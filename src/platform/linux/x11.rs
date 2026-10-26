@@ -198,6 +198,13 @@ impl Conn {
                 .and_then(|t| scale::parse_xft_dpi(&t));
             conn.scale =
                 scale::scale_from(std::env::var("WINIT_X11_SCALE_FACTOR").ok().as_deref(), xft);
+            crate::diag_log!(
+                "x11",
+                "scale",
+                scale = conn.scale,
+                xft_scale_input = xft.unwrap_or(0.0),
+                env_override = std::env::var("WINIT_X11_SCALE_FACTOR").unwrap_or_default()
+            );
             Some(conn)
         }
     }

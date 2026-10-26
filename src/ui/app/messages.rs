@@ -24,6 +24,14 @@ impl App {
             } => {
                 // a real gesture takes over from any preview
                 self.preview_until = None;
+                crate::diag_log!(
+                    "ui",
+                    "msg_show_pie",
+                    x = x,
+                    y = y,
+                    profile = profile,
+                    depth = path.len()
+                );
                 self.show_pie(ctx, x, y, profile, path);
             }
             Msg::OpenSettings { x, y, about } => {

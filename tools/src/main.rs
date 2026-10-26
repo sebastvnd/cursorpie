@@ -12,6 +12,7 @@
 //! | `bump` | `bump.rs` | raises the version and prepares the changelog |
 //! | `hooks` | `hooks.rs` | turns the Git hooks of `.githooks/` on or off |
 //! | `commit-msg` | `commit_msg.rs` | checks a commit message |
+//! | `diag` | `diag.rs` | reads a debug log of the app (`CURSORPIE_DEBUG=1`) and says where the chain broke |
 //!
 //! The tools use only the standard library, so they build in seconds and work on every OS the
 //! project supports. Each one keeps its decisions in pure functions with unit tests; this file
@@ -21,6 +22,7 @@
 mod bump;
 mod ci;
 mod commit_msg;
+mod diag;
 mod git;
 mod hooks;
 
@@ -51,6 +53,8 @@ Commands:
 
   hooks <install|uninstall>    turn the Git hooks of .githooks/ on or off for this clone
   commit-msg <FILE>            check a commit message file (the commit-msg hook calls this)
+  diag [FILE]                  read a debug log of the app (start it with CURSORPIE_DEBUG=1) and say
+                               where positions stop agreeing; default: the newest log
   help                         show this text
 
 Rules and workflow: CONTRIBUTING.md, sections "Development workflow" and "Releasing"."#;
@@ -70,6 +74,8 @@ enum Task {
     Hooks(hooks::Action),
     /// Check the commit message in a file.
     CommitMsg(PathBuf),
+    /// Read a debug log of the app: the file, or the newest one.
+    Diag(Option<PathBuf>),
 }
 
 /// Reads the arguments after the program name. `-h` or `--help` anywhere asks for the usage.
@@ -91,6 +97,11 @@ fn parse_command<I: IntoIterator<Item = String>>(args: I) -> Result<Task, String
         "commit-msg" => match rest {
             [file] => Ok(Task::CommitMsg(PathBuf::from(file))),
             _ => Err("commit-msg needs one argument: the file with the message".into()),
+        },
+        "diag" => match rest {
+            [] => Ok(Task::Diag(None)),
+            [file] => Ok(Task::Diag(Some(PathBuf::from(file)))),
+            _ => Err("diag takes at most one argument: the log file".into()),
         },
         other => Err(format!("unknown command '{other}'")),
     }
@@ -171,6 +182,7 @@ fn run(root: &Path, task: Task) -> Result<ExitCode, String> {
         Task::Bump(level, options) => bump::run(root, level, options),
         Task::Hooks(action) => hooks::run(root, action),
         Task::CommitMsg(file) => commit_msg::run(&file),
+        Task::Diag(file) => diag::run(file.as_deref()),
     }
 }
 
@@ -224,6 +236,11 @@ mod tests {
             parse(&["commit-msg", ".git/COMMIT_EDITMSG"]),
             Ok(Task::CommitMsg(".git/COMMIT_EDITMSG".into()))
         );
+        assert_eq!(parse(&["diag"]), Ok(Task::Diag(None)));
+        assert_eq!(
+            parse(&["diag", "a.jsonl"]),
+            Ok(Task::Diag(Some("a.jsonl".into())))
+        );
     }
 
     #[test]
@@ -237,5 +254,6 @@ mod tests {
         assert!(parse(&["commit-msg", "a", "b"]).is_err());
         assert!(parse(&["hooks"]).is_err());
         assert!(parse(&["hooks", "enable"]).is_err());
+        assert!(parse(&["diag", "a", "b"]).is_err());
     }
 }

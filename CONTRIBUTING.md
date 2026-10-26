@@ -99,6 +99,7 @@ package (standard library only, never part of the app) and behave the same on ma
 | `cargo tools check` | `Cargo.toml`, `Cargo.lock` and `CHANGELOG.md` agree on the version |
 | `cargo tools bump LEVEL` | raises the version and prepares the changelog (see [Releasing](#releasing)) |
 | `cargo tools commit-msg FILE` | checks a commit message (the `commit-msg` hook runs it) |
+| `cargo tools diag [FILE]` | reads a debug log of the app (`CURSORPIE_DEBUG=1`) and says where positions stop agreeing, see [docs/DEBUGGING.md](docs/DEBUGGING.md) |
 
 ### The loop
 

@@ -65,6 +65,14 @@ fn on_press<'a>(
     button: i64,
 ) -> Verdict {
     let (hold_profile, app) = resolve_profiles(p);
+    crate::diag_log!(
+        "tap",
+        "on_press",
+        x = p.x,
+        y = p.y,
+        button = button,
+        profile = hold_profile
+    );
     // lets the UI load the icons while the hold timer runs (never blocks, see the tap rules)
     notifier.send(Msg::Warm {
         general: hold_profile,
@@ -157,6 +165,7 @@ fn spawn_hold_timer(st: Arc<Mutex<Gesture>>, n: Notifier, id: u64) {
             found
         };
         let Some((pos, profile)) = opened else { return };
+        crate::diag_log!("tap", "hold_open", x = pos.x, y = pos.y, profile = profile);
         n.send(Msg::ShowPie {
             x: pos.x,
             y: pos.y,

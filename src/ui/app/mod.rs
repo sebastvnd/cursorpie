@@ -175,6 +175,18 @@ impl eframe::App for App {
         if let Some(handle) = native_handle(frame) {
             platform::clear_window_frame(handle);
         }
+        // debug log only: where the window really is, compared with where it was asked to be
+        if crate::diag::observing() {
+            let (outer, ppp) = ctx.input(|i| {
+                let v = i.viewport();
+                (
+                    v.outer_rect
+                        .map(|r| [r.min.x, r.min.y, r.width(), r.height()]),
+                    v.native_pixels_per_point,
+                )
+            });
+            crate::diag::observe_window(outer, ppp);
+        }
         // evicts icons nobody used lately (never one the last frame used)
         self.ed.icons.new_frame();
         while let Ok(msg) = self.rx.try_recv() {

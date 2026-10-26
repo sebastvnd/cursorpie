@@ -91,9 +91,18 @@ pub(super) fn wanted_buttons(trigger: i64) -> Vec<c_int> {
 
 /// Starts the tap on its own thread (retrying while the X server cannot be reached).
 pub fn spawn(notifier: Notifier) {
-    if let Some(problem) = Session::current().problem() {
+    let session = Session::current();
+    if let Some(problem) = session.problem() {
         eprintln!("CursorPie: {problem}");
     }
+    crate::diag_log!(
+        "tap",
+        "session",
+        server = format!("{:?}", session.server),
+        desktops = session.desktops.join(","),
+        has_x_display = session.has_x_display,
+        problem = session.problem().unwrap_or("")
+    );
     x11::warm_index();
     let state = Arc::new(Mutex::new(Gesture::Idle));
     let started = std::thread::Builder::new()
@@ -133,7 +142,15 @@ fn serve(conn: &'static Conn, state: &Arc<Mutex<Gesture>>, notifier: &Notifier) 
     conn.select_raw_release();
     let trigger = cfg().trigger_button;
     let wanted = wanted_buttons(trigger);
-    conn.set_grabs(&wanted);
+    let all_grabbed = conn.set_grabs(&wanted);
+    crate::diag_log!(
+        "tap",
+        "grabs",
+        trigger = trigger,
+        wanted = format!("{wanted:?}"),
+        grabbed = format!("{:?}", conn.grabbed()),
+        all_grabbed = all_grabbed
+    );
     let trigger_x = x_button_for(trigger);
     if trigger_x.is_none_or(|x| !conn.grabbed().contains(&x)) {
         conn.release_grabs();
@@ -258,6 +275,29 @@ impl Tap {
             return;
         }
         let pos = Point::new(e.root_x / self.conn.scale, e.root_y / self.conn.scale);
+        if evtype == XI_MOTION {
+            crate::diag_trace!("tap", "drag", x = pos.x, y = pos.y);
+        } else {
+            // the position the event carries, next to what the server says right now
+            crate::diag_log!(
+                "tap",
+                if evtype == XI_BUTTON_PRESS {
+                    "press"
+                } else {
+                    "release"
+                },
+                detail = e.detail,
+                root_x = e.root_x,
+                root_y = e.root_y,
+                scale = self.conn.scale,
+                x = pos.x,
+                y = pos.y,
+                query_px = self
+                    .conn
+                    .pointer_px()
+                    .map_or_else(String::new, |(qx, qy)| format!("{qx},{qy}"))
+            );
+        }
         let (kind, button) = match evtype {
             XI_BUTTON_PRESS => (Kind::Down, mac_button(e.detail)),
             XI_BUTTON_RELEASE => (Kind::Up, mac_button(e.detail)),
@@ -266,6 +306,15 @@ impl Tap {
         };
         let Some(button) = button else { return };
         let verdict = self.route(Ev::Mouse { kind, button, pos });
+        if kind != Kind::Drag {
+            crate::diag_log!(
+                "tap",
+                "verdict",
+                kind = format!("{kind:?}"),
+                button = button,
+                verdict = format!("{verdict:?}")
+            );
+        }
         let side = match button {
             SIDE_BACK => Some(0),
             SIDE_FORWARD => Some(1),

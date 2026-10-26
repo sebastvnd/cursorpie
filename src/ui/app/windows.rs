@@ -104,6 +104,17 @@ impl App {
         let card = fit(area.size());
         let win_sz = card + Vec2::splat(2.0 * WIN_MARGIN);
         let top_left = area.center() - win_sz / 2.0;
+        crate::diag_log!(
+            "ui",
+            "place_card",
+            at_x = at.x,
+            at_y = at.y,
+            left = top_left.x,
+            top = top_left.y,
+            w = win_sz.x,
+            h = win_sz.y
+        );
+        crate::diag::expect_window(top_left.x, top_left.y);
 
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(win_sz));
         ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
@@ -164,6 +175,13 @@ impl App {
         path: Vec<usize>,
     ) {
         if self.settings_open {
+            crate::diag_log!(
+                "ui",
+                "show_pie_ignored",
+                reason = "settings_open",
+                x = x,
+                y = y
+            );
             return;
         }
         self.win = cfg().pie_size;
@@ -186,10 +204,28 @@ impl App {
         ));
         // whole points: a window on a half-point offset is resampled by the compositor on
         // standard-density screens, which softens everything drawn in it
-        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(
-            (x as f32 - w / 2.0).round(),
-            (y as f32 - w / 2.0).round(),
-        )));
+        let top_left = egui::pos2((x as f32 - w / 2.0).round(), (y as f32 - w / 2.0).round());
+        crate::diag_log!(
+            "ui",
+            "show_pie",
+            x = x,
+            y = y,
+            win = w,
+            left = top_left.x,
+            top = top_left.y,
+            ppp = ctx.pixels_per_point(),
+            visible_before = self.visible,
+            mon = screen_rect_at(self.pie_pos).map_or_else(String::new, |r| {
+                crate::diag::rect_str(
+                    f64::from(r.min.x),
+                    f64::from(r.min.y),
+                    f64::from(r.width()),
+                    f64::from(r.height()),
+                )
+            })
+        );
+        crate::diag::expect_window(top_left.x, top_left.y);
+        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(top_left));
         if !self.visible {
             self.visible = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
@@ -222,8 +258,15 @@ impl App {
 
     /// Current cursor position, or a fixed fallback if the OS cannot tell.
     fn cursor_or_default(&self) -> Pos2 {
-        platform::cursor_pos()
-            .map(|(x, y)| egui::pos2(x as f32, y as f32))
+        let raw = platform::cursor_pos();
+        crate::diag_log!(
+            "ui",
+            "cursor_or_default",
+            ok = raw.is_some(),
+            x = raw.map_or(400.0, |p| p.0),
+            y = raw.map_or(300.0, |p| p.1)
+        );
+        raw.map(|(x, y)| egui::pos2(x as f32, y as f32))
             .unwrap_or(egui::pos2(400.0, 300.0))
     }
 
