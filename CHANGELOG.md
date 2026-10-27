@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.5.2
+
+- Diag code for developer
+- Fix bug pie position in x11
+- Fix bug pie position in linux
+- New documentation and repair memory management
+
+## 0.5.1
+
 - **Fix bug many display on macOS**
 - **Lower memory use in Settings.** The icon picker only draws (and only loads) the icons that are on
   screen, and loads a few per frame instead of all at once. Image icons larger than 4096 px on a side are no
@@ -12,6 +21,8 @@
   saves a 256 px PNG copy in the icons folder and uses that (the original is untouched), and the status bar
   says what was done. An image that cannot be read, or has more than 40 megapixels, is refused with a message.
   The "Mine" page tells you when images in the icons folder are not listed because they are too big.
+- **Fix bug pie draw center position.**
+- **Add debug/diag tools.** 
 
 ## 0.5.0
 

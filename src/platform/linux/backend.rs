@@ -48,6 +48,12 @@ pub fn set_accessory_policy() {}
 /// The window manager draws no frame around an undecorated window.
 pub fn clear_window_frame(_handle: isize) {}
 
+/// X11 window managers (KWin, ...) may place a window that is mapped again at the center of the
+/// screen, ignoring the position it was given while hidden, so the pie asks for it again.
+pub fn window_manager_may_recenter() -> bool {
+    true
+}
+
 /// The pointer position in logical points.
 pub fn cursor_pos() -> Option<(f64, f64)> {
     x11::conn()?.pointer()

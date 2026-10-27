@@ -5,7 +5,7 @@ use crate::config::{self, MAX_ITEMS, cfg};
 use crate::platform;
 use crate::side;
 use crate::tap::PAUSED;
-use crate::ui::screen::screen_rect_at;
+use crate::ui::screen::{PieHold, pie_hold, screen_rect_at};
 use crate::ui::settings::{Tab, Welcome};
 use eframe::egui::{self, Pos2, Vec2};
 use std::sync::atomic::Ordering;
@@ -230,6 +230,38 @@ impl App {
             self.visible = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
         }
+        if platform::window_manager_may_recenter() {
+            // Once mapped, a move is a request from the client and the window manager honors
+            // it; the position given while the window was hidden is not always kept.
+            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(top_left));
+            self.want_pos = Some((top_left, Instant::now()));
+            ctx.request_repaint();
+        }
+    }
+
+    /// For a short time after the pie was shown, moves the window back to where it was asked to
+    /// be if the window manager put it somewhere else (see [`App::want_pos`]).
+    pub(super) fn enforce_pie_pos(&mut self, ctx: &egui::Context) {
+        const HOLD: Duration = Duration::from_millis(300);
+        let Some((target, since)) = self.want_pos else {
+            return;
+        };
+        if self.settings_open || !self.pie_open {
+            self.want_pos = None;
+            return;
+        }
+        let outer_min = ctx.input(|i| i.viewport().outer_rect).map(|r| r.min);
+        match pie_hold(target, outer_min, since.elapsed(), HOLD) {
+            PieHold::Release => {
+                self.want_pos = None;
+                return;
+            }
+            PieHold::Move => {
+                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(target));
+            }
+            PieHold::Keep => {}
+        }
+        ctx.request_repaint_after(Duration::from_millis(16));
     }
 
     /// Menu bar item: switch which pie the side buttons follow in the app in front.

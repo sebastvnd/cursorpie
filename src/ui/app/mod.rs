@@ -88,6 +88,11 @@ pub struct App {
     pub win: f32,
     pub pie_pos: Pos2,
     pub opened_at: Instant,
+    /// Where the pie window was last asked to be, and since when. `logic` keeps re-sending that
+    /// position for a moment, because some window managers (KWin on X11) place a window that is
+    /// mapped again at the center of the screen and ignore the position set while it was hidden.
+    /// Only set where [`platform::window_manager_may_recenter`] is true.
+    pub want_pos: Option<(Pos2, Instant)>,
     pub last_tick: Instant,
     /// Some while a preview (menu bar "Switch side-button pie") is on screen: when it ends
     pub preview_until: Option<Instant>,
@@ -138,6 +143,7 @@ impl App {
             win,
             pie_pos: egui::pos2(200.0, 200.0),
             opened_at: Instant::now(),
+            want_pos: None,
             last_tick: Instant::now(),
             preview_until: None,
             settings_open: false,
@@ -187,6 +193,7 @@ impl eframe::App for App {
             });
             crate::diag::observe_window(outer, ppp);
         }
+        self.enforce_pie_pos(ctx);
         // evicts icons nobody used lately (never one the last frame used)
         self.ed.icons.new_frame();
         while let Ok(msg) = self.rx.try_recv() {

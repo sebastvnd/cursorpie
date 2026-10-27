@@ -31,6 +31,10 @@ pub fn app_icon(_bundle: &str) -> Option<NativeIcon> {
 pub fn set_accessory_policy() {}
 /// The window has no frame to remove.
 pub fn clear_window_frame(_handle: isize) {}
+/// Nothing moves the window.
+pub fn window_manager_may_recenter() -> bool {
+    false
+}
 /// No pointer.
 pub fn cursor_pos() -> Option<(f64, f64)> {
     None

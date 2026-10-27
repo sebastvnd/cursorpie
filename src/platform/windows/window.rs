@@ -144,3 +144,8 @@ pub fn clear_window_frame(handle: isize) {
         }
     }
 }
+
+/// Windows keeps the position a hidden window was given.
+pub fn window_manager_may_recenter() -> bool {
+    false
+}
