@@ -1,7 +1,7 @@
 //! `cargo tools diag [FILE]`: reads a debug log of the app and says where the chain broke.
 //!
-//! The app writes the log when it is started with `CURSORPIE_DEBUG=1` (see `src/diag.rs` in the
-//! app crate and `docs/DEBUGGING.md`). Every line is a flat JSON object. This tool follows one
+//! The app writes the log when it is started with `CURSORPIE_DEBUG=1` (the log is written by
+//! the `diag` crate in `diag/`, see `docs/DEBUGGING.md`). Every line is a flat JSON object. This tool follows one
 //! gesture through the layers and compares the numbers each layer reports:
 //!
 //! ```text
@@ -20,6 +20,152 @@ use std::process::ExitCode;
 const TOLERANCE: f64 = 3.0;
 /// How far the window centre may be from the monitor centre to count as "centered".
 const CENTER_TOLERANCE: f64 = 6.0;
+
+// ------------------------------------------------------------------------------- the contract
+
+/// One event this tool (or `logview.rs`) reads, and the fields it reads from it.
+pub struct Expected {
+    pub cat: &'static str,
+    pub ev: &'static str,
+    pub fields: &'static [&'static str],
+}
+
+/// Every event the analysis depends on. `cargo tools diag-lint` (and `cargo test`) checks that a
+/// log line in `src/` writes each of them with these fields, so renaming an event or a field in
+/// the app without teaching the analyzer fails the checks instead of silently making the analysis
+/// blind. An event or field the analyzer starts to read is added here, in the same commit.
+///
+/// The events written by the `diag` crate itself (`diag.start`, `diag.size_cap`, `panic.panic`)
+/// and the fields of the ones built at run time (`sys.startup`, `win.win_obs`) are not looked
+/// for in the source: the lint knows them (`lint::BUILT_IN`).
+pub const EXPECTED: &[Expected] = &[
+    Expected {
+        cat: "diag",
+        ev: "start",
+        fields: &[],
+    },
+    Expected {
+        cat: "diag",
+        ev: "size_cap",
+        fields: &[],
+    },
+    Expected {
+        cat: "panic",
+        ev: "panic",
+        fields: &["at", "message"],
+    },
+    Expected {
+        cat: "sys",
+        ev: "startup",
+        fields: &[],
+    },
+    Expected {
+        cat: "x11",
+        ev: "scale",
+        fields: &["scale", "xft_scale_input", "env_override"],
+    },
+    Expected {
+        cat: "tap",
+        ev: "session",
+        fields: &["server", "desktops", "has_x_display", "problem"],
+    },
+    Expected {
+        cat: "tap",
+        ev: "grabs",
+        fields: &["wanted", "grabbed", "all_grabbed"],
+    },
+    Expected {
+        cat: "tap",
+        ev: "press",
+        fields: &["x", "y", "scale", "query_px"],
+    },
+    Expected {
+        cat: "tap",
+        ev: "release",
+        fields: &["x", "y"],
+    },
+    Expected {
+        cat: "tap",
+        ev: "on_press",
+        fields: &["x", "y"],
+    },
+    Expected {
+        cat: "tap",
+        ev: "on_release",
+        fields: &["x", "y"],
+    },
+    Expected {
+        cat: "tap",
+        ev: "hold_open",
+        fields: &["x", "y"],
+    },
+    Expected {
+        cat: "ui",
+        ev: "msg_show_pie",
+        fields: &["x", "y"],
+    },
+    Expected {
+        cat: "ui",
+        ev: "show_pie",
+        fields: &["x", "y", "left", "top", "mon"],
+    },
+    Expected {
+        cat: "ui",
+        ev: "show_pie_ignored",
+        fields: &["x", "y", "reason"],
+    },
+    Expected {
+        cat: "ui",
+        ev: "place_card",
+        fields: &[],
+    },
+    Expected {
+        cat: "ui",
+        ev: "cursor_or_default",
+        fields: &["ok", "x", "y"],
+    },
+    Expected {
+        cat: "win",
+        ev: "win_obs",
+        fields: &[],
+    },
+    Expected {
+        cat: "cfg",
+        ev: "save",
+        fields: &["ok", "how", "error"],
+    },
+    // `outcome`, `bytes` and `ms` are added to the line by its `Timer`, not written in the call
+    Expected {
+        cat: "cfg",
+        ev: "load",
+        fields: &[],
+    },
+    Expected {
+        cat: "act",
+        ev: "exec",
+        fields: &["kind", "wait_ms"],
+    },
+    Expected {
+        cat: "tap",
+        ev: "hook",
+        fields: &["backend", "state"],
+    },
+    Expected {
+        cat: "act",
+        ev: "spawn_failed",
+        fields: &["program", "error"],
+    },
+    Expected {
+        cat: "act",
+        ev: "exited",
+        fields: &["program", "code"],
+    },
+    Expected {
+        cat: "act",
+        ev: "shell_execute",
+        fields: &["ok", "code"],
+    },
+];
 
 // ------------------------------------------------------------------------------------ reading
 
@@ -159,28 +305,32 @@ pub fn parse_line(line: &str) -> Option<Rec> {
     (r.at == chars.len()).then_some(rec)
 }
 
-fn num(r: &Rec, key: &str) -> Option<f64> {
+/// A number field of a line.
+pub fn num(r: &Rec, key: &str) -> Option<f64> {
     match r.get(key)? {
         Val::Num(n) => Some(*n),
         _ => None,
     }
 }
 
-fn text<'a>(r: &'a Rec, key: &str) -> Option<&'a str> {
+/// A text field of a line.
+pub fn text<'a>(r: &'a Rec, key: &str) -> Option<&'a str> {
     match r.get(key)? {
         Val::Str(s) => Some(s.as_str()),
         _ => None,
     }
 }
 
-fn flag(r: &Rec, key: &str) -> Option<bool> {
+/// A boolean field of a line.
+pub fn flag(r: &Rec, key: &str) -> Option<bool> {
     match r.get(key)? {
         Val::Bool(b) => Some(*b),
         _ => None,
     }
 }
 
-fn is(r: &Rec, cat: &str, ev: &str) -> bool {
+/// Whether a line is the event `ev` of the category `cat`.
+pub fn is(r: &Rec, cat: &str, ev: &str) -> bool {
     text(r, "cat") == Some(cat) && text(r, "ev") == Some(ev)
 }
 
@@ -348,6 +498,10 @@ pub fn analyze(lines: &[String]) -> Report {
             "the pointer position could not be read {fallbacks} time(s): the fallback (400,300) was used"
         ));
     }
+    // the checks of the other views of the log (slow steps, failed saves, queued actions)
+    report
+        .findings
+        .extend(crate::logview::extra_findings(&recs));
     if let (Some(scale), Some(p)) = (x11_scale, ppp)
         && (scale - p).abs() > 0.05
     {
@@ -497,17 +651,24 @@ pub fn render(report: &Report) -> String {
 
 // ------------------------------------------------------------------------------ finding a log
 
+/// The start and the end of the file names of the app's logs (see `diag::file_name`).
+pub const LOG_PREFIX: &str = "cursorpie-";
+/// The end of the file names of the app's logs.
+pub const LOG_SUFFIX: &str = ".jsonl";
+
+/// Whether a file name is one of the app's logs, so no other file is ever read or deleted.
+pub fn is_log_name(name: &str) -> bool {
+    name.starts_with(LOG_PREFIX) && name.ends_with(LOG_SUFFIX)
+}
+
 /// The newest log among file names (the names sort by time, see `diag::file_name`).
 fn newest(names: &[String]) -> Option<&String> {
-    names
-        .iter()
-        .filter(|n| n.starts_with("cursorpie-") && n.ends_with(".jsonl"))
-        .max()
+    names.iter().filter(|n| is_log_name(n)).max()
 }
 
 /// Where the app writes its logs on this OS, from an environment lookup. Mirrors
-/// `diag::log_dir_from` and `config::support_dir_from` of the app.
-fn default_log_dir(get: &dyn Fn(&str) -> Option<String>) -> Option<PathBuf> {
+/// `diag::log_dir_from` (crate `diag`) and `config::support_dir_from` of the app.
+pub fn default_log_dir(get: &dyn Fn(&str) -> Option<String>) -> Option<PathBuf> {
     if let Some(d) = get("CURSORPIE_DEBUG_DIR").filter(|d| !d.trim().is_empty()) {
         return Some(PathBuf::from(d.trim()));
     }
@@ -534,7 +695,7 @@ fn default_log_dir(get: &dyn Fn(&str) -> Option<String>) -> Option<PathBuf> {
 }
 
 /// The file to read: the one named, else the newest in the default folder.
-fn pick_file(given: Option<&Path>) -> Result<PathBuf, String> {
+pub fn pick_file(given: Option<&Path>) -> Result<PathBuf, String> {
     if let Some(p) = given {
         return Ok(p.to_path_buf());
     }

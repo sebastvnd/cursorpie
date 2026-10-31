@@ -13,6 +13,11 @@
 //! | `hooks` | `hooks.rs` | turns the Git hooks of `.githooks/` on or off |
 //! | `commit-msg` | `commit_msg.rs` | checks a commit message |
 //! | `diag` | `diag.rs` | reads a debug log of the app (`CURSORPIE_DEBUG=1`) and says where the chain broke |
+//! | `log` | `logview.rs` | other views of a debug log: `summary`, `timeline`, `grep`, `slow`, `diff`, `follow`, `report` |
+//! | `diag-lint` | `lint.rs` | checks the log lines in `src/` against the rules and against what the analyzer reads |
+//! | `clean-logs` | `clean.rs` | deletes old debug logs |
+//! | `zip` | `zip.rs` | packs the project into a `.zip` file without `target/` and `.git/` |
+//! | `info` | `info.rs` | prints the facts a bug report needs (OS, session, tool versions) |
 //!
 //! The tools use only the standard library, so they build in seconds and work on every OS the
 //! project supports. Each one keeps its decisions in pure functions with unit tests; this file
@@ -21,10 +26,15 @@
 
 mod bump;
 mod ci;
+mod clean;
 mod commit_msg;
 mod diag;
 mod git;
 mod hooks;
+mod info;
+mod lint;
+mod logview;
+mod zip;
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -55,6 +65,23 @@ Commands:
   commit-msg <FILE>            check a commit message file (the commit-msg hook calls this)
   diag [FILE]                  read a debug log of the app (start it with CURSORPIE_DEBUG=1) and say
                                where positions stop agreeing; default: the newest log
+  log <view> [...]             other ways to read a debug log (default: the newest log)
+      summary [FILE]             lines, threads and how often each event was written; names a flood
+      timeline [FILE]            one row per press: hold timer, UI lag, window asked and seen
+      grep PATTERN [FILE]        the lines of `cat`, `cat:event` or `:event` as readable text
+                                 [--field NAME=VALUE] [--after S] [--before S] [--limit N] [--raw]
+      slow [--ms N] [FILE]       the timed steps that took N ms or more (default 50), slowest first
+      diff BEFORE AFTER          what a change did: findings gone, findings new, events that changed
+      follow [FILE]              print the lines of a run that is still going (Ctrl-C to stop)
+      report [FILE]              facts and verdict as text to paste into a bug report
+  diag-lint                    check the log lines in src/ against the rules of docs/DEBUGGING.md and
+                               against what the analyzer reads (part of `ci --quick`)
+  clean-logs [--keep N] [--older-than DAYS] [--all] [--dir PATH] [--dry-run]
+                               delete old debug logs of the app (default: keep the newest 3)
+  zip [-o FILE] [--list] [--no-git]
+                               pack the project into a .zip file without target/ and .git/
+                               (default file: NAME-VERSION.zip next to the project folder)
+  info                         print the facts a bug report needs: OS, session, tool versions
   help                         show this text
 
 Rules and workflow: CONTRIBUTING.md, sections "Development workflow" and "Releasing"."#;
@@ -76,6 +103,16 @@ enum Task {
     CommitMsg(PathBuf),
     /// Read a debug log of the app: the file, or the newest one.
     Diag(Option<PathBuf>),
+    /// Another view of a debug log (summary, timeline, grep, ...).
+    Log(logview::Options),
+    /// Check the log lines in `src/`.
+    DiagLint,
+    /// Delete old debug logs.
+    CleanLogs(clean::Options),
+    /// Pack the project into a zip file.
+    Zip(zip::Options),
+    /// Print the facts a bug report needs.
+    Info,
 }
 
 /// Reads the arguments after the program name. `-h` or `--help` anywhere asks for the usage.
@@ -103,6 +140,13 @@ fn parse_command<I: IntoIterator<Item = String>>(args: I) -> Result<Task, String
             [file] => Ok(Task::Diag(Some(PathBuf::from(file)))),
             _ => Err("diag takes at most one argument: the log file".into()),
         },
+        "log" => logview::parse_args(rest).map(Task::Log),
+        "diag-lint" if rest.is_empty() => Ok(Task::DiagLint),
+        "diag-lint" => Err("diag-lint takes no arguments".into()),
+        "clean-logs" => clean::parse_args(rest).map(Task::CleanLogs),
+        "zip" => zip::parse_args(rest).map(Task::Zip),
+        "info" if rest.is_empty() => Ok(Task::Info),
+        "info" => Err("info takes no arguments".into()),
         other => Err(format!("unknown command '{other}'")),
     }
 }
@@ -183,6 +227,11 @@ fn run(root: &Path, task: Task) -> Result<ExitCode, String> {
         Task::Hooks(action) => hooks::run(root, action),
         Task::CommitMsg(file) => commit_msg::run(&file),
         Task::Diag(file) => diag::run(file.as_deref()),
+        Task::Log(options) => logview::run(root, &options),
+        Task::DiagLint => lint::run(root),
+        Task::CleanLogs(options) => clean::run(&options),
+        Task::Zip(options) => zip::run(root, &options),
+        Task::Info => Ok(info::run(root)),
     }
 }
 
@@ -236,7 +285,15 @@ mod tests {
             parse(&["commit-msg", ".git/COMMIT_EDITMSG"]),
             Ok(Task::CommitMsg(".git/COMMIT_EDITMSG".into()))
         );
+        assert_eq!(parse(&["info"]), Ok(Task::Info));
+        assert!(matches!(parse(&["zip", "--list"]), Ok(Task::Zip(o)) if o.list));
+        assert!(matches!(parse(&["clean-logs", "--all"]), Ok(Task::CleanLogs(o)) if o.keep == 0));
         assert_eq!(parse(&["diag"]), Ok(Task::Diag(None)));
+        assert_eq!(parse(&["diag-lint"]), Ok(Task::DiagLint));
+        assert!(matches!(
+            parse(&["log", "timeline"]),
+            Ok(Task::Log(o)) if o.view == logview::View::Timeline && o.file.is_none()
+        ));
         assert_eq!(
             parse(&["diag", "a.jsonl"]),
             Ok(Task::Diag(Some("a.jsonl".into())))
@@ -255,5 +312,11 @@ mod tests {
         assert!(parse(&["hooks"]).is_err());
         assert!(parse(&["hooks", "enable"]).is_err());
         assert!(parse(&["diag", "a", "b"]).is_err());
+        assert!(parse(&["diag-lint", "x"]).is_err());
+        assert!(parse(&["log"]).is_err(), "a view is needed");
+        assert!(parse(&["log", "watch"]).is_err());
+        assert!(parse(&["info", "x"]).is_err());
+        assert!(parse(&["zip", "--fast"]).is_err());
+        assert!(parse(&["clean-logs", "--keep"]).is_err());
     }
 }

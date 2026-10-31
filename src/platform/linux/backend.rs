@@ -157,7 +157,15 @@ fn started(cmd: &mut Command) -> bool {
             });
             true
         }
-        Err(_) => false,
+        Err(e) => {
+            diag::log!(
+                "act",
+                "spawn_failed",
+                program = cmd.get_program().to_string_lossy().into_owned(),
+                error = format!("{:?}", e.kind())
+            );
+            false
+        }
     }
 }
 

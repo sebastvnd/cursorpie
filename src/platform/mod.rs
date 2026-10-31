@@ -286,11 +286,29 @@ pub struct ScreenRect {
 }
 
 /// Starts a process and reaps its exit status on a tiny thread, so it never becomes a zombie.
+///
+/// The diagnostic log gets the program's name (never its arguments: they hold the person's command,
+/// URL or path), whether it could be started, and how it ended.
 pub fn spawn_reaped(cmd: &mut Command) {
-    if let Ok(mut child) = cmd.spawn() {
-        std::thread::spawn(move || {
-            let _ = child.wait();
-        });
+    match cmd.spawn() {
+        Ok(mut child) => {
+            let program = cmd.get_program().to_string_lossy().into_owned();
+            std::thread::spawn(move || {
+                let status = child.wait();
+                diag::log!(
+                    "act",
+                    "exited",
+                    program = program,
+                    code = status.ok().and_then(|s| s.code())
+                );
+            });
+        }
+        Err(e) => diag::log!(
+            "act",
+            "spawn_failed",
+            program = cmd.get_program().to_string_lossy().into_owned(),
+            error = format!("{:?}", e.kind())
+        ),
     }
 }
 

@@ -182,7 +182,7 @@ impl eframe::App for App {
             platform::clear_window_frame(handle);
         }
         // debug log only: where the window really is, compared with where it was asked to be
-        if crate::diag::observing() {
+        if crate::debug::observing() {
             let (outer, ppp) = ctx.input(|i| {
                 let v = i.viewport();
                 (
@@ -191,7 +191,7 @@ impl eframe::App for App {
                     v.native_pixels_per_point,
                 )
             });
-            crate::diag::observe_window(outer, ppp);
+            crate::debug::observe_window(outer, ppp);
         }
         self.enforce_pie_pos(ctx);
         // evicts icons nobody used lately (never one the last frame used)

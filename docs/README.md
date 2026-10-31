@@ -13,7 +13,8 @@
 
 Start with [CONTRIBUTING.md](../CONTRIBUTING.md). The technical reference is the Rust docs (`cargo docs`):
 architecture, config format and step-by-step recipes for common changes.
-To find a problem that only shows on one machine, use the diagnostic log: [DEBUGGING.md](DEBUGGING.md).
+To find a problem that only shows on one machine, use the diagnostic log: [DEBUGGING.md](DEBUGGING.md) (it also
+says how to add log lines, which is what the `diag/` crate is for).
 
 ## Design records
 

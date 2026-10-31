@@ -1,6 +1,6 @@
 [package]
 name = "cursorpie"
-version = "0.5.2"
+version = "0.5.4"
 edition = "2024"
 rust-version = "1.88"
 description = "Hold-to-open pie menu for macOS, Windows and Linux (X11): per-app profiles, shortcuts, launchers and submenus."
@@ -13,16 +13,23 @@ repository = "https://github.com/sebastvnd/cursorpie"
 # It is not part of the app: `cargo build` and `cargo test` of the root package never touch it, so
 # test it with `cargo test --workspace` (what `cargo tools ci` does).
 [workspace]
-members = ["tools"]
+members = ["tools", "diag"]
 
 [features]
 # Compiles the Windows backend on any OS so `cargo check --features check-windows` can type-check
 # it (and its pure helpers can be unit tested) without a Windows machine. Not needed on Windows.
 check-windows = ["dep:windows-sys"]
+# Keeps the diagnostic log (`CURSORPIE_DEBUG=1`, docs/DEBUGGING.md) in a release build. A debug
+# build always has it; an ordinary release build has none of its code.
+debug-log = ["diag/force"]
 
 [dependencies]
 # UI (egui 0.36 uses `App::ui` + `App::logic`, same as the original code).
 # `eframe` is declared per target below, because the renderer differs between the OSes.
+
+# The diagnostic log (`CURSORPIE_DEBUG=1`, docs/DEBUGGING.md). It is a crate of its own with no
+# dependencies, so the code that writes the log is not part of the app's sources.
+diag = { package = "cursorpie-diag", version = "0.1.0", path = "diag" }
 
 # Reads the multi-page TIFF macOS hands out for app icons. Only the codecs macOS uses are enabled.
 # Kept for every target because the decoder is plain Rust and its tests run everywhere.

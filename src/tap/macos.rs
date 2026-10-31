@@ -88,14 +88,17 @@ pub fn spawn(notifier: Notifier) {
                         CFRunLoop::get_current().add_source(&source, unsafe { kCFRunLoopCommonModes });
                         tap.enable();
                         super::TAP_ACTIVE.store(true, Ordering::SeqCst);
+                        diag::log!("tap", "hook", backend = "macos", state = "running");
                         notifier.ctx.request_repaint();
                         CFRunLoop::run_current();
                         super::TAP_ACTIVE.store(false, Ordering::SeqCst);
+                        diag::log!("tap", "hook", backend = "macos", state = "stopped");
                     }
                     Err(_) => {
                         super::TAP_ACTIVE.store(false, Ordering::SeqCst);
                         if !warned {
                             warned = true;
+                            diag::log!("tap", "hook", backend = "macos", state = "blocked");
                             eprintln!(
                                 "CursorPie: macOS blocked the event tap. Grant 'Accessibility' (and 'Input Monitoring') \
                                  to this app in System Settings -> Privacy & Security. Retrying every 2 s..."

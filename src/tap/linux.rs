@@ -95,7 +95,7 @@ pub fn spawn(notifier: Notifier) {
     if let Some(problem) = session.problem() {
         eprintln!("CursorPie: {problem}");
     }
-    crate::diag_log!(
+    diag::log!(
         "tap",
         "session",
         server = format!("{:?}", session.server),
@@ -120,6 +120,7 @@ fn run(state: Arc<Mutex<Gesture>>, notifier: Notifier) {
             Some(conn) => {
                 if !serve(conn, &state, &notifier) && !reported {
                     reported = true;
+                    diag::log!("tap", "hook", backend = "x11", state = "grab_failed");
                     eprintln!(
                         "CursorPie: could not grab the mouse button (another program may hold it); retrying every 2 s"
                     );
@@ -128,6 +129,7 @@ fn run(state: Arc<Mutex<Gesture>>, notifier: Notifier) {
             None => {
                 if !reported {
                     reported = true;
+                    diag::log!("tap", "hook", backend = "x11", state = "no_x_server");
                     eprintln!("CursorPie: cannot connect to the X server; retrying every 2 s");
                 }
             }
@@ -143,7 +145,7 @@ fn serve(conn: &'static Conn, state: &Arc<Mutex<Gesture>>, notifier: &Notifier) 
     let trigger = cfg().trigger_button;
     let wanted = wanted_buttons(trigger);
     let all_grabbed = conn.set_grabs(&wanted);
-    crate::diag_log!(
+    diag::log!(
         "tap",
         "grabs",
         trigger = trigger,
@@ -157,6 +159,7 @@ fn serve(conn: &'static Conn, state: &Arc<Mutex<Gesture>>, notifier: &Notifier) 
         return false;
     }
     TAP_ACTIVE.store(true, Ordering::SeqCst);
+    diag::log!("tap", "hook", backend = "x11", state = "running");
     let mut tap = Tap {
         conn,
         state: state.clone(),
@@ -276,10 +279,10 @@ impl Tap {
         }
         let pos = Point::new(e.root_x / self.conn.scale, e.root_y / self.conn.scale);
         if evtype == XI_MOTION {
-            crate::diag_trace!("tap", "drag", x = pos.x, y = pos.y);
+            diag::trace!("tap", "drag", x = pos.x, y = pos.y);
         } else {
             // the position the event carries, next to what the server says right now
-            crate::diag_log!(
+            diag::log!(
                 "tap",
                 if evtype == XI_BUTTON_PRESS {
                     "press"
@@ -307,7 +310,7 @@ impl Tap {
         let Some(button) = button else { return };
         let verdict = self.route(Ev::Mouse { kind, button, pos });
         if kind != Kind::Drag {
-            crate::diag_log!(
+            diag::log!(
                 "tap",
                 "verdict",
                 kind = format!("{kind:?}"),

@@ -214,6 +214,13 @@ pub fn spawn(notifier: Notifier) {
                         super::TAP_ACTIVE.store(false, Ordering::SeqCst);
                         if !warned {
                             warned = true;
+                            diag::log!(
+                                "tap",
+                                "hook",
+                                backend = "windows",
+                                state = "refused",
+                                os_error = std::io::Error::last_os_error().to_string()
+                            );
                             eprintln!(
                                 "CursorPie: Windows refused the input hooks ({}). Retrying every 2 s...",
                                 std::io::Error::last_os_error()
@@ -222,10 +229,12 @@ pub fn spawn(notifier: Notifier) {
                         notifier.ctx.request_repaint();
                     } else {
                         super::TAP_ACTIVE.store(true, Ordering::SeqCst);
+                        diag::log!("tap", "hook", backend = "windows", state = "running");
                         notifier.ctx.request_repaint();
                         let mut msg: MSG = std::mem::zeroed();
                         while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {}
                         super::TAP_ACTIVE.store(false, Ordering::SeqCst);
+                        diag::log!("tap", "hook", backend = "windows", state = "stopped");
                         UnhookWindowsHookEx(mouse);
                         UnhookWindowsHookEx(keys);
                     }

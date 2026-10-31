@@ -72,7 +72,16 @@ pub(super) fn handle_side(
                 }
             };
 
-            if matches!(action, Action::Nothing) && !in_pie {
+            let nothing = matches!(action, Action::Nothing);
+            diag::log!(
+                "tap",
+                "side_press",
+                button = button,
+                in_pie = in_pie,
+                mapped = !nothing,
+                passed_through = nothing && !in_pie
+            );
+            if nothing && !in_pie {
                 SIDE_SWALLOWED[idx].store(false, Ordering::SeqCst);
                 return Verdict::Keep; // native back/forward keeps working
             }

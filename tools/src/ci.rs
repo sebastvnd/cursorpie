@@ -26,6 +26,8 @@ enum Action {
     },
     /// The version check of the release tool (`cargo tools check`).
     Versions,
+    /// The rules for the log lines in `src/` and what the analyzer reads (`cargo tools diag-lint`).
+    DiagLint,
 }
 
 /// One line of the checklist.
@@ -55,6 +57,11 @@ fn steps() -> Vec<Step> {
             name: "version files agree",
             quick: true,
             action: Action::Versions,
+        },
+        Step {
+            name: "diagnostic log lines",
+            quick: true,
+            action: Action::DiagLint,
         },
         cargo_step(
             "clippy",
@@ -141,6 +148,18 @@ fn execute(root: &Path, action: &Action) -> Result<(), String> {
                 Err(problems.join("; "))
             }
         }
+        Action::DiagLint => {
+            let problems = crate::lint::problems(root)?;
+            if problems.is_empty() {
+                Ok(())
+            } else {
+                Err(format!(
+                    "{} problem(s), run `cargo tools diag-lint` for the list: {}",
+                    problems.len(),
+                    problems.join("; ")
+                ))
+            }
+        }
     }
 }
 
@@ -198,6 +217,7 @@ mod tests {
         let quick: Vec<&str> = all.iter().filter(|s| s.quick).map(|s| s.name).collect();
         assert!(quick.contains(&"format"));
         assert!(quick.contains(&"version files agree"));
+        assert!(quick.contains(&"diagnostic log lines"));
         assert!(quick.len() < all.len(), "the full run does more");
     }
 

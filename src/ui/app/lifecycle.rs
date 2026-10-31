@@ -35,6 +35,8 @@ impl App {
     /// to macOS. Everything is rebuilt on demand, so nothing is lost: icons are decoded again by
     /// [`App::warm`] when the trigger is pressed, and Settings copies the config when it opens.
     fn enter_sleep(&mut self) {
+        // how long freeing the caches and handing the pages back to the OS took
+        let _t = diag::timed!("ui", "sleep");
         self.ed.icons.clear();
         self.release_editor();
         self.toast = None;
@@ -75,6 +77,9 @@ impl App {
             }
             v
         };
+        // how long loading the icons took: it runs while the hold timer does, so it should end
+        // before the pie opens
+        let _t = diag::timed!("ui", "warm", count = icons.len());
         for icon in &icons {
             let _ = self.ed.icons.get(ctx, icon);
         }

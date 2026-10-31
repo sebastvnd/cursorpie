@@ -24,7 +24,7 @@ impl App {
             } => {
                 // a real gesture takes over from any preview
                 self.preview_until = None;
-                crate::diag_log!(
+                diag::log!(
                     "ui",
                     "msg_show_pie",
                     x = x,
@@ -55,6 +55,12 @@ impl App {
             Msg::Warm { general, app } => self.warm(ctx, general, app),
             Msg::Refocus => ctx.send_viewport_cmd(egui::ViewportCommand::Focus),
             Msg::HidePie => {
+                diag::log!(
+                    "ui",
+                    "hide_pie",
+                    was_open = self.pie_open,
+                    was_visible = self.visible
+                );
                 self.hover = None;
                 self.pie_open = false;
                 self.preview_until = None;
@@ -103,6 +109,13 @@ impl App {
             {
                 Some(cfg_in) => {
                     let warn = has_commands(&cfg_in);
+                    diag::log!(
+                        "ui",
+                        "import_config",
+                        ok = true,
+                        profiles = cfg_in.profiles.len(),
+                        has_commands = warn
+                    );
                     self.edit = cfg_in;
                     self.ed.profile = 0;
                     self.ed.reset_nav();
@@ -114,7 +127,10 @@ impl App {
                         "Imported. Review it, then press Save to apply."
                     });
                 }
-                None => self.say("That file is not a valid CursorPie config."),
+                None => {
+                    diag::log!("ui", "import_config", ok = false);
+                    self.say("That file is not a valid CursorPie config.")
+                }
             },
             Msg::Tray(id) => self.handle_tray(ctx, &id),
             Msg::ActionAppPicked {

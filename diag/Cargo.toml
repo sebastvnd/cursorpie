@@ -1,0 +1,18 @@
+[package]
+name = "cursorpie-diag"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "A small diagnostic log for developers: switch-on-demand JSON lines, written from anywhere with one macro. Used by CursorPie, not specific to it."
+license = "MIT"
+publish = false
+
+# No dependencies, on purpose: the log builds in a second, is the same on every OS, and adds
+# nothing to the app besides its own code. It writes JSON by hand (see `value.rs`).
+[features]
+# The log is part of debug builds only. This keeps it in a release build too, which is how a
+# build for finding a problem on someone else's machine is made (`cargo build --release --features
+# debug-log` in the app). Without it a release build has none of the log code.
+force = []
+
+[dependencies]

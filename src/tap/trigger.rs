@@ -65,7 +65,7 @@ fn on_press<'a>(
     button: i64,
 ) -> Verdict {
     let (hold_profile, app) = resolve_profiles(p);
-    crate::diag_log!(
+    diag::log!(
         "tap",
         "on_press",
         x = p.x,
@@ -90,7 +90,15 @@ fn on_press<'a>(
         ..
     } = prev
     {
-        if at.elapsed() < Duration::from_millis(dbl_ms) {
+        let gap = at.elapsed();
+        diag::log!(
+            "tap",
+            "double_click",
+            gap_ms = gap,
+            window_ms = dbl_ms,
+            in_time = gap < Duration::from_millis(dbl_ms)
+        );
+        if gap < Duration::from_millis(dbl_ms) {
             let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
             *g = Gesture::ActivePie {
                 id,
@@ -164,8 +172,12 @@ fn spawn_hold_timer(st: Arc<Mutex<Gesture>>, n: Notifier, id: u64) {
             }
             found
         };
-        let Some((pos, profile)) = opened else { return };
-        crate::diag_log!("tap", "hold_open", x = pos.x, y = pos.y, profile = profile);
+        let Some((pos, profile)) = opened else {
+            // released, dragged away or replaced by a newer press before the timer ran out
+            diag::log!("tap", "hold_cancelled", id = id, after_ms = pie_ms);
+            return;
+        };
+        diag::log!("tap", "hold_open", x = pos.x, y = pos.y, profile = profile);
         n.send(Msg::ShowPie {
             x: pos.x,
             y: pos.y,
@@ -185,6 +197,7 @@ fn spawn_hold_timer(st: Arc<Mutex<Gesture>>, n: Notifier, id: u64) {
             }
             go
         };
+        diag::log!("tap", "hold_settings", id = id, opened = open_settings);
         if open_settings {
             n.send(Msg::OpenSettings {
                 x: pos.x,
@@ -212,6 +225,8 @@ fn spawn_double_timer(st: Arc<Mutex<Gesture>>, id: u64, button: i64, ms: u64) {
             found
         };
         if let Some(p) = replay {
+            // no second click came: the first one goes to the app after all
+            diag::log!("tap", "click_replay", x = p.x, y = p.y, waited_ms = ms);
             post_mouse(p, Kind::Down, button);
             post_mouse(p, Kind::Up, button);
         }
@@ -316,6 +331,15 @@ fn on_release_pending(
         return Verdict::Drop;
     };
     let (id, start, app) = (*id, *pos, *app);
+    diag::log!(
+        "tap",
+        "on_release",
+        x = start.x,
+        y = start.y,
+        button = button,
+        pie = false,
+        waits_for_second_click = app.is_some()
+    );
     match app {
         Some(app) => {
             // this app has its own profile: wait for a possible second click
@@ -352,7 +376,16 @@ fn on_release_in_pie(notifier: &Notifier, mut g: MutexGuard<'_, Gesture>, p: Poi
     let (center, profile, path) = (*center, *profile, path.clone());
     *g = Gesture::Idle;
     drop(g);
-    if let Some(h) = eval(profile, &path, center, p).hover {
+    let hover = eval(profile, &path, center, p).hover;
+    diag::log!(
+        "tap",
+        "on_release",
+        x = p.x,
+        y = p.y,
+        pie = true,
+        slice = hover.is_some()
+    );
+    if let Some(h) = hover {
         select(profile, &path, h);
     }
     notifier.send(Msg::HidePie);

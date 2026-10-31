@@ -39,6 +39,7 @@ pub(super) fn handle_right(
                 let c = cfg();
                 side::toggle(&c, target.as_deref())
             };
+            diag::log!("tap", "right_switch", switched = switched.is_some());
             if switched.is_some() {
                 notifier.send(Msg::Hover(hover)); // wakes the UI so the ring is redrawn
             }

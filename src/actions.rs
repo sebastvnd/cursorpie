@@ -9,7 +9,7 @@ use crate::geometry::Point;
 use crate::platform;
 use crate::tap::Kind;
 use std::sync::{OnceLock, mpsc};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Marks events we posted ourselves so the event tap ignores them.
 pub const SYNTH_TAG: i64 = 0x504F_5055;
@@ -19,6 +19,8 @@ struct Job {
     /// Bundle id of an app to bring to the front first (only done when the action sends keys).
     focus: Option<String>,
     action: Action,
+    /// When the job was queued, so the diagnostic log can say how long it waited for the worker.
+    queued: Instant,
 }
 
 /// Sender side of the worker queue; set once by [`init`].
@@ -32,6 +34,14 @@ pub fn init() {
         .name("cursorpie-actions".into())
         .spawn(move || {
             for job in rx {
+                // one line per action: its kind (never its content), how long it waited in the
+                // queue (`wait_ms`) and how long it ran (`ms`, written when `_t` is dropped)
+                let _t = diag::timed!(
+                    "act",
+                    "exec",
+                    kind = kind_name(&job.action),
+                    wait_ms = job.queued.elapsed().as_secs_f64() * 1000.0
+                );
                 if let Some(app) = job.focus.as_deref()
                     && sends_keys(&job.action)
                 {
@@ -51,7 +61,24 @@ pub fn run_in(focus: Option<String>, action: Action) {
         return;
     }
     if let Some(tx) = TX.get() {
-        let _ = tx.send(Job { focus, action });
+        let _ = tx.send(Job {
+            focus,
+            action,
+            queued: Instant::now(),
+        });
+    }
+}
+
+/// The kind of an action as one word, for the diagnostic log. Never its content: an action holds
+/// a command, a URL or a path, which belong to the person (docs/DEBUGGING.md, "Add a log line").
+fn kind_name(action: &Action) -> &'static str {
+    match action {
+        Action::Nothing => "nothing",
+        Action::Key(_) => "key",
+        Action::OpenApp(_) => "open_app",
+        Action::OpenUrl(_) => "open_url",
+        Action::Command(_) => "command",
+        Action::Sequence(_) => "sequence",
     }
 }
 
@@ -117,6 +144,25 @@ mod tests {
         assert!(!sends_keys(&Action::Sequence(vec![Action::OpenUrl(
             "https://example.com".into()
         )])));
+    }
+
+    #[test]
+    fn the_log_names_the_kind_of_an_action_and_never_its_content() {
+        assert_eq!(kind_name(&Action::Nothing), "nothing");
+        assert_eq!(kind_name(&Action::Key(Shortcut::new(6, 0))), "key");
+        assert_eq!(kind_name(&Action::OpenApp("Safari".into())), "open_app");
+        assert_eq!(
+            kind_name(&Action::OpenUrl("https://example.com".into())),
+            "open_url"
+        );
+        assert_eq!(
+            kind_name(&Action::Command("rm -rf secret".into())),
+            "command"
+        );
+        assert_eq!(
+            kind_name(&Action::Sequence(vec![Action::Nothing])),
+            "sequence"
+        );
     }
 
     #[test]

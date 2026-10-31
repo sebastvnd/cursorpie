@@ -53,6 +53,19 @@ pub(super) fn select(profile: usize, path: &[usize], index: usize) {
             .and_then(|items| items.get(index))
             .map(|i| i.kind.clone())
     };
+    diag::log!(
+        "tap",
+        "select",
+        profile = profile,
+        depth = path.len(),
+        index = index,
+        kind = match &kind {
+            Some(ItemKind::Mode { .. }) => "mode",
+            Some(ItemKind::Run(_)) => "run",
+            Some(_) => "other",
+            None => "missing",
+        }
+    );
     match kind {
         Some(ItemKind::Mode { .. }) => {
             let mut full = path.to_vec();
@@ -100,9 +113,26 @@ pub(super) fn remember_target(bundle: Option<String>) {
 pub(super) fn resolve_profiles(p: Point) -> (usize, Option<usize>) {
     let bundle = target_bundle_at(p);
     remember_target(bundle.clone());
-    let c = cfg();
-    match c.app_gesture {
-        AppGesture::Merged => (c.profile_for(bundle.as_deref()), None),
-        AppGesture::DoubleClick => (c.global_profile(), c.app_profile_for(bundle.as_deref())),
-    }
+    let (merged, general, own) = {
+        let c = cfg();
+        match c.app_gesture {
+            AppGesture::Merged => (true, c.profile_for(bundle.as_deref()), None),
+            AppGesture::DoubleClick => (
+                false,
+                c.global_profile(),
+                c.app_profile_for(bundle.as_deref()),
+            ),
+        }
+    };
+    // which profile a press resolves to is the first thing to check when "the wrong pie opened";
+    // the app itself is never logged, only whether one was found
+    diag::log!(
+        "tap",
+        "resolve",
+        target_found = bundle.is_some(),
+        merged = merged,
+        profile = general,
+        app_profile = own
+    );
+    (general, own)
 }

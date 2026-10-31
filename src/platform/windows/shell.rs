@@ -18,13 +18,21 @@ fn shell_execute(file: &str, params: Option<&str>, show: i32) {
     let params = params.map(wide);
     // SAFETY: every string is zero terminated and outlives the call.
     unsafe {
-        ShellExecuteW(
+        let result = ShellExecuteW(
             std::ptr::null_mut(),
             verb.as_ptr(),
             file.as_ptr(),
             params.as_ref().map_or(std::ptr::null(), |p| p.as_ptr()),
             std::ptr::null(),
             show,
+        );
+        // a value above 32 means it worked; below that it is an error code (2 and 3: not found,
+        // 5: access denied). Only the code is logged, never what was opened.
+        diag::log!(
+            "act",
+            "shell_execute",
+            ok = (result as isize) > 32,
+            code = result as isize
         );
     }
 }

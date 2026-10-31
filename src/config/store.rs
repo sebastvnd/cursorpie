@@ -140,16 +140,48 @@ pub fn config_path() -> PathBuf {
 /// Reads `config.json`. A missing file gives the defaults; an invalid one is copied to
 /// `config.broken.json` first and the defaults are used.
 pub fn load_config() -> Config {
+    // one line for the whole load: how it ended (`outcome`), how big the file was, how long it took
+    let mut t = diag::timed!("cfg", "load");
     let path = config_path();
-    let Ok(text) = fs::read_to_string(&path) else {
-        return Config::default();
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) => {
+            let missing = e.kind() == std::io::ErrorKind::NotFound;
+            t.field("outcome", if missing { "missing" } else { "unreadable" });
+            t.field("error", format!("{:?}", e.kind()));
+            return Config::default();
+        }
     };
+    t.field("bytes", text.len());
     match parse_config(&text) {
-        Some(cfg) => cfg,
+        Some(cfg) => {
+            t.field("outcome", "ok");
+            t.field("profiles", cfg.profiles.len());
+            cfg
+        }
         None => {
+            t.field("outcome", "broken");
             fs::copy(&path, path.with_file_name("config.broken.json")).ok();
             Config::default()
         }
+    }
+}
+
+/// Writes how a save ended to the diagnostic log. A save that fails is otherwise silent (the
+/// callers ignore the error on purpose: a failed save must never crash the app), so without this
+/// line a change that was lost leaves no trace. `how` is `plain` or `backup`; the size is the
+/// number of bytes, never the content.
+fn log_save(how: &str, bytes: usize, result: &std::io::Result<()>) {
+    match result {
+        Ok(()) => diag::log!("cfg", "save", how = how, bytes = bytes, ok = true),
+        Err(e) => diag::log!(
+            "cfg",
+            "save",
+            how = how,
+            bytes = bytes,
+            ok = false,
+            error = format!("{:?}", e.kind())
+        ),
     }
 }
 
@@ -162,7 +194,8 @@ static IO: Mutex<()> = Mutex::new(());
 pub fn save_config(config: &Config) {
     if let Ok(data) = serde_json::to_string_pretty(config) {
         let _io = lock(&IO);
-        backup::write_atomic(&config_path(), &data).ok();
+        let result = backup::write_atomic(&config_path(), &data);
+        log_save("plain", data.len(), &result);
     }
 }
 
@@ -180,7 +213,8 @@ pub fn save_config_with_backup(config: &Config) {
     {
         backup::push_backup(&app_support_dir(), &old, backup::KEEP).ok();
     }
-    backup::write_atomic(&path, &data).ok();
+    let result = backup::write_atomic(&path, &data);
+    log_save("backup", data.len(), &result);
 }
 
 /// The backups on disk, newest first.

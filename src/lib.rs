@@ -27,7 +27,7 @@
 //! | [`tap`] | `cursorpie-tap` thread | global event tap and the gesture state machine |
 //! | [`actions`] | `cursorpie-actions` thread | executes actions (shortcuts, `open`, shell) in order |
 //! | [`cache`] | any thread | bounded least-recently-used cache (backs the icon textures) |
-//! | [`diag`] | any thread | the opt-in diagnostic log for developers (`CURSORPIE_DEBUG=1`, `docs/DEBUGGING.md`) |
+//! | [`debug`] | any thread | switches the opt-in diagnostic log on and holds the app's probes; the logging itself is the separate `diag` crate (`diag/`, `CURSORPIE_DEBUG=1`, `docs/DEBUGGING.md`) |
 //! | [`history`] | UI thread | undo / redo snapshots for the Settings editor |
 //! | [`side`] | any thread | which pie the back/forward buttons follow |
 //! | [`geometry`] | any thread | pie sizes and slice hit-testing (shared by tap and UI) |
@@ -55,7 +55,7 @@ pub mod about;
 pub mod actions;
 pub mod cache;
 pub mod config;
-pub mod diag;
+pub mod debug;
 pub mod geometry;
 pub mod guides;
 pub mod history;
@@ -97,7 +97,7 @@ pub fn run() -> eframe::Result<()> {
     if !platform::single_instance() {
         return Ok(());
     }
-    diag::init(); // the opt-in debug log; does nothing unless it is switched on
+    debug::init(); // the opt-in debug log; does nothing unless it is switched on
     actions::init();
     let (tx, rx) = mpsc::channel();
     let win = config::cfg().pie_size;
@@ -134,7 +134,7 @@ pub fn run() -> eframe::Result<()> {
                 platform::clear_window_frame(handle);
             }
             platform::layout::init(); // keyboard-layout snapshot (TIS must run on the main thread)
-            diag::startup_snapshot();
+            debug::startup_snapshot();
             let notifier = Notifier {
                 tx: tx.clone(),
                 ctx: cc.egui_ctx.clone(),
