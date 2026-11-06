@@ -665,7 +665,16 @@ mod tests {
         // the trackpad: the same pointer path
         let mut rig = Rig::new();
         rig.frames(600, &[finger(0.5)]);
-        std::thread::sleep(Duration::from_millis(100));
+        // The hold timer opens the pie on its own thread, after a time that depends on the machine.
+        // Wait until it is open, then past the rate limit of the haptic ticks: a hover that came
+        // within `MIN_GAP` of the tick of the opening would be silent, and the test would flicker.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !matches!(*crate::config::lock(&rig.state), Gesture::ActivePie { .. })
+            && Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        std::thread::sleep(haptic::MIN_GAP * 3);
         rig.pointer.set(Point::new(600.0, 500.0));
         rig.frames(30, &[finger(0.55)]);
         rig.pointer.set(Point::new(500.0, 500.0));
