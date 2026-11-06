@@ -204,7 +204,7 @@ cargo tools diag
 
 ## Trying the trackpad gestures without a trackpad
 
-`cargo tools trackpad` starts the app with a *virtual trackpad*: a trackpad that floats exactly in the middle of the
+`cargo tools trackpad` builds the app with the `vtrackpad` feature and starts it with a *virtual trackpad*: a trackpad that floats exactly in the middle of the
 screen. Your real pointer is the finger on it (over the glass it touches, off the glass it is lifted), and a virtual
 pointer, an arrow drawn on the screen outside the trackpad, is what the finger moves, relatively and with acceleration
 like a real trackpad does. The pie opens at the virtual pointer, aims with it and acts on the app under it.
@@ -221,7 +221,9 @@ tool says so and stops.
 | `--silent` | no click sound (the switch in the lower frame does the same) |
 | `--release` | build the app with optimizations |
 
-Behind the command is the environment the app reads: `CURSORPIE_VTRACKPAD=1` (turns the tool on),
+The tool is behind the Cargo feature `vtrackpad`: an ordinary build, debug or release, has none of its code (and
+ignores `CURSORPIE_VTRACKPAD`). `cargo tools ci` checks it with the feature on. Behind the command is the environment
+the app reads (in a build that has the feature): `CURSORPIE_VTRACKPAD=1` (turns the tool on),
 `CURSORPIE_VTRACKPAD_WIDTH` and `CURSORPIE_VTRACKPAD_SOUND=0`. The haptic click of a real trackpad cannot be given by a
 mouse; the tool shows it (the surface sinks, a ring, a glow) and plays a click, and the tick is also sent to the
 system's haptic engine, which only a finger on a real trackpad feels.

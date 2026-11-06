@@ -2,7 +2,8 @@
 //! gestures with a plain mouse.
 //!
 //! The trackpad is a window of the real app (it feeds the same recognizer a real trackpad does), so
-//! this builds and runs the app, with the tool turned on through the environment. Nothing is
+//! this builds and runs the app with the `vtrackpad` feature (an ordinary build has none of the tool's
+//! code) and turns the tool on through the environment. Nothing is
 //! written to the app's settings: closing the trackpad (its red dot) leaves the app running as usual.
 //!
 //! | Option | Meaning |
@@ -75,7 +76,7 @@ fn environment(o: &Options) -> Vec<(&'static str, String)> {
 
 /// The arguments of the `cargo` that runs the app.
 fn cargo_args(o: &Options) -> Vec<&'static str> {
-    let mut args = vec!["run", "--package", "cursorpie"];
+    let mut args = vec!["run", "--package", "cursorpie", "--features", "vtrackpad"];
     if o.release {
         args.push("--release");
     }
@@ -116,7 +117,10 @@ mod tests {
             environment(&o),
             vec![("CURSORPIE_VTRACKPAD", "1".to_string())]
         );
-        assert_eq!(cargo_args(&o), ["run", "--package", "cursorpie"]);
+        assert_eq!(
+            cargo_args(&o),
+            ["run", "--package", "cursorpie", "--features", "vtrackpad"]
+        );
     }
 
     #[test]
@@ -127,7 +131,14 @@ mod tests {
         assert!(env.contains(&("CURSORPIE_VTRACKPAD_SOUND", "0".to_string())));
         assert_eq!(
             cargo_args(&o),
-            ["run", "--package", "cursorpie", "--release"]
+            [
+                "run",
+                "--package",
+                "cursorpie",
+                "--features",
+                "vtrackpad",
+                "--release"
+            ]
         );
     }
 

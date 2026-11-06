@@ -60,6 +60,7 @@ pub fn spawn(notifier: Notifier) {
             let state = Arc::new(Mutex::new(Gesture::Idle));
             // the trackpad source (idle until "touch_trigger" is switched on) shares the gesture
             super::touch::start(state.clone(), notifier.clone());
+            #[cfg(feature = "vtrackpad")]
             super::touch::register_virtual(state.clone(), notifier.clone());
             let mut warned = false;
             loop {

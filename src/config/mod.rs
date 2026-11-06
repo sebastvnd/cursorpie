@@ -77,7 +77,10 @@ mod tests {
     fn icons_only_is_the_default_and_an_old_file_keeps_the_names() {
         assert!(!Config::default().show_labels);
         let old = parse_config(r#"{"version": 2}"#).expect("parses");
-        assert!(old.show_labels, "a file without the setting keeps the names");
+        assert!(
+            old.show_labels,
+            "a file without the setting keeps the names"
+        );
         let c = parse_config(r#"{"version": 2, "show_labels": false}"#).expect("parses");
         assert!(!c.show_labels);
         let json = serde_json::to_string(&c).expect("serializes");

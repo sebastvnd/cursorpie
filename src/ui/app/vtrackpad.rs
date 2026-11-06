@@ -21,7 +21,7 @@ use crate::platform;
 use crate::tap;
 use crate::ui::screen::screen_rect_at;
 use crate::ui::vtrackpad::draw::{self, Shared};
-use crate::ui::vtrackpad::{Cue, centered, pointer, pointer_start};
+use crate::ui::vtrackpad::{Cue, DEFAULT_WIDTH, centered, options, pointer, pointer_start};
 use eframe::egui::{self, Pos2, Rect, ViewportBuilder, ViewportId};
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -36,6 +36,44 @@ pub(super) fn wanted_level(pie_open: bool) -> egui::WindowLevel {
         egui::WindowLevel::Normal
     } else {
         egui::WindowLevel::AlwaysOnTop
+    }
+}
+
+/// What the app keeps of the tool: the part its window shares, and where the app is with it.
+pub struct VtState {
+    /// What the trackpad's window shares with the app.
+    pub shared: Arc<Mutex<Shared>>,
+    /// The tool is open (`cargo tools trackpad` started the app with it; closing it turns it off).
+    pub open: bool,
+    /// The trackpad was wanted when `vt_logic` last looked.
+    pub shown: bool,
+    /// The main window is parked (see the module docs) instead of hidden.
+    pub parked: bool,
+    /// The display the trackpad is in the middle of, chosen when it opened.
+    pub display: Option<Rect>,
+    /// Where the virtual pointer began (its window is declared there; it moves by command).
+    pub pointer_start: Option<(f64, f64)>,
+    /// The width the trackpad's window was last declared with.
+    pub width: f32,
+    /// The level the trackpad's windows were last given.
+    pub level: egui::WindowLevel,
+}
+
+impl VtState {
+    /// The state at start-up: open if the environment asks for it (see [`options`]).
+    pub fn from_env() -> Self {
+        let opts = options();
+        let width = opts.map_or(DEFAULT_WIDTH, |o| o.width);
+        Self {
+            shared: Arc::new(Mutex::new(Shared::new(width, opts.is_none_or(|o| o.sound)))),
+            open: opts.is_some(),
+            shown: false,
+            parked: false,
+            display: None,
+            pointer_start: None,
+            width,
+            level: egui::WindowLevel::AlwaysOnTop,
+        }
     }
 }
 
@@ -59,52 +97,52 @@ fn all_displays() -> Option<Rect> {
 impl App {
     /// Whether the trackpad is wanted now.
     fn vt_wanted(&self) -> bool {
-        self.vt_open && !self.quitting
+        self.vt.open && !self.quitting
     }
 
     /// Runs in `logic` every frame: keeps the trackpad in step with the pie and Settings.
     pub(super) fn vt_logic(&mut self, ctx: &egui::Context) {
         let wanted = self.vt_wanted();
         let close = {
-            let mut sh = lock(&self.vt);
+            let mut sh = lock(&self.vt.shared);
             if wanted && (sh.blocked != self.settings_open || sh.pie_open != self.pie_open) {
                 ctx.request_repaint_of(vt_id()); // what it says depends on both
             }
             sh.blocked = self.settings_open;
             sh.pie_open = self.pie_open;
-            if wanted && (sh.width - self.vt_width).abs() > f32::EPSILON {
+            if wanted && (sh.width - self.vt.width).abs() > f32::EPSILON {
                 // the main window declares the new size
                 ctx.request_repaint_of(ViewportId::ROOT);
             }
             std::mem::take(&mut sh.close_requested)
         };
         if close {
-            self.vt_open = false;
+            self.vt.open = false;
             ctx.request_repaint_of(ViewportId::ROOT);
         }
         let wanted = self.vt_wanted();
-        if wanted != self.vt_shown {
-            self.vt_shown = wanted;
+        if wanted != self.vt.shown {
+            self.vt.shown = wanted;
             if wanted {
                 // a hidden window gets no frames, and the frames are what open the trackpad
-                if !self.visible && !self.settings_open && !self.vt_parked {
+                if !self.visible && !self.settings_open && !self.vt.parked {
                     self.park_root(ctx);
                 }
             } else {
                 tap::virtual_reset(); // a finger still down must not leave a gesture behind
                 platform::set_virtual_pointer(None);
-                let mut sh = lock(&self.vt);
+                let mut sh = lock(&self.vt.shared);
                 sh.tracker = Default::default();
                 sh.pointer = None;
-                self.vt_display = None;
-                self.vt_pointer_start = None;
+                self.vt.display = None;
+                self.vt.pointer_start = None;
             }
             ctx.request_repaint_of(ViewportId::ROOT);
         }
         if wanted {
             let level = wanted_level(self.pie_open);
-            if level != self.vt_level {
-                self.vt_level = level;
+            if level != self.vt.level {
+                self.vt.level = level;
                 ctx.send_viewport_cmd_to(vt_id(), egui::ViewportCommand::WindowLevel(level));
                 ctx.send_viewport_cmd_to(pointer::id(), egui::ViewportCommand::WindowLevel(level));
             }
@@ -115,36 +153,36 @@ impl App {
     /// is no longer wanted, lets them go and hides the main window if nothing else needs it.
     pub(super) fn vt_ui(&mut self, ctx: &egui::Context) {
         if !self.vt_wanted() {
-            if self.vt_parked {
-                self.vt_parked = false;
+            if self.vt.parked {
+                self.vt.parked = false;
                 if !self.settings_open && !self.pie_open && !self.visible {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
                 }
             }
             return;
         }
-        let width = lock(&self.vt).width;
-        self.vt_width = width;
+        let width = lock(&self.vt.shared).width;
+        self.vt.width = width;
         let size = draw::window_size(width);
-        let display = match self.vt_display {
+        let display = match self.vt.display {
             Some(d) => d,
             None => {
                 // the display the real pointer is on when the tool opens
                 let at = self.cursor_or_default();
                 let d = screen_rect_at(at)
                     .unwrap_or(Rect::from_min_size(Pos2::ZERO, egui::vec2(1280.0, 800.0)));
-                self.vt_display = Some(d);
+                self.vt.display = Some(d);
                 d
             }
         };
         let pos = centered(display, size);
         // the virtual pointer begins above the trackpad
-        let start = match self.vt_pointer_start {
+        let start = match self.vt.pointer_start {
             Some(p) => p,
             None => {
                 let p = pointer_start(display, Rect::from_min_size(pos, size));
-                self.vt_pointer_start = Some(p);
-                let mut sh = lock(&self.vt);
+                self.vt.pointer_start = Some(p);
+                let mut sh = lock(&self.vt.shared);
                 sh.bounds = Some(all_displays().unwrap_or(display));
                 sh.set_pointer(ctx, Some(p));
                 p
@@ -168,7 +206,7 @@ impl App {
             // CursorPie's own windows are never "the app under the pointer"
             builder = builder.with_app_id("cursorpie");
         }
-        let shared = Arc::clone(&self.vt);
+        let shared = Arc::clone(&self.vt.shared);
         ctx.show_viewport_deferred(vt_id(), builder, move |ui, class| {
             if class == egui::ViewportClass::EmbeddedWindow {
                 return; // no native second window here: nothing to show
@@ -190,7 +228,7 @@ impl App {
         let corner = screen_rect_at(at).map_or(Pos2::new(0.0, 0.0), |r| {
             Pos2::new(r.max.x - 1.0, r.max.y - 1.0)
         });
-        self.vt_parked = true;
+        self.vt.parked = true;
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize([1.0, 1.0].into()));
         ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(true));
         ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
@@ -206,7 +244,7 @@ impl App {
         if self.vt_wanted() {
             self.park_root(ctx);
         } else {
-            self.vt_parked = false;
+            self.vt.parked = false;
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         }
     }
@@ -216,7 +254,7 @@ impl App {
         if !self.vt_wanted() {
             return;
         }
-        let mut sh = lock(&self.vt);
+        let mut sh = lock(&self.vt.shared);
         if sh.tracker.finger().is_none() {
             return;
         }

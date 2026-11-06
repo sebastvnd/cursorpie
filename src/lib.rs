@@ -99,6 +99,7 @@ pub fn run() -> eframe::Result<()> {
         }
     }
     if !platform::single_instance() {
+        #[cfg(feature = "vtrackpad")]
         if ui::vtrackpad::options().is_some() {
             // the trackpad is a window of the *running* app: a second copy cannot show it, and
             // exiting without a word looks like the tool did nothing

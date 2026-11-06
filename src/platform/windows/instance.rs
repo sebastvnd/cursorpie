@@ -5,8 +5,8 @@
 //! icon is already there.
 
 use super::util::wide;
-use std::time::{Duration, Instant};
 use crate::about::APP_NAME;
+use std::time::{Duration, Instant};
 use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
 use windows_sys::Win32::System::Threading::CreateMutexW;
 use windows_sys::Win32::UI::WindowsAndMessaging::FindWindowW;

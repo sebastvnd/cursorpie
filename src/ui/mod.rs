@@ -13,7 +13,7 @@
 //! | [`fonts`] | Inter for text and Phosphor for icons, compiled into the binary |
 //! | [`symbols`] | the names and glyphs of the icon set, and the `ico:` slice icon strings |
 //! | [`screen`] | display lookup for window placement |
-//! | [`vtrackpad`] | the virtual trackpad: a developer tool: a floating trackpad whose finger is the mouse and whose pointer is virtual |
+//! | `vtrackpad` (feature `vtrackpad`) | the virtual trackpad: a developer tool: a floating trackpad whose finger is the mouse and whose pointer is virtual |
 //!
 //! The UI never runs actions or inspects raw input: the event tap does that and sends
 //! [`Msg`](crate::msg::Msg) values here.
@@ -30,4 +30,5 @@ pub mod settings;
 pub mod sleep;
 pub mod symbols;
 pub mod tray;
+#[cfg(feature = "vtrackpad")]
 pub mod vtrackpad;

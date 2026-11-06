@@ -42,15 +42,18 @@
 
 /// The pointer a developer tool stands in for the real one (the virtual trackpad's), in logical
 /// points. `None` almost always.
+#[cfg(feature = "vtrackpad")]
 static VIRTUAL_POINTER: std::sync::Mutex<Option<(f64, f64)>> = std::sync::Mutex::new(None);
 
 /// Puts a virtual pointer in place of the system's (`Some`) or takes it away (`None`). See
 /// [`pointer_pos`].
+#[cfg(feature = "vtrackpad")]
 pub fn set_virtual_pointer(p: Option<(f64, f64)>) {
     *VIRTUAL_POINTER.lock().unwrap_or_else(|e| e.into_inner()) = p;
 }
 
 /// Whether a virtual pointer is standing in for the system's.
+#[cfg(feature = "vtrackpad")]
 pub fn virtual_pointer_active() -> bool {
     VIRTUAL_POINTER
         .lock()
@@ -61,6 +64,13 @@ pub fn virtual_pointer_active() -> bool {
 /// Where the pointer *the pie follows* is: the virtual one while the virtual trackpad is open (the
 /// real pointer is then the finger on it), the system's otherwise. The pie, the trackpad source and
 /// the lookup of the app under the pointer all ask this, never [`cursor_pos`] directly.
+#[cfg(not(feature = "vtrackpad"))]
+pub fn pointer_pos() -> Option<(f64, f64)> {
+    cursor_pos()
+}
+
+/// See above: with the virtual trackpad built in, its pointer comes first.
+#[cfg(feature = "vtrackpad")]
 pub fn pointer_pos() -> Option<(f64, f64)> {
     let v = *VIRTUAL_POINTER.lock().unwrap_or_else(|e| e.into_inner());
     v.or_else(cursor_pos)

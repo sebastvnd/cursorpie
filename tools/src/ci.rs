@@ -77,6 +77,26 @@ fn steps() -> Vec<Step> {
         ),
         cargo_step("tests", false, &["test", "--workspace", "--all-targets"]),
         cargo_step("doc tests", false, &["test", "--doc"]),
+        // the virtual trackpad is behind a feature, so none of the steps above looks at it
+        cargo_step(
+            "virtual trackpad: clippy",
+            false,
+            &[
+                "clippy",
+                "--lib",
+                "--all-targets",
+                "--features",
+                "vtrackpad",
+                "--",
+                "-D",
+                "warnings",
+            ],
+        ),
+        cargo_step(
+            "virtual trackpad: tests",
+            false,
+            &["test", "--lib", "--features", "vtrackpad"],
+        ),
     ];
     // docs.rs builds for macOS, and only there do the links to the macOS backend resolve
     if cfg!(target_os = "macos") {

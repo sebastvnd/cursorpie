@@ -39,7 +39,8 @@ fn main() {
   </compatibility>
 </assembly>"#,
         );
-        res.compile()
-            .expect("failed to embed the icon, version info and manifest in the Windows executable");
+        res.compile().expect(
+            "failed to embed the icon, version info and manifest in the Windows executable",
+        );
     }
 }

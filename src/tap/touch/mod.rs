@@ -233,7 +233,11 @@ impl Bridge {
         self.events = events;
     }
 
-    /// A device went away.
+    /// A device went away. Only the Linux and Windows sources report this; macOS never does.
+    #[cfg_attr(
+        not(any(target_os = "linux", windows, feature = "check-windows", test)),
+        allow(dead_code)
+    )]
     pub(crate) fn device_lost(&mut self, env: &Env<'_>, device: u64) {
         let mut events = std::mem::take(&mut self.events);
         events.clear();
@@ -402,7 +406,8 @@ impl Sink {
         self.with(|b, env| b.poll(env));
     }
 
-    /// A device went away.
+    /// A device went away. Only the Linux source reports this; macOS never does.
+    #[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
     pub(crate) fn device_lost(&self, device: u64) {
         self.with(|b, env| b.device_lost(env, device));
     }
@@ -417,22 +422,27 @@ impl Sink {
 /// the native ones, fed by the UI instead of by a device. It shares the gesture of the tap, so a
 /// hold on it opens the pie, a drag aims it and a release runs the slice, exactly as on a real
 /// trackpad. Set once, when the tap starts.
+#[cfg(feature = "vtrackpad")]
 static VIRTUAL: OnceLock<Sink> = OnceLock::new();
 
 /// The device id of the virtual trackpad on the recognizer's frames ("VIRT").
+#[cfg(feature = "vtrackpad")]
 const VIRTUAL_DEVICE: u64 = 0x5649_5254;
 
 /// Called by the native tap right after it creates the gesture, so the UI can feed it.
+#[cfg(feature = "vtrackpad")]
 pub(crate) fn register_virtual(state: Arc<Mutex<Gesture>>, notifier: Notifier) {
     let _ = VIRTUAL.set(Sink::new(state, notifier));
 }
 
 /// Whether the tap has started, i.e. whether the virtual trackpad has a gesture to feed.
+#[cfg(feature = "vtrackpad")]
 pub(crate) fn virtual_ready() -> bool {
     VIRTUAL.get().is_some()
 }
 
 /// One frame of the virtual trackpad. No fingers = all lifted. False when the tap has not started.
+#[cfg(feature = "vtrackpad")]
 pub(crate) fn virtual_feed(size_mm: (f32, f32), fingers: &[recognizer::Finger]) -> bool {
     VIRTUAL.get().is_some_and(|s| {
         s.feed(VIRTUAL_DEVICE, size_mm, fingers);
@@ -442,6 +452,7 @@ pub(crate) fn virtual_feed(size_mm: (f32, f32), fingers: &[recognizer::Finger]) 
 
 /// Time passes while a finger rests on the virtual trackpad (a resting finger sends no frames, and
 /// the hold time is counted here).
+#[cfg(feature = "vtrackpad")]
 pub(crate) fn virtual_poll() {
     if let Some(s) = VIRTUAL.get() {
         s.poll();
@@ -449,6 +460,7 @@ pub(crate) fn virtual_poll() {
 }
 
 /// The virtual trackpad went away (closed, or Settings opened): a running gesture is cancelled.
+#[cfg(feature = "vtrackpad")]
 pub(crate) fn virtual_reset() {
     if let Some(s) = VIRTUAL.get() {
         s.reset();
@@ -689,6 +701,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "vtrackpad")]
     /// A sink whose pointer stays put (there is no display to ask in a test).
     fn test_sink(state: &Arc<Mutex<Gesture>>, n: Notifier) -> Sink {
         let mut sink = Sink::new(Arc::clone(state), n);
@@ -696,6 +709,7 @@ mod tests {
         sink
     }
 
+    #[cfg(feature = "vtrackpad")]
     /// Holds one finger still on a virtual trackpad sink for `ms`, in real time (the sink stamps
     /// its frames with the clock, like the window does).
     fn hold_virtual(sink: &Sink, ms: u64) {
@@ -763,6 +777,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "vtrackpad")]
     fn a_virtual_trackpad_hold_opens_the_pie_like_a_real_one() {
         let _c = Cfg::set(fast);
         let (n, rx) = notifier();
@@ -789,6 +804,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "vtrackpad")]
     fn a_virtual_trackpad_hold_opens_nothing_while_settings_is_open() {
         let _c = Cfg::set(fast);
         crate::tap::SETTINGS_OPEN.store(true, Ordering::SeqCst);

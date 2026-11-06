@@ -36,7 +36,7 @@
   extra click. It feeds the same recognizer as a real trackpad (macOS, Windows and Linux alike). Its feel stands in
   for the haptic click a mouse cannot give: the surface sinks at a click, a ring spreads, the frame glows and a short
   click sounds; the ticks of the pie are shown the same way and are also sent to the haptic engine, which a finger on
-  a real trackpad feels. A slider in the lower frame sets the size and a switch the click sound. Options:
+  a real trackpad feels. A slider in the lower frame sets the size and a switch the click sound. It is behind the Cargo feature `vtrackpad`, which the command turns on: an ordinary build has none of its code. Options:
   `--width POINTS`, `--silent`, `--release`. Nothing is written to the settings. While the trackpad is open the main
   window is parked (1 x 1 point, click-through) instead of hidden, which keeps the trackpad's own windows alive.
 - **Fix: messages from the tap could wait for the wrong window.** The tap woke the UI with a plain
