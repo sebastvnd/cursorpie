@@ -33,6 +33,17 @@ impl Point {
     }
 }
 
+/// Extra room, in points, the pie window has on every side beyond the ring's own square, for the
+/// badges of an "Open app" slice (see [`running`](crate::running)), which sit outside the rim. The
+/// window is transparent and click-through, so the room costs nothing to look at.
+pub const BADGE_ROOM: f32 = 36.0;
+
+/// Side of the (square) pie window for a pie of size `win` (`Config::pie_size`): the pie plus
+/// [`BADGE_ROOM`] on every side. The ring is still drawn and hit-tested for `win`, around the center.
+pub fn window_size(win: f32) -> f32 {
+    win + 2.0 * BADGE_ROOM
+}
+
 /// Outer radius of the ring for a window of size `win`.
 pub fn pie_outer(win: f32) -> f32 {
     win / 2.0 - 10.0

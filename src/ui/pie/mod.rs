@@ -5,6 +5,7 @@ mod view;
 
 use crate::config::{MAX_ITEMS, cfg};
 use crate::geometry::*;
+use crate::running::{self, Choice};
 use crate::ui::app::App;
 use crate::ui::draw::*;
 use eframe::egui::{self, Align2, Color32, FontId, Shape, Stroke, Vec2};
@@ -16,10 +17,21 @@ use view::PieView;
 const OPEN_SECS: f32 = 0.22;
 /// Seconds the pie takes to fade away. Closing is quicker than opening: the action already ran.
 const CLOSE_SECS: f32 = 0.12;
+/// Seconds the badges of an "Open app" slice take to come out, and to go back.
+const BADGE_IN_SECS: f32 = 0.30;
+const BADGE_OUT_SECS: f32 = 0.14;
 /// Center disc while the side buttons follow the other pie: the same white with a pink cast.
 const CORE_INACTIVE: Color32 = Color32::from_rgb(255, 238, 238);
 /// The same in the dark appearance.
 const CORE_INACTIVE_DARK: Color32 = Color32::from_rgb(52, 30, 32);
+/// The badge of the app that is already open: a muted sage-gold, warm enough to tell apart from the
+/// sage of the new-window badge and quiet enough to sit with it on a light pie.
+const OPEN_APP_GOLD: Color32 = Color32::from_rgb(212, 190, 118);
+/// The same on the smoked pie (dark appearance and glass), deeper so that the white square on it
+/// reads.
+const OPEN_APP_GOLD_SMOKED: Color32 = Color32::from_rgb(168, 144, 70);
+/// Ink on the gold badge.
+const OPEN_APP_GOLD_INK: Color32 = Color32::from_rgb(58, 50, 24);
 /// Points the ring may grow past [`pie_outer`] while it overshoots, so it is never cut off by the
 /// edge of the window (the window leaves 10 points of margin).
 const OVERSHOOT_ROOM: f32 = 8.0;
@@ -66,6 +78,42 @@ impl App {
                 dt,
                 12.0,
             );
+            // the badges of an "Open app" slice: out while it is hovered and its app runs, back in
+            // when the pointer leaves (a little quicker than they came)
+            let offers = self.hover == Some(i)
+                && view
+                    .open_apps
+                    .get(i)
+                    .and_then(|a| a.as_deref())
+                    .is_some_and(|a| running::is_running(a) == Some(true));
+            let (b, mv) = step_linear(
+                self.badge_in[i],
+                offers as u8 as f32,
+                dt,
+                if offers {
+                    BADGE_IN_SECS
+                } else {
+                    BADGE_OUT_SECS
+                },
+            );
+            self.badge_in[i] = b;
+            moving |= mv;
+            let picked = if offers { running::shown() } else { None };
+            for choice in [Choice::NewWindow, Choice::Existing] {
+                let k = badge_ix(choice);
+                moving |= smooth_approach(
+                    &mut self.badge_pick[i][k],
+                    (picked == Some(choice)) as u8 as f32,
+                    dt,
+                    22.0,
+                );
+                moving |= smooth_approach(
+                    &mut self.badge_step[i][k],
+                    (picked.is_some() && picked != Some(choice)) as u8 as f32,
+                    dt,
+                    22.0,
+                );
+            }
         }
 
         if !self.pie_open && self.anim <= 0.0 {
@@ -230,6 +278,45 @@ impl App {
                             ink.gamma_multiply(lf * (0.78 + 0.22 * h)),
                         );
                     }
+                    // An "Open app" slice whose app already runs shows two round badges outside
+                    // the rim, in front of the slice, while it is hovered: a new window, or the
+                    // app that is open. They grow out of the rim one after the other, and the one
+                    // the pointer is on is lifted while the other steps back.
+                    // `is_running` is a lookup in a cache a worker filled at the press.
+                    let bi = self.badge_in[i];
+                    if bi > 0.0 {
+                        for choice in [Choice::NewWindow, Choice::Existing] {
+                            let k = badge_ix(choice);
+                            // the second badge starts a little after the first
+                            let local = ((bi - 0.22 * k as f32) / 0.78).clamp(0.0, 1.0);
+                            if local <= 0.0 {
+                                continue;
+                            }
+                            let (ox, oy) = running::badge_offset(self.win, i, total, choice);
+                            // it slides out from the rim: starts 12 points closer to the slice
+                            let at = c + Vec2::new(ox, oy)
+                                - dir * (12.0 * (1.0 - ease_out_cubic(local)));
+                            draw_open_badge(
+                                &painter,
+                                at,
+                                running::badge_size(self.win),
+                                choice,
+                                BadgeMotion {
+                                    // starts small and overshoots a little
+                                    grow: 0.35 + 0.65 * ease_out_back(local),
+                                    alpha: ease_out_cubic(local) * lf,
+                                    pick: self.badge_pick[i][k],
+                                    step: self.badge_step[i][k],
+                                },
+                                &BadgeStyle {
+                                    accent,
+                                    colors,
+                                    glass,
+                                    smoked,
+                                },
+                            );
+                        }
+                    }
                     if *is_sub {
                         // dot on the rim: drag outward across it to open the submenu
                         painter.circle_filled(
@@ -331,6 +418,124 @@ impl App {
                     }
                 }
             });
+    }
+}
+
+/// Which of the two badges of a slice: index into the animation state.
+fn badge_ix(choice: Choice) -> usize {
+    match choice {
+        Choice::NewWindow => 0,
+        Choice::Existing => 1,
+    }
+}
+
+/// How one badge of an "Open app" slice is moving at this moment.
+#[derive(Clone, Copy)]
+struct BadgeMotion {
+    /// Size while it comes out: below 1 at first, a little above 1 at the end of the overshoot.
+    grow: f32,
+    /// Opacity, 0 to 1.
+    alpha: f32,
+    /// 0 to 1: how much the pointer is on this badge (larger, with a bright ring).
+    pick: f32,
+    /// 0 to 1: how much the pointer is on the other badge (smaller and paler).
+    step: f32,
+}
+
+/// What the badges take from the pie they sit next to, so they follow its theme.
+struct BadgeStyle {
+    /// The accent of the pie (sage by default): the new-window badge is this color.
+    accent: Color32,
+    /// The colors of the pie in the appearance it is drawn in.
+    colors: PieColors,
+    /// The glass settings while the pie is glass, `None` while it is solid.
+    glass: Option<glass::Glass>,
+    /// Whether the pie is smoked graphite (dark appearance, or glass).
+    smoked: bool,
+}
+
+/// The color of the badge of `choice`: the accent for a new window (lifted a little on a smoked pie,
+/// where the accent is dark against the graphite), sage-gold for the app that is open.
+fn badge_tint(choice: Choice, style: &BadgeStyle) -> Color32 {
+    match choice {
+        Choice::NewWindow if style.smoked => {
+            let a = [style.accent.r(), style.accent.g(), style.accent.b()];
+            rgb(mix(a, [255, 255, 255], 0.14))
+        }
+        Choice::NewWindow => style.accent,
+        Choice::Existing if style.smoked => OPEN_APP_GOLD_SMOKED,
+        Choice::Existing => OPEN_APP_GOLD,
+    }
+}
+
+/// Draws one round badge of an "Open app" slice centered on `at`, `size` points wide: sage with a +
+/// for a new window, sage-gold with a small square for the app that is open. It is drawn in the
+/// material of the pie: an opaque disc with a hairline edge on a solid pie, a lit glass disc (the
+/// same as the center of the pie) on a glass one. `motion` says how it is coming out or being picked.
+fn draw_open_badge(
+    painter: &egui::Painter,
+    at: egui::Pos2,
+    size: f32,
+    choice: Choice,
+    motion: BadgeMotion,
+    style: &BadgeStyle,
+) {
+    let scale = motion.grow.max(0.0) * (1.0 + 0.18 * motion.pick - 0.08 * motion.step);
+    let alpha = motion.alpha.clamp(0.0, 1.0) * (1.0 - 0.3 * motion.step);
+    let radius = size * scale / 2.0;
+    let tint = badge_tint(choice, style);
+
+    // the same soft shadow the pie has, a little smaller
+    let shadow = Color32::from_black_alpha(
+        ((if style.glass.is_some() { 30.0 } else { 46.0 }) * alpha) as u8,
+    );
+    painter.circle_filled(at + Vec2::new(0.0, 1.5), radius + 1.0, shadow);
+
+    if let Some(g) = style.glass {
+        glass::core(painter, at, radius, alpha, Some(tint), g);
+    } else {
+        painter.circle_filled(at, radius, tint.gamma_multiply(alpha));
+        // the hairline the slices have, so the edge reads on any background
+        let edge = if style.smoked {
+            Color32::from_white_alpha((46.0 * alpha) as u8)
+        } else {
+            Color32::from_black_alpha((34.0 * alpha) as u8)
+        };
+        painter.circle_stroke(at, radius, Stroke::new(1.0, edge));
+    }
+    if motion.pick > 0.02 {
+        // the badge the pointer is on gets a ring in the ink of the pie, which opens around it
+        painter.circle_stroke(
+            at,
+            radius + 2.0 * motion.pick,
+            Stroke::new(1.75, style.colors.ink.gamma_multiply(alpha * motion.pick)),
+        );
+    }
+
+    // white on a smoked pie (dark appearance or glass), where it reads best; on the light solid pie
+    // the readable color of the badge
+    let glyph_color = if style.smoked {
+        Color32::WHITE
+    } else {
+        match choice {
+            Choice::NewWindow => on_accent(tint),
+            Choice::Existing => OPEN_APP_GOLD_INK,
+        }
+    };
+    let glyph = glyph_color.gamma_multiply(alpha);
+    match choice {
+        Choice::NewWindow => {
+            // a +
+            let arm = radius * 0.5;
+            let plus = Stroke::new((radius * 0.24).max(1.8), glyph);
+            painter.line_segment([at - Vec2::new(arm, 0.0), at + Vec2::new(arm, 0.0)], plus);
+            painter.line_segment([at - Vec2::new(0.0, arm), at + Vec2::new(0.0, arm)], plus);
+        }
+        Choice::Existing => {
+            // a small square inside the circle
+            let rect = egui::Rect::from_center_size(at, Vec2::splat(radius * 0.9));
+            painter.rect_filled(rect, (radius * 0.14).max(1.0), glyph);
+        }
     }
 }
 

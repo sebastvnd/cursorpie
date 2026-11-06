@@ -213,6 +213,11 @@ impl App {
 
         // right: editor
         let nav = ed.nav.clone(); // may have just changed
+        let flow_list: Vec<(String, String)> = edit
+            .flows
+            .iter()
+            .map(|f| (f.id.clone(), f.name.clone()))
+            .collect();
         let env = Env {
             ctx,
             tx: tx_ref,
@@ -222,6 +227,7 @@ impl App {
             trigger,
             mouse: &mouse,
             bounds: ed.card,
+            flows: &flow_list,
         };
         ui.scope_builder(UiBuilder::new().max_rect(right), |ui| {
             ui.set_clip_rect(ui.clip_rect().intersect(right)); // clip anything that overflows

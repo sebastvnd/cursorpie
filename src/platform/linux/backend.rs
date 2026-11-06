@@ -469,6 +469,35 @@ pub fn reveal_app(app: &str, _mode: DesktopMode) {
     raise_or_open(a);
 }
 
+/// Opens a new window of an app that already runs: the app is started again, which is what a
+/// launcher does too. An app that keeps one process (Firefox, Chromium, the terminals) answers with
+/// a new window; one that cannot have two copies shows the one it has.
+pub fn open_app_new_window(app: &str) {
+    open_app(app);
+}
+
+/// For each of `apps` (as typed in "Open app" slices), whether it has a window right now, on any
+/// workspace and minimized or not: the same windows [`reveal_app`] would raise. One look at the
+/// window manager's list serves them all. A role (`@browser`) is first turned into the app that
+/// fills it. Meant for a worker thread: it asks the X server, and a role asks the system.
+pub fn running_among(apps: &[String]) -> Vec<bool> {
+    let Some(conn) = x11::conn() else {
+        return vec![false; apps.len()];
+    };
+    let index = x11::index().unwrap_or_else(|| std::sync::Arc::new(Index::default()));
+    let ids: Vec<Option<String>> = apps
+        .iter()
+        .map(|a| {
+            let a = a.trim();
+            match Role::parse(a) {
+                Some(role) => role_app(role, &index),
+                None => Some(a.to_string()),
+            }
+        })
+        .collect();
+    conn.running_among(&ids)
+}
+
 /// Raises the window of the app `a` if it has one, otherwise starts it.
 fn raise_or_open(a: &str) {
     if let Some(c) = x11::conn()

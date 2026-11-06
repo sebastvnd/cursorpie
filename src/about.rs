@@ -8,7 +8,7 @@ pub const APP_NAME: &str = "CursorPie";
 /// Version from `Cargo.toml`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// One-line description shown under the name in About.
-pub const TAGLINE: &str = "A hold-to-open pie menu for your mouse";
+pub const TAGLINE: &str = "A hold-to-open pie menu for your mouse or trackpad";
 
 /// Used as the LaunchAgent label and the .app bundle identifier on macOS (on Windows the startup entry is named
 /// after [`APP_NAME`]) (keep it unique, reverse-DNS style).

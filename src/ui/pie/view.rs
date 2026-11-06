@@ -8,6 +8,10 @@ use crate::ui::appicon;
 pub(super) struct PieView {
     /// (icon, name, is_submenu)
     pub(super) items: Vec<(String, String, bool)>,
+    /// Per slice of `items`: the app it opens, when it is an "Open app" slice and the choice
+    /// between a new window and the open app is on (see [`running`](crate::running)). All `None`
+    /// when the setting is off.
+    pub(super) open_apps: Vec<Option<String>>,
     /// index (in this ring) of the active side-button mode
     pub(super) active: Option<usize>,
     pub(super) center_icon: String,
@@ -43,6 +47,13 @@ impl PieView {
                 )
             })
             .collect();
+        let open_apps = ring
+            .iter()
+            .map(|i| match &i.kind {
+                ItemKind::Run(a) if c.open_app_choice => a.open_target().map(str::to_string),
+                _ => None,
+            })
+            .collect();
         let active = prof.and_then(|p| {
             (p.active.len() == path.len() + 1 && p.active[..path.len()] == *path)
                 .then(|| p.active[path.len()])
@@ -64,6 +75,7 @@ impl PieView {
             .flatten();
         Self {
             items,
+            open_apps,
             active,
             center_icon,
             labels: c.show_labels,

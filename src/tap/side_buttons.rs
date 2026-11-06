@@ -97,7 +97,7 @@ pub(super) fn handle_side(
                 return Verdict::Keep; // native back/forward keeps working
             }
             SIDE_SWALLOWED[idx].store(true, Ordering::SeqCst);
-            run_action(action, target);
+            run_action(action, target, None);
             Verdict::Drop
         }
         Kind::Up => {

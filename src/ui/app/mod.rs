@@ -101,6 +101,12 @@ pub struct App {
     pub fresh: bool,
     pub anim: f32,
     pub hover_anim: [f32; MAX_ITEMS],
+    /// How far the two badges of an "Open app" slice have come out (0 to 1, one clock per slice).
+    pub badge_in: [f32; MAX_ITEMS],
+    /// Per slice and badge (new window, app that is open): how much it is the one the pointer is on.
+    pub badge_pick: [[f32; 2]; MAX_ITEMS],
+    /// The same for the one the pointer is not on, which steps back.
+    pub badge_step: [[f32; 2]; MAX_ITEMS],
     pub active_anim: [f32; MAX_ITEMS],
     pub win: f32,
     pub pie_pos: Pos2,
@@ -172,6 +178,9 @@ impl App {
             fresh: false,
             anim: 0.0,
             hover_anim: [0.0; MAX_ITEMS],
+            badge_in: [0.0; MAX_ITEMS],
+            badge_pick: [[0.0; 2]; MAX_ITEMS],
+            badge_step: [[0.0; 2]; MAX_ITEMS],
             active_anim: [0.0; MAX_ITEMS],
             win,
             pie_pos: egui::pos2(200.0, 200.0),

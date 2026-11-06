@@ -394,7 +394,7 @@ pub(super) fn profile_toolbar(
                         true,
                     );
                     if export.clicked() {
-                        match share::export_to_downloads(&edit.profiles[pi]) {
+                        match share::export_to_downloads_with(&edit.profiles[pi], &edit.flows) {
                             Ok(path) => {
                                 platform::reveal_in_file_manager(&path);
                                 notice(tx, ctx, format!("Exported to {}", path.display()));
@@ -474,7 +474,7 @@ fn pick_app_sheet(
     let back = match for_ {
         PickFor::New => Some(ProfileSheet::New),
         PickFor::Add => Some(ProfileSheet::Apps),
-        PickFor::Action => None,
+        PickFor::Action | PickFor::Flow => None,
     };
     let profile = ed.profile;
     // apps that are already chosen are shown with a check and cannot be picked twice
@@ -485,7 +485,7 @@ fn pick_app_sheet(
             .map(|p| p.apps.clone())
             .unwrap_or_default(),
         PickFor::New => vec![ed.new_profile_app.clone()],
-        PickFor::Action => Vec::new(),
+        PickFor::Action | PickFor::Flow => Vec::new(),
     };
     let is_taken =
         |id: &str| !id.is_empty() && taken.iter().any(|t| platform::OS.app_ids_equal(t, id));
@@ -633,6 +633,16 @@ fn pick_app_sheet(
                     p.apps.push(app.id);
                 }
             }
+            PickFor::Flow => {
+                if let Some((flow, node)) = ed.flow_target.take() {
+                    let _ = tx.send(Msg::FlowAppPicked {
+                        flow,
+                        node,
+                        app: platform::installed::action_text(&app),
+                    });
+                    ctx.request_repaint();
+                }
+            }
             PickFor::Action => {
                 // the same message a chosen file gives, so the slice also takes the app's icon
                 if let Some(t) = ed.action_target.take() {
@@ -665,6 +675,17 @@ fn pick_app_sheet(
                     platform::bundle_id_of(&file).map(|bundle| Msg::AppPicked { profile, bundle })
                 },
             ),
+            PickFor::Flow => {
+                if let Some((flow, node)) = ed.flow_target.take() {
+                    spawn_file_picker(
+                        tx.clone(),
+                        ctx.clone(),
+                        platform::FileKind::App,
+                        "Choose an application",
+                        move |app| Some(Msg::FlowAppPicked { flow, node, app }),
+                    );
+                }
+            }
             PickFor::Action => {
                 if let Some(t) = ed.action_target.take() {
                     spawn_file_picker(
@@ -687,7 +708,22 @@ fn pick_app_sheet(
         ed.profile_sheet = back;
     } else if cancel || floating.close {
         ed.action_target = None;
+        ed.flow_target = None;
         ed.profile_sheet = back;
+    }
+}
+
+/// The app list of the Flow tab: shown while it was opened by the **Pick...** button of an "App"
+/// block (the Menu tab shows its own with the profile toolbar).
+pub(in crate::ui::settings) fn flow_app_sheet(
+    ctx: &egui::Context,
+    edit: &mut Config,
+    ed: &mut Ed,
+    tx: &Sender<Msg>,
+    accent: egui::Color32,
+) {
+    if let Some(ProfileSheet::Pick(PickFor::Flow)) = ed.profile_sheet {
+        pick_app_sheet(ctx, edit, ed, tx, accent, PickFor::Flow);
     }
 }
 
@@ -1108,6 +1144,7 @@ mod tests {
             Some(ProfileSheet::Pick(PickFor::New)),
             Some(ProfileSheet::Pick(PickFor::Add)),
             Some(ProfileSheet::Pick(PickFor::Action)),
+            Some(ProfileSheet::Pick(PickFor::Flow)),
         ] {
             ed.profile_sheet = which;
             for _ in 0..3 {

@@ -81,7 +81,7 @@ icon positions.
 
 ### Permissions on macOS
 
-CursorPie needs **Accessibility** to watch the mouse and send shortcuts, and macOS may also ask for
+CursorPie needs **Accessibility** to watch the mouse and trackpad and send shortcuts, and macOS may also ask for
 **Input Monitoring**.
 
 1. Open **System Settings > Privacy & Security**.

@@ -23,6 +23,27 @@ pub enum Action {
     /// Shell command, run with `/bin/sh -c` (macOS) or `cmd /C` (Windows).
     Command(String),
     Sequence(Vec<Action>),
+    /// Pause this many milliseconds (at most [`MAX_WAIT_MS`](super::MAX_WAIT_MS)). Made by the
+    /// *Wait* block of a flow; useful inside a `Sequence` too.
+    Wait(u32),
+    /// Run the flow with this id (see [`Config::flows`] and the [`flow`](super::flow) module).
+    /// Nothing happens when no flow has that id.
+    Flow(String),
+}
+
+impl Action {
+    /// The app this action opens, if it opens one: the text of an [`Action::OpenApp`], or of the
+    /// first one of a [`Action::Sequence`]. `None` for everything else and for a blank app name.
+    ///
+    /// This is the app an "Open app" slice offers the choice "new window or the one that is open"
+    /// for (see [`running`](crate::running)).
+    pub fn open_target(&self) -> Option<&str> {
+        match self {
+            Action::OpenApp(app) => Some(app.trim()).filter(|a| !a.is_empty()),
+            Action::Sequence(steps) => steps.iter().find_map(Action::open_target),
+            _ => None,
+        }
+    }
 }
 
 /// What a slice does.
@@ -302,6 +323,10 @@ pub struct Config {
     pub focus_target: bool,
     /// What an "Open app" slice does when the app's window is on another virtual desktop or Space.
     pub desktop_mode: DesktopMode,
+    /// An "Open app" slice of an app that already runs offers two choices while it is hovered: a
+    /// green + (a new window) and a yellow square (the app that is open). Off: the slice always
+    /// does what it did before this setting existed (see [`running`](crate::running)).
+    pub open_app_choice: bool,
     /// Which pie the side buttons follow in an app that has its own pie, until you choose another.
     pub side_default: SideTarget,
     /// Choosing a side-button mode in a pie makes the side buttons follow that pie.
@@ -355,6 +380,9 @@ pub struct Config {
     pub haptics: bool,
     /// With `haptics`: also a tick when the hovered slice changes.
     pub haptic_hover: bool,
+    /// The flows the *Flow* tab edits: chains of steps that a slice runs with [`Action::Flow`].
+    /// Files from before flows existed have none.
+    pub flows: Vec<super::flow::Flow>,
 }
 
 impl Config {

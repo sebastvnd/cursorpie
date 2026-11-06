@@ -12,6 +12,7 @@ use crate::actions::post_mouse;
 use crate::config::{cfg, lock};
 use crate::geometry::Point;
 use crate::msg::{Msg, Notifier};
+use crate::running;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -99,6 +100,11 @@ fn on_press<'a>(
     // gesture (`InSettings`: its drags and its release are dropped), but nothing opens, hovers or
     // runs, and no timer starts. The UI only says why nothing happened.
     if settings_open() {
+        // over the canvas of the Flow tab the button belongs to the window (it moves the canvas)
+        if source == Source::Mouse && super::FLOW_CANVAS_HOVER.load(Ordering::SeqCst) {
+            *g = Gesture::Passthrough;
+            return Verdict::Keep;
+        }
         diag::log!("tap", "press_blocked", reason = "settings_open");
         *g = Gesture::InSettings(source);
         drop(g);
@@ -120,6 +126,9 @@ fn on_press<'a>(
         general: hold_profile,
         app,
     });
+    // which apps of the "Open app" slices already run: asked once, off this thread, while the hold
+    // timer runs (does nothing when no slice opens an app or the setting is off)
+    running::warm(&profile_list(hold_profile, app));
     let dbl_ms = cfg().double_click_ms;
 
     // (A) second press inside the double-click window: open the app's own pie at once
@@ -203,6 +212,13 @@ fn on_press<'a>(
     drop(g);
     spawn_hold_timer(state.clone(), notifier.clone(), id, press.already);
     Verdict::Drop
+}
+
+/// The pies a press may open: the one of the hold and, when the app has its own, that one too.
+fn profile_list(hold: usize, app: Option<usize>) -> Vec<usize> {
+    let mut v = vec![hold];
+    v.extend(app.filter(|a| *a != hold));
+    v
 }
 
 /// Timer thread for one press: opens the pie after `pie_hold_ms`, and Settings after
@@ -372,7 +388,8 @@ fn on_drag_pending(
 }
 
 /// Moved while the pie is open: update the hovered slice, or enter a submenu when the cursor
-/// crosses the rim over one.
+/// crosses the rim over one. Over an "Open app" slice whose app runs, the UI also learns which of
+/// the two badges the cursor is on (see [`running`]).
 fn on_drag_in_pie(notifier: &Notifier, mut g: MutexGuard<'_, Gesture>, p: Point) -> Verdict {
     let Gesture::ActivePie {
         center,
@@ -393,6 +410,7 @@ fn on_drag_in_pie(notifier: &Notifier, mut g: MutexGuard<'_, Gesture>, p: Point)
             path.push(h);
             *center = p;
             *hover = None;
+            running::set_shown(None);
             let (pr, pa) = (*profile, path.clone());
             drop(g);
             notifier.send(Msg::ShowPie {
@@ -402,12 +420,17 @@ fn on_drag_in_pie(notifier: &Notifier, mut g: MutexGuard<'_, Gesture>, p: Point)
                 path: pa,
             });
         }
-    } else if hit.hover != *hover {
-        *hover = hit.hover;
-        drop(g);
-        notifier.send(Msg::Hover(hit.hover));
-        if touch {
-            haptic::emit(notifier, Tick::Hover(hit.hover));
+    } else {
+        let slice_changed = hit.hover != *hover;
+        if slice_changed || hit.choice != running::shown() {
+            *hover = hit.hover;
+            running::set_shown(hit.choice);
+            drop(g);
+            // also wakes the UI when only the badge changed: it reads `running::shown`
+            notifier.send(Msg::Hover(hit.hover));
+            if touch && slice_changed {
+                haptic::emit(notifier, Tick::Hover(hit.hover));
+            }
         }
     }
     Verdict::Drop
@@ -483,21 +506,24 @@ fn on_release_in_pie(notifier: &Notifier, mut g: MutexGuard<'_, Gesture>, p: Poi
     let (center, profile, path) = (*center, *profile, path.clone());
     *g = Gesture::Idle;
     drop(g);
-    let hover = eval(profile, &path, center, p).hover;
+    let hit = eval(profile, &path, center, p);
+    let hover = hit.hover;
+    running::set_shown(None);
     diag::log!(
         "tap",
         "on_release",
         x = p.x,
         y = p.y,
         pie = true,
-        slice = hover.is_some()
+        slice = hover.is_some(),
+        choice = ?hit.choice
     );
     if let Some(h) = hover {
         if settings_open() {
             // the pie was open when Settings opened (menu bar): closing it must not run anything
             diag::log!("tap", "select_blocked", reason = "settings_open");
         } else {
-            select(profile, &path, h);
+            select(profile, &path, h, hit.choice);
         }
     }
     notifier.send(Msg::HidePie);

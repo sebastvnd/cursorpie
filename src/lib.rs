@@ -1,6 +1,6 @@
 //! # CursorPie
 //!
-//! A hold-to-open **pie menu for macOS, Windows and Linux**: hold a mouse button, flick toward a slice, release.
+//! A hold-to-open **pie menu for macOS, Windows and Linux**: hold a mouse button or touch and hold a trackpad, flick toward a slice, release.
 //! A slice can send a shortcut, launch an app, open a URL, run a shell command, open a submenu,
 //! or remap the mouse's back/forward buttons. Every app can have its own pie ("profile").
 //!
@@ -26,6 +26,7 @@
 //! | [`config`] | any thread | data model, defaults, validation, `config.json`, the live global copy |
 //! | [`tap`] | `cursorpie-tap` thread | global event tap and the gesture state machine |
 //! | [`actions`] | `cursorpie-actions` thread | executes actions (shortcuts, `open`, shell) in order |
+//! | [`running`] | `cursorpie-running` thread | whether the app of an "Open app" slice already runs, and the new-window / open-app choice that follows |
 //! | [`cache`] | any thread | bounded least-recently-used cache (backs the icon textures) |
 //! | [`debug`] | any thread | switches the opt-in diagnostic log on and holds the app's probes; the logging itself is the separate `diag` crate (`diag/`, `CURSORPIE_DEBUG=1`, `docs/DEBUGGING.md`) |
 //! | [`history`] | UI thread | undo / redo snapshots for the Settings editor |
@@ -66,6 +67,7 @@ pub mod keys;
 pub mod mouse;
 pub mod msg;
 pub mod platform;
+pub mod running;
 pub mod side;
 pub mod tap;
 pub mod ui;
@@ -125,7 +127,7 @@ pub fn run() -> eframe::Result<()> {
     debug::init(); // the opt-in debug log; does nothing unless it is switched on
     actions::init();
     let (tx, rx) = mpsc::channel();
-    let win = config::cfg().pie_size;
+    let win = geometry::window_size(config::cfg().pie_size);
 
     let viewport = egui::ViewportBuilder::default()
         .with_inner_size([win, win])
@@ -177,6 +179,7 @@ pub fn run() -> eframe::Result<()> {
                 tx: tx.clone(),
                 ctx: cc.egui_ctx.clone(),
             };
+            running::init(notifier.clone()); // before the tap: its presses ask what runs
             tap::spawn(notifier.clone());
             mouse::spawn_watcher(notifier.clone());
             let tray = ui::tray::build(&notifier);

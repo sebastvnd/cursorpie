@@ -85,7 +85,7 @@ enum Step {
 /// Heading of the second page.
 pub fn setup_title(os: Os) -> &'static str {
     match os {
-        Os::Mac => "Allow CursorPie to watch the mouse",
+        Os::Mac => "Allow CursorPie to see your mouse",
         Os::Windows => "CursorPie lives in the system tray",
         Os::Linux => "CursorPie works in your X11 session",
     }
@@ -107,7 +107,7 @@ pub fn setup_steps(os: Os) -> &'static [&'static str] {
     match os {
         Os::Mac => &[
             "Open Privacy & Security > Accessibility.",
-            "Switch CursorPie on. Not listed? Press + and choose it in Applications.",
+            "Switch CursorPie on, or press + and add it from Applications.",
             "If macOS asks for Input Monitoring, allow that too.",
         ],
         Os::Windows => &[
@@ -131,8 +131,8 @@ pub fn setup_steps(os: Os) -> &'static [&'static str] {
 pub fn setup_note(os: Os) -> &'static str {
     match os {
         Os::Mac => {
-            "macOS only lets an app watch the mouse after you allow it. This page notices the \
-             change by itself; there is nothing to restart."
+            "macOS only lets an app watch the mouse after you allow it. This page notices the change \
+             by itself."
         }
         Os::Windows | Os::Linux => "",
     }
@@ -144,7 +144,7 @@ pub fn gesture_steps(hold_ms: u64) -> [(&'static str, String); 3] {
         (
             "Hold",
             format!(
-                "Press and hold the middle mouse button for {}.",
+                "Press and hold the middle mouse button, or touch and hold the trackpad, for {}.",
                 seconds(hold_ms)
             ),
         ),

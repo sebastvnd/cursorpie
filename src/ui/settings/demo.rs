@@ -7,6 +7,7 @@
 //! | [`hold_demo`] | hold times, "open the pie when I drag" | the button going down, the pie opening, the "hold for settings" arc |
 //! | [`gesture_demo`] | [`AppGesture`] | which pie opens on a hold and on a double-click |
 //! | [`target_demo`] | [`TargetApp`], "bring that app to the front" | which window the pie works on |
+//! | [`open_choice_demo`] | "Choose between a new window and the open app" | the two badges coming out of a slice, one of them picked, and what it does to the app |
 //! | [`desktop_demo`] | [`DesktopMode`] | what "Open app" does to an app on another desktop |
 //! | [`look_demo`] | pie size, names, app icon, accent, material | the pie as it will look, the pointer passing over its slices |
 //! | [`app_icon_demo`] | [`AppIconStyle`], "Show the app's icon in the center" | the app's icon flying into the middle of the pie, staying in color or turning into a one-color silhouette |
@@ -22,7 +23,9 @@
 
 use super::theme::*;
 use crate::config::{AppGesture, AppIconStyle, DesktopMode, SideTarget, TargetApp};
-use crate::ui::draw::{ease_out_cubic, glass_colors, mix, pie_colors, rgb, ring_slice};
+use crate::ui::draw::{
+    ease_out_back, ease_out_cubic, glass_colors, mix, on_accent, pie_colors, rgb, ring_slice,
+};
 use crate::ui::fonts;
 use crate::ui::pie::glass::{self, Glass};
 use crate::ui::symbols;
@@ -356,6 +359,243 @@ pub(in crate::ui::settings) fn target_demo(
         let name = if f.target_right { "Browser" } else { "Notes" };
         caption(&p, rect, &format!("The pie works on {name}"));
     }
+    ui.add_space(GAP);
+}
+
+// ------------------------------------------------------------ the open-app choice
+
+/// The seconds one half of the choice loop lasts: the first half picks the new window, the second
+/// half picks the app that is open.
+const CHOICE_HALF: f32 = 4.5;
+/// Radius of the pie in the choice demo, and the size and gaps of its badges.
+const CHOICE_R: f32 = PIE_R * 0.9;
+const CHOICE_BADGE: f32 = 18.0;
+const CHOICE_BADGE_GAP: f32 = 8.0;
+const CHOICE_BADGES_APART: f32 = 3.5;
+/// Middle of the slice the demo hovers (of four, starting at the east, turning clockwise).
+const CHOICE_MID: f32 = TAU / 8.0;
+/// The badge of the app that is open (the same gold as the real pie).
+const CHOICE_GOLD: Color32 = Color32::from_rgb(212, 190, 118);
+const CHOICE_GOLD_INK: Color32 = Color32::from_rgb(58, 50, 24);
+
+/// One moment of the open-app choice demo.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct ChoiceFrame {
+    /// How far the pie is open.
+    pub pie: f32,
+    /// How much the slice is hovered.
+    pub hover: f32,
+    /// How far the two badges have come out.
+    pub badges: f32,
+    /// How much the pointer is on the badge that is picked.
+    pub pick: f32,
+    /// Where the pointer is, from the center of the pie.
+    pub cursor: Vec2,
+    /// Which badge is picked in this half: `true` = new window.
+    pub new_window: bool,
+    /// How much of the result is shown: a new window, or the app that is open brought forward.
+    pub result: f32,
+}
+
+/// Where the middle of a badge is, from the center of the pie.
+fn choice_badge_at(new_window: bool) -> Vec2 {
+    let dir = Vec2::angled(CHOICE_MID);
+    let tangent = Vec2::new(-dir.y, dir.x);
+    let half = CHOICE_BADGE / 2.0;
+    let along = (half + CHOICE_BADGES_APART / 2.0) * if new_window { -1.0 } else { 1.0 };
+    dir * (CHOICE_R + CHOICE_BADGE_GAP + half) + tangent * along
+}
+
+/// The open-app choice demo at `t` seconds. `enabled` is the setting: when it is off nothing is
+/// offered and the slice just goes to the app.
+pub(super) fn choice_frame(t: f32, enabled: bool) -> ChoiceFrame {
+    let t = t.rem_euclid(CHOICE_HALF * 2.0);
+    let new_window = enabled && t < CHOICE_HALF;
+    let u = t.rem_euclid(CHOICE_HALF);
+    let dir = Vec2::angled(CHOICE_MID);
+    let tangent = Vec2::new(-dir.y, dir.x);
+    let on_slice = dir * CHOICE_R * 0.75;
+    // the pointer rests on the half of the slice nearer the badge it picks
+    let side = if new_window { -1.0 } else { 1.0 };
+    let on_half = on_slice + tangent * side * CHOICE_R * 0.3;
+    let to_slice = ease_out_cubic(ramp(u, 0.5, 0.5));
+    let to_half = ease_out_cubic(ramp(u, 1.9, 0.5));
+    let cursor = if enabled {
+        let a = on_slice * to_slice;
+        a + (on_half - on_slice) * to_half
+    } else {
+        on_slice * to_slice
+    };
+    let closing = ramp(u, 3.2, 0.25);
+    ChoiceFrame {
+        pie: ramp(u, 0.2, OPEN_SECS) - closing,
+        hover: ramp(u, 0.9, 0.2) * (1.0 - closing),
+        badges: if enabled {
+            ramp(u, 1.0, 0.45) * (1.0 - closing)
+        } else {
+            0.0
+        },
+        pick: if enabled {
+            ramp(u, 2.2, 0.2) * (1.0 - closing)
+        } else {
+            0.0
+        },
+        cursor,
+        new_window,
+        result: ramp(u, 3.3, 0.3) - ramp(u, 4.2, 0.25),
+    }
+}
+
+/// What the demo says at this moment.
+fn choice_caption(enabled: bool, f: &ChoiceFrame) -> &'static str {
+    if !enabled {
+        return if f.result > 0.5 {
+            "Off: it goes to the app, as before"
+        } else {
+            "Off: the slice always opens the app"
+        };
+    }
+    if f.result > 0.5 {
+        return if f.new_window {
+            "A new window of the app opened"
+        } else {
+            "It went to the app that is open"
+        };
+    }
+    if f.pick > 0.5 {
+        return if f.new_window {
+            "Release on the green + for a new window"
+        } else {
+            "Release on the yellow square for the open app"
+        };
+    }
+    if f.badges > 0.5 {
+        return "The app runs: two choices come out";
+    }
+    "Hover an Open app slice"
+}
+
+/// One round badge of the demo: sage with a + for a new window, gold with a square for the app that
+/// is open. `show` fades and grows it in, `pick` lifts it, `step` pushes it back.
+fn choice_badge(
+    p: &egui::Painter,
+    at: Pos2,
+    new_window: bool,
+    show: f32,
+    pick: f32,
+    step: f32,
+    accent: Color32,
+) {
+    if show <= 0.01 {
+        return;
+    }
+    let radius = CHOICE_BADGE / 2.0
+        * (0.35 + 0.65 * ease_out_back(show))
+        * (1.0 + 0.18 * pick - 0.08 * step);
+    let alpha = ease_out_cubic(show) * (1.0 - 0.3 * step);
+    let tint = if new_window { accent } else { CHOICE_GOLD };
+    p.circle_filled(
+        at + Vec2::new(0.0, 1.5),
+        radius + 1.0,
+        Color32::from_black_alpha((40.0 * alpha) as u8),
+    );
+    p.circle_filled(at, radius, tint.gamma_multiply(alpha));
+    p.circle_stroke(
+        at,
+        radius,
+        Stroke::new(1.0, Color32::from_black_alpha((34.0 * alpha) as u8)),
+    );
+    if pick > 0.02 {
+        p.circle_stroke(
+            at,
+            radius + 2.0 * pick,
+            Stroke::new(1.75, pal().text.gamma_multiply(alpha * pick)),
+        );
+    }
+    let glyph = if new_window {
+        on_accent(accent)
+    } else {
+        CHOICE_GOLD_INK
+    }
+    .gamma_multiply(alpha);
+    if new_window {
+        let arm = radius * 0.5;
+        let stroke = Stroke::new((radius * 0.24).max(1.8), glyph);
+        p.line_segment([at - Vec2::new(arm, 0.0), at + Vec2::new(arm, 0.0)], stroke);
+        p.line_segment([at - Vec2::new(0.0, arm), at + Vec2::new(0.0, arm)], stroke);
+    } else {
+        let rect = Rect::from_center_size(at, Vec2::splat(radius * 0.9));
+        p.rect_filled(rect, (radius * 0.14).max(1.0), glyph);
+    }
+}
+
+/// A pie with one slice hovered and the app it opens already running (the window on the right). The
+/// two badges come out of the slice; the pointer picks one and the window answers.
+pub(in crate::ui::settings) fn open_choice_demo(ui: &mut egui::Ui, accent: Color32, enabled: bool) {
+    let (p, rect, t) = stage(ui);
+    let f = choice_frame(t, enabled);
+    let c = Pos2::new(rect.min.x + rect.width() * 0.32, rect.min.y + PIE_Y);
+    // the app that is already open, and the new window that may join it
+    let w = rect.width() * 0.26;
+    let win = Rect::from_min_size(
+        Pos2::new(rect.max.x - rect.width() * 0.12 - w, rect.min.y + 22.0),
+        Vec2::new(w, 96.0),
+    );
+    let went_to = if f.new_window { 0.0 } else { f.result };
+    mini_window(&p, win, "Notes", 0.35 + 0.65 * went_to, accent);
+    if went_to > 0.01 {
+        p.rect_stroke(
+            win.expand(3.0),
+            11.0,
+            Stroke::new(2.0, accent.gamma_multiply(went_to)),
+            StrokeKind::Outside,
+        );
+    }
+    if f.new_window && f.result > 0.01 {
+        let r = ease_out_back(f.result.clamp(0.0, 1.0)).max(0.0);
+        let second = Rect::from_center_size(
+            win.center() + Vec2::new(14.0, 12.0),
+            win.size() * (0.6 + 0.4 * r),
+        );
+        mini_window(&p, second, "Notes 2", 1.0, accent);
+        p.rect_stroke(
+            second.expand(3.0),
+            11.0,
+            Stroke::new(2.0, accent.gamma_multiply(f.result.clamp(0.0, 1.0))),
+            StrokeKind::Outside,
+        );
+    }
+    mini_pie(&p, c, CHOICE_R, f.pie, accent, false, 0.0);
+    if f.pie > 0.01 && f.hover > 0.01 {
+        let inner = CHOICE_R * 0.4;
+        let outer = inner + (CHOICE_R - inner) * ease_out_cubic(f.pie);
+        let quarter = TAU / 4.0;
+        p.add(ring_slice(
+            &p,
+            c,
+            inner,
+            outer,
+            0.05,
+            quarter - 0.05,
+            accent.gamma_multiply(f.hover * f.pie),
+        ));
+    }
+    for new_window in [true, false] {
+        let mine = new_window == f.new_window;
+        choice_badge(
+            &p,
+            c + choice_badge_at(new_window),
+            new_window,
+            f.badges,
+            if mine { f.pick } else { 0.0 },
+            if mine { 0.0 } else { f.pick },
+            accent,
+        );
+    }
+    if f.pie > 0.01 {
+        cursor(&p, c + f.cursor);
+    }
+    caption(&p, rect, choice_caption(enabled, &f));
     ui.add_space(GAP);
 }
 
@@ -1681,6 +1921,73 @@ mod tests {
                 scan_demo(ui, accent);
             })
             .drop_without_applying_deltas();
+        }
+    }
+
+    #[test]
+    fn the_choice_demo_brings_out_the_badges_picks_one_and_shows_the_result() {
+        let at = |t: f32, on: bool| choice_frame(t, on);
+        assert_eq!(at(0.0, true).pie, 0.0, "nothing before the pie opens");
+        assert!(at(1.0, true).pie > 0.99 && at(1.0, true).badges < 0.1);
+        let out = at(2.0, true);
+        assert!(
+            out.badges > 0.99 && out.hover > 0.99,
+            "badges are out while hovered"
+        );
+        let picked = at(2.6, true);
+        assert!(picked.pick > 0.99);
+        assert!(picked.new_window, "the first half picks the new window");
+        assert!(at(CHOICE_HALF + 2.6, true).pick > 0.99);
+        assert!(
+            !at(CHOICE_HALF + 2.6, true).new_window,
+            "the second half picks the open app"
+        );
+        assert!(at(3.8, true).result > 0.99, "then the window answers");
+        assert!(at(CHOICE_HALF - 0.1, true).result < 0.2 && at(CHOICE_HALF - 0.1, true).pie < 0.01);
+    }
+
+    #[test]
+    fn the_choice_demo_offers_nothing_when_the_setting_is_off() {
+        for t in [0.5, 1.5, 2.5, 3.5, 6.0, 8.0] {
+            let f = choice_frame(t, false);
+            assert_eq!((f.badges, f.pick), (0.0, 0.0), "t={t}");
+            assert!(!f.new_window);
+        }
+        assert!(choice_caption(false, &choice_frame(2.0, false)).starts_with("Off"));
+    }
+
+    #[test]
+    fn the_choice_demo_badges_sit_outside_the_pie_and_apart() {
+        let (a, b) = (choice_badge_at(true), choice_badge_at(false));
+        for v in [a, b] {
+            assert!(
+                v.length() > CHOICE_R + CHOICE_BADGE / 2.0,
+                "outside the rim"
+            );
+        }
+        let gap = (a - b).length() - CHOICE_BADGE;
+        assert!(
+            gap > 0.0 && gap < CHOICE_BADGE,
+            "close but not touching: {gap}"
+        );
+    }
+
+    #[test]
+    fn the_choice_demo_loop_repeats() {
+        for t in [0.7, 2.1, 3.5, 6.2] {
+            let (a, b) = (
+                choice_frame(t, true),
+                choice_frame(t + CHOICE_HALF * 2.0, true),
+            );
+            assert_eq!(a.new_window, b.new_window);
+            for (x, y) in [
+                (a.pie, b.pie),
+                (a.badges, b.badges),
+                (a.pick, b.pick),
+                (a.result, b.result),
+            ] {
+                assert!((x - y).abs() < 1e-3, "t={t}: {x} vs {y}");
+            }
         }
     }
 }

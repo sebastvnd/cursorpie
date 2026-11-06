@@ -4,9 +4,12 @@
 //! (`chrome.exe`). UWP apps all report `applicationframehost.exe`.
 
 use super::dpi::{last_scale, scale_at_physical};
-use super::util::{exe_id_from_path, from_wide, logical_to_px, px_to_logical, wide};
+use super::util::{
+    app_id_for_open, exe_id_from_path, from_wide, logical_to_px, px_to_logical, wide,
+};
 use crate::geometry::Point;
 use crate::platform::{NativeIcon, ScreenRect};
+use std::collections::HashSet;
 use std::time::Duration;
 use windows_sys::Win32::Foundation::{CloseHandle, HWND, LPARAM, POINT, RECT, S_FALSE, S_OK};
 use windows_sys::Win32::Graphics::Gdi::{
@@ -301,6 +304,71 @@ pub(super) fn windows_of(exe: &str) -> Vec<HWND> {
         unsafe { EnumWindows(Some(pick_window), &mut find as *mut Find as LPARAM) };
     }
     find.found
+}
+
+/// Adds the process id of `hwnd` to the `Vec<u32>` behind `data` when it is a window that
+/// [`windows_of`] would offer: visible, with a title, and not a tool window.
+unsafe extern "system" fn collect_window_pid(hwnd: HWND, data: LPARAM) -> i32 {
+    // SAFETY: `data` is the `Vec<u32>` passed by `running_among`, alive during the enumeration.
+    let pids = unsafe { &mut *(data as *mut Vec<u32>) };
+    unsafe {
+        if IsWindowVisible(hwnd) == 0 || GetWindowTextLengthW(hwnd) == 0 {
+            return 1;
+        }
+        if GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 & WS_EX_TOOLWINDOW != 0 {
+            return 1;
+        }
+    }
+    pids.push(pid_of(hwnd));
+    1
+}
+
+/// The executable names (lower case) of the processes in `pids`, from one process snapshot.
+fn exes_of_pids(pids: &HashSet<u32>) -> HashSet<String> {
+    let mut out = HashSet::new();
+    if pids.is_empty() {
+        return out;
+    }
+    // SAFETY: the snapshot handle is closed; `entry.dwSize` is set as the API requires.
+    unsafe {
+        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snap.is_null() || snap as isize == -1 {
+            return out;
+        }
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut ok = Process32FirstW(snap, &mut entry);
+        while ok != 0 {
+            if pids.contains(&entry.th32ProcessID) {
+                out.insert(from_wide(&entry.szExeFile).to_ascii_lowercase());
+            }
+            ok = Process32NextW(snap, &mut entry);
+        }
+        CloseHandle(snap);
+    }
+    out
+}
+
+/// For each of `apps` (as typed in "Open app" slices: `chrome`, `Chrome.exe` or a path), whether it
+/// has a window that [`windows_of`] would bring to the front. The windows are listed once and the
+/// processes are listed once, however many apps are asked about. Meant for a worker thread.
+pub fn running_among(apps: &[String]) -> Vec<bool> {
+    let ids: Vec<Option<String>> = apps.iter().map(|a| app_id_for_open(a)).collect();
+    if ids.iter().all(Option::is_none) {
+        return vec![false; apps.len()];
+    }
+    let mut pids: Vec<u32> = Vec::new();
+    // SAFETY: the callback only runs during `EnumWindows`; `pids` outlives it.
+    unsafe {
+        EnumWindows(
+            Some(collect_window_pid),
+            &mut pids as *mut Vec<u32> as LPARAM,
+        )
+    };
+    let exes = exes_of_pids(&pids.into_iter().collect());
+    ids.iter()
+        .map(|id| id.as_ref().is_some_and(|id| exes.contains(id)))
+        .collect()
 }
 
 /// Brings the top-most window of the app `exe` to the front and waits (briefly) until Windows

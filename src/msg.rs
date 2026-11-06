@@ -60,6 +60,8 @@ pub enum Msg {
     InstalledApps(Vec<crate::platform::installed::InstalledApp>),
     /// A profile file to import was chosen (its path).
     ProfileImportPicked(String),
+    /// A flow file to import was chosen (its path).
+    FlowImportPicked(String),
     /// Show a short message in the Settings status bar (sent by helpers that cannot reach `App`).
     Notice(String),
     /// A mouse was connected that is not the one that was in use: `new` if CursorPie had never met
@@ -81,6 +83,8 @@ pub enum Msg {
         slot: Slot,
         app: String,
     },
+    /// An app was chosen for the "App" block `node` of the flow at index `flow`.
+    FlowAppPicked { flow: usize, node: u32, app: String },
 }
 
 /// A channel sender plus the egui context needed to wake the UI. Cheap to clone.

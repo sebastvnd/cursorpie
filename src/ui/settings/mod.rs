@@ -1,10 +1,10 @@
-//! The settings card: a sidebar of sections (Menu, Behavior, General, About) and the page of the selected one.
+//! The settings card: a sidebar of sections (Menu, Flow, Behavior, General, About) and the page of the selected one.
 //!
 //! | Module | Contents |
 //! |---|---|
 //! | `state` | editor-only state ([`Ed`], [`Tab`], [`Slot`]) |
 //! | `window` | the window, animation, top bar, sidebar, body and footer (`App::settings_ui`, `regions`) |
-//! | `tabs/*` | one file per section (the [`Tab`] enum) (`menu` also has `profile_toolbar`) |
+//! | `tabs/*` | one file per section (the [`Tab`] enum) (`menu` also has `profile_toolbar`; `flow` is the node editor) |
 //! | `demo` | small looping animations that show what a setting does (Behavior tab) |
 //! | `pie_designer` | the interactive pie used to pick and arrange slices |
 //! | `inspector` | editor for one slice, `add_panel` for the "Add a slice" panel |

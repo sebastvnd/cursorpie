@@ -49,8 +49,10 @@
 //!
 //! Everything is best effort and ends in `open -a`, the behavior from before this setting.
 
+use super::input::press_shortcut;
 use super::shell::open_app;
 use crate::config::DesktopMode;
+use crate::keys::{MOD_CMD, Shortcut};
 use crate::platform::desktops::{
     Desktops, DisplayRow, MAX_STEPS, OnScreen, Presence, WindowInfo, app_name_of_path,
     pick_display, presence_of, same_app_path, signature, steps_between, walk_to_target,
@@ -158,6 +160,117 @@ fn visible_running_pid(app: &str) -> Option<i32> {
         });
         None
     })
+}
+
+/// Whether the running app `a` is the one `target` names: a bundle id or a localized name, or, when
+/// `target` is a path (`by_path`), the `.app` it was started from or the name in it. `name` is the
+/// name to compare with the localized one. The same test as [`visible_running_pid`] makes.
+fn is_app(
+    a: &objc2_app_kit::NSRunningApplication,
+    target: &str,
+    by_path: bool,
+    name: &str,
+) -> bool {
+    let named = a
+        .localizedName()
+        .is_some_and(|s| !name.is_empty() && s.to_string().eq_ignore_ascii_case(name));
+    if by_path {
+        a.bundleURL()
+            .and_then(|u| u.path())
+            .is_some_and(|p| same_app_path(&p.to_string(), target))
+            || named
+    } else {
+        a.bundleIdentifier()
+            .is_some_and(|s| s.to_string().eq_ignore_ascii_case(target))
+            || named
+    }
+}
+
+/// For each of `apps` (a bundle id, an app name or a `.app` path, as typed in "Open app" slices),
+/// whether the app runs. A hidden app, and an app with no window, run. One list of the running apps
+/// serves every question. Meant for a worker thread.
+pub fn running_among(apps: &[String]) -> Vec<bool> {
+    use objc2::rc::autoreleasepool;
+    use objc2_app_kit::NSWorkspace;
+
+    autoreleasepool(|_| {
+        // NSRunningApplication documents its properties as thread-safe.
+        let running = NSWorkspace::sharedWorkspace().runningApplications();
+        apps.iter()
+            .map(|app| {
+                let target = app.trim();
+                if target.is_empty() {
+                    return false;
+                }
+                let by_path = target.contains('/');
+                let name = if by_path {
+                    app_name_of_path(target)
+                } else {
+                    target
+                };
+                running.iter().any(|a| is_app(&a, target, by_path, name))
+            })
+            .collect()
+    })
+}
+
+/// The process id of the app `app` names, hidden or not. `None` when it does not run.
+fn running_pid(app: &str) -> Option<i32> {
+    use objc2::rc::autoreleasepool;
+    use objc2_app_kit::NSWorkspace;
+
+    let target = app.trim();
+    let by_path = target.contains('/');
+    let name = if by_path {
+        app_name_of_path(target)
+    } else {
+        target
+    };
+    autoreleasepool(|_| {
+        NSWorkspace::sharedWorkspace()
+            .runningApplications()
+            .iter()
+            .find(|a| is_app(a, target, by_path, name))
+            .map(|a| a.processIdentifier())
+    })
+}
+
+/// Process id of the app in front, whether or not it has a window.
+fn frontmost_pid() -> Option<i32> {
+    use objc2::rc::autoreleasepool;
+    use objc2_app_kit::NSWorkspace;
+
+    autoreleasepool(|_| {
+        NSWorkspace::sharedWorkspace()
+            .frontmostApplication()
+            .map(|a| a.processIdentifier())
+    })
+}
+
+/// Opens a new window of an app that already runs: the app is brought forward (`open -a`, which also
+/// goes to its Space), then Cmd+N is pressed, the shortcut for "new window" (or "new document") in
+/// Finder, Safari, Chrome, Terminal, Notes and most other apps. There is no call that asks an app
+/// for a window, so an app that uses another shortcut, or none, only comes forward.
+///
+/// An app that does not run (the answer that offered the choice was out of date) is just opened.
+pub fn open_app_new_window(app: &str) {
+    let Some(pid) = running_pid(app) else {
+        trace(|| format!("new window of {app:?}: not running, plain open -a"));
+        open_app(app);
+        return;
+    };
+    open_app(app);
+    // `open` returns before the switch is done, and the key would reach the app that was in front
+    let start = Instant::now();
+    while frontmost_pid() != Some(pid) && start.elapsed() < OPEN_WAIT {
+        std::thread::sleep(Duration::from_millis(15));
+    }
+    let front = frontmost_pid() == Some(pid);
+    trace(|| format!("new window of {app:?}: pid {pid}, frontmost {front}"));
+    if front {
+        std::thread::sleep(Duration::from_millis(60)); // let its window become the key window
+        press_shortcut(Shortcut::ch('n', MOD_CMD));
+    }
 }
 
 /// The windows of every app, front to back, as [`WindowInfo`]. With `on_screen_only` just the ones

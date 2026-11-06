@@ -135,6 +135,11 @@ fn section_info(tab: Tab) -> (char, &'static str, &'static str) {
             "Menu",
             "Profiles, slices and what each one does.",
         ),
+        Tab::Flow => (
+            symbols::LIGHTNING,
+            "Flow",
+            "Chain steps together with wires, then share the flow.",
+        ),
         Tab::Behavior => (
             symbols::SLIDERS_HORIZONTAL,
             "Behavior",
@@ -293,10 +298,17 @@ impl App {
             )),
             |ui| {
                 ui.spacing_mut().item_spacing.y = 4.0;
-                for tab in [Tab::Menu, Tab::Behavior, Tab::General, Tab::About] {
+                for tab in [
+                    Tab::Menu,
+                    Tab::Flow,
+                    Tab::Behavior,
+                    Tab::General,
+                    Tab::About,
+                ] {
                     let (icon, title, _) = section_info(tab);
                     if nav_item(ui, icon, title, self.ed.tab == tab, accent, !wide).clicked() {
                         self.ed.tab = tab;
+                        self.ed.stop_recording(); // a shortcut is recorded on one page only
                         self.ed.scan = None; // a scan belongs to the General tab
                         self.ed.close_sheet();
                         if tab == Tab::General {
@@ -406,9 +418,15 @@ impl App {
         // ---------------------------------------------------------------- body
         ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
             ui.set_clip_rect(ui.clip_rect().intersect(body));
+            if self.ed.tab != Tab::Flow {
+                crate::tap::FLOW_CANVAS_HOVER.store(false, std::sync::atomic::Ordering::SeqCst);
+            }
             if self.ed.tab == Tab::Menu {
                 // Menu: two tiles, no outer scroll
                 self.menu_tab(ui, &ctx, body.width());
+            } else if self.ed.tab == Tab::Flow {
+                // Flow: a toolbar and a canvas that scrolls by itself, no outer scroll area
+                self.flow_tab(ui, &ctx);
             } else {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
@@ -426,7 +444,7 @@ impl App {
                                 Tab::Behavior => self.behavior_tab(ui),
                                 Tab::General => self.general_tab(ui),
                                 Tab::About => about_tab(ui, accent),
-                                Tab::Menu => {}
+                                Tab::Menu | Tab::Flow => {}
                             }
                         });
                     });
@@ -628,7 +646,13 @@ mod tests {
         app.edit = crate::config::Config::default();
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        for tab in [Tab::Menu, Tab::Behavior, Tab::General, Tab::About] {
+        for tab in [
+            Tab::Menu,
+            Tab::Flow,
+            Tab::Behavior,
+            Tab::General,
+            Tab::About,
+        ] {
             app.ed.tab = tab;
             draw(&mut app, &ctx, 3);
         }

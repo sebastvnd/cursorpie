@@ -42,6 +42,13 @@ pub fn open_app(app: &str) {
     shell_execute(app, None, SW_SHOWNORMAL);
 }
 
+/// Opens a new window of an app that already runs: the app is started again, which Explorer,
+/// browsers, terminals and editors answer with a new window (an app that keeps a single window
+/// shows the one it has).
+pub fn open_app_new_window(app: &str) {
+    open_app(app);
+}
+
 /// Opens a URL or a file with its default handler.
 pub fn open_url(target: &str) {
     shell_execute(target, None, SW_SHOWNORMAL);

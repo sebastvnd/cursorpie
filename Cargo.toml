@@ -1,6 +1,6 @@
 [package]
 name = "cursorpie"
-version = "0.8.3"
+version = "0.8.4"
 edition = "2024"
 rust-version = "1.88"
 description = "Hold-to-open pie menu for macOS, Windows and Linux (X11): per-app profiles, shortcuts, launchers and submenus."
@@ -9,7 +9,7 @@ license = "MIT"
 authors = ["sebastvnd@gmail.com"]
 repository = "https://github.com/sebastvnd/cursorpie"
 readme = "README.md"
-keywords = ["pie-menu", "mouse", "launcher", "shortcuts", "egui"]
+keywords = ["pie-menu", "mouse", "trackpad", "launcher", "shortcuts"]
 categories = ["gui"]
 
 # What `cargo publish` leaves out of the package: the website, the CI files and the packaging scripts.

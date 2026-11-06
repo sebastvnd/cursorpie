@@ -62,9 +62,9 @@ For step-by-step instructions, including the Linux `install.sh` script and macOS
 ## Try it
 
 1. Install and launch CursorPie.
-2. Hold the **middle mouse button** for a split second (150 ms by default).
+2. Hold the **middle mouse button**, or touch and hold your **trackpad**, for a split second (150 ms by default).
 3. Move the pointer toward a slice.
-4. Release the button to run the action.
+4. Release to run the action.
 
 No middle button? Turn on *Open the pie with a trackpad hold* in **Settings > Behavior > Trackpad** and touch and hold the trackpad instead. Hold the trigger in the center of the pie to open Settings and customize your menus. The [user guide](docs/USER_GUIDE.md) explains gestures, actions, profiles and settings in detail.
 

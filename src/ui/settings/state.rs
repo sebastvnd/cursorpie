@@ -16,6 +16,7 @@ use std::sync::atomic::Ordering;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
     Menu,
+    Flow,
     Behavior,
     General,
     About,
@@ -29,6 +30,9 @@ pub enum Slot {
     Run,
     /// An extra button of the mouse (button number 5 and up) of a side-button mode.
     Extra(i64),
+    /// The shortcut block `.0` of the flow being edited in the Flow tab (the flow is
+    /// `Rec::profile`, the path is empty).
+    Node(u32),
 }
 
 /// The action field currently recording a shortcut.
@@ -85,6 +89,8 @@ pub enum PickFor {
     Add,
     /// The app of an "Open app" action of a slice (see [`ActionTarget`]); it goes back to the editor.
     Action,
+    /// The app of an "App" block of a flow (see [`Ed::flow_target`]); it goes back to the Flow tab.
+    Flow,
 }
 
 /// The action field of a slice that the app list is answering (set by the **Pick...** button of the
@@ -150,6 +156,20 @@ pub struct Ed {
     pub scan: Option<Scan>,
     /// The window's rectangle of the last frame: sheets are centered over it and dim it
     pub card: egui::Rect,
+    /// Flow tab: the flow being edited (index into `Config::flows`)
+    pub flow: usize,
+    /// Flow tab: how far the canvas is scrolled
+    pub flow_pan: egui::Vec2,
+    /// Flow tab: how far the canvas is zoomed (1.0 = actual size)
+    pub flow_zoom: f32,
+    /// Flow tab: the middle button is held on the canvas, so moving the mouse scrolls it
+    pub flow_mid: bool,
+    /// Flow tab: the "App" block (flow index, block id) the app list is choosing an app for
+    pub flow_target: Option<(usize, u32)>,
+    /// Flow tab: the selected block
+    pub flow_sel: Option<u32>,
+    /// Flow tab: the block whose output a wire is being dragged from
+    pub flow_wire: Option<u32>,
 }
 
 impl Default for Ed {
@@ -188,6 +208,13 @@ impl Ed {
             backups: Vec::new(),
             scan: None,
             card: egui::Rect::NOTHING,
+            flow: 0,
+            flow_pan: egui::Vec2::ZERO,
+            flow_zoom: 1.0,
+            flow_mid: false,
+            flow_target: None,
+            flow_sel: None,
+            flow_wire: None,
         }
     }
 
@@ -209,6 +236,7 @@ impl Ed {
         let was = self.sheet_open();
         self.profile_sheet = None;
         self.action_target = None;
+        self.flow_target = None;
         self.adding = false;
         self.add_catalog = None;
         self.picking_icon = false;
@@ -249,6 +277,13 @@ impl Ed {
     pub fn fit_to(&mut self, edit: &Config) {
         self.stop_recording();
         self.profile = self.profile.min(edit.profiles.len().saturating_sub(1));
+        self.flow = self.flow.min(edit.flows.len().saturating_sub(1));
+        self.flow_wire = None;
+        if let Some(f) = edit.flows.get(self.flow)
+            && self.flow_sel.is_some_and(|id| f.node(id).is_none())
+        {
+            self.flow_sel = None;
+        }
         let ring_len = edit
             .profiles
             .get(self.profile)

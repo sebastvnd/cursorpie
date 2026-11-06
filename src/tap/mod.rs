@@ -118,6 +118,11 @@ pub static TAP_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// nothing of the UI, kept running behind the Settings window and released slices ran their actions.
 pub static SETTINGS_OPEN: AtomicBool = AtomicBool::new(false);
 
+/// The pointer is over the canvas of the Flow tab (set by the UI every frame). While it is, and
+/// Settings is open, a press of the trigger button is passed to the window instead of being
+/// swallowed, so a flow can be moved by holding the middle button. See `trigger::on_press`.
+pub static FLOW_CANVAS_HOVER: AtomicBool = AtomicBool::new(false);
+
 /// The statics above are process-wide, so the tests of `tap` and `tap::touch` that touch them run
 /// one at a time, all behind this one lock.
 #[cfg(test)]

@@ -61,7 +61,7 @@ impl App {
         self.anim = 0.0;
         self.visible = false;
 
-        let w = self.win;
+        let w = crate::geometry::window_size(self.win);
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize([w, w].into()));
         ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(true));
         ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
@@ -303,13 +303,16 @@ impl App {
         self.path = path;
         self.hover = None;
         self.hover_anim = [0.0; MAX_ITEMS];
+        self.badge_in = [0.0; MAX_ITEMS];
+        self.badge_pick = [[0.0; 2]; MAX_ITEMS];
+        self.badge_step = [[0.0; 2]; MAX_ITEMS];
         self.pie_open = true;
         self.fresh = true;
         self.anim = 0.0; // submenus "bloom" again, re-centered on the cursor
         self.opened_at = Instant::now();
         self.pie_pos = egui::pos2(x as f32, y as f32);
 
-        let w = self.win;
+        let w = crate::geometry::window_size(self.win);
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize([w, w].into()));
         ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
         // A mouse hold has a button down, so the apps under the pie hear no pointer motion. A

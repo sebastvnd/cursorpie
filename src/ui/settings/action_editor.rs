@@ -6,16 +6,18 @@ use crate::ui::settings::widgets::*;
 use crate::ui::symbols;
 use eframe::egui::{self, Color32};
 
-/// The kinds in the drop-down. Order = index in `action_index`. Sequence (5) is only shown while it is active.
-const KINDS: [(char, &str); 5] = [
+/// The kinds in the drop-down. Order = index in `action_index`. Sequence (6, which also stands for a
+/// bare wait) is only shown while it is active.
+const KINDS: [(char, &str); 6] = [
     (symbols::PROHIBIT, "None"),
     (symbols::KEYBOARD, "Shortcut"),
     (symbols::APP_WINDOW, "App"),
     (symbols::LINK, "URL / file"),
     (symbols::TERMINAL_WINDOW, "Command"),
+    (symbols::LIGHTNING, "Flow"),
 ];
 
-/// Position of the action's kind in [`KINDS`] (Sequence is 5).
+/// Position of the action's kind in [`KINDS`] (Sequence is 6).
 fn action_index(a: &Action) -> usize {
     match a {
         Action::Nothing => 0,
@@ -23,7 +25,8 @@ fn action_index(a: &Action) -> usize {
         Action::OpenApp(_) => 2,
         Action::OpenUrl(_) => 3,
         Action::Command(_) => 4,
-        Action::Sequence(_) => 5,
+        Action::Flow(_) => 5,
+        Action::Sequence(_) | Action::Wait(_) => 6,
     }
 }
 
@@ -34,7 +37,8 @@ fn make_action(i: usize) -> Action {
         2 => Action::OpenApp(String::new()),
         3 => Action::OpenUrl(String::new()),
         4 => Action::Command(String::new()),
-        5 => Action::Sequence(Vec::new()),
+        5 => Action::Flow(String::new()),
+        6 => Action::Sequence(Vec::new()),
         _ => Action::Nothing,
     }
 }
@@ -53,6 +57,7 @@ pub(super) fn action_editor(
     a: &mut Action,
     recording: bool,
     accent: Color32,
+    flows: &[(String, String)],
 ) -> ActionClick {
     let mut out = ActionClick::default();
     let now = action_index(a);
@@ -62,8 +67,13 @@ pub(super) fn action_editor(
         .iter()
         .map(|&(icon, name)| (Some(icon), name))
         .collect();
-    if now == 5 {
-        items.push((Some(symbols::STACK), "Sequence"));
+    if now == 6 {
+        let label = if matches!(a, Action::Wait(_)) {
+            "Wait"
+        } else {
+            "Sequence"
+        };
+        items.push((Some(symbols::STACK), label));
     }
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
@@ -72,7 +82,7 @@ pub(super) fn action_editor(
         {
             *a = make_action(i);
         }
-        fields(ui, a, recording, accent, &mut out);
+        fields(ui, a, recording, accent, flows, &mut out);
     });
     out
 }
@@ -83,6 +93,7 @@ fn fields(
     a: &mut Action,
     recording: bool,
     accent: Color32,
+    flows: &[(String, String)],
     out: &mut ActionClick,
 ) {
     match a {
@@ -125,6 +136,20 @@ fn fields(
                 ui,
                 &format!("{} steps (edit config.json to change)", v.len()),
             );
+        }
+        Action::Wait(ms) => muted(ui, &format!("Wait {ms} ms (edit config.json to change)")),
+        Action::Flow(id) => {
+            if flows.is_empty() {
+                muted(ui, "No flows yet: make one in the Flow tab.");
+            } else {
+                let names: Vec<&str> = flows.iter().map(|(_, name)| name.as_str()).collect();
+                let now = flows.iter().position(|(fid, _)| fid == id);
+                let shown = now.map_or("Choose a flow\u{2026}", |i| names[i]);
+                let width = ui.available_width().max(140.0);
+                if let Some(i) = select(ui, width, shown, &names, now.unwrap_or(usize::MAX)) {
+                    *id = flows[i].0.clone();
+                }
+            }
         }
         Action::Nothing => muted(ui, "The click passes through."),
     }

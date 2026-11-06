@@ -29,6 +29,7 @@
 //! | `press_shortcut`, `post_mouse`, `activate_app` | input injection (used by [`actions`](crate::actions)) |
 //! | `click_at` | a left or right click at a given point, the pointer left where it was (the virtual trackpad's clicks) |
 //! | `open_app`, `reveal_app`, `open_url`, `run_shell`, `open_path`, `reveal_in_file_manager` | launching things; `reveal_app` is `open_app` that also goes to, or fetches, the app's desktop (see [`desktops`]) |
+//! | `running_among`, `open_app_new_window` | for the choice an "Open app" slice offers when its app already runs (see [`running`](crate::running)): which of some apps run (one look at the system for all of them, called off the tap thread), and a new window of an app (macOS: `open -a`, then Cmd+N; Windows and Linux: start it again) |
 //! | `choose_file`, `tick` | file chooser and hover sound |
 //! | `haptic` | one haptic tick on a trackpad (macOS only, no-op elsewhere), see [`HapticKind`] |
 //! | `launch_at_login_enabled`, `set_launch_at_login` | start with the user session |

@@ -13,7 +13,8 @@
 //! | `defaults` | built-in slices and `Config::default()` |
 //! | `sanitize` | [`Config::sanitize`]: clamps everything into the supported limits |
 //! | `store` | `config.json` on disk, import/export and the live global copy ([`cfg()`]) |
-//! | [`share`] | exporting and importing one profile as a file, icons included |
+//! | [`flow`] | flows: chains of steps drawn as blocks and wires, and their own share file |
+//! | [`share`] | exporting and importing one profile as a file, icons and flows included |
 //! | [`backup`] | rolling backups of `config.json`, written by every Save in Settings |
 //! | `first_run` | whether the welcome window is due (a marker file next to `config.json`) |
 //!
@@ -23,6 +24,7 @@
 pub mod backup;
 mod defaults;
 mod first_run;
+pub mod flow;
 mod model;
 mod sanitize;
 pub mod share;
@@ -31,6 +33,7 @@ mod tree;
 
 pub use defaults::{blank_items, presets, quick_actions};
 pub use first_run::{FirstRun, mark_welcomed, welcome_due};
+pub use flow::{Flow, FlowNode, NodeKind};
 pub use model::*;
 pub use share::image_path;
 pub use store::*;
@@ -44,6 +47,13 @@ pub const MAX_ITEMS: usize = 8;
 pub const MAX_DEPTH: usize = 5;
 /// Max number of profiles.
 pub const MAX_PROFILES: usize = 16;
+/// Max number of flows (see [`flow`]).
+pub const MAX_FLOWS: usize = 32;
+/// Max blocks in one flow, *Start* included.
+pub const MAX_FLOW_NODES: usize = 64;
+/// Longest a *Wait* step lasts, in milliseconds. The actions worker does one thing at a time, so
+/// a long wait would hold up every other action.
+pub const MAX_WAIT_MS: u32 = 10_000;
 
 #[cfg(test)]
 mod tests {
@@ -87,6 +97,18 @@ mod tests {
         assert!(json.contains(r#""show_labels":false"#));
         let on = parse_config(r#"{"version": 2, "show_labels": true}"#).expect("parses");
         assert!(on.show_labels);
+    }
+
+    #[test]
+    fn the_open_app_choice_is_on_by_default_and_can_be_switched_off() {
+        assert!(Config::default().open_app_choice);
+        // a file from before the setting existed gets the new behavior
+        let old = parse_config(r#"{"version": 2}"#).expect("parses");
+        assert!(old.open_app_choice);
+        let off = parse_config(r#"{"version": 2, "open_app_choice": false}"#).expect("parses");
+        assert!(!off.open_app_choice);
+        let json = serde_json::to_string(&off).expect("serializes");
+        assert!(json.contains(r#""open_app_choice":false"#));
     }
 
     #[test]

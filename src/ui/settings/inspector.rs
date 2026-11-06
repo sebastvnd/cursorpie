@@ -34,6 +34,8 @@ pub(super) struct Env<'a> {
     pub width: f32,
     /// the window's rectangle, which sheets dim and center over
     pub bounds: Rect,
+    /// the flows a slice can run, as `(id, name)`
+    pub flows: &'a [(String, String)],
 }
 
 /// Width of the content of a card that is `outer` wide: its padding and hairline come off.
@@ -255,7 +257,7 @@ pub(super) fn item_inspector(
         ui.add_space(4.0);
         match &mut item.kind {
             ItemKind::Run(a) => {
-                let r = action_editor(ui, &format!("{uid}_r"), a, rr, env.accent);
+                let r = action_editor(ui, &format!("{uid}_r"), a, rr, env.accent, env.flows);
                 if r.shortcut {
                     start = Some(Slot::Run);
                 }
@@ -290,7 +292,7 @@ pub(super) fn item_inspector(
                 extra,
             } => {
                 section_label(ui, "Back button");
-                let r = action_editor(ui, &format!("{uid}_b"), back, rb, env.accent);
+                let r = action_editor(ui, &format!("{uid}_b"), back, rb, env.accent, env.flows);
                 if r.shortcut {
                     start = Some(Slot::Back);
                 }
@@ -298,7 +300,7 @@ pub(super) fn item_inspector(
                     pick_app = Some(Slot::Back);
                 }
                 section_label(ui, "Forward button");
-                let r = action_editor(ui, &format!("{uid}_f"), forward, rf, env.accent);
+                let r = action_editor(ui, &format!("{uid}_f"), forward, rf, env.accent, env.flows);
                 if r.shortcut {
                     start = Some(Slot::Forward);
                 }
@@ -315,6 +317,7 @@ pub(super) fn item_inspector(
                         &mut act,
                         extra_rec[k],
                         env.accent,
+                        env.flows,
                     );
                     if act == Action::Nothing {
                         extra.remove(&b);

@@ -8,6 +8,7 @@ use crate::config::{
 use crate::geometry::Point;
 use crate::geometry::{pie_inner, pie_outer, slice_at};
 use crate::platform;
+use crate::running::{self, Choice};
 use crate::side;
 
 /// Result of testing the cursor against the pie.
@@ -15,6 +16,9 @@ pub(super) struct Hit {
     pub hover: Option<usize>,
     /// cursor crossed the rim over a submenu slice
     pub enter: bool,
+    /// The cursor is over an "Open app" slice whose app already runs: which of its two badges it is
+    /// on (see [`running`]). `None` over every other slice, and whenever the setting is off.
+    pub choice: Option<Choice>,
 }
 
 /// Which slice is under `p`, and whether `p` crossed the outer rim over a submenu slice.
@@ -29,6 +33,7 @@ pub(super) fn eval(profile: usize, path: &[usize], center: Point, p: Point) -> H
         return Hit {
             hover: None,
             enter: false,
+            choice: None,
         };
     };
     let hover = slice_at(center, p, items.len(), pie_inner(win));
@@ -40,11 +45,33 @@ pub(super) fn eval(profile: usize, path: &[usize], center: Point, p: Point) -> H
         }) => !ch.is_empty() && dist > pie_outer(win) && path.len() + 1 < MAX_DEPTH,
         _ => false,
     };
-    Hit { hover, enter }
+    // the cache is asked with the config locked: lock order is config, then running
+    let choice = hover
+        .and_then(|h| items.get(h))
+        .and_then(|i| match &i.kind {
+            ItemKind::Run(a) => a.open_target(),
+            _ => None,
+        })
+        .and_then(|app| {
+            running::choose(
+                c.open_app_choice,
+                Some(app),
+                center,
+                p,
+                hover.unwrap_or(0),
+                items.len(),
+            )
+        });
+    Hit {
+        hover,
+        enter,
+        choice,
+    }
 }
 
-/// Applies the slice the user released over.
-pub(super) fn select(profile: usize, path: &[usize], index: usize) {
+/// Applies the slice the user released over. `choice` is what the pointer was on when the slice had
+/// two badges (see [`Hit::choice`]).
+pub(super) fn select(profile: usize, path: &[usize], index: usize, choice: Option<Choice>) {
     let kind = {
         let c = cfg();
         c.profiles
@@ -68,7 +95,7 @@ pub(super) fn select(profile: usize, path: &[usize], index: usize) {
     );
     match kind {
         Some(ItemKind::Mode { .. }) => pick_mode(profile, path, index),
-        Some(ItemKind::Run(action)) => run_action(action, side::target()),
+        Some(ItemKind::Run(action)) => run_action(action, side::target(), choice),
         _ => {}
     }
 }
@@ -100,12 +127,12 @@ pub(super) fn is_mode(profile: usize, path: &[usize], index: usize) -> bool {
 
 /// Runs an action. If the settings say so, the target app is brought to the front first, because
 /// shortcuts always go to the app in front.
-pub(super) fn run_action(action: Action, target: Option<String>) {
+pub(super) fn run_action(action: Action, target: Option<String>, choice: Option<Choice>) {
     let focus = {
         let c = cfg();
         c.target_app == TargetApp::UnderCursor && c.focus_target
     };
-    actions::run_in(if focus { target } else { None }, action);
+    actions::run_in_with(if focus { target } else { None }, action, choice);
 }
 
 /// The app a gesture at `p` is about: the app in front, or the app whose window is under `p`

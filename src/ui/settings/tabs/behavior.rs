@@ -36,6 +36,19 @@ fn desktops_title() -> &'static str {
     }
 }
 
+/// How a new window of an app that already runs is opened, for the note under the switch of the
+/// "Open app" choice.
+fn new_window_hint() -> &'static str {
+    match crate::platform::OS {
+        crate::platform::Os::Mac => {
+            "A new window brings the app forward and presses Cmd+N, so it works in apps that use that shortcut."
+        }
+        crate::platform::Os::Windows | crate::platform::Os::Linux => {
+            "A new window starts the app again, which most apps answer with a new window."
+        }
+    }
+}
+
 /// The text of one [`DesktopMode`] choice.
 fn desktop_mode_label(mode: DesktopMode) -> String {
     let noun = desktop_noun();
@@ -64,7 +77,7 @@ impl App {
             row(
                 ui,
                 "Trigger button",
-                "The mouse button you hold to open the pie.",
+                "The mouse button you hold to open the pie. A trackpad has its own hold in the Trackpad section.",
                 |ui| {
                     let buttons = crate::platform::OS.trigger_buttons();
                     let labels: Vec<&str> = buttons.iter().map(|&b| name(b)).collect();
@@ -312,6 +325,27 @@ impl App {
                     accent,
                 );
             });
+        });
+        panel(ui, "Open app slices", |ui| {
+            demo::open_choice_demo(ui, accent, cfg.open_app_choice);
+            toggle_row(
+                ui,
+                &mut cfg.open_app_choice,
+                "Choose between a new window and the open app",
+                "When the app already runs, hovering its slice shows two round badges beside it: a green + (new window) and a yellow one with a square (the app that is open).",
+                accent,
+            );
+            note(
+                ui,
+                if cfg.open_app_choice {
+                    "Release on the half of the slice nearer a badge to pick it: the green + is on the side where the slice starts, the yellow one on the side where it ends. An app that is not running is simply opened."
+                } else {
+                    "Off: an Open app slice always opens the app, or goes to it when it runs, as before."
+                },
+            );
+            if cfg.open_app_choice {
+                note(ui, new_window_hint());
+            }
         });
         panel(ui, desktops_title(), |ui| {
             let mode = cfg.desktop_mode.effective(crate::platform::OS);
@@ -795,5 +829,15 @@ mod tests {
             assert!(!labels[..i].contains(a), "{a} is listed twice");
         }
         assert!(desktop_mode_label(DesktopMode::BringToCurrent).contains("experimental"));
+    }
+
+    #[test]
+    fn the_new_window_hint_names_what_this_os_does() {
+        let hint = new_window_hint();
+        assert!(!hint.is_empty());
+        assert_eq!(
+            hint.contains("Cmd+N"),
+            crate::platform::OS == crate::platform::Os::Mac
+        );
     }
 }

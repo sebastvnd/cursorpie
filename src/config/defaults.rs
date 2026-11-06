@@ -335,6 +335,7 @@ impl Config {
             target_app: TargetApp::UnderCursor,
             focus_target: true,
             desktop_mode: DesktopMode::SwitchToApp,
+            open_app_choice: true,
             side_default: SideTarget::App,
             side_adopt: true,
             side_forget: false,
@@ -358,6 +359,7 @@ impl Config {
             touch_typing_guard_ms: 400,
             haptics: true,
             haptic_hover: true,
+            flows: Vec::new(),
         }
     }
 }

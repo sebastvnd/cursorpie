@@ -2,6 +2,7 @@
 
 pub(super) mod about;
 mod behavior;
+mod flow;
 mod general;
 mod menu;
 mod mouse;

@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+## 0.8.4
+
+- **Flow tab: a node editor for chains of steps.** A new **Flow** section in Settings draws a sequence of actions as
+  blocks joined by wires, like the graphs of Unity or Blender. Add **Shortcut**, **App**, **URL / file**,
+  **Command** and **Wait** blocks, drag from the dot on the right of a block to the dot on the left of the next one,
+  and the flow runs the blocks in that order, from **Start** to **End** (a new flow is Start wired to End; new
+  blocks go in before End, and a flow from before End existed gets one after its last block). Drag a header to move
+  a block, click a wired input dot to unplug it; blocks that are not wired in are marked and never run. The canvas
+  has a dot grid and moves like a node editor: drag the empty canvas, hold the middle button (the trigger button is
+  let through over this canvas while Settings is open), or use two fingers or the wheel; **Alt/Option + scroll**,
+  a pinch or Ctrl/Cmd + scroll zoom from 30% to 125% (further in the text would turn blurry). The **App** block has
+  a **Pick...** button that opens the list of installed apps, like the one in a slice. A slice runs a flow with the
+  new **Flow** action (Menu > a slice > Action > Flow). Flows live in `config.json` (`flows`, with `Action::Flow` and
+  `Action::Wait`), so they are saved, backed up and undone like everything else. Files from before flows load as
+  they were; a config that uses flows cannot be read by older versions.
+- **Sharing flows.** **Export** writes `<name>.cursorpie-flow.json` to Downloads, **Import** adds a file as a new
+  flow (new id, unique name; the file is checked and limited like a config). A profile file now also carries the
+  flows its slices use, so a shared profile keeps working; CursorPie warns when an imported flow or profile holds a
+  shell command.
+
 ## 0.8.3
 
 - **A recorded shortcut keeps the order you pressed it in.** Pressing Cmd, Shift, Opt and then W was saved and shown

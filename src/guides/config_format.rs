@@ -22,7 +22,8 @@
 //! `Mode.extra` maps the number of an extra mouse button (5 to 15; 3 and 4 are `back` and `forward`) to an
 //! `Action`; it is left out of the file when empty, and buttons without an entry pass through to the app.
 //!
-//! `Action` is `Nothing | Key(Shortcut) | OpenApp | OpenUrl | Command | Sequence(Vec<Action>)`.
+//! `Action` is `Nothing | Key(Shortcut) | OpenApp | OpenUrl | Command | Sequence(Vec<Action>) | Wait(u32) | Flow(String)`.
+//! `Flow` names a flow of the top-level `flows` list by its `id` (see [`config::flow`](crate::config::flow)).
 //! `Shortcut` is `{ key, mods }`, where `key` is a macOS *virtual key code* (a physical key
 //! position) and `mods` a bitmask: Shift = 1, Ctrl = 2, Opt = 4 (Alt), Cmd = 8 (the Windows key
 //! on Windows) (see [`keys`](crate::keys)). The codes are the same on every OS: Windows translates
@@ -62,6 +63,7 @@
 //! | `preview_ms` | at most 3000 |
 //! | `sleep_after_s` | 0 (never sleep) or 10 to 3600 |
 //! | `trigger_button` | 2, 5, 6 or 7 (otherwise 2) |
+//! | `flows` | at most [`MAX_FLOWS`](crate::config::MAX_FLOWS); unique non-empty ids; per flow see [`Flow::clean`](crate::config::Flow::clean): at most [`MAX_FLOW_NODES`](crate::config::MAX_FLOW_NODES) blocks, one `Start` and one `End`, waits of at most [`MAX_WAIT_MS`](crate::config::MAX_WAIT_MS), no loops |
 //!
 //! If you add a setting with a range, clamp it there and add a test.
 //!
@@ -75,7 +77,9 @@
 //! the image bytes, names are reduced to safe characters, sizes are capped, nothing is written
 //! outside the folder) and adds the result with [`add_profile`](crate::config::share::add_profile),
 //! which requires an app, a free slot and a unique name. Bump `cursorpie_profile` only for changes an old
-//! reader would misread.
+//! reader would misread. The file also carries `"flows": [..]`, the flows the profile's slices use
+//! (left out when there are none); [`merge_flows`](crate::config::flow::merge_flows) adds them to the receiver's
+//! config and points the slices at them. A single flow is shared as `{ "cursorpie_flow": 1, "flow": { .. } }`.
 //!
 //! ## Loading, saving and the broken-file path
 //!

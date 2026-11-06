@@ -17,6 +17,7 @@
 //!
 //! Everything here works on text, bytes and directories passed in, so it is unit tested.
 
+use super::flow::{Flow, flow_ids_used};
 use super::{Config, Item, ItemKind, MAX_PROFILES, Profile};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -48,6 +49,10 @@ pub struct Bundle {
     pub profile: Profile,
     #[serde(default)]
     icons: BTreeMap<String, SharedIcon>,
+    /// The flows the slices of the profile use (see [`flow`](super::flow)), so a shared profile
+    /// keeps working. Files from before flows existed have none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    flows: Vec<Flow>,
 }
 
 /// `Some(path)` if an icon string points to an image file (`~/` allowed), `None` for text, emoji
@@ -148,6 +153,17 @@ fn each_icon(items: &[Item], f: &mut dyn FnMut(&str)) {
 /// The profile file for `profile`, with its image icons embedded. Icons that are missing, too
 /// large or not PNG / JPEG / WebP are left out (the receiver sees a "?" for them).
 pub fn export_profile(profile: &Profile) -> Result<String, String> {
+    export_profile_with(profile, &[])
+}
+
+/// [`export_profile`] that also embeds the flows of `flows` that the slices of the profile use.
+pub fn export_profile_with(profile: &Profile, flows: &[Flow]) -> Result<String, String> {
+    let used = flow_ids_used(&profile.items);
+    let flows: Vec<Flow> = flows
+        .iter()
+        .filter(|f| used.contains(&f.id))
+        .cloned()
+        .collect();
     let mut icons = BTreeMap::new();
     each_icon(&profile.items, &mut |icon| {
         if icons.len() >= MAX_ICONS || icons.contains_key(icon) {
@@ -173,13 +189,19 @@ pub fn export_profile(profile: &Profile) -> Result<String, String> {
         cursorpie_profile: FORMAT,
         profile: profile.clone(),
         icons,
+        flows,
     };
     serde_json::to_string_pretty(&bundle).map_err(|e| e.to_string())
 }
 
 /// Writes the profile file to `<downloads>/<name>.cursorpie-profile.json` and returns its path.
 pub fn export_to_downloads(profile: &Profile) -> Result<PathBuf, String> {
-    let text = export_profile(profile)?;
+    export_to_downloads_with(profile, &[])
+}
+
+/// [`export_to_downloads`] that also embeds the flows the profile uses.
+pub fn export_to_downloads_with(profile: &Profile, flows: &[Flow]) -> Result<PathBuf, String> {
+    let text = export_profile_with(profile, flows)?;
     let mut p = super::downloads_dir();
     fs::create_dir_all(&p).map_err(|e| e.to_string())?;
     p.push(export_file_name(&profile.name));
@@ -196,7 +218,7 @@ pub fn export_file_name(profile_name: &str) -> String {
 }
 
 /// `name` reduced to ASCII letters, digits, `-` and `_` (at most 40), or `fallback` if nothing is left.
-fn safe_stem(name: &str, fallback: &str) -> String {
+pub(super) fn safe_stem(name: &str, fallback: &str) -> String {
     let s: String = name
         .chars()
         .map(|c| {
@@ -299,12 +321,24 @@ pub fn import_file(
     icons_dir: &Path,
     as_icon: &dyn Fn(&Path) -> String,
 ) -> Result<Profile, String> {
+    import_file_with_flows(path, icons_dir, as_icon).map(|(profile, _)| profile)
+}
+
+/// [`import_file`] that also returns the flows the file carries (not yet added to any config, see
+/// [`merge_flows`](super::flow::merge_flows)).
+pub fn import_file_with_flows(
+    path: &str,
+    icons_dir: &Path,
+    as_icon: &dyn Fn(&Path) -> String,
+) -> Result<(Profile, Vec<Flow>), String> {
     let meta = fs::metadata(path).map_err(|_| "Could not read that file.".to_string())?;
     if meta.len() > MAX_FILE_BYTES {
         return Err("That file is too large to be a profile.".into());
     }
     let text = fs::read_to_string(path).map_err(|_| "Could not read that file.".to_string())?;
-    Ok(install_icons(parse_bundle(&text)?, icons_dir, as_icon))
+    let mut bundle = parse_bundle(&text)?;
+    let flows = std::mem::take(&mut bundle.flows);
+    Ok((install_icons(bundle, icons_dir, as_icon), flows))
 }
 
 /// Adds an imported profile to `cfg` as a new profile and returns its index. The profile needs at

@@ -1,10 +1,11 @@
 //! Applies one [`Msg`] (sent by the event tap, the tray menu or a file-picker thread) to the UI state.
 
 use super::App;
-use crate::config::share::{add_profile, import_file};
+use crate::config::flow::{add_flow, import_flow_file, merge_flows};
+use crate::config::share::{add_profile, import_file_with_flows};
 use crate::config::{
-    Action, ItemKind, MAX_CONFIG_FILE_BYTES, cfg, has_commands, icons_dir, item_at_mut,
-    parse_config, profile_has_commands, read_text_capped, tilde,
+    Action, Flow, ItemKind, MAX_CONFIG_FILE_BYTES, NodeKind, cfg, has_commands, icons_dir,
+    item_at_mut, parse_config, profile_has_commands, read_text_capped, tilde,
 };
 use crate::msg::Msg;
 use crate::platform;
@@ -62,6 +63,7 @@ impl App {
                 self.ed.installed_scan = crate::ui::settings::AppScan::Done;
             }
             Msg::ProfileImportPicked(file) => self.import_profile(&file),
+            Msg::FlowImportPicked(file) => self.import_flow(&file),
             Msg::Notice(text) => self.say(text),
             Msg::MouseChanged { new, name, extra } => {
                 let which = if new { "New mouse" } else { "Mouse back again" };
@@ -92,7 +94,20 @@ impl App {
                 ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(true));
             }
             Msg::KeyCaptured(sc) => {
-                if let Some(rec) = self.ed.recording.take()
+                // a shortcut block of the Flow tab, or a field of a slice of the Menu tab
+                let flow_block = self.ed.recording.as_ref().and_then(|r| match r.slot {
+                    Slot::Node(id) => Some((r.profile, id)),
+                    _ => None,
+                });
+                if let Some((flow, id)) = flow_block {
+                    self.ed.recording = None;
+                    if let Some(f) = self.edit.flows.get_mut(flow)
+                        && let Some(n) = f.node_mut(id)
+                        && let NodeKind::Key(k) = &mut n.kind
+                    {
+                        *k = sc;
+                    }
+                } else if let Some(rec) = self.ed.recording.take()
                     && let Some(p) = self.edit.profiles.get_mut(rec.profile)
                     && let Some(item) = item_at_mut(&mut p.items, &rec.path)
                 {
@@ -162,6 +177,17 @@ impl App {
                 }
             },
             Msg::Tray(id) => self.handle_tray(ctx, &id),
+            Msg::FlowAppPicked { flow, node, app } => {
+                if let Some(n) = self
+                    .edit
+                    .flows
+                    .get_mut(flow)
+                    .and_then(|f| f.nodes.iter_mut().find(|n| n.id == node))
+                    && matches!(n.kind, NodeKind::OpenApp(_))
+                {
+                    n.kind = NodeKind::OpenApp(app);
+                }
+            }
             Msg::ActionAppPicked {
                 profile,
                 path,
@@ -209,10 +235,19 @@ impl App {
         if !self.settings_open {
             return; // the chooser answered after Settings was closed
         }
-        let added = import_file(file, &icons_dir(), &tilde).and_then(|p| {
-            let runs_commands = profile_has_commands(&p);
-            add_profile(&mut self.edit, p).map(|i| (i, runs_commands))
-        });
+        // the flows the profile uses come with it; if the profile cannot be added after all, the
+        // flows are taken out again
+        let flows_before = self.edit.flows.clone();
+        let added =
+            import_file_with_flows(file, &icons_dir(), &tilde).and_then(|(mut p, flows)| {
+                let runs_commands =
+                    profile_has_commands(&p) || flows.iter().any(Flow::has_commands);
+                merge_flows(&mut self.edit.flows, flows, &mut p.items)?;
+                add_profile(&mut self.edit, p).map(|i| (i, runs_commands))
+            });
+        if added.is_err() {
+            self.edit.flows = flows_before;
+        }
         match added {
             Ok((index, runs_commands)) => {
                 self.ed.profile = index;
@@ -223,6 +258,32 @@ impl App {
                     "Profile imported. It runs shell commands - review them before you Save."
                 } else {
                     "Profile imported. Review it, then press Save to apply."
+                });
+            }
+            Err(e) => self.say(e),
+        }
+    }
+
+    /// Adds the flow in `file` to the Settings copy as a new flow.
+    fn import_flow(&mut self, file: &str) {
+        if !self.settings_open {
+            return; // the chooser answered after Settings was closed
+        }
+        let added = import_flow_file(file).and_then(|f| {
+            let runs_commands = f.has_commands();
+            add_flow(&mut self.edit.flows, f).map(|i| (i, runs_commands))
+        });
+        match added {
+            Ok((index, runs_commands)) => {
+                self.ed.flow = index;
+                self.ed.flow_sel = None;
+                self.ed.flow_wire = None;
+                self.ed.flow_pan = egui::Vec2::ZERO;
+                self.ed.stop_recording();
+                self.say(if runs_commands {
+                    "Flow imported. It runs shell commands - review them before you Save."
+                } else {
+                    "Flow imported. Review it, then press Save to apply."
                 });
             }
             Err(e) => self.say(e),

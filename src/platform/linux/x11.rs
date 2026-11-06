@@ -554,6 +554,30 @@ impl Conn {
         true
     }
 
+    /// For each of `apps` (`None` = not an app that can be looked for), whether it has a window.
+    /// The names of every window are read once, however many apps are asked about; the matching is
+    /// the one of [`Conn::raise`], so an app that is said to run is one that `raise` would find.
+    pub fn running_among(&self, apps: &[Option<String>]) -> Vec<bool> {
+        if apps.iter().all(Option::is_none) {
+            return vec![false; apps.len()];
+        }
+        let index = index().unwrap_or_default();
+        let windows: Vec<Vec<String>> = self
+            .stacking()
+            .into_iter()
+            .map(|w| self.window_names(w))
+            .collect();
+        apps.iter()
+            .map(|app| {
+                let Some(app) = app else { return false };
+                let aliases = index.aliases(app);
+                windows
+                    .iter()
+                    .any(|names| toplevels::belongs_to(names, &aliases))
+            })
+            .collect()
+    }
+
     /// Sends a client message to the window manager (through the root window), the way a pager does.
     fn send_to_wm(&self, window: Window, message_type: Atom, data: [c_long; 5]) {
         let mut ev = XEvent::zeroed();

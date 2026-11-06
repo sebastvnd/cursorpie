@@ -7,6 +7,7 @@
 use crate::config::Action;
 use crate::geometry::Point;
 use crate::platform;
+use crate::running::{self, Choice};
 use crate::tap::Kind;
 use std::sync::{OnceLock, mpsc};
 use std::time::{Duration, Instant};
@@ -19,6 +20,9 @@ struct Job {
     /// Bundle id of an app to bring to the front first (only done when the action sends keys).
     focus: Option<String>,
     action: Action,
+    /// What was picked on an "Open app" slice whose app already runs: a new window, or the app
+    /// that is open. `None` for every other job, which does what it always did.
+    choice: Option<Choice>,
     /// When the job was queued, so the diagnostic log can say how long it waited for the worker.
     queued: Instant,
 }
@@ -47,7 +51,7 @@ pub fn init() {
                 {
                     platform::activate_app(app);
                 }
-                execute(&job.action);
+                execute(&job.action, job.choice);
             }
         })
         .expect("failed to spawn action worker");
@@ -57,6 +61,12 @@ pub fn init() {
 /// is given and the action sends keys, that app is brought to the front first, because keys always
 /// go to the app in front.
 pub fn run_in(focus: Option<String>, action: Action) {
+    run_in_with(focus, action, None);
+}
+
+/// Like [`run_in`], for a slice that offered the choice between a new window and the app that is
+/// open (see [`running`]): `choice` says which one was picked. `None` is the plain behavior.
+pub fn run_in_with(focus: Option<String>, action: Action, choice: Option<Choice>) {
     if matches!(action, Action::Nothing) {
         return;
     }
@@ -64,6 +74,7 @@ pub fn run_in(focus: Option<String>, action: Action) {
         let _ = tx.send(Job {
             focus,
             action,
+            choice,
             queued: Instant::now(),
         });
     }
@@ -79,6 +90,8 @@ fn kind_name(action: &Action) -> &'static str {
         Action::OpenUrl(_) => "open_url",
         Action::Command(_) => "command",
         Action::Sequence(_) => "sequence",
+        Action::Wait(_) => "wait",
+        Action::Flow(_) => "flow",
     }
 }
 
@@ -87,23 +100,43 @@ fn sends_keys(action: &Action) -> bool {
     match action {
         Action::Key(_) => true,
         Action::Sequence(steps) => steps.iter().any(sends_keys),
+        Action::Flow(id) => flow_steps(id).iter().any(sends_keys),
         _ => false,
     }
 }
 
-/// Runs one action on the worker thread. A sequence waits 40 ms between steps.
-fn execute(action: &Action) {
+/// The steps of the flow with this id, copied out so the config lock is not held while they run.
+/// Empty when there is no such flow.
+fn flow_steps(id: &str) -> Vec<Action> {
+    let c = crate::config::cfg();
+    let steps: Vec<Action> = c
+        .flows
+        .iter()
+        .find(|f| f.id == id)
+        .map(|f| f.steps())
+        .unwrap_or_default();
+    drop(c);
+    steps
+}
+
+/// Runs one action on the worker thread. A sequence (and a flow) waits 40 ms between steps; a
+/// `Wait` adds its own pause on top of that.
+///
+/// `choice` applies to the first "Open app" step that runs, whether it is the action itself or a step
+/// of a sequence: [`Choice::NewWindow`] opens a new window of the app, anything else does what an
+/// "Open app" always did. The other steps are not affected.
+fn execute(action: &Action, choice: Option<Choice>) {
+    let mut choice = choice;
+    execute_step(action, &mut choice);
+}
+
+/// [`execute`], with the choice that is still waiting for an "Open app" step to be used on.
+fn execute_step(action: &Action, choice: &mut Option<Choice>) {
     match action {
         Action::Nothing => {}
         Action::Key(sc) => platform::press_shortcut(*sc),
         Action::OpenApp(app) if !app.trim().is_empty() => {
-            // read first: the config lock must not be held while the app is looked for
-            let mode = crate::config::cfg().desktop_mode.effective(platform::OS);
-            if mode.follows_app() {
-                platform::reveal_app(app.trim(), mode);
-            } else {
-                platform::open_app(app.trim());
-            }
+            open_app(app.trim(), choice.take());
         }
         Action::OpenUrl(target) if !target.trim().is_empty() => {
             platform::open_url(target.trim());
@@ -113,12 +146,39 @@ fn execute(action: &Action) {
         }
         Action::Sequence(steps) => {
             for s in steps {
-                execute(s);
+                execute_step(s, choice);
+                std::thread::sleep(Duration::from_millis(40));
+            }
+        }
+        Action::Wait(ms) => {
+            let ms = (*ms).min(crate::config::MAX_WAIT_MS);
+            std::thread::sleep(Duration::from_millis(u64::from(ms)));
+        }
+        Action::Flow(id) => {
+            for s in flow_steps(id) {
+                execute_step(&s, choice);
                 std::thread::sleep(Duration::from_millis(40));
             }
         }
         _ => {}
     }
+}
+
+/// Opens `app` the way `choice` says (see [`execute`]).
+fn open_app(app: &str, choice: Option<Choice>) {
+    if choice == Some(Choice::NewWindow) {
+        platform::open_app_new_window(app);
+    } else {
+        // read first: the config lock must not be held while the app is looked for
+        let mode = crate::config::cfg().desktop_mode.effective(platform::OS);
+        if mode.follows_app() {
+            platform::reveal_app(app, mode);
+        } else {
+            platform::open_app(app);
+        }
+    }
+    // from now on it runs, even if the next press is sooner than the system notices
+    running::note_launched(app);
 }
 
 /// Re-posts a swallowed mouse press/release (used when a quick click must reach the app after all).
@@ -163,6 +223,23 @@ mod tests {
             kind_name(&Action::Sequence(vec![Action::Nothing])),
             "sequence"
         );
+        assert_eq!(kind_name(&Action::Wait(10)), "wait");
+        assert_eq!(kind_name(&Action::Flow("secret-name".into())), "flow");
+    }
+
+    #[test]
+    fn the_app_of_a_slice_is_the_first_open_app_step() {
+        // the app of the slice is the first "Open app" of the action
+        let seq = Action::Sequence(vec![
+            Action::Key(Shortcut::new(6, 0)),
+            Action::OpenApp(" Safari ".into()),
+            Action::OpenApp("Notes".into()),
+        ]);
+        assert_eq!(seq.open_target(), Some("Safari"));
+        assert_eq!(Action::OpenApp("Mail".into()).open_target(), Some("Mail"));
+        assert_eq!(Action::OpenApp("  ".into()).open_target(), None);
+        assert_eq!(Action::Command("true".into()).open_target(), None);
+        assert_eq!(Action::Nothing.open_target(), None);
     }
 
     #[test]

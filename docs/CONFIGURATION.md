@@ -55,8 +55,17 @@ An `icon` that ends in `.png`, `.jpg`, `.jpeg` or `.webp` is an image file (a pa
 
 ## Structure
 `profiles[] > items[] > kind`, where `kind` is `Mode`, `Run` or `Submenu`. Actions are `Nothing`, `Key`,
-`OpenApp`, `OpenUrl`, `Command` or `Sequence`. Enums use serde's default external tagging, for example
-`{"Run": {"OpenApp": "Notes"}}`.
+`OpenApp`, `OpenUrl`, `Command`, `Sequence`, `Wait` (milliseconds) or `Flow` (the `id` of a flow). Enums use serde's
+default external tagging, for example `{"Run": {"OpenApp": "Notes"}}`.
+
+### Flows
+
+`flows[]` is the list the **Flow** tab edits. Each flow is `{ "id", "name", "nodes": [...] }`; a node is
+`{ "id", "x", "y", "kind", "next" }` where `kind` is `Start`, `End`, `{"Key": ..}`, `{"OpenApp": ".."}`,
+`{"OpenUrl": ".."}`, `{"Command": ".."}` or `{"Wait": 500}` and `next` is the `id` of the node its wire leads to (or
+`null`). The flow runs from the one `Start` node along the `next` wires to the one `End` node (which has no `next`; a flow
+without one gets it when the file is loaded). At most 32 flows of 64 nodes; a wait is at
+most 10000 ms. Anything outside the limits is repaired when the file is loaded.
 
 ```json
 {
@@ -74,6 +83,7 @@ An `icon` that ends in `.png`, `.jpg`, `.jpeg` or `.webp` is an image file (a pa
   "target_app": "UnderCursor",
   "focus_target": true,
   "desktop_mode": "SwitchToApp",
+  "open_app_choice": true,
   "side_default": "App",
   "side_adopt": true,
   "side_forget": false,
@@ -153,6 +163,7 @@ An `icon` that ends in `.png`, `.jpg`, `.jpeg` or `.webp` is an image file (a pa
 | `target_app` | `"UnderCursor"` (app whose window is under the pointer) or `"Focused"` (app in front) |
 | `focus_target` | With `UnderCursor`: bring that app to the front before sending it a shortcut |
 | `desktop_mode` | `"SwitchToApp"` (default), `"BringToCurrent"` or `"DoNothing"`: what an Open app slice does when the app's window is on another desktop or Space. `BringToCurrent` is macOS only (experimental) and acts as `SwitchToApp` elsewhere. See [OTHER_DESKTOPS.md](OTHER_DESKTOPS.md) |
+| `open_app_choice` | `true` (default) or `false`. When an Open app slice's app is already running, hovering the slice shows two round badges side by side just outside the ring, in front of the slice: a green one with a + (a new window, on the side where the slice starts) and a yellow one with a small square (the app that is open, on the side where it ends). Releasing on the half of the slice nearer a badge picks it. `false`: the slice always does what it did before. The running apps are looked up once per press, off the input thread, and only when a pie has an Open app slice. A new window is `open -a` then Cmd+N on macOS, and starting the app again on Windows and Linux |
 | `side_default` | `"App"` or `"General"`: the pie the side buttons follow in an app that has its own pie, until you choose |
 | `side_adopt` | Picking a side-button mode in a pie makes the side buttons follow that pie |
 | `side_forget` | Forget that choice when another app becomes the target |

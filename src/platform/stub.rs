@@ -77,6 +77,12 @@ pub fn open_app(_app: &str) {}
 /// Ignored.
 pub fn reveal_app(_app: &str, _mode: DesktopMode) {}
 /// Ignored.
+pub fn open_app_new_window(_app: &str) {}
+/// Nothing runs: no app lookup.
+pub fn running_among(apps: &[String]) -> Vec<bool> {
+    vec![false; apps.len()]
+}
+/// Ignored.
 pub fn open_url(_target: &str) {}
 /// Nothing to wait for: the login entry already starts the app when the session is ready.
 pub fn wait_for_login_ready() {}

@@ -54,6 +54,7 @@ A set variable wins over the file, so `CURSORPIE_DEBUG=0` silences a `debug` fil
 | `win` | where the toolkit says the window really is, for two seconds after a window was placed |
 | `cfg` | loading `config.json` (outcome, size, time) and every save of it (`ok`, and the error kind when it failed: a failed save is otherwise silent) |
 | `act` | every action the worker runs: its kind (never its content), how long it waited in the queue (`wait_ms`) and how long it ran (`ms`); every program it starts (`exited` with its exit code, `spawn_failed` with the error kind, on Windows `shell_execute` with the code), by program name only, never its arguments |
+| `run` | which "Open app" apps are running, asked once per press of the trigger on the `cursorpie-running` worker: `scan` (timed: `apps` asked about), `answer` (`stored`: whether the answer was kept or was already stale, `running`: how many of the apps run) and `spawn_failed` (the worker thread could not start, so no badges ever appear) |
 | `panic` | any panic, with its location |
 
 ## Where the log goes

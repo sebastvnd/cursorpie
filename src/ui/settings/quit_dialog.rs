@@ -349,7 +349,13 @@ mod tests {
         let mut a = app();
         let ctx = egui::Context::default();
         crate::ui::fonts::install(&ctx);
-        for tab in [Tab::Menu, Tab::Behavior, Tab::General, Tab::About] {
+        for tab in [
+            Tab::Menu,
+            Tab::Flow,
+            Tab::Behavior,
+            Tab::General,
+            Tab::About,
+        ] {
             a.ed.tab = tab;
             draw(&mut a, &ctx, 3);
             assert!(!a.has_unsaved_changes());

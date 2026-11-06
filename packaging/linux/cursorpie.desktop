@@ -2,11 +2,11 @@
 Type=Application
 Name=CursorPie
 GenericName=Pie menu
-Comment=Hold-to-open pie menu for the mouse
+Comment=Hold-to-open pie menu for the mouse or trackpad
 Exec=cursorpie
 Icon=cursorpie
 Terminal=false
 Categories=Utility;
-Keywords=pie;menu;mouse;shortcuts;launcher;
+Keywords=pie;menu;mouse;trackpad;touchpad;shortcuts;launcher;
 StartupNotify=false
 StartupWMClass=cursorpie

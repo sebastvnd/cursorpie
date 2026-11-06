@@ -7,6 +7,7 @@ Everything about using CursorPie once it is installed. New here? Read [The gestu
 
 - [The gesture](#the-gesture)
 - [Slices and actions](#slices-and-actions)
+- [Flows: chains of steps](#flows-chains-of-steps)
 - [Profiles](#profiles)
 - [Side buttons and app pies](#side-buttons-and-app-pies)
 - [Your mouse and its extra buttons](#your-mouse-and-its-extra-buttons)
@@ -19,7 +20,7 @@ Everything about using CursorPie once it is installed. New here? Read [The gestu
 
 ## The gesture
 
-1. **Hold** the trigger (the middle mouse button by default) for 150 ms. The pie opens under the cursor.
+1. **Hold** the trigger (the middle mouse button by default, or a trackpad hold once you turn it on) for 150 ms. The pie opens under the cursor.
 2. **Move** toward a slice. It highlights as you hover.
 3. **Release** to run it. Release in the center dead zone to cancel.
 
@@ -65,12 +66,45 @@ Actions are available for Run slices and for each side button of a Mode:
 | Open app | macOS: `open -a <name or path>`, for example `Safari` or `/Applications/Safari.app`. Windows: a program name or the path of an `.exe`, for example `chrome` or `C:\Tools\App.exe`. Linux: a desktop-entry id, a program name or a path, or a role that the system fills: `@browser`, `@files` or `@terminal`. If the app already runs on another virtual desktop or Space, CursorPie goes to it |
 | Open URL / file | Opens the target with the system, for example `https://example.com` or a file path |
 | Shell command | macOS and Linux: `/bin/sh -c "<command>"`. Windows: `cmd /C "<command>"` without a console window |
+| Flow | Runs one of your [flows](#flows-chains-of-steps): a chain of steps you drew in the **Flow** section |
 | Sequence | Several actions in order, 40 ms apart. Edit these in `config.json` (see [Configuration](CONFIGURATION.md)) |
 
 Actions run on one worker thread, so they always execute in the order you triggered them.
 
 **Icons** can be text, emoji, or an image (`.png`, `.jpg`, `.jpeg`, `.webp`); a path may start with `~/`. An icon is drawn at no more than about 120 px, so a big image is wasted. When you choose an image with **Image...** in the icon picker, CursorPie prepares it: up to 512 px and 512 KB it is used as it is; a bigger one is shrunk to a 256 px PNG copy in the `icons` folder next to `config.json`, the original is never touched, and the status bar tells you what it did. An image with more than 40 megapixels or 64 MB, or a file that is not an image, is refused with a message. The **Mine** page of the picker lists the images in the `icons` folder (up to 120 files of at most 2 MB each) and says how many it left out. The pie size (140 to 360 px), accent color and sounds are adjustable. An optional soft tick plays when the hovered
 slice changes.
+
+## Flows: chains of steps
+
+The **Flow** section of Settings is a small node editor. A *flow* is a chain of steps (shortcuts, apps, links,
+shell commands, waits) that one slice runs one after the other, for example "copy, open Notes, wait half a second,
+paste".
+
+1. **+** makes a new flow. Give it a name.
+2. **Add a step** puts a block on the canvas. A flow always runs from **Start** to **End**: a new block is wired in
+   after the selected one (before **End** when nothing is selected), and a block added in the middle of the chain
+   goes between its neighbours. **Start** and **End** cannot be removed.
+3. Fill in each block: record a shortcut, type an app (or press **Pick...** to choose one of the installed apps,
+   as in a slice), type a URL or a command, set the wait in milliseconds (at most 10 s, because actions run one at
+   a time).
+4. To change the order, drag from the dot on the right of a block to the dot on the left of another one. An input
+   takes one wire and an output gives one, so a new wire replaces the old one. Click a wired input dot to unplug
+   it. The number in the header of a block is its place in the chain; a block marked *not wired* never runs.
+   **x** removes a block and joins its neighbours.
+5. In the **Menu** section choose a slice, set its action to **Flow** and pick the flow.
+
+Drag the header of a block to move it. The canvas has a dot grid and moves like any node editor: drag the empty
+canvas, hold the **middle button** anywhere on it (even though it is the trigger button, CursorPie lets it through
+over this canvas while Settings is open), or scroll with two fingers on a trackpad or the mouse wheel. Hold
+**Alt** (**Option** on a Mac) and scroll, pinch, or hold Ctrl/Cmd and scroll to zoom between 30% and 125%; the
+text is only sharp up to a little over 100%. The button with the arrows brings the blocks back into view at
+100%. Flows are saved with **Save**, and **Undo** (Cmd+Z) works in this section too.
+
+**Sharing.** **Export** (the arrow up) writes `<name>.cursorpie-flow.json` to your Downloads folder; **Import** (the
+arrow down) adds such a file as a **new** flow and never overwrites one of yours. A shared profile (see
+[Sharing a profile](#sharing-a-profile)) carries the flows its slices use. **Only import flows you trust:** a
+*Shell command* block runs whatever it says. CursorPie warns after importing one, and nothing runs until you Save
+and use the slice. If you delete a flow that a slice uses, that slice does nothing until you pick another flow.
 
 ## Profiles
 
@@ -283,6 +317,8 @@ temporary one, so a crash or a full disk cannot leave half a file. Where the fil
 - **Import a profile...** adds the file as a **new** profile (nothing is overwritten) and selects it. The
   embedded images are copied into the `icons` folder next to `config.json`: an identical file is reused, a
   different one with the same name gets a number. Press **Save** to apply it, or **Undo** (Cmd+Z) to take it back.
+- The flows the profile's slices use are embedded too. On import they are added as new flows (an identical one
+  you already have is reused) and the slices are pointed at them.
 - A profile must list at least one app. A name already taken gets ` (2)`, ` (3)`...
 - Only PNG, JPEG and WebP data is written, whatever the file claims, and nothing outside the icons folder.
 

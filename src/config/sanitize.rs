@@ -124,6 +124,7 @@ impl Config {
             Config::default().touch_still_mm
         };
         self.touch_typing_guard_ms = self.touch_typing_guard_ms.min(2000);
+        super::flow::clean_flows(&mut self.flows);
         self
     }
 }
