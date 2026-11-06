@@ -668,12 +668,7 @@ mod tests {
         // The hold timer opens the pie on its own thread, after a time that depends on the machine.
         // Wait until it is open, then past the rate limit of the haptic ticks: a hover that came
         // within `MIN_GAP` of the tick of the opening would be silent, and the test would flicker.
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while !matches!(*crate::config::lock(&rig.state), Gesture::ActivePie { .. })
-            && Instant::now() < deadline
-        {
-            std::thread::sleep(Duration::from_millis(5));
-        }
+        wait_for_pie(&rig);
         std::thread::sleep(haptic::MIN_GAP * 3);
         rig.pointer.set(Point::new(600.0, 500.0));
         rig.frames(30, &[finger(0.55)]);
@@ -963,9 +958,25 @@ mod tests {
     }
 
     /// Opens a trackpad pie in `rig` and waits until it is open.
+    /// Waits (at most 5 s) until the hold timer, which runs on its own thread, has opened the pie.
+    /// A fixed sleep is not enough: on a busy machine the thread may be scheduled late.
+    fn wait_for_pie(rig: &Rig) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !matches!(
+            *crate::config::lock(&rig.state),
+            Gesture::ActivePie {
+                source: Source::Touch,
+                ..
+            }
+        ) && Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     fn open_pie(rig: &mut Rig) {
         rig.frames(180, &[finger(0.5)]);
-        std::thread::sleep(Duration::from_millis(150));
+        wait_for_pie(rig);
         assert!(
             matches!(
                 *crate::config::lock(&rig.state),
@@ -977,6 +988,8 @@ mod tests {
             "the pie did not open"
         );
         let _ = drain(&rig.rx, Duration::from_millis(30));
+        // the tick of the opening must not fall into the same `MIN_GAP` as what a test does next
+        std::thread::sleep(haptic::MIN_GAP * 2);
     }
 
     fn click(rig: &Rig, kind: Kind, button: i64) -> Verdict {
