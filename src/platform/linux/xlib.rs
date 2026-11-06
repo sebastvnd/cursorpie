@@ -375,6 +375,14 @@ unsafe extern "C" {
         is_press: Bool,
         delay: c_ulong,
     ) -> c_int;
+    /// Moves the pointer to `(x, y)` of the screen `screen_number` (-1: the current one).
+    pub fn XTestFakeMotionEvent(
+        dpy: *mut Display,
+        screen_number: c_int,
+        x: c_int,
+        y: c_int,
+        delay: c_ulong,
+    ) -> c_int;
 }
 
 #[link(name = "Xrandr")]

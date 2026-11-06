@@ -68,6 +68,8 @@ pub fn press_shortcut(_sc: Shortcut) {}
 /// Ignored.
 pub fn post_mouse(_pos: Point, _kind: Kind, _button: i64) {}
 /// Ignored.
+pub fn click_at(_pos: (f64, f64), _button: i64, _clicks: u32) {}
+/// Ignored.
 pub fn activate_app(_bundle: &str) {}
 
 /// Ignored.

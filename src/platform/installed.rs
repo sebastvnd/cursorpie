@@ -167,31 +167,20 @@ pub fn app_from_plist_json(json: &[u8], bundle: &std::path::Path) -> Option<Inst
 
 // -------------------------------------------------------------------------------------- Windows
 
-/// The apps that registered themselves under `App Paths`, per machine and per user. `reg.exe` is
-/// asked for the default value of every key, which is the path of the program.
+/// The apps of the Start menu (the list Windows itself shows) and those that registered
+/// themselves under `App Paths`, read straight from the registry and the shortcut files: no
+/// `reg.exe`, whose output is in the language and the code page of the system and so cannot be
+/// read reliably. See `platform::windows::apppath`.
 #[cfg(windows)]
 fn collect() -> Vec<InstalledApp> {
-    use std::os::windows::process::CommandExt;
-    use std::process::Command;
-    const NO_WINDOW: u32 = 0x0800_0000; // CREATE_NO_WINDOW
-    let mut out = Vec::new();
-    for hive in ["HKLM", "HKCU"] {
-        let key = format!(r"{hive}\Software\Microsoft\Windows\CurrentVersion\App Paths");
-        let Ok(output) = Command::new("reg")
-            .args(["query", key.as_str(), "/s", "/ve"])
-            .creation_flags(NO_WINDOW)
-            .output()
-        else {
-            continue;
-        };
-        out.extend(parse_reg_app_paths(&String::from_utf8_lossy(
-            &output.stdout,
-        )));
-    }
-    out
+    super::windows::installed_list()
+        .into_iter()
+        .map(|(id, name)| InstalledApp { id, name })
+        .collect()
 }
 
-/// The apps in the output of `reg query ...\App Paths /s /ve`:
+/// The apps in the output of `reg query ...\App Paths /s /ve`. Not used by the Windows build any
+/// more (see `collect`); kept, with its tests, for anyone who has such an output at hand:
 ///
 /// ```text
 /// HKEY_LOCAL_MACHINE\SOFTWARE\...\App Paths\chrome.exe
@@ -200,6 +189,7 @@ fn collect() -> Vec<InstalledApp> {
 ///
 /// The id is the key's name in lower case; the name is the program's file name without `.exe`,
 /// with a capital. Keys that are not programs (`.exe` only), uninstallers and updaters are skipped.
+#[cfg_attr(windows, allow(dead_code))]
 pub fn parse_reg_app_paths(text: &str) -> Vec<InstalledApp> {
     let mut out = Vec::new();
     let mut key: Option<String> = None;

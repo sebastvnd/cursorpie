@@ -10,6 +10,8 @@
 //! | `util` | wide strings, app ids from paths, DPI math, command lines (pure) |
 //! | `dpi` | monitor scale lookup: the bridge between physical pixels and logical points |
 //! | `apps` | frontmost app, app under the pointer, app icons, activation, cursor, displays |
+//! | `apppath` | where the program of an app id is (App Paths, Start menu, program folders) and the list of installed apps |
+//! | `shellitem` | the shell's icon of a file (`IShellItemImageFactory`) and the target of a `.lnk` (`IShellLinkW`) |
 //! | `desktops` | "Open app" that follows the app's window to its virtual desktop (`IVirtualDesktopManager` and Win+Ctrl+Arrows) |
 //! | `input` | `SendInput` for shortcuts and replayed mouse buttons |
 //! | `layout` | keyboard-layout snapshot (`ToUnicodeEx`) |
@@ -27,6 +29,7 @@
 pub mod layout;
 pub mod util;
 
+mod apppath;
 mod apps;
 mod desktops;
 mod dpi;
@@ -36,8 +39,10 @@ mod instance;
 mod login_item;
 mod registry;
 mod shell;
+mod shellitem;
 mod window;
 
+pub use apppath::installed_list;
 pub use apps::*;
 pub use desktops::*;
 pub use input::*;

@@ -9,7 +9,7 @@ use crate::about::APP_NAME;
 use std::time::{Duration, Instant};
 use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
 use windows_sys::Win32::System::Threading::CreateMutexW;
-use windows_sys::Win32::UI::WindowsAndMessaging::FindWindowW;
+use windows_sys::Win32::UI::WindowsAndMessaging::{FindWindowExW, FindWindowW};
 
 /// Claims the right to run. Returns `false` when another copy of this app already runs in this
 /// user session; the caller should exit quietly.
@@ -27,18 +27,37 @@ pub fn single_instance() -> bool {
     !taken
 }
 
-/// Waits until the desktop is ready after a login: the taskbar (`Shell_TrayWnd`) exists, plus a
-/// short pause. Called only when the startup entry started the program (`--autostart`).
+/// Whether the taskbar exists and has its notification area, the place the tray icon goes to.
+fn tray_ready(taskbar: &[u16], notify_area: &[u16]) -> bool {
+    // SAFETY: both class names are zero terminated and outlive the calls; null window titles and a
+    // null previous child are allowed.
+    unsafe {
+        let bar = FindWindowW(taskbar.as_ptr(), std::ptr::null());
+        !bar.is_null()
+            && !FindWindowExW(
+                bar,
+                std::ptr::null_mut(),
+                notify_area.as_ptr(),
+                std::ptr::null(),
+            )
+            .is_null()
+    }
+}
+
+/// Waits until the desktop is ready after a login: the taskbar (`Shell_TrayWnd`) exists and has its
+/// notification area (`TrayNotifyWnd`), plus a short pause. Called only when the startup entry
+/// started the program (`--autostart`).
 ///
 /// A Run-key program starts while Explorer is still building the desktop and while the antivirus
 /// scans the new session. Creating the tray icon that early fails (the app then runs without a
-/// tray, with no way to quit it), and the input hooks can be refused. Gives up after 90 seconds
-/// and carries on, so a PC without the standard shell still starts the app.
+/// tray, with no way to quit it), and the input hooks can be refused. The taskbar window exists
+/// well before its notification area does, so both are waited for. Gives up after 90 seconds and
+/// carries on, so a PC without the standard shell still starts the app.
 pub fn wait_for_login_ready() {
-    let class = wide("Shell_TrayWnd");
+    let taskbar = wide("Shell_TrayWnd");
+    let notify_area = wide("TrayNotifyWnd");
     let deadline = Instant::now() + Duration::from_secs(90);
-    // SAFETY: `class` is zero terminated and outlives the call; a null window title is allowed.
-    while unsafe { FindWindowW(class.as_ptr(), std::ptr::null()) }.is_null() {
+    while !tray_ready(&taskbar, &notify_area) {
         if Instant::now() >= deadline {
             break;
         }

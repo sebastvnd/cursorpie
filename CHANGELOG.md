@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+## 0.8.3
+
+- **A recorded shortcut keeps the order you pressed it in.** Pressing Cmd, Shift, Opt and then W was saved and shown
+  as "Opt + Shift + Cmd + W": modifiers were stored as a bitmask, so the order was lost and the label always used one
+  fixed order. The recorder now follows every modifier press (a `FlagsChanged` event on macOS, the modifier key
+  events of the hook on Windows and Linux), saves the order as `"order"` next to `"mods"` in `config.json`
+  (left out when it is the old fixed order, so existing configs load and save unchanged), and the label shows it.
+  Playing the shortcut presses the modifiers in that same order.
+- **Windows: launch at login that survives odd paths.** The installed copy compared its own path with the install
+  folder as plain text. A short 8.3 name (`C:\Users\JOHNDO~1`), a junction, or the other case of a non-ASCII user
+  name made it believe it was a *different* copy: it started "the installed copy" (itself) and exited, and so did
+  that one, over and over, so nothing ever reached the tray at login. Paths are now compared as the file system
+  sees them, and the copy that was handed over to never hands over again (`--handover`; `--autostart` is passed on).
+  A zip copy no longer copies itself over an install made by the Setup wizard.
+- **Windows: a login entry that cannot work is repaired.** The Settings checkbox now also checks that the program the
+  entry names still exists, and the entry is rewritten when it points at a deleted or moved folder or is an old one
+  without `--autostart`. A login start waits for the notification area of the taskbar (not only the taskbar window)
+  before it creates the tray icon.
+- **Windows: app icons.** The icon of an app is now looked up in `App Paths` (per user, per machine, 32-bit view), in
+  the Start menu shortcuts and in the program folders, not only among the running programs and `PATH`, so apps that
+  are not running show their icon. A program picked with the file chooser is remembered. The icon itself comes from
+  the shell (`IShellItemImageFactory`, 256 px with alpha, the one Explorer shows) with the old calls as the fallback.
+- **Windows: the app list.** Settings lists the apps of the Start menu (by their shortcut names) plus those under
+  `App Paths`. It reads the registry and the shortcut files directly instead of the text of `reg.exe`, which is
+  localized and in the OEM code page, so it also works on non-English Windows and with non-ASCII paths.
+
 ## 0.8.2
 
 - **Settings comes forward with the trackpad trigger too.** With Settings open behind another window, a press of the
@@ -26,6 +52,21 @@
   ad-hoc signature is tied to the bundle id so Accessibility is not forgotten after a rebuild. Linux: the autostart
   entry waits 5 s so the display is ready. Antivirus programs can still object to an unsigned build: see
   KNOWN_ISSUES.md.
+
+- **Fix: the virtual trackpad feels like a trackpad.** The pointer's speed was worked out from the time between two
+  frames of the window, which can be one millisecond: a burst of frames made the pointer jump and stutter. The speed
+  is now averaged over time (a frame weighs as much as it lasts), the gain is a smooth curve (3.5 points per
+  millimeter when slow, up to four times that in a flick), a long gap is no motion, and the arrow's window sits on
+  whole points so it no longer trembles.
+- **Fix: the mouse buttons of the virtual trackpad did nothing.** A click on the glass only made the surface sink; no
+  click ever reached the app under the virtual pointer, and a click made while the pie was open was not the extra
+  click either (the virtual trackpad has one finger, the extra click wanted two). Now the left and right buttons are
+  the primary and the secondary click of the trackpad: when the button comes up, a click is made at the virtual
+  pointer (`platform::click_at`; the system's pointer goes there and back at once, on macOS the event carries the
+  place), with the click count of a double click. A press that belongs to the pie (the pie was open, or opened while
+  the button was held) is never a click for the app, and while a pie of the virtual trackpad is open a click is its
+  extra click. Holding the button and moving off the glass no longer lifts the finger, and a moment without a
+  pointer (the click's trip) no longer lifts it either. Not yet: dragging with the button held.
 
 - **Virtual trackpad (developer tool: `cargo tools trackpad`).** Starts the app with a trackpad that floats exactly in
   the middle of the screen, to try the trackpad gestures with a plain mouse. Your real pointer is the finger: while it

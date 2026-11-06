@@ -21,6 +21,12 @@ pub const AUTHOR_NAME: &str = "Sebastvnd";
 /// The Windows build then waits for the desktop to be ready before it installs its hooks and its
 /// tray icon (see `platform::wait_for_login_ready`). Other platforms ignore it.
 pub const AUTOSTART_ARG: &str = "--autostart";
+
+/// Command-line switch the installing copy adds when it hands over to the installed copy: "you were
+/// started by another copy of me, do not hand over again". Without it two paths that name the same
+/// file but are written differently (short 8.3 names, a junction, upper/lower case of a non-ASCII
+/// user name) make the installed copy believe it is somewhere else and start itself again, forever.
+pub const HANDOVER_ARG: &str = "--handover";
 /// GitHub user name of the author (without `@`).
 pub const AUTHOR_GITHUB_USER: &str = "sebastvnd";
 /// GitHub profile of the author.

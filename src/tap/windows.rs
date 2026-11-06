@@ -116,6 +116,17 @@ fn current_mods() -> u8 {
     m
 }
 
+/// The `MOD_*` bit of a modifier's virtual-key code (either side), `None` for other keys.
+fn modifier_bit(vk: u16) -> Option<u8> {
+    match vk {
+        0x10 | 0xA0 | 0xA1 => Some(MOD_SHIFT),
+        0x11 | 0xA2 | 0xA3 => Some(MOD_CTRL),
+        0x12 | 0xA4 | 0xA5 => Some(MOD_ALT),
+        0x5B | 0x5C => Some(MOD_CMD),
+        _ => None,
+    }
+}
+
 /// Handles one mouse event. `true` = swallow.
 fn on_mouse(ctx: &Ctx, msg: u32, info: &MSLLHOOKSTRUCT) -> bool {
     if info.dwExtraInfo == SYNTH_TAG as usize {
@@ -171,6 +182,15 @@ fn on_key(ctx: &Ctx, msg: u32, info: &KBDLLHOOKSTRUCT) -> bool {
     let Some(down) = key_is_down(msg) else {
         return false;
     };
+    // a modifier is only remembered (the order of a recorded shortcut), never swallowed
+    if let Some(bit) = modifier_bit(info.vkCode as u16) {
+        if down {
+            super::modorder::press(bit);
+        } else {
+            super::modorder::release(bit);
+        }
+        return false;
+    }
     let extended = info.flags & LLKHF_EXTENDED != 0;
     let Some(code) = keymap::code_for_event(info.vkCode as u16, info.scanCode as u16, extended)
     else {

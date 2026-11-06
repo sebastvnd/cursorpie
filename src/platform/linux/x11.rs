@@ -646,9 +646,11 @@ impl Conn {
         let Some(key) = keymap::x_keycode_for(sc.key) else {
             return;
         };
-        let mods: Vec<u8> = keymap::LINUX_MODIFIER_KEYS
+        // pressed in the order the shortcut was recorded in (the order its label shows)
+        let mods: Vec<u8> = sc
+            .ordered_mods()
             .iter()
-            .filter(|(bit, _)| sc.mods & *bit != 0)
+            .filter_map(|bit| keymap::LINUX_MODIFIER_KEYS.iter().find(|(b, _)| b == bit))
             .filter_map(|(_, code)| u8::try_from(*code + 8).ok())
             .collect();
         for m in &mods {
@@ -694,6 +696,29 @@ impl Conn {
                     self.grab_button(*b);
                 }
             });
+        }
+    }
+
+    /// Clicks the X button `xb` at `to` (logical points) and puts the pointer back where it was:
+    /// the system has one pointer, so it is moved there, clicks, and comes back at once.
+    pub fn click_at(&self, xb: c_int, to: (f64, f64)) {
+        let back = self.pointer_px();
+        let x = (to.0 * self.scale).round() as c_int;
+        let y = (to.1 * self.scale).round() as c_int;
+        // SAFETY: plain requests.
+        unsafe {
+            XTestFakeMotionEvent(self.dpy, -1, x, y, 0);
+            XSync(self.dpy, FALSE);
+        }
+        self.inject_button(xb, true);
+        std::thread::sleep(Duration::from_millis(12));
+        self.inject_button(xb, false);
+        if let Some((bx, by)) = back {
+            // SAFETY: plain requests.
+            unsafe {
+                XTestFakeMotionEvent(self.dpy, -1, bx, by, 0);
+                XSync(self.dpy, FALSE);
+            }
         }
     }
 

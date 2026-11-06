@@ -93,7 +93,13 @@ pub fn run() -> eframe::Result<()> {
     }
     // Hand over before claiming the single-instance lock, so the installed copy can take it.
     if let Some(installed) = platform::ensure_installed() {
-        match std::process::Command::new(&installed).spawn() {
+        // The arguments go along (`--autostart` keeps its meaning) plus the switch that stops the
+        // installed copy from handing over once more.
+        match std::process::Command::new(&installed)
+            .args(std::env::args_os().skip(1))
+            .arg(about::HANDOVER_ARG)
+            .spawn()
+        {
             Ok(_) => return Ok(()),
             Err(e) => eprintln!("CursorPie: could not start {}: {e}", installed.display()),
         }

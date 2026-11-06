@@ -15,9 +15,11 @@ pub fn id() -> ViewportId {
     ViewportId::from_hash_of("cursorpie-virtual-pointer")
 }
 
-/// Where the window goes so that the tip of the arrow is at the pointer `(x, y)`.
+/// Where the window goes so that the tip of the arrow is at the pointer `(x, y)`. The window sits on
+/// whole points: a window put at a fraction of a point shimmers as the system rounds it again and
+/// again, and the arrow looks like it trembles.
 pub fn window_pos(x: f64, y: f64) -> Pos2 {
-    pos2(x as f32 - TIP, y as f32 - TIP)
+    pos2((x as f32).round() - TIP, (y as f32).round() - TIP)
 }
 
 /// The window, put at `at` to begin with. It never takes the pointer, the keyboard or a place in the
@@ -74,6 +76,13 @@ mod tests {
     fn the_tip_of_the_arrow_is_at_the_pointer() {
         let w = window_pos(500.0, 300.0);
         assert_eq!(w + vec2(TIP, TIP), pos2(500.0, 300.0));
+    }
+
+    #[test]
+    fn the_window_stays_on_whole_points() {
+        let w = window_pos(500.4, 300.6);
+        assert_eq!(w + vec2(TIP, TIP), pos2(500.0, 301.0));
+        assert_eq!(window_pos(10.2, 10.3), window_pos(10.0, 10.0));
     }
 
     #[test]

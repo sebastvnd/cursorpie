@@ -25,6 +25,7 @@
 
 mod gesture;
 mod keyboard;
+mod modorder;
 mod pie_clicks;
 mod resolve;
 mod right_click;
@@ -381,6 +382,32 @@ mod tests {
         );
         assert_eq!(SWALLOW_KEY.load(Ordering::SeqCst), -1);
         assert_eq!(dispatch(&st, &n, key(true, 6, 0), &|| {}), Verdict::Keep);
+    }
+
+    #[test]
+    fn recording_keeps_the_order_the_modifiers_were_pressed_in() {
+        use crate::keys::{MOD_ALT, MOD_SHIFT};
+        let _s = serial();
+        SWALLOW_KEY.store(-1, Ordering::SeqCst);
+        RECORDING.store(true, Ordering::SeqCst);
+        modorder::clear();
+        // Cmd, Shift, Opt, then W
+        modorder::press(MOD_CMD);
+        modorder::press(MOD_SHIFT);
+        modorder::press(MOD_ALT);
+        let (n, rx) = notifier();
+        let st = idle();
+        let mods = MOD_CMD | MOD_SHIFT | MOD_ALT;
+        assert_eq!(dispatch(&st, &n, key(true, 13, mods), &|| {}), Verdict::Drop);
+        match rx.try_recv() {
+            Ok(Msg::KeyCaptured(s)) => assert_eq!(
+                s.label_for(crate::platform::Os::Mac),
+                "Cmd + Shift + Opt + W"
+            ),
+            _ => panic!("expected the captured shortcut"),
+        }
+        SWALLOW_KEY.store(-1, Ordering::SeqCst);
+        modorder::clear();
     }
 
     #[test]

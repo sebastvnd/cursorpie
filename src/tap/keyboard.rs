@@ -33,7 +33,11 @@ pub(super) fn handle_key(notifier: &Notifier, down: bool, code: i32, mods: u8) -
     if code == 53 && mods == 0 {
         notifier.send(Msg::RecordCancelled); // plain Esc cancels
     } else {
-        notifier.send(Msg::KeyCaptured(Shortcut::new(code as u16, mods)));
+        // the order the modifiers were pressed in, so the shortcut reads as it was typed
+        let pressed = super::modorder::ordered(mods);
+        notifier.send(Msg::KeyCaptured(
+            Shortcut::new(code as u16, mods).with_order(&pressed),
+        ));
     }
     Verdict::Drop
 }

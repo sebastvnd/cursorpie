@@ -2,7 +2,8 @@
 //! finger that follows the mouse, rings and a glow for every cue (see the module docs).
 
 use super::{
-    Cue, Look, Mover, Pointer, RIPPLE_LIFE, SURFACE_MM, Step, Tracker, WIDTHS, fade, move_pointer,
+    Buttons, Clicker, Cue, Look, Mover, Pointer, RIPPLE_LIFE, SURFACE_MM, Step, Tracker, WIDTHS,
+    fade, move_pointer,
 };
 use crate::config::cfg;
 use crate::platform::{self, HapticKind};
@@ -48,6 +49,8 @@ pub struct Shared {
     pub bounds: Option<Rect>,
     /// The mouse button went down on the glass and is still down (the click).
     pub clicking: bool,
+    /// Turns the mouse buttons into clicks at the virtual pointer.
+    pub clicker: Clicker,
 }
 
 impl Shared {
@@ -66,6 +69,7 @@ impl Shared {
             pointer: None,
             bounds: None,
             clicking: false,
+            clicker: Clicker::default(),
         }
     }
 
@@ -125,10 +129,21 @@ pub fn show(ui: &mut Ui, shared: &Arc<Mutex<Shared>>) {
 
     // the pointer over the window is the finger (none when it is somewhere else)
     let hover = ctx.input(|i| i.pointer.hover_pos());
-    let pointer = ctx.input(|i| Pointer {
-        pos: i.pointer.hover_pos(),
-        pressed: i.pointer.primary_pressed(),
-        down: i.pointer.primary_down(),
+    let (pointer, buttons) = ctx.input(|i| {
+        let m = &i.pointer;
+        (
+            Pointer {
+                pos: m.hover_pos(),
+                pressed: m.primary_pressed() || m.secondary_pressed(),
+                down: m.primary_down() || m.secondary_down(),
+            },
+            Buttons {
+                left_pressed: m.primary_pressed(),
+                left_released: m.primary_released(),
+                right_pressed: m.secondary_pressed(),
+                right_released: m.secondary_released(),
+            },
+        )
     });
 
     let mut sh = shared.lock().unwrap_or_else(|e| e.into_inner());
@@ -139,7 +154,7 @@ pub fn show(ui: &mut Ui, shared: &Arc<Mutex<Shared>>) {
     let blocked = sh.blocked;
 
     // the mouse is a finger on the glass
-    match sh.tracker.step(pointer, glass, blocked) {
+    match sh.tracker.step_at(pointer, glass, blocked, now) {
         Step::Idle => {}
         Step::Down(f) => {
             tap::virtual_feed(SURFACE_MM, &[f]);
@@ -154,8 +169,9 @@ pub fn show(ui: &mut Ui, shared: &Arc<Mutex<Shared>>) {
     }
     let finger = sh.tracker.finger().map(|f| (f.x, f.y));
 
-    // the finger moves the virtual pointer, relatively and with acceleration
-    let moved = sh.mover.step(finger, dt.clamp(0.001, 0.05));
+    // the finger moves the virtual pointer, relatively and with acceleration (the mover reads the
+    // real time between frames: it averages the speed, and a long gap is no motion)
+    let moved = sh.mover.step(finger, dt);
     if moved != (0.0, 0.0)
         && let (Some(p), Some(bounds)) = (sh.pointer, sh.bounds)
     {
@@ -165,7 +181,16 @@ pub fn show(ui: &mut Ui, shared: &Arc<Mutex<Shared>>) {
         }
     }
 
-    // the click of the mouse is the click of the trackpad: it sinks, it ticks
+    // the buttons are the click of the trackpad: made at the virtual pointer, when the button
+    // comes up (a press that belongs to the pie is no click)
+    let double = Duration::from_millis(cfg().double_click_ms);
+    let pie_open = sh.pie_open;
+    let click = sh
+        .clicker
+        .step(buttons, finger.is_some(), pie_open, blocked, now, double);
+    let inject = click.zip(sh.pointer);
+
+    // and it sinks, it ticks
     if pointer.pressed && finger.is_some() {
         sh.clicking = true;
         sh.cue(Cue::Down);
@@ -203,6 +228,10 @@ pub fn show(ui: &mut Ui, shared: &Arc<Mutex<Shared>>) {
     };
     let ripples = sh.look.ripples.clone();
     drop(sh);
+    // the click goes to the system with the lock let go: it takes a few milliseconds
+    if let Some((click, at)) = inject {
+        platform::click_at(at, click.button.code(), click.count);
+    }
     paint(ui.painter(), &frame, &ripples, now);
 
     // the controls come after the painting, on top of the frame
@@ -398,7 +427,7 @@ pub fn paint(p: &egui::Painter, f: &Frame, ripples: &[super::Ripple], now: Insta
         let hint = if f.finger.is_none() {
             "Move your mouse in here: it is the finger"
         } else {
-            "Hold still to open the pie"
+            "Hold still to open the pie, click to click"
         };
         p.text(
             Pos2::new(glass.center().x, glass.max.y - size * 1.6),

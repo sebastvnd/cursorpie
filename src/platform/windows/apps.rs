@@ -116,10 +116,15 @@ pub fn bundle_id_at(p: Point) -> Option<String> {
 }
 
 /// App id of an `.exe` path chosen in the file chooser.
+///
+/// The folder of a program that exists is remembered, so its icon can be found later although the
+/// program is not running (an app id alone is only a file name).
 pub fn bundle_id_of(app_path: &str) -> Option<String> {
-    super::util::is_exe(app_path)
+    let id = super::util::is_exe(app_path)
         .then(|| exe_id_from_path(app_path))
-        .flatten()
+        .flatten()?;
+    super::apppath::remember(app_path.trim().trim_matches('"'));
+    Some(id)
 }
 
 /// Cursor position in logical points.
@@ -177,6 +182,62 @@ pub fn display_rects() -> Vec<ScreenRect> {
         );
     }
     out
+}
+
+unsafe extern "system" fn collect_scale(
+    mon: HMONITOR,
+    _dc: HDC,
+    _rect: *mut RECT,
+    data: LPARAM,
+) -> i32 {
+    // SAFETY: `data` is the `Vec` passed by `logical_to_physical`, alive for the whole enumeration.
+    let out = unsafe { &mut *(data as *mut Vec<(ScreenRect, f64)>) };
+    let mut info: MONITORINFO = unsafe { std::mem::zeroed() };
+    info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+    if unsafe { GetMonitorInfoW(mon, &mut info) } != 0 {
+        let (mut dx, mut dy) = (0u32, 0u32);
+        let dpi_ok = unsafe { GetDpiForMonitor(mon, MDT_EFFECTIVE_DPI, &mut dx, &mut dy) } == 0;
+        let s = if dpi_ok {
+            super::util::scale_from_dpi(dx)
+        } else {
+            1.0
+        };
+        let r = info.rcMonitor;
+        out.push((
+            ScreenRect {
+                x: px_to_logical(r.left as f64, s),
+                y: px_to_logical(r.top as f64, s),
+                w: px_to_logical((r.right - r.left) as f64, s),
+                h: px_to_logical((r.bottom - r.top) as f64, s),
+            },
+            s,
+        ));
+    }
+    1
+}
+
+/// A point in logical points as physical pixels, with the scale of the monitor that holds it (the
+/// first monitor when none does). `None` when Windows lists no monitor.
+pub(super) fn logical_to_physical(p: (f64, f64)) -> Option<(i32, i32)> {
+    let mut rows: Vec<(ScreenRect, f64)> = Vec::new();
+    // SAFETY: the callback only runs during this call and `rows` outlives it.
+    unsafe {
+        EnumDisplayMonitors(
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            Some(collect_scale),
+            &mut rows as *mut Vec<(ScreenRect, f64)> as LPARAM,
+        );
+    }
+    let s = rows
+        .iter()
+        .find(|(r, _)| p.0 >= r.x && p.0 < r.x + r.w && p.1 >= r.y && p.1 < r.y + r.h)
+        .or_else(|| rows.first())
+        .map(|(_, s)| *s)?;
+    Some((
+        logical_to_px(p.0, s).round() as i32,
+        logical_to_px(p.1, s).round() as i32,
+    ))
 }
 
 // ---------------------------------------------------------------- activation
@@ -289,7 +350,8 @@ pub(super) fn bring_to_front(exe: &str, hwnd: HWND) {
 
 // --------------------------------------------------------------------- icons
 
-/// Full path of the executable for an app id: a running process first, then the search path.
+/// Full path of the executable for an app id: a running process first, then the search path, then
+/// everywhere else a program can be installed (see [`super::apppath`]).
 fn exe_path_for(exe: &str) -> Option<String> {
     if let Some(path) = pids_of_exe(exe).into_iter().find_map(exe_path_of_pid) {
         return Some(path);
@@ -307,7 +369,8 @@ fn exe_path_for(exe: &str) -> Option<String> {
             std::ptr::null_mut(),
         )
     };
-    (n > 0 && (n as usize) < buf.len()).then(|| from_wide(&buf[..n as usize]))
+    let on_path = (n > 0 && (n as usize) < buf.len()).then(|| from_wide(&buf[..n as usize]));
+    on_path.or_else(|| super::apppath::find_exe(exe))
 }
 
 /// A 128 px icon of the executable (the size of the glyph texture), or the large shell icon.
@@ -342,7 +405,7 @@ fn icon_handle(path: &str) -> Option<HICON> {
 }
 
 /// Reads the pixels of a 32-bit icon bitmap as BGRA, top-down.
-unsafe fn bitmap_bgra(
+pub(super) unsafe fn bitmap_bgra(
     bmp: windows_sys::Win32::Graphics::Gdi::HBITMAP,
     w: i32,
     h: i32,
@@ -415,13 +478,27 @@ thread_local! {
     static COM: ComForThread = ComForThread::enter();
 }
 
+/// Makes sure COM runs on the calling thread (it is ended with the thread).
+pub(super) fn com_for_thread() {
+    COM.with(|_| {});
+}
+
 /// The real icon of the app with this id as RGBA, or `None` when the app cannot be found.
 ///
 /// Slow (a scan of the running processes, then the executable is read): call it off the UI thread
 /// when many icons are needed, as the app list does.
 pub fn app_icon(exe: &str) -> Option<NativeIcon> {
-    COM.with(|_| {}); // COM for this thread, once
+    com_for_thread(); // COM for this thread, once
     let path = exe_path_for(exe)?;
+    // The shell's own icon first: the one Explorer shows, 256 px, with its alpha channel. The older
+    // calls below stay as the fallback for a file the shell cannot parse.
+    if let Some((width, height, data)) = super::shellitem::shell_icon_rgba(&path, 256) {
+        return Some(NativeIcon::Rgba {
+            width,
+            height,
+            data,
+        });
+    }
     let hicon = icon_handle(&path)?;
     // SAFETY: every GDI object created below is deleted, and the icon handle destroyed.
     unsafe {

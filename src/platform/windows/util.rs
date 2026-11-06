@@ -128,16 +128,26 @@ pub fn installed_exe(local_app_data: &str, app_name: &str) -> String {
     format!("{}\\{EXE_NAME}", install_dir(local_app_data, app_name))
 }
 
-/// Whether two Windows paths name the same file: the comparison ignores case, the kind of slash
-/// and a trailing separator, because the file system does too.
-pub fn same_path(a: &str, b: &str) -> bool {
-    let norm = |s: &str| {
-        s.trim()
-            .replace('/', "\\")
-            .trim_end_matches('\\')
-            .to_ascii_lowercase()
+/// A Windows path in the form used to compare two of them: without the `\\?\` prefix that
+/// `fs::canonicalize` adds, with backslashes only, without a trailing separator and in lower case
+/// (Unicode lower case, not just ASCII: a user name such as `Müller` is written `MÜLLER` in some
+/// places).
+pub fn normalize_path(s: &str) -> String {
+    let s = s.trim();
+    let s = if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = s.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        s.to_string()
     };
-    !a.trim().is_empty() && norm(a) == norm(b)
+    s.replace('/', "\\").trim_end_matches('\\').to_lowercase()
+}
+
+/// Whether two Windows paths name the same file: the comparison ignores case, the kind of slash,
+/// a trailing separator and the `\\?\` prefix, because the file system does too.
+pub fn same_path(a: &str, b: &str) -> bool {
+    !a.trim().is_empty() && normalize_path(a) == normalize_path(b)
 }
 
 /// The `UninstallString` of the "Apps & features" entry.
@@ -218,6 +228,97 @@ pub fn bgra_to_rgba(px: &mut [u8], mask: Option<&[u8]>) {
         if !has_alpha {
             let transparent = mask.and_then(|m| m.get(i)).is_some_and(|m| *m != 0);
             p[3] = if transparent { 0 } else { 255 };
+        }
+    }
+}
+
+/// The executable inside the value of a `Run` entry: `"C:\\Apps\\x.exe" --autostart` and
+/// `C:\\Apps\\x.exe --autostart` both give `C:\\Apps\\x.exe`. `None` when no path can be told.
+pub fn exe_of_run_value(value: &str) -> Option<String> {
+    let v = value.trim();
+    if let Some(rest) = v.strip_prefix('"') {
+        let path = &rest[..rest.find('"')?];
+        return (!path.is_empty()).then(|| path.to_string());
+    }
+    // ASCII lower-casing keeps every byte offset, so the index is valid for `v` too
+    let end = v.to_ascii_lowercase().find(".exe")? + 4;
+    Some(v[..end].to_string())
+}
+
+/// Text of a registry value read as raw bytes (`REG_SZ` / `REG_EXPAND_SZ`: UTF-16, little endian).
+pub fn utf16_bytes_to_string(bytes: &[u8]) -> String {
+    let units: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    from_wide(&units)
+}
+
+/// Replaces every `%NAME%` that `lookup` knows (what `REG_EXPAND_SZ` values such as App Paths need).
+/// An unknown or malformed `%NAME%` stays as it is.
+pub fn expand_env_vars(text: &str, lookup: &dyn Fn(&str) -> Option<String>) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(i) = rest.find('%') {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + 1..];
+        match after.find('%') {
+            Some(j) if j > 0 => {
+                let name = &after[..j];
+                match lookup(name) {
+                    Some(v) => out.push_str(&v),
+                    None => {
+                        out.push('%');
+                        out.push_str(name);
+                        out.push('%');
+                    }
+                }
+                rest = &after[j + 1..];
+            }
+            _ => {
+                out.push('%');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Whether an executable name (without `.exe`, lower case) belongs to an uninstaller, updater or
+/// installer: such programs are never listed as apps.
+pub fn is_helper_stem(stem: &str) -> bool {
+    ["uninstall", "unins000", "update", "setup", "install"]
+        .iter()
+        .any(|w| stem.contains(w))
+}
+
+/// `chrome` -> `Chrome`: the name shown for an app that only has a file name.
+pub fn capitalized(stem: &str) -> String {
+    let mut chars = stem.chars();
+    match chars.next() {
+        Some(c) => c.to_uppercase().chain(chars).collect(),
+        None => String::new(),
+    }
+}
+
+/// Converts the pixels of a bitmap from `IShellItemImageFactory` (BGRA, 32 bit) to straight RGBA
+/// in place. The shell hands out premultiplied alpha; when a pixel has a color channel above its
+/// alpha the data cannot be premultiplied and is left alone. A bitmap with no alpha at all becomes
+/// opaque.
+pub fn shell_bgra_to_rgba(px: &mut [u8]) {
+    let px = px.as_chunks_mut::<4>().0;
+    let has_alpha = px.iter().any(|p| p[3] != 0);
+    let premultiplied = has_alpha && px.iter().all(|p| p[..3].iter().all(|&c| c <= p[3]));
+    for p in px.iter_mut() {
+        p.swap(0, 2);
+        if !has_alpha {
+            p[3] = 255;
+        } else if premultiplied && p[3] != 0 && p[3] != 255 {
+            let a = p[3] as u32;
+            for v in &mut p[..3] {
+                *v = ((*v as u32 * 255 + a / 2) / a).min(255) as u8;
+            }
         }
     }
 }
@@ -486,5 +587,78 @@ mod tests {
         let mut all = [1, 2, 3, 0];
         bgra_to_rgba(&mut all, None);
         assert_eq!(all[3], 255);
+    }
+    #[test]
+    fn paths_with_the_extended_prefix_or_other_case_are_the_same_file() {
+        assert!(same_path(r"\\?\C:\Users\Ann\x.exe", r"c:\users\ann\X.EXE"));
+        assert!(same_path(r"\\?\UNC\srv\share\x.exe", r"\\srv\share\x.exe"));
+        assert!(same_path(r"C:\Users\Müller\x.exe", r"c:\users\MÜLLER\x.exe"));
+        assert!(!same_path(r"C:\Users\Müller\x.exe", r"C:\Users\Muller\x.exe"));
+    }
+
+    #[test]
+    fn the_program_of_a_run_entry_is_found_quoted_or_not() {
+        assert_eq!(
+            exe_of_run_value(r#""C:\Program Files\A B\x.exe" --autostart"#).as_deref(),
+            Some(r"C:\Program Files\A B\x.exe")
+        );
+        assert_eq!(
+            exe_of_run_value(r"C:\Apps\X.EXE --autostart").as_deref(),
+            Some(r"C:\Apps\X.EXE")
+        );
+        assert_eq!(exe_of_run_value(""), None);
+        assert_eq!(exe_of_run_value(r#""" --autostart"#), None);
+        assert_eq!(exe_of_run_value("notepad"), None);
+    }
+
+    #[test]
+    fn registry_text_is_read_from_utf16_bytes() {
+        let bytes: Vec<u8> = "C:\\a\u{e9}.exe\0junk"
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        assert_eq!(utf16_bytes_to_string(&bytes), "C:\\a\u{e9}.exe");
+        assert_eq!(utf16_bytes_to_string(&[]), "");
+        assert_eq!(utf16_bytes_to_string(&[65]), "", "a lone byte is not a character");
+    }
+
+    #[test]
+    fn environment_variables_are_expanded_only_when_known() {
+        let lookup = |n: &str| (n == "ProgramFiles").then(|| r"C:\Program Files".to_string());
+        assert_eq!(
+            expand_env_vars(r"%ProgramFiles%\A\a.exe", &lookup),
+            r"C:\Program Files\A\a.exe"
+        );
+        assert_eq!(expand_env_vars("%Nope%\\a.exe", &lookup), "%Nope%\\a.exe");
+        assert_eq!(expand_env_vars("100%", &lookup), "100%");
+        assert_eq!(expand_env_vars("%%", &lookup), "%%");
+        assert_eq!(expand_env_vars("plain", &lookup), "plain");
+    }
+
+    #[test]
+    fn helpers_are_not_apps_and_names_get_a_capital() {
+        assert!(is_helper_stem("unins000"));
+        assert!(is_helper_stem("my-updater-setup"));
+        assert!(!is_helper_stem("chrome"));
+        assert_eq!(capitalized("chrome"), "Chrome");
+        assert_eq!(capitalized(""), "");
+    }
+
+    #[test]
+    fn shell_bitmaps_become_straight_rgba() {
+        // premultiplied: half transparent white is (128, 128, 128, 128)
+        let mut px = [128, 128, 128, 128, 10, 20, 30, 255, 0, 0, 0, 0];
+        shell_bgra_to_rgba(&mut px);
+        assert_eq!(px[..4], [255, 255, 255, 128]);
+        assert_eq!(px[4..8], [30, 20, 10, 255]);
+        assert_eq!(px[8..], [0, 0, 0, 0]);
+        // a channel above alpha: already straight, only the channel order changes
+        let mut px = [200, 100, 50, 128];
+        shell_bgra_to_rgba(&mut px);
+        assert_eq!(px, [50, 100, 200, 128]);
+        // no alpha at all: opaque
+        let mut px = [1, 2, 3, 0, 4, 5, 6, 0];
+        shell_bgra_to_rgba(&mut px);
+        assert_eq!(px, [3, 2, 1, 255, 6, 5, 4, 255]);
     }
 }

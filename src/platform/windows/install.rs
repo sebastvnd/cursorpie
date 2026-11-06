@@ -14,14 +14,14 @@
 //! `CURSORPIE_NO_INSTALL=1` to get the same for any other copy). A copy that the Setup wizard
 //! (`installer/cursorpie.iss`) put in place is left alone too: the wizard registered it.
 
-use super::login_item::{launch_at_login_enabled, set_launch_at_login};
+use super::login_item::{launch_at_login_enabled, repair_launch_entry, set_launch_at_login};
 use super::registry;
 use super::shell::run_shell;
 use super::util::{
     cleanup_command, install_dir, installed_by_setup, installed_exe, is_build_output, same_path,
     uninstall_command, wants_uninstall,
 };
-use crate::about::{APP_NAME, AUTHOR_NAME, REPO_URL, VERSION};
+use crate::about::{APP_NAME, AUTHOR_NAME, HANDOVER_ARG, REPO_URL, VERSION};
 use std::path::{Path, PathBuf};
 use std::{fs, io};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -69,6 +69,18 @@ fn local_app_data() -> Option<String> {
     std::env::var("LOCALAPPDATA")
         .ok()
         .filter(|s| !s.trim().is_empty())
+}
+
+/// Whether two paths are the same file. The text comparison ([`same_path`]) is tried first; when
+/// it says no, both paths are resolved by the file system, which turns 8.3 short names (`JOHNDO~1`),
+/// junctions and links into the one real path. Without that, an installed copy that was started
+/// through such a path took itself for another copy.
+pub(super) fn same_file(a: &Path, b: &Path) -> bool {
+    same_path(&a.to_string_lossy(), &b.to_string_lossy())
+        || matches!(
+            (fs::canonicalize(a), fs::canonicalize(b)),
+            (Ok(x), Ok(y)) if same_path(&x.to_string_lossy(), &y.to_string_lossy())
+        )
 }
 
 /// The install folder.
@@ -169,8 +181,31 @@ pub fn ensure_installed() -> Option<PathBuf> {
     if installed_by_setup(&current) {
         return None;
     }
+    // Handed over to by another copy: this is the installed copy, whatever the paths look like.
+    // Never hand over again, or a path that is written differently starts copies of itself forever.
+    let handed_over = std::env::args().skip(1).any(|a| a == HANDOVER_ARG);
+    let handover = if handed_over {
+        None
+    } else {
+        install_step(&current)
+    };
+    if handover.is_none() {
+        // Staying in this copy: make sure a login entry that cannot work is repaired.
+        repair_launch_entry();
+    }
+    handover
+}
+
+/// The install itself, see [`ensure_installed`]. Returns the installed copy when this copy has to
+/// hand over to it.
+fn install_step(current: &Path) -> Option<PathBuf> {
     let target = installed_exe_path()?;
-    let running_installed = same_path(&current.to_string_lossy(), &target.to_string_lossy());
+    // A Setup wizard install of the same folder is left alone: it has its own uninstall entry, and
+    // copying over it would leave two of them.
+    if installed_by_setup(&target) {
+        return None;
+    }
+    let running_installed = same_file(current, &target);
     let first_time = !is_installed();
 
     // A first install is the user's decision. An update of an app that is already installed
@@ -188,7 +223,7 @@ pub fn ensure_installed() -> Option<PathBuf> {
 
     if running_installed {
         let _ = fs::remove_file(leftover(&target)); // an update parked the old copy here
-    } else if let Err(e) = copy_over(&current, &target) {
+    } else if let Err(e) = copy_over(current, &target) {
         eprintln!("CursorPie: could not install to {}: {e}", target.display());
         return None;
     }

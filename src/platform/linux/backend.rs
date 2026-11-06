@@ -244,6 +244,20 @@ pub fn post_mouse(_pos: Point, kind: Kind, button: i64) {
     }
 }
 
+/// Clicks `button` (0 = left, 1 = right) at `pos` (logical points) and leaves the pointer where it
+/// was. Used by the virtual trackpad, whose pointer is not the system's.
+pub fn click_at(pos: (f64, f64), button: i64, _clicks: u32) {
+    if !matches!(button, 0 | 1) {
+        return;
+    }
+    let Some(xb) = x_button_for(button) else {
+        return;
+    };
+    if let Some(c) = x11::conn() {
+        c.click_at(xb, pos);
+    }
+}
+
 /// Brings the top-most window of `bundle` to the front.
 pub fn activate_app(bundle: &str) {
     if let Some(c) = x11::conn() {

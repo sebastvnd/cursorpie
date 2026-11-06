@@ -84,6 +84,8 @@ pub fn spawn(notifier: Notifier) {
                         CGEventType::ScrollWheel,
                         CGEventType::KeyDown,
                         CGEventType::KeyUp,
+                        // modifiers have no key events: their flags tell the order they were pressed in
+                        CGEventType::FlagsChanged,
                     ],
                     move |_proxy, etype, event| guarded(&st, &n, etype, event),
                 );
@@ -182,6 +184,12 @@ fn handle(
             unsafe { CGEventTapEnable(port as CFMachPortRef, true) };
         }
         reset(state, notifier);
+        return CallbackResult::Keep;
+    }
+    // a modifier went down or up: only remembered (for the order of a recorded shortcut), never
+    // touched
+    if matches!(etype, CGEventType::FlagsChanged) {
+        super::modorder::sync(mods_from_flags(event.get_flags()));
         return CallbackResult::Keep;
     }
     // the holding finger and the extra one are two fingers, which scroll: while a trackpad hold

@@ -29,7 +29,7 @@
 
 use super::{
     Ev, Gesture, Kind, PAUSED, RECORDING, RIGHT_BUTTON, SIDE_BACK, SIDE_FORWARD, SWALLOW_KEY,
-    TAP_ACTIVE, Verdict, dispatch, touch,
+    TAP_ACTIVE, Verdict, dispatch, modorder, touch,
 };
 use crate::config::{cfg, extra_buttons_in_use, lock};
 use crate::geometry::Point;
@@ -70,6 +70,19 @@ pub(super) fn mac_button(x_button: c_int) -> Option<i64> {
 }
 
 /// The `MOD_*` bits of an `XKeyEvent::state`.
+/// The `MOD_*` bit of an X keycode of a modifier key (either side), `None` for other keys. The X
+/// keycode is the Linux key code plus 8 (`KEY_LEFTSHIFT` 42, `KEY_LEFTCTRL` 29, `KEY_LEFTALT` 56,
+/// `KEY_LEFTMETA` 125, and the right ones).
+fn modifier_bit(keycode: u32) -> Option<u8> {
+    match keycode.checked_sub(8)? {
+        42 | 54 => Some(MOD_SHIFT),
+        29 | 97 => Some(MOD_CTRL),
+        56 | 100 => Some(MOD_ALT),
+        125 | 126 => Some(MOD_CMD),
+        _ => None,
+    }
+}
+
 pub(super) fn mods_from_state(state: u32) -> u8 {
     let mut m = 0;
     if state & SHIFT_MASK != 0 {
@@ -473,6 +486,14 @@ impl Tap {
 
     fn on_key(&mut self, down: bool, k: &XKeyEvent) {
         let Some(code) = keymap::code_for_x_keycode(k.keycode) else {
+            // a modifier on its own: remembered for the order of a recorded shortcut
+            if let Some(bit) = modifier_bit(k.keycode) {
+                if down {
+                    modorder::press(bit);
+                } else {
+                    modorder::release(bit);
+                }
+            }
             return; // a modifier on its own, or a key without a code
         };
         self.route(Ev::Key {

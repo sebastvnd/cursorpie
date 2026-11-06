@@ -11,6 +11,16 @@ pub const MOD_ALT: u8 = 4;
 /// Modifier bit: Command.
 pub const MOD_CMD: u8 = 8;
 
+/// The modifiers in the order a label lists them when the press order is not known (the order of
+/// the macOS menus): Ctrl, Opt, Shift, Cmd.
+pub const MOD_ORDER: [u8; 4] = [MOD_CTRL, MOD_ALT, MOD_SHIFT, MOD_CMD];
+
+/// Every `MOD_*` bit together.
+const MOD_ALL: u8 = MOD_SHIFT | MOD_CTRL | MOD_ALT | MOD_CMD;
+
+/// Two bits of [`Shortcut::order`] name one modifier: its index in this table.
+const MOD_BY_ID: [u8; 4] = [MOD_SHIFT, MOD_CTRL, MOD_ALT, MOD_CMD];
+
 /// Virtual key codes that mean the same thing on every layout (no letters / digits / punctuation:
 /// those move around between layouts, use `Shortcut::ch` for them).
 pub mod key {
@@ -41,12 +51,82 @@ pub mod key {
 pub struct Shortcut {
     pub key: u16,
     pub mods: u8,
+    /// The order the modifiers were pressed in while recording, two bits per modifier (the first
+    /// pressed in the lowest bits; see [`Shortcut::with_order`]). `0` means the usual order
+    /// ([`MOD_ORDER`]), which is also what every shortcut saved before this field existed has. It
+    /// is left out of `config.json` while it is `0`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub order: u8,
+}
+
+fn is_zero(v: &u8) -> bool {
+    *v == 0
 }
 
 impl Shortcut {
     /// A shortcut from a virtual key code and a `MOD_*` bitmask.
     pub const fn new(key: u16, mods: u8) -> Self {
-        Self { key, mods }
+        Self {
+            key,
+            mods,
+            order: 0,
+        }
+    }
+
+    /// This shortcut with its modifiers in the order `pressed` lists them (`MOD_*` bits, first
+    /// pressed first). Bits that are not in `mods` are ignored and modifiers `pressed` leaves out
+    /// follow in the usual order. The usual order is stored as `0`, so a shortcut that was pressed
+    /// in that order equals one made with [`Shortcut::new`].
+    pub fn with_order(mut self, pressed: &[u8]) -> Self {
+        let mods = self.mods & MOD_ALL;
+        let mut list: Vec<u8> = Vec::new();
+        for &bit in pressed {
+            if mods & bit != 0 && bit.count_ones() == 1 && !list.contains(&bit) {
+                list.push(bit);
+            }
+        }
+        for bit in MOD_ORDER {
+            if mods & bit != 0 && !list.contains(&bit) {
+                list.push(bit);
+            }
+        }
+        self.order = if list == self.usual_mods() {
+            0
+        } else {
+            list.iter().enumerate().fold(0u8, |acc, (i, bit)| {
+                let id = MOD_BY_ID.iter().position(|b| b == bit).unwrap_or(0) as u8;
+                acc | (id << (2 * i))
+            })
+        };
+        self
+    }
+
+    /// The modifiers of this shortcut in the usual order ([`MOD_ORDER`]).
+    fn usual_mods(&self) -> Vec<u8> {
+        MOD_ORDER
+            .iter()
+            .copied()
+            .filter(|bit| self.mods & bit != 0)
+            .collect()
+    }
+
+    /// The modifiers of this shortcut (`MOD_*` bits) in the order they were pressed. The usual
+    /// order when none was recorded, or when the recorded one does not match `mods`.
+    pub fn ordered_mods(&self) -> Vec<u8> {
+        let usual = self.usual_mods();
+        if self.order == 0 {
+            return usual;
+        }
+        let list: Vec<u8> = (0..usual.len())
+            .map(|i| MOD_BY_ID[((self.order >> (2 * i)) & 3) as usize])
+            .collect();
+        let seen = list.iter().fold(0u8, |acc, bit| acc | bit);
+        let known = usual.iter().fold(0u8, |acc, bit| acc | bit);
+        if seen == known && seen.count_ones() as usize == list.len() {
+            list
+        } else {
+            usual
+        }
     }
 
     /// The key that *types* `c` on the current layout (AZERTY, QWERTZ, Dvorak, ...), plus any
@@ -60,7 +140,7 @@ impl Shortcut {
         Self::new(ansi_code(c).unwrap_or(0), mods)
     }
 
-    /// Display text. Shift + a symbol key shows the resulting symbol ("+" instead of "Shift + =").
+    /// Display text, the modifiers in the order they were pressed. Shift + a symbol key shows the resulting symbol ("+" instead of "Shift + =").
     pub fn label(&self) -> String {
         self.label_for(crate::platform::OS)
     }
@@ -77,17 +157,14 @@ impl Shortcut {
         };
 
         let mut parts: Vec<String> = Vec::new();
-        if self.mods & MOD_CTRL != 0 {
-            parts.push(names.ctrl.into());
-        }
-        if self.mods & MOD_ALT != 0 {
-            parts.push(names.alt.into());
-        }
-        if shift && sym.is_none() {
-            parts.push(names.shift.into());
-        }
-        if self.mods & MOD_CMD != 0 {
-            parts.push(names.cmd.into());
+        for bit in self.ordered_mods() {
+            match bit {
+                MOD_CTRL => parts.push(names.ctrl.into()),
+                MOD_ALT => parts.push(names.alt.into()),
+                MOD_SHIFT if sym.is_none() => parts.push(names.shift.into()),
+                MOD_CMD => parts.push(names.cmd.into()),
+                _ => {}
+            }
         }
         parts.push(match sym {
             Some(s) => s,
@@ -322,6 +399,53 @@ mod tests {
             Shortcut::new(key::UP, MOD_CTRL).label_for(Os::Mac),
             "Ctrl + Up"
         );
+    }
+
+    #[test]
+    fn labels_follow_the_order_the_modifiers_were_pressed_in() {
+        use crate::platform::Os;
+        let all = MOD_CTRL | MOD_ALT | MOD_SHIFT | MOD_CMD;
+        let sc = Shortcut::new(13, all).with_order(&[MOD_CMD, MOD_SHIFT, MOD_ALT, MOD_CTRL]);
+        assert_eq!(sc.label_for(Os::Mac), "Cmd + Shift + Opt + Ctrl + W");
+        // Cmd, Shift, Opt then W: what the user pressed is what the label says
+        let sc = Shortcut::new(13, MOD_CMD | MOD_SHIFT | MOD_ALT)
+            .with_order(&[MOD_CMD, MOD_SHIFT, MOD_ALT]);
+        assert_eq!(sc.label_for(Os::Mac), "Cmd + Shift + Opt + W");
+        assert_eq!(sc.label_for(Os::Windows), "Win + Shift + Alt + W");
+        assert_eq!(
+            sc.ordered_mods(),
+            vec![MOD_CMD, MOD_SHIFT, MOD_ALT],
+            "playback uses the same order"
+        );
+    }
+
+    #[test]
+    fn the_usual_order_is_stored_as_zero() {
+        let sc = Shortcut::new(13, MOD_CTRL | MOD_CMD).with_order(&[MOD_CTRL, MOD_CMD]);
+        assert_eq!(sc, Shortcut::new(13, MOD_CTRL | MOD_CMD));
+        // modifiers the list leaves out, and bits that are not held, do not matter
+        let sc = Shortcut::new(13, MOD_CMD | MOD_ALT).with_order(&[MOD_SHIFT, MOD_CMD]);
+        assert_eq!(sc.ordered_mods(), vec![MOD_CMD, MOD_ALT]);
+    }
+
+    #[test]
+    fn a_stale_order_falls_back_to_the_usual_one() {
+        let mut sc = Shortcut::new(13, MOD_CMD | MOD_SHIFT).with_order(&[MOD_CMD, MOD_SHIFT]);
+        assert_eq!(sc.ordered_mods(), vec![MOD_CMD, MOD_SHIFT]);
+        sc.mods = MOD_CMD | MOD_ALT; // edited by hand in config.json
+        assert_eq!(sc.ordered_mods(), vec![MOD_ALT, MOD_CMD]);
+    }
+
+    #[test]
+    fn order_is_only_written_when_it_is_not_the_usual_one() {
+        let sc = Shortcut::new(13, MOD_CMD | MOD_SHIFT).with_order(&[MOD_CMD, MOD_SHIFT]);
+        let json = serde_json::to_string(&sc).unwrap();
+        assert_eq!(json, r#"{"key":13,"mods":9,"order":3}"#);
+        let back: Shortcut = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, sc);
+        // a config written before `order` existed still loads
+        let old: Shortcut = serde_json::from_str(r#"{"key":13,"mods":9}"#).unwrap();
+        assert_eq!(old, Shortcut::new(13, MOD_CMD | MOD_SHIFT));
     }
 
     #[test]

@@ -211,6 +211,9 @@ like a real trackpad does. The pie opens at the virtual pointer, aims with it an
 
 It feeds the same recognizer as a real trackpad, so the whole chain (hold, aim, lift, extra click, the palm and edge
 rules) is the real one, and `CURSORPIE_DEBUG=touch` logs it as it logs a real trackpad (the device id is `0x56495254`).
+The left and right buttons of the mouse are the primary and the secondary click of the trackpad: the click is made at
+the virtual pointer when the button comes up, so the app under the arrow gets it (a double click too). While the pie is
+open, a click is the pie's extra click and goes nowhere else. Holding a button and dragging is not made yet.
 Nothing is written to the settings; the red dot closes the trackpad, and the app keeps running. The app allows one
 copy at a time: if another CursorPie is running (the installed one, or another `cargo run`), quit it first, or the
 tool says so and stops.
