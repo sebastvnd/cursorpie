@@ -430,9 +430,13 @@ mod tests {
             "the first ask must not wait for the system"
         );
         let started = Instant::now();
+        // Only a bound against a hang. For an app that does not exist, Windows scans the Start
+        // menu shortcuts and the program folders (once, then the miss is remembered), which on a
+        // busy machine or a CI runner takes well over ten seconds.
+        let patience = Duration::from_secs(120);
         loop {
             match c.get_app_async(&ctx, key) {
-                IconState::Pending if started.elapsed() < Duration::from_secs(10) => {
+                IconState::Pending if started.elapsed() < patience => {
                     std::thread::sleep(Duration::from_millis(10));
                 }
                 IconState::Pending => panic!("the worker never answered"),
