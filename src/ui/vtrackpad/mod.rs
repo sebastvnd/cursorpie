@@ -347,7 +347,10 @@ impl Clicker {
                     spoiled: false,
                 });
             }
-            if released && let Some(h) = self.held && h.button == button {
+            if released
+                && let Some(h) = self.held
+                && h.button == button
+            {
                 self.held = None;
                 if h.spoiled {
                     continue;
@@ -599,7 +602,10 @@ mod tests {
         let slow = travel_per_mm(0.5, 0.016);
         let flick = travel_per_mm(8.0, 0.016);
         // a slow slide is about POINTS_PER_MM per millimeter (a little more: it already accelerates)
-        assert!(slow >= POINTS_PER_MM && slow < POINTS_PER_MM * 2.0, "{slow}");
+        assert!(
+            (POINTS_PER_MM..POINTS_PER_MM * 2.0).contains(&slow),
+            "{slow}"
+        );
         // a flick goes much further per millimeter: that is the acceleration, and it is bounded
         assert!(flick > slow * 1.8, "{flick} {slow}");
         assert!(flick <= POINTS_PER_MM * (1.0 + ACCEL_MAX) + 1e-3);

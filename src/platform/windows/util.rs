@@ -247,10 +247,8 @@ pub fn exe_of_run_value(value: &str) -> Option<String> {
 
 /// Text of a registry value read as raw bytes (`REG_SZ` / `REG_EXPAND_SZ`: UTF-16, little endian).
 pub fn utf16_bytes_to_string(bytes: &[u8]) -> String {
-    let units: Vec<u16> = bytes
-        .chunks_exact(2)
-        .map(|c| u16::from_le_bytes([c[0], c[1]]))
-        .collect();
+    let (pairs, _) = bytes.as_chunks::<2>(); // a trailing odd byte is dropped, as before
+    let units: Vec<u16> = pairs.iter().map(|&c| u16::from_le_bytes(c)).collect();
     from_wide(&units)
 }
 
@@ -592,8 +590,14 @@ mod tests {
     fn paths_with_the_extended_prefix_or_other_case_are_the_same_file() {
         assert!(same_path(r"\\?\C:\Users\Ann\x.exe", r"c:\users\ann\X.EXE"));
         assert!(same_path(r"\\?\UNC\srv\share\x.exe", r"\\srv\share\x.exe"));
-        assert!(same_path(r"C:\Users\Müller\x.exe", r"c:\users\MÜLLER\x.exe"));
-        assert!(!same_path(r"C:\Users\Müller\x.exe", r"C:\Users\Muller\x.exe"));
+        assert!(same_path(
+            r"C:\Users\Müller\x.exe",
+            r"c:\users\MÜLLER\x.exe"
+        ));
+        assert!(!same_path(
+            r"C:\Users\Müller\x.exe",
+            r"C:\Users\Muller\x.exe"
+        ));
     }
 
     #[test]
@@ -619,7 +623,11 @@ mod tests {
             .collect();
         assert_eq!(utf16_bytes_to_string(&bytes), "C:\\a\u{e9}.exe");
         assert_eq!(utf16_bytes_to_string(&[]), "");
-        assert_eq!(utf16_bytes_to_string(&[65]), "", "a lone byte is not a character");
+        assert_eq!(
+            utf16_bytes_to_string(&[65]),
+            "",
+            "a lone byte is not a character"
+        );
     }
 
     #[test]

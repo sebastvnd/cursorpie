@@ -137,6 +137,16 @@ mod tests {
         crate::config::parse_config(json).expect("valid config")
     }
 
+    /// What a file without any of the newer fields loads as: the defaults, except that a file
+    /// saved before `show_labels` existed keeps the names (the default is icons only).
+    fn defaults_of_an_old_file(version: u32) -> Config {
+        Config {
+            version,
+            show_labels: true,
+            ..Config::default()
+        }
+    }
+
     #[test]
     fn the_look_settings_default_and_are_clamped() {
         let old = parse(r#"{"version":2}"#);
@@ -161,22 +171,10 @@ mod tests {
         assert_eq!(old.touch_click_action, TouchClickAction::SwitchPie);
         assert_eq!(old.touch_typing_guard_ms, 400);
         assert!(old.haptics && old.haptic_hover);
-        assert_eq!(
-            old,
-            Config {
-                version: old.version,
-                ..Config::default()
-            }
-        );
+        assert_eq!(old, defaults_of_an_old_file(old.version));
         // the two-finger mode is gone: the old field is ignored and never comes back
         let two = parse(r#"{"version":2,"touch_fingers":2}"#);
-        assert_eq!(
-            two,
-            Config {
-                version: two.version,
-                ..Config::default()
-            }
-        );
+        assert_eq!(two, defaults_of_an_old_file(two.version));
         assert!(
             !serde_json::to_string(&two)
                 .unwrap()
@@ -220,7 +218,11 @@ mod tests {
             r#"{"version":2,"pie_hold_ms":1,"settings_hold_ms":1,"double_click_ms":9999,"pie_size":10}"#,
         );
         assert_eq!(c.pie_hold_ms, 50);
-        assert_eq!(c.settings_hold_ms, 450, "at least 300 ms after the pie");
+        assert_eq!(
+            c.settings_hold_ms,
+            c.pie_hold_ms + 300,
+            "at least 300 ms after the pie"
+        );
         assert_eq!(c.double_click_ms, 500);
         assert_eq!(c.pie_size, 140.0);
         let big = parse(r#"{"version":2,"pie_hold_ms":99999,"pie_size":9999}"#);

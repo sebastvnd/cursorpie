@@ -87,7 +87,8 @@ pub(crate) fn handle(
             }
             // the virtual trackpad has one finger, the mouse, and its click is the extra click:
             // the finger count of a real trackpad is not there to say so
-            let physical = FINGERS.load(Ordering::SeqCst) == EXTRA_CLICK_FINGERS || virtual_pointer();
+            let physical =
+                FINGERS.load(Ordering::SeqCst) == EXTRA_CLICK_FINGERS || virtual_pointer();
             let t = now_ms();
             let from_tap = {
                 let until = SWALLOW_UNTIL.load(Ordering::SeqCst);

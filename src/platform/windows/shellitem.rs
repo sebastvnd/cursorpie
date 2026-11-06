@@ -120,7 +120,12 @@ pub fn shell_icon_rgba(name: &str, px: i32) -> Option<(u32, u32, Vec<u8>)> {
     let mut raw: *mut c_void = std::ptr::null_mut();
     // SAFETY: `name` is zero terminated; a null bind context is allowed; `raw` is a valid out-pointer.
     let hr = unsafe {
-        SHCreateItemFromParsingName(name.as_ptr(), std::ptr::null_mut(), &IID_IMAGE_FACTORY, &mut raw)
+        SHCreateItemFromParsingName(
+            name.as_ptr(),
+            std::ptr::null_mut(),
+            &IID_IMAGE_FACTORY,
+            &mut raw,
+        )
     };
     if hr < 0 || raw.is_null() {
         return None;

@@ -1,6 +1,6 @@
 //! Trackpad touches: a second source of the same gesture (macOS and Windows).
 //!
-//! The state machine in [`trigger`](super::trigger) already turns "button down, held, moved,
+//! The state machine in [`trigger`] already turns "button down, held, moved,
 //! released" into "the pie opens, a slice is hovered, a slice runs". A trackpad hold is the same
 //! story with different words, so this module translates touches into the calls a mouse press, drag
 //! and release make. The pie, the profiles, the app detection and the actions do not change, and
@@ -14,7 +14,7 @@
 //! | [`extra`] | the extra click: one more finger clicks while the pie is open | every OS |
 //! | [`haptic`] | which moments tick and how often (pure), `Msg::Haptic` | every OS |
 //! | `multitouch` | macOS: the contact frames of the system, through the private `MultitouchSupport.framework` | by hand on a Mac (checklist) |
-//! | [`ptp`] | Windows: what the HID reports of a Precision Touchpad mean (layout, hybrid reports, palms; pure) | every OS |
+//! | `ptp` | Windows: what the HID reports of a Precision Touchpad mean (layout, hybrid reports, palms; pure) | every OS |
 //! | `precision` | Windows: the reports of the touchpad, through Raw Input (`WM_INPUT`) and the `HidP_*` parser | by hand on Windows (checklist) |
 //! | `evdev` | Linux: the fingers of a touchpad, read from `/dev/input/event*` (the parser is pure) | the parser everywhere, the reader by hand on a Linux laptop |
 //!
@@ -1121,9 +1121,13 @@ mod tests {
         let _c = Cfg::set(|c| {
             fast(c);
             c.touch_click_action = crate::config::TouchClickAction::SwitchPie;
+            // only the general pie: whichever app happens to be under the pointer (or in front)
+            // when the test runs must not own a pie of its own, or the click would switch it
+            c.profiles.retain(|p| p.is_general());
         });
         let mut rig = Rig::new();
         open_pie(&mut rig);
+        crate::side::set_target(Some("firefox".into()), false); // an app with a pie in the defaults
         // there is no app pie in this config, so nothing switches and nothing ticks
         let two = [
             finger(0.5),

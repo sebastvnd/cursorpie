@@ -398,7 +398,10 @@ mod tests {
         let (n, rx) = notifier();
         let st = idle();
         let mods = MOD_CMD | MOD_SHIFT | MOD_ALT;
-        assert_eq!(dispatch(&st, &n, key(true, 13, mods), &|| {}), Verdict::Drop);
+        assert_eq!(
+            dispatch(&st, &n, key(true, 13, mods), &|| {}),
+            Verdict::Drop
+        );
         match rx.try_recv() {
             Ok(Msg::KeyCaptured(s)) => assert_eq!(
                 s.label_for(crate::platform::Os::Mac),

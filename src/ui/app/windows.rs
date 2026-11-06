@@ -104,7 +104,7 @@ impl App {
     ///
     /// Only macOS needs this (the window there is resized while it is visible); elsewhere it is
     /// always false. A window that never reaches the size (the system clamped it) is let go of
-    /// after [`SETTLE_MAX`].
+    /// after `SETTLE_MAX`.
     pub fn window_settling(&mut self, ctx: &egui::Context) -> bool {
         let Some((want, since)) = self.settings_wait else {
             return false;

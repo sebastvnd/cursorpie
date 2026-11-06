@@ -23,7 +23,8 @@ const APPROVED_KEY: &str =
 /// off in Task Manager (Windows then keeps the entry but never runs it).
 fn active_entry() -> Option<String> {
     let value = utf16_bytes_to_string(&registry::get_bytes(RUN_KEY, APP_NAME)?);
-    let off = registry::get_bytes(APPROVED_KEY, APP_NAME).is_some_and(|d| startup_entry_disabled(&d));
+    let off =
+        registry::get_bytes(APPROVED_KEY, APP_NAME).is_some_and(|d| startup_entry_disabled(&d));
     (!off).then_some(value)
 }
 

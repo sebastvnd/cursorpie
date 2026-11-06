@@ -2,7 +2,7 @@
 //!
 //! The decision is **pure** ([`Limiter`] takes the time as a parameter), so it is unit tested on
 //! every OS. The tick itself is played by the UI thread (`platform::haptic`, see
-//! [`Msg::Haptic`](crate::msg::Msg::Haptic)): AppKit is never called from the tap or the touch thread.
+//! [`Msg::Haptic`]): AppKit is never called from the tap or the touch thread.
 //!
 //! | Moment | Pattern | Why |
 //! |---|---|---|
