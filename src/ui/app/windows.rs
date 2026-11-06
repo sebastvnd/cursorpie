@@ -11,7 +11,32 @@ use eframe::egui::{self, Pos2, Vec2};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
+/// Longest the card waits for the window to take its size (see [`App::window_settling`]).
+const SETTLE_MAX: Duration = Duration::from_millis(300);
+
+/// Whether a window of `size` (None = the system did not say) is the size `want`, give or take
+/// the rounding to whole pixels. An unknown size counts as arrived: there is nothing to wait for.
+fn has_size(size: Option<Vec2>, want: Vec2) -> bool {
+    size.is_none_or(|s| (s.x - want.x).abs() <= 2.0 && (s.y - want.y).abs() <= 2.0)
+}
+
 impl App {
+    /// Applies the edited config and writes it to disk (with a backup), without closing Settings:
+    /// the config is sanitized and stored, and the launch-at-login setting is applied.
+    pub fn persist_edit(&mut self) {
+        let new = self.edit.clone().sanitize();
+        let login = new.launch_at_login;
+        *cfg() = new.clone();
+        side::forget_all(); // a changed default should apply at once
+        config::save_config_with_backup(&new);
+        if let Err(e) = platform::set_launch_at_login(login) {
+            eprintln!("CursorPie: could not update launch-at-login: {e}");
+        }
+        if let Some(t) = &self.tray {
+            t.set_login_checked(login);
+        }
+    }
+
     /// Closes Settings and turns the window back into the hidden, click-through pie window.
     /// With `save`, the edited config is sanitized, stored, saved to disk and the launch-at-login setting is applied.
     pub fn close_settings(&mut self, ctx: &egui::Context, save: bool) {
@@ -20,26 +45,18 @@ impl App {
         self.ed.stop_recording();
         self.ed.scan = None;
         self.confirm_quit = false;
+        self.confirm_discard = false;
         if save {
-            let new = self.edit.clone().sanitize();
-            let login = new.launch_at_login;
-            *cfg() = new.clone();
-            side::forget_all(); // a changed default should apply at once
-            config::save_config_with_backup(&new);
-            if let Err(e) = platform::set_launch_at_login(login) {
-                eprintln!("CursorPie: could not update launch-at-login: {e}");
-            }
-            if let Some(t) = &self.tray {
-                t.set_login_checked(login);
-            }
+            self.persist_edit();
         }
         self.ed.icons.revalidate(); // re-read only the images that changed on disk
         self.release_editor(); // the next open copies the config again
         self.win = cfg().pie_size;
-        self.settings_open = false;
+        self.set_settings_open(false);
         self.welcome = None;
         self.closing = None;
         self.settings_anim = 0.0;
+        self.settings_wait = None;
         self.pie_open = false;
         self.anim = 0.0;
         self.visible = false;
@@ -50,7 +67,7 @@ impl App {
         ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
             egui::WindowLevel::AlwaysOnTop,
         ));
-        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        self.hide_root(ctx);
         self.sleep_step(ctx); // the idle clock starts now
     }
 
@@ -74,6 +91,43 @@ impl App {
         platform::raise_own_window();
     }
 
+    /// Whether the window is still on its way to the size the card was given. While it is, the
+    /// caller draws nothing and returns, and the open animation has not started.
+    ///
+    /// The pie is a small window that is already on screen when a held trigger opens Settings
+    /// (and a hidden one when the menu bar opens it). The commands that resize and move it are
+    /// carried out by the system a moment after the frame that sent them, so the first frames of
+    /// the card would be drawn into a window that still has the old size: the card cut off, or
+    /// stretched when the window grows, and then a jump. Worst on the first open, when the
+    /// frames are slowest (nothing is cached yet and the larger drawing surface is created).
+    /// Drawing nothing keeps the transparent window empty until it has arrived.
+    ///
+    /// Only macOS needs this (the window there is resized while it is visible); elsewhere it is
+    /// always false. A window that never reaches the size (the system clamped it) is let go of
+    /// after [`SETTLE_MAX`].
+    pub fn window_settling(&mut self, ctx: &egui::Context) -> bool {
+        let Some((want, since)) = self.settings_wait else {
+            return false;
+        };
+        let size = ctx.input(|i| i.viewport().inner_rect).map(|r| r.size());
+        if platform::OS != platform::Os::Mac
+            || has_size(size, want)
+            || since.elapsed() >= SETTLE_MAX
+        {
+            diag::log!(
+                "ui",
+                "window_settled",
+                waited_ms = since.elapsed(),
+                arrived = has_size(size, want)
+            );
+            self.settings_wait = None;
+            ctx.request_repaint(); // draw the card now
+            return false;
+        }
+        ctx.request_repaint_after(Duration::from_millis(8));
+        true
+    }
+
     /// Turns the window into Settings, centered on the display that contains `at`.
     pub(super) fn open_settings(&mut self, ctx: &egui::Context, at: Pos2, about: bool) {
         diag::log!(
@@ -90,7 +144,7 @@ impl App {
             return;
         }
         self.pie_open = false;
-        self.settings_open = true;
+        self.set_settings_open(true);
         self.visible = true;
         self.closing = None;
         self.settings_anim = 0.0;
@@ -118,7 +172,7 @@ impl App {
             return;
         }
         self.pie_open = false;
-        self.settings_open = true;
+        self.set_settings_open(true);
         self.visible = true;
         self.closing = None;
         self.settings_anim = 0.0;
@@ -148,6 +202,7 @@ impl App {
             h = win_sz.y
         );
         crate::debug::expect_window(top_left.x, top_left.y);
+        self.settings_wait = Some((win_sz, Instant::now()));
 
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(win_sz));
         ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
@@ -192,13 +247,34 @@ impl App {
         if open_settings {
             // straight into Settings, without hiding the window in between
             self.welcome = None;
-            self.settings_open = false;
+            self.set_settings_open(false);
             self.closing = None;
             let at = self.cursor_or_default();
             self.open_settings(ctx, at, false);
         } else {
             self.close_settings(ctx, false);
         }
+    }
+
+    /// Mirrors `settings_open` into [`tap::SETTINGS_OPEN`](crate::tap::SETTINGS_OPEN), which the
+    /// tap thread reads to keep the pie off. Every change of `settings_open` goes through here.
+    pub(super) fn set_settings_open(&mut self, open: bool) {
+        self.settings_open = open;
+        crate::tap::SETTINGS_OPEN.store(open, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// The trigger was pressed while Settings is open, so the pie did not open. Settings may be
+    /// behind other windows, minimized or on another desktop: without a sign the press looks like it
+    /// did nothing. Brings the window forward and says why.
+    pub(super) fn pie_blocked(&mut self, ctx: &egui::Context, _x: f64, _y: f64) {
+        // (not while a file chooser is open: it would end up under Settings)
+        if !crate::ui::settings::choosing() {
+            self.raise_settings(ctx, "pie_press");
+            ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
+                egui::UserAttentionType::Informational,
+            ));
+        }
+        self.say("The pie is off while Settings is open  \u{b7}  Save or Cancel to use it again");
     }
 
     /// Opens the pie window for `profile` at (x, y). Submenus call this again to re-center.
@@ -211,6 +287,7 @@ impl App {
         path: Vec<usize>,
     ) {
         if self.settings_open {
+            // defense in depth: the tap does not ask for a pie while Settings is open
             diag::log!(
                 "ui",
                 "show_pie_ignored",
@@ -218,19 +295,7 @@ impl App {
                 x = x,
                 y = y
             );
-            // Settings may be behind other windows, minimized or on another desktop: without a
-            // sign the press looks like it did nothing. Bring the window forward and say why the
-            // pie did not open.
-            // (not while a file chooser is open: it would end up under Settings)
-            if !crate::ui::settings::choosing() {
-                self.raise_settings(ctx, "pie_press");
-                ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
-                    egui::UserAttentionType::Informational,
-                ));
-            }
-            self.say(
-                "The pie is off while Settings is open  \u{b7}  Save or Cancel to use it again",
-            );
+            self.pie_blocked(ctx, x, y);
             return;
         }
         self.win = cfg().pie_size;
@@ -247,7 +312,14 @@ impl App {
         let w = self.win;
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize([w, w].into()));
         ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
-        ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(true));
+        // A mouse hold has a button down, so the apps under the pie hear no pointer motion. A
+        // trackpad hold has none: the finger moves the real pointer, and a click-through pie lets
+        // every move reach the page below (a video player shows its controls, links highlight).
+        // So the pie of a trackpad hold takes the pointer; the pie follows the cursor, so the
+        // pointer stays inside it. Clicks are swallowed by the taps as before.
+        let takes_pointer = crate::tap::touch_pie_active();
+        diag::log!("ui", "pie_input", takes_pointer = takes_pointer);
+        ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(!takes_pointer));
         ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
             egui::WindowLevel::AlwaysOnTop,
         ));
@@ -338,8 +410,8 @@ impl App {
     }
 
     /// Current cursor position, or a fixed fallback if the OS cannot tell.
-    fn cursor_or_default(&self) -> Pos2 {
-        let raw = platform::cursor_pos();
+    pub(super) fn cursor_or_default(&self) -> Pos2 {
+        let raw = platform::pointer_pos();
         diag::log!(
             "ui",
             "cursor_or_default",
@@ -393,5 +465,26 @@ impl App {
             "quit" => self.request_quit(ctx),
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_window_has_arrived_when_it_has_the_size_asked_for() {
+        let want = Vec2::new(1260.0, 820.0);
+        assert!(has_size(Some(Vec2::new(1260.0, 820.0)), want));
+        assert!(
+            has_size(Some(Vec2::new(1259.0, 821.0)), want),
+            "pixel rounding"
+        );
+        assert!(
+            !has_size(Some(Vec2::new(400.0, 400.0)), want),
+            "still the pie"
+        );
+        assert!(!has_size(Some(Vec2::new(1260.0, 400.0)), want));
+        assert!(has_size(None, want), "nothing to compare: do not wait");
     }
 }

@@ -3,8 +3,9 @@
 # its icon and an install.sh that copies them under a prefix (default /usr/local, or ~/.local with
 # --user).
 # Usage:  scripts/package-linux.sh
-# Needs the development files of libx11, libxi, libxtst and libxrandr (see CONTRIBUTING.md) and,
-# for the icon, ImageMagick (`convert` or `magick`); without it the package is built without an icon.
+# Needs the development files of libx11, libxi, libxtst and libxrandr (see CONTRIBUTING.md).
+# The icons (16 to 512 px, same artwork as the Windows and macOS icons) are in assets/icons; no
+# image-conversion tool is needed.
 # Build on an older distribution if the program must start on older ones (glibc is not backwards
 # compatible).
 set -euo pipefail
@@ -22,14 +23,9 @@ cp target/release/cursorpie "$OUT/cursorpie"
 cp packaging/linux/cursorpie.desktop "$OUT/cursorpie.desktop"
 cp LICENSE README.md "$OUT/"
 
-# the icon: a 256x256 PNG made from the logo
-IM=""
-if command -v magick >/dev/null 2>&1; then IM="magick"; elif command -v convert >/dev/null 2>&1; then IM="convert"; fi
-if [ -n "$IM" ]; then
-    $IM icon/cursorpie_logo.png -background none -gravity center -resize 256x256 -extent 256x256 "$OUT/cursorpie.png"
-else
-    echo "warning: ImageMagick not found, building without an icon" >&2
-fi
+# Keep the white mark on the sage background square; do not use the horizontal wordmark here.
+mkdir -p "$OUT/icons"
+cp assets/icons/cursorpie-*.png "$OUT/icons/"
 
 cat > "$OUT/install.sh" <<'INSTALL'
 #!/usr/bin/env sh
@@ -45,8 +41,17 @@ case "${1:-}" in
 esac
 install -Dm755 "$here/cursorpie" "$prefix/bin/cursorpie"
 install -Dm644 "$here/cursorpie.desktop" "$prefix/share/applications/cursorpie.desktop"
-if [ -f "$here/cursorpie.png" ]; then
-    install -Dm644 "$here/cursorpie.png" "$prefix/share/icons/hicolor/256x256/apps/cursorpie.png"
+for f in "$here"/icons/cursorpie-*.png; do
+    [ -f "$f" ] || continue
+    size=$(basename "$f" .png); size=${size#cursorpie-}
+    install -Dm644 "$f" "$prefix/share/icons/hicolor/${size}x${size}/apps/cursorpie.png"
+done
+# make the desktop pick up the new icon and entry without a logout (each tool is optional)
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -q -t -f "$prefix/share/icons/hicolor" 2>/dev/null || true
+fi
+if command -v update-desktop-database >/dev/null 2>&1; then
+    update-desktop-database -q "$prefix/share/applications" 2>/dev/null || true
 fi
 echo "Installed under $prefix. Start CursorPie from your applications menu or run: cursorpie"
 INSTALL

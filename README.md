@@ -1,15 +1,15 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="icon/cursorpie_logo.png">
-  <img src="icon/cursorpie_logo_black.png" alt="CursorPie" width="420">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/cursorpie-logo-white.png">
+  <img src="assets/cursorpie-logo-black.png" alt="CursorPie" width="420">
 </picture>
 
 ### Your actions, one gesture away.
 
-**Hold a mouse button. Flick toward an action. Release.**
+**Hold a mouse button or a finger on your trackpad. Flick toward an action. Release.**
 
-A configurable pie menu for your cursor — available on macOS, Windows and Linux.
+A configurable pie menu for your cursor — available on macOS, Windows and Linux, with a mouse or a trackpad.
 
 [**Visit the website**](https://sebastvnd.github.io/cursorpie/) · [Download latest release](https://github.com/sebastvnd/cursorpie/releases/latest) · [Explore the docs](https://sebastvnd.github.io/cursorpie/index.html?doc=docs/README.md)
 
@@ -26,7 +26,7 @@ A configurable pie menu for your cursor — available on macOS, Windows and Linu
 
 ## What is CursorPie?
 
-CursorPie puts a radial menu right under your pointer. Hold the middle mouse button, move toward the action you need, then release. No hunting through menus and no need to remember a long list of shortcuts.
+CursorPie puts a radial menu right under your pointer. Hold the middle mouse button (or touch and hold a trackpad), move toward the action you need, then release. No hunting through menus and no need to remember a long list of shortcuts.
 
 A slice can send a keyboard shortcut, open an application, URL or file, run a command, switch a mouse-button mode, or open a submenu. You can keep a general menu and create a different profile for each application.
 
@@ -34,8 +34,9 @@ Built with **Rust** and [egui](https://github.com/emilk/egui), CursorPie is insp
 
 ## Highlights
 
-- **A quick, natural gesture.** Hold for 500 ms by default, flick toward a slice, and release. Hold in the center to open Settings.
+- **A quick, natural gesture.** Hold for 150 ms by default, flick toward a slice, and release. Hold in the center to open Settings.
 - **A menu for every app.** Keep a general pie and create app-specific profiles for the tools you use most.
+- **Mouse or trackpad.** Touch and hold a trackpad instead of pressing a button, on macOS, Windows and Linux (X11). It is off by default and uses the same pie, timings and profiles; see [Trackpad](#trackpad).
 - **Useful mouse buttons.** Assign actions to back, forward and other supported extra buttons with configurable modes.
 - **Actions that fit your workflow.** Trigger shortcuts, open apps, links and files, run shell commands, or chain actions into a sequence.
 - **Nested menus.** Organize up to 8 slices per ring and 5 levels of submenus.
@@ -43,7 +44,7 @@ Built with **Rust** and [egui](https://github.com/emilk/egui), CursorPie is insp
 - **Easy to share.** Export a profile, including its icons, as a single JSON file.
 - **Private and lightweight.** No account, network connection or telemetry. The menu stays out of the way while idle.
 
-A clickable mouse wheel is enough to get started. Some features and button options vary by operating system; see [Platform support](#platform-support).
+A clickable mouse wheel, or a trackpad, is enough to get started. Some features and button options vary by operating system; see [Platform support](#platform-support).
 
 ## Download and install
 
@@ -61,21 +62,33 @@ For step-by-step instructions, including the Linux `install.sh` script and macOS
 ## Try it
 
 1. Install and launch CursorPie.
-2. Hold the **middle mouse button** for about half a second.
+2. Hold the **middle mouse button** for a split second (150 ms by default).
 3. Move the pointer toward a slice.
 4. Release the button to run the action.
 
-Hold the trigger in the center of the pie to open Settings and customize your menus. The [user guide](docs/USER_GUIDE.md) explains gestures, actions, profiles and settings in detail.
+No middle button? Turn on *Open the pie with a trackpad hold* in **Settings > Behavior > Trackpad** and touch and hold the trackpad instead. Hold the trigger in the center of the pie to open Settings and customize your menus. The [user guide](docs/USER_GUIDE.md) explains gestures, actions, profiles and settings in detail.
 
 ## Platform support
 
 | Platform | Status | Notes |
 |---|---|---|
-| **macOS 11+** | Supported | Requires the Accessibility permission. The trigger can be the middle button or one of three extra mouse buttons. |
-| **Windows 10 (1809) / 11** | Supported · stable | No special permission required. The middle button is the only trigger; Windows exposes the back and forward buttons as extra buttons. |
-| **Linux (X11)** | Supported · experimental | x86_64 packages are provided for Ubuntu 24.04+ and Fedora 44. In a Wayland session, only X11/XWayland windows are supported; native Wayland windows are not detected. There is no tray icon yet. |
+| **macOS 11+** | Supported | Requires the Accessibility permission. The trigger can be the middle button or one of three extra mouse buttons. Any trackpad works; Force Touch trackpads also give haptic ticks. |
+| **Windows 10 (1809) / 11** | Supported · stable | No special permission required. The middle button is the only trigger; Windows exposes the back and forward buttons as extra buttons. Trackpad hold needs a precision touchpad. |
+| **Linux (X11)** | Supported · experimental | x86_64 packages are provided for Ubuntu 24.04+ and Fedora 44. In a Wayland session, only X11/XWayland windows are supported; native Wayland windows are not detected. There is no tray icon yet. Trackpad hold reads the touchpad from `/dev/input` and needs your user in the `input` group. |
 
 Linux support is still being tested across distributions and desktop environments. Read [Known issues](docs/KNOWN_ISSUES.md) before installing, especially when using Wayland.
+
+### Trackpad
+
+Touch and hold opens the pie, moving the finger hovers a slice, lifting runs it, and one more finger that taps or clicks switches the mode. It is **off by default** and works on all three systems:
+
+| System | What is read | Needs |
+|---|---|---|
+| **macOS** | any trackpad, through Apple's private `MultitouchSupport` framework (loaded only while the feature is on) | the Accessibility permission; haptic ticks on a Force Touch trackpad |
+| **Windows** | a *precision* touchpad, through Raw Input | nothing extra; no haptics |
+| **Linux (X11)** | a touchpad, from `/dev/input/event*` | your user in the `input` group (`sudo usermod -aG input $USER`, then log out and in); no haptics |
+
+The trackpad paths are new and have not been verified on every device yet; see [Known issues](docs/KNOWN_ISSUES.md) and the [user guide](docs/USER_GUIDE.md#trackpad-macos-windows-and-linux-x11). On Linux, `cursorpie --touchpad-debug` shows which step fails.
 
 ## Documentation
 

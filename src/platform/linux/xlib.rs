@@ -47,6 +47,7 @@ pub const XI_ALL_MASTER_DEVICES: c_int = 1;
 pub const XI_BUTTON_PRESS: c_int = 4;
 pub const XI_BUTTON_RELEASE: c_int = 5;
 pub const XI_MOTION: c_int = 6;
+pub const XI_RAW_KEY_PRESS: c_int = 13;
 pub const XI_RAW_BUTTON_PRESS: c_int = 15;
 pub const XI_RAW_BUTTON_RELEASE: c_int = 16;
 /// Highest event type of XInput 2.2 plus one byte of slack: the mask is `(XI_LASTEVENT >> 3) + 1`

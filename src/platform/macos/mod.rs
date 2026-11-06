@@ -11,11 +11,13 @@
 //! | `login_item` | "Launch at login" LaunchAgent |
 //! | `spaces` | "Open app" that follows the app's window to its Space, or fetches the window |
 //! | `shell` | helpers that run macOS tools: `open`, `osascript`, `mdls`, `afplay` |
+//! | `haptics` | one haptic tick on a trackpad (`NSHapticFeedbackManager`) |
 //! | [`layout`] | keyboard-layout snapshot (TIS + `UCKeyTranslate`) |
 
 pub mod layout;
 
 mod apps;
+mod haptics;
 mod input;
 mod login_item;
 mod memory;
@@ -24,6 +26,7 @@ mod shell;
 mod spaces;
 
 pub use apps::*;
+pub use haptics::*;
 pub use input::*;
 pub use login_item::*;
 pub use memory::*;

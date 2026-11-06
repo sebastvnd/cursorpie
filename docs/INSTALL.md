@@ -6,7 +6,7 @@ CursorPie runs on macOS, Windows and Linux (X11). You can install a ready-made p
 ## Download a ready-made package
 
 These links point to the matching file attached to the latest release. CI publishes them automatically
-when a stable `v*` version tag is pushed and every platform job succeeds. Until that first release is
+when a `v*` version tag is pushed and every platform job succeeds. Until that first release is
 published, the direct-download links return 404. Choose the package
 for your system:
 
@@ -89,7 +89,7 @@ CursorPie needs **Accessibility** to watch the mouse and send shortcuts, and mac
    **Input Monitoring** if asked.
 
 CursorPie checks again every 2 seconds, so it starts working as soon as you grant access. If **Settings >
-General** still shows *Event tap: Not running*, quit and reopen the app. That tab also has buttons that jump
+General** still shows *Event tap: Not running (retrying every 2 s)*, quit and reopen the app. That tab also has buttons that jump
 to the right System Settings pages.
 
 An ad-hoc signed build may need the permission again after each rebuild. Sign with `SIGN_ID` to avoid it.
@@ -166,8 +166,8 @@ cd cursorpie-*-linux-*
 ```
 
 Start CursorPie from your applications menu or run `cursorpie`. It needs no permission and can start at login
-from **Settings > Behavior**. The icon in the package needs ImageMagick at build time; without it the package is
-built without an icon. Build on an older distribution if the binary must also start on older ones.
+from **Settings > Behavior**. The package carries the icon in every size (16 to 512 px) and `install.sh` refreshes
+the icon cache, so no image tool is needed. Build on an older distribution if the binary must also start on older ones.
 
 Good to know:
 
@@ -178,12 +178,25 @@ Good to know:
 - A minimal system may lack libraries the window toolkit loads at run time (OpenGL, libxkbcommon-x11, libxcursor).
 - Install `zenity` or `kdialog` to use the file chooser buttons.
 
+## Trackpad hold (optional)
+
+Touching and holding a trackpad can open the pie instead of the middle button. It is off by default: turn on *Open
+the pie with a trackpad hold* in **Settings > Behavior > Trackpad** and press Save.
+
+- **macOS:** works with any trackpad and needs the same Accessibility permission as the mouse.
+- **Windows:** needs a *precision* touchpad (most laptops since Windows 10). No permission is needed.
+- **Linux (X11):** your user must be in the `input` group: `sudo usermod -aG input $USER`, then log out and in.
+  If nothing happens, run `cursorpie --touchpad-debug` in a terminal.
+
+The [user guide](USER_GUIDE.md#trackpad-macos-windows-and-linux-x11) explains the gesture and its settings.
+
 ## First launch
 
-On macOS and Windows a short welcome window opens the first time. It shows the gesture, then the one thing to
-do next (on macOS, allow Accessibility with a live status; on Windows, where to find the tray icon) and ends with
-a **Launch at login** box. Skip it with **Skip** or `Esc`. **Welcome guide...** in the menu bar or tray menu shows
-it again. The "already shown" flag is the empty file `welcome_shown` next to `config.json`; delete it to see the
+On every system a short welcome window opens the first time. It shows the gesture, then the one thing to
+do next (on macOS, allow Accessibility with a live status; on Windows, where to find the tray icon; on Linux, that
+there is no tray icon and that Pause and Quit are at the bottom of Settings) and ends with a **Launch at login**
+box. Skip it with **Skip** or `Esc`. **Welcome guide...** in the menu bar or tray menu shows it again (Linux has
+no tray icon, so there the window appears only on the first start). The "already shown" flag is the empty file `welcome_shown` next to `config.json`; delete it to see the
 window at the next start.
 
 ## Next steps

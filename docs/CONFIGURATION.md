@@ -20,6 +20,8 @@ config.broken.json     a config that could not be read (see below)
 mice.json              the mice CursorPie has met and their extra buttons (not part of the config, see below)
 icons/                 images copied in by a profile import, and the smaller copies made when you choose a big image
 welcome_shown          empty file: the welcome window was already shown
+logs/                  diagnostic logs, only when logging is on (see DEBUGGING.md)
+debug                  optional empty file that turns the diagnostic log on (see DEBUGGING.md)
 ```
 
 Export writes `cursorpie-config.json` to your Downloads folder.
@@ -59,10 +61,10 @@ An `icon` that ends in `.png`, `.jpg`, `.jpeg` or `.webp` is an image file (a pa
 ```json
 {
   "version": 2,
-  "pie_hold_ms": 500,
+  "pie_hold_ms": 150,
   "settings_hold_ms": 1200,
   "pie_size": 200.0,
-  "accent": [64, 156, 255],
+  "accent": [90, 120, 94],
   "trigger_button": 2,
   "flick": false,
   "sound": false,
@@ -81,8 +83,20 @@ An `icon` that ends in `.png`, `.jpg`, `.jpeg` or `.webp` is an image file (a pa
   "preview_ms": 900,
   "center_app_icon": true,
   "app_icon_style": "Glyph",
-  "show_labels": true,
+  "app_icon_shadow": "Auto",
+  "show_labels": false,
   "sleep_after_s": 60,
+  "appearance": "System",
+  "pie_style": "Solid",
+  "glass_clear": 60,
+  "glass_frost": 45,
+  "glass_shine": 60,
+  "touch_trigger": false,
+  "touch_still_mm": 2.0,
+  "touch_click_action": "SwitchPie",
+  "touch_typing_guard_ms": 400,
+  "haptics": true,
+  "haptic_hover": true,
   "profiles": [
     {
       "name": "Default",
@@ -130,8 +144,9 @@ An `icon` that ends in `.png`, `.jpg`, `.jpeg` or `.webp` is an image file (a pa
 | Field | Meaning |
 |---|---|
 | `trigger_button` | `2` = middle, `5` / `6` / `7` = extra buttons (shown as "Extra button 6/7/8"). Only the middle button works on Windows and Linux |
-| `pie_hold_ms` | Hold time before the pie opens (150 to 2000) |
-| `settings_hold_ms` | Hold time before Settings opens (always at least `pie_hold_ms` + 300) |
+| `accent` | Accent color as `[r, g, b]`. The default is `[90, 120, 94]`; the old default blue `[64, 156, 255]` is replaced by the new default when a file is loaded |
+| `pie_hold_ms` | Hold time before the pie opens (50 to 2000 in the file; the Settings slider goes from 50 to 1500; default 150) |
+| `settings_hold_ms` | Hold time before Settings opens (always at least `pie_hold_ms` + 300; the Settings slider goes from 500 to 4000) |
 | `pie_size` | Pie window size in px (140 to 360) |
 | `app_gesture` | `"DoubleClick"` (hold = general pie, double-click = app pie) or `"Merged"` (classic) |
 | `double_click_ms` | Window for the second click (150 to 500) |
@@ -146,7 +161,16 @@ An `icon` that ends in `.png`, `.jpg`, `.jpeg` or `.webp` is an image file (a pa
 | `preview_ms` | How long the pie stays on screen after switching from the menu bar (0 to 3000, 0 = off) |
 | `center_app_icon` | Show the app's icon in the center of an app's own pie instead of the active mode's icon |
 | `app_icon_style` | `"Glyph"` or `"Color"`: that icon as a one-color silhouette in the pie's ink (default), or in the app's own colors |
-| `show_labels` | Show each slice's name under its icon (`false` = icons only) |
+| `app_icon_shadow` | `"Auto"` (default), `"Soft"`, `"Strong"` or `"Off"`: the shadow under the app's icon in the center of the pie. `Auto` adds it only on a plain light center |
+| `show_labels` | Show each slice's name under its icon (default `false` = icons only; a file that lacks the field keeps the names) |
+| `appearance` | `"System"` (default), `"Light"` or `"Dark"`: the look of Settings and the pie |
+| `pie_style` | `"Solid"` (default) or `"Glass"`: opaque slices, or see-through frosted ones (always smoked dark) |
+| `glass_clear`, `glass_frost`, `glass_shine` | Glass style only, in percent (0 to 100, larger values are clamped): how see-through the slices are (default 60), how frosted (default 45) and how bright the rim and sheen are (default 60) |
+| `touch_trigger` | macOS trackpad, Windows precision touchpad and Linux (X11) touchpad: a hold opens the pie (default `false`; while it is off the system's touch library is never loaded on macOS, nothing is registered with Windows and `/dev/input` is never opened on Linux). See [the user guide](USER_GUIDE.md#trackpad-macos-windows-and-linux-x11) |
+| `touch_still_mm` | 0.5 to 6.0 (default `2.0`): how far, in millimeters on the trackpad, the holding finger may move before the hold counts |
+| `touch_click_action` | `"SwitchPie"` (default, like the right-click), `"PickHovered"` (the hovered Mode slice becomes the active mode) or `"Nothing"`: what the extra click does |
+| `touch_typing_guard_ms` | 0 to 2000 (default `400`, `0` = off): no hold is armed this soon after a key press |
+| `haptics`, `haptic_hover` | macOS only (ignored on Windows and Linux): trackpad ticks when the pie opens and the mode switches (default on), and when the hovered slice changes (default on, needs `haptics`) |
 | `sleep_after_s` | Seconds without a pie or Settings before cached icons and the Settings copy are freed (10 to 3600, `0` = never) |
 | `apps` | App ids: bundle identifiers on macOS, executable names on Windows, desktop-entry ids on Linux. An empty list marks the general profile; only the first such profile is kept, all others need at least one app |
 | `active` | Path of the active side-button mode, as indices (`[3, 1]` = slice 1 inside slice 3) |

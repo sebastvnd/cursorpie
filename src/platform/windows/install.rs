@@ -5,6 +5,9 @@
 //! an "Apps & features" entry whose uninstall command is `cursorpie.exe --uninstall`
 //! ([`handle_command_line`]). Nothing needs administrator rights.
 //!
+//! The first install asks for permission (once; a "No" is remembered under
+//! `HKCU\Software\CursorPie\InstallDeclined`, delete that value to be asked again).
+//!
 //! Starting from a download folder or an unzipped archive therefore stops mattering: the copy in
 //! the install folder is what starts at every login, and starting a newer download updates it.
 //! Builds made by `cargo` are left alone, so development never touches the installed app (set
@@ -21,10 +24,40 @@ use super::util::{
 use crate::about::{APP_NAME, AUTHOR_NAME, REPO_URL, VERSION};
 use std::path::{Path, PathBuf};
 use std::{fs, io};
-use windows_sys::Win32::UI::WindowsAndMessaging::{MB_ICONINFORMATION, MB_OK, MessageBoxW};
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    IDYES, MB_ICONINFORMATION, MB_ICONQUESTION, MB_OK, MB_YESNO, MessageBoxW,
+};
 
 /// Environment variable that switches the install step off.
 const OPT_OUT: &str = "CURSORPIE_NO_INSTALL";
+
+/// Where the program remembers that the user said "No" to the install question.
+const SETTINGS_KEY: &str = r"Software\CursorPie";
+const DECLINED: &str = "InstallDeclined";
+
+/// Asks, once, whether this copy may install itself. A program that silently copies itself into
+/// the profile, registers a startup entry and starts the copy is exactly what a dropper does, and
+/// behavior-based antivirus engines judge it that way; asking first makes it the user's decision.
+fn user_agrees_to_install(dir: &Path) -> bool {
+    let text = format!(
+        "Install {APP_NAME} for this user?\n\n\
+         It will be copied to {}, listed in Apps & features and started at every login. \
+         Nothing needs administrator rights.\n\n\
+         Choose No to just run it from where it is.",
+        dir.display()
+    );
+    let (text, caption) = (super::util::wide(&text), super::util::wide(APP_NAME));
+    // SAFETY: both strings are zero terminated and outlive the call; a null owner is allowed.
+    let answer = unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            text.as_ptr(),
+            caption.as_ptr(),
+            MB_YESNO | MB_ICONQUESTION,
+        )
+    };
+    answer == IDYES
+}
 
 /// The "Apps & features" entry of this app.
 fn uninstall_key() -> String {
@@ -140,16 +173,34 @@ pub fn ensure_installed() -> Option<PathBuf> {
     let running_installed = same_path(&current.to_string_lossy(), &target.to_string_lossy());
     let first_time = !is_installed();
 
+    // A first install is the user's decision. An update of an app that is already installed
+    // needs no question: the user agreed when they installed it.
+    if first_time && !running_installed {
+        if registry::has_value(SETTINGS_KEY, DECLINED) {
+            return None;
+        }
+        let dir = target.parent().unwrap_or(&target);
+        if !user_agrees_to_install(dir) {
+            let _ = registry::set_dword(SETTINGS_KEY, DECLINED, 1);
+            return None;
+        }
+    }
+
     if running_installed {
         let _ = fs::remove_file(leftover(&target)); // an update parked the old copy here
     } else if let Err(e) = copy_over(&current, &target) {
         eprintln!("CursorPie: could not install to {}: {e}", target.display());
         return None;
     }
-    if let Err(e) = register_uninstall(&target) {
+    // Registry writes happen only when something was installed or updated, not at every start:
+    // a program that rewrites its startup entry each time it runs looks like malware to
+    // behavior-based antivirus engines.
+    let changed = first_time || !running_installed;
+    if changed && let Err(e) = register_uninstall(&target) {
         eprintln!("CursorPie: could not write the uninstall entry: {e}");
     }
-    if (first_time || launch_at_login_enabled())
+    if changed
+        && (first_time || launch_at_login_enabled())
         && let Err(e) = set_launch_at_login(true)
     {
         eprintln!("CursorPie: could not set up launch at login: {e}");

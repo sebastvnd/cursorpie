@@ -2,7 +2,7 @@
 //!
 //! ```text
 //! +--------------+-------------------------------------------------------+
-//! | logo  Cursor | Page title                      undo redo  Cancel Save |  top bar
+//! | logo  Cursor | Page title                              (o)(o)(o) |  top bar
 //! |       Pie    | one line about the page                                |
 //! |              +-------------------------------------------------------+
 //! |  Menu        |                                                       |
@@ -83,11 +83,45 @@ fn regions(card: egui::Rect, side_w: f32) -> Regions {
     }
 }
 
+/// Size of the hit area and radius of the small round window-style buttons in the top bar.
+const DOT_HIT: f32 = 20.0;
+const DOT_R: f32 = 6.5;
+
+/// The unsaved-changes dot: a muted ochre that sits with the sage palette (lighter in dark mode).
+fn amber() -> egui::Color32 {
+    if pal().dark {
+        egui::Color32::from_rgb(232, 198, 112)
+    } else {
+        egui::Color32::from_rgb(208, 160, 56)
+    }
+}
+
+/// A small round colored button (like the close / zoom dots of a window). Its glyph shows while
+/// the pointer is over it.
+fn dot_button(ui: &mut egui::Ui, color: egui::Color32, icon: char, tip: &str) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(DOT_HIT), egui::Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tip));
+    let fill = if resp.is_pointer_button_down_on() {
+        color.gamma_multiply(0.8)
+    } else {
+        color
+    };
+    ui.painter().circle_filled(rect.center(), DOT_R, fill);
+    if resp.hovered() {
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            icon,
+            egui::FontId::new(9.0, fonts::icons()),
+            egui::Color32::from_black_alpha(170),
+        );
+    }
+    resp.on_hover_text(tip)
+}
+
 /// What the top bar and sidebar buttons asked for this frame.
 enum UiAction {
     None,
-    Undo,
-    Redo,
     Save,
     Cancel,
     Quit,
@@ -121,6 +155,11 @@ impl App {
     pub fn settings_ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
 
+        // the window is still becoming the card: an empty frame, the animation waits
+        if self.window_settling(&ctx) {
+            return;
+        }
+
         // open / close animation
         let dt = ctx.input(|i| i.stable_dt).min(0.05);
         let target = if self.closing.is_some() { 0.0 } else { 1.0 };
@@ -146,10 +185,25 @@ impl App {
             if esc {
                 if self.confirm_quit {
                     self.confirm_quit = false; // "keep editing"
+                } else if self.confirm_discard {
+                    self.confirm_discard = false; // "keep editing"
                 } else if !self.ed.close_sheet() && !egui::Popup::is_any_open(&ctx) {
-                    self.closing = Some(false);
+                    self.request_cancel();
                 }
             }
+        }
+        // Ctrl+S / Cmd+S saves and keeps Settings open (the green dot saves and closes)
+        if self.closing.is_none()
+            && self.ed.recording.is_none()
+            && !self.confirm_quit
+            && !self.confirm_discard
+            && !super::picker::choosing()
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S))
+        {
+            self.persist_edit();
+            self.opened = Some(self.edit.clone()); // nothing is unsaved any more
+            self.say("Saved.");
+            ctx.request_repaint();
         }
         self.history_keys(&ctx);
         if self
@@ -221,7 +275,7 @@ impl App {
         }
 
         let mut action = UiAction::None;
-        let (can_undo, can_redo) = (self.history.can_undo(), self.history.can_redo());
+        let unsaved = self.has_unsaved_changes();
         let primary = platform::OS.primary_name();
 
         // ---------------------------------------------------------------- sidebar
@@ -332,31 +386,19 @@ impl App {
                 .layout(egui::Layout::right_to_left(egui::Align::Center)),
             |ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
-                let save = button(ui, Look::Primary(accent), Some(symbols::CHECK), "Save");
-                if save.on_hover_text("Apply every tab at once").clicked() {
+                // window-style dots, left to right: red (cancel), yellow (unsaved changes), green (save)
+                let save = dot_button(ui, accent, symbols::CHECK, "Save and close");
+                if save.clicked() {
                     action = UiAction::Save;
                 }
-                if button(ui, Look::Soft, None, "Cancel").clicked() {
+                if unsaved {
+                    let (rect, resp) =
+                        ui.allocate_exact_size(Vec2::splat(DOT_HIT), egui::Sense::hover());
+                    ui.painter().circle_filled(rect.center(), DOT_R, amber());
+                    resp.on_hover_text("Unsaved changes");
+                }
+                if dot_button(ui, pal().bad, symbols::X, "Cancel (Esc)").clicked() {
                     action = UiAction::Cancel;
-                }
-                ui.add_space(GAP);
-                let redo = icon_button(
-                    ui,
-                    symbols::ARROW_CLOCKWISE,
-                    &format!("Redo ({primary}+Shift+Z)"),
-                    can_redo,
-                );
-                if redo.clicked() {
-                    action = UiAction::Redo;
-                }
-                let undo = icon_button(
-                    ui,
-                    symbols::ARROW_COUNTER_CLOCKWISE,
-                    &format!("Undo the last change ({primary}+Z)"),
-                    can_undo,
-                );
-                if undo.clicked() {
-                    action = UiAction::Undo;
                 }
             },
         );
@@ -419,7 +461,7 @@ impl App {
                     ui.label(hint(msg));
                 } else {
                     ui.label(hint(&format!(
-                        "Esc cancels  \u{b7}  {primary}+Z undoes  \u{b7}  Save applies every tab at once"
+                        "Esc cancels  \u{b7}  {primary}+Z undoes  \u{b7}  {primary}+S saves"
                     )));
                 }
             },
@@ -432,17 +474,17 @@ impl App {
 
         // the sheet that asks again before quitting with unsaved changes (over everything else)
         self.quit_dialog(&ctx, accent);
+        // the sheet that asks before Cancel / Esc throws unsaved changes away
+        self.discard_dialog(&ctx);
 
         match action {
-            UiAction::Undo => self.undo_edit(&ctx),
-            UiAction::Redo => self.redo_edit(&ctx),
             UiAction::Save => {
                 self.ed.stop_recording();
                 self.closing = Some(true);
             }
             UiAction::Cancel => {
                 self.ed.stop_recording();
-                self.closing = Some(false);
+                self.request_cancel();
             }
             UiAction::Quit => self.request_quit(&ctx),
             UiAction::None => {}

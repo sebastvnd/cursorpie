@@ -2,5 +2,9 @@
 # The developer tools of this repository (the `tools/` package): `cargo tools ci`,
 # `cargo tools bump minor`, `cargo tools hooks install`, ... `cargo tools help` lists them.
 tools = "run --quiet --package cursorpie-tools --"
+
 # Build the developer documentation (including private items) and open it in the browser.
 docs = "doc --no-deps --document-private-items --open"
+
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"

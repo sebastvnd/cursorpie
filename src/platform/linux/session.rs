@@ -67,11 +67,13 @@ impl Session {
     }
 
     /// Whether the current desktop environment list names `name` (case-insensitive).
+    #[cfg(test)]
     pub fn is_desktop(&self, name: &str) -> bool {
         self.desktops.iter().any(|d| d.eq_ignore_ascii_case(name))
     }
 
     /// Whether the X11 backend can see every window and mouse event: a real X11 session.
+    #[cfg(test)]
     pub fn x11_sees_everything(&self) -> bool {
         self.server == DisplayServer::X11 && self.has_x_display
     }

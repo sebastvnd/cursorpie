@@ -4,9 +4,10 @@
 //! transition. Every function that changes the state takes the lock guard by value, so it can
 //! release the lock before posting messages or synthetic events (never do that while locked).
 
-use super::gesture::Gesture;
+use super::gesture::{Gesture, Source};
 use super::resolve::{eval, resolve_profiles, select};
-use super::{DRAG_TOLERANCE, FLICK_DISTANCE, Kind, NEXT_ID, Verdict};
+use super::touch::haptic::{self, Tick};
+use super::{DRAG_TOLERANCE, FLICK_DISTANCE, Kind, NEXT_ID, PAUSED, Verdict, settings_open};
 use crate::actions::post_mouse;
 use crate::config::{cfg, lock};
 use crate::geometry::Point;
@@ -28,15 +29,21 @@ pub(super) fn handle(
 ) -> Verdict {
     let g = lock(state);
 
+    // a trackpad gesture is running: the mouse trigger passes through untouched (its press, its
+    // drag and its release all belong to the app); see `touch` and "Mouse and trackpad together"
+    if g.source() == Some(Source::Touch) {
+        return Verdict::Keep;
+    }
+
     match (kind, &*g) {
-        (Kind::Down, _) => on_press(state, notifier, g, p, button),
+        (Kind::Down, _) => on_press(state, notifier, g, p, button, Press::mouse()),
         (Kind::Drag, Gesture::Pending { .. }) => {
             on_drag_pending(notifier, g, replay_drag, p, button, flick)
         }
         (Kind::Drag, Gesture::ActivePie { .. }) => on_drag_in_pie(notifier, g, p),
         (Kind::Up, Gesture::Pending { .. }) => on_release_pending(state, g, button),
         (Kind::Up, Gesture::ActivePie { .. }) => on_release_in_pie(notifier, g, p),
-        (Kind::Up, Gesture::InSettings) => {
+        (Kind::Up, Gesture::InSettings(_)) => {
             release_to_idle(g);
             Verdict::Drop
         }
@@ -45,7 +52,7 @@ pub(super) fn handle(
             Verdict::Keep
         }
         (Kind::Drag, Gesture::Passthrough) => Verdict::Keep,
-        (Kind::Drag, Gesture::InSettings) => Verdict::Drop,
+        (Kind::Drag, Gesture::InSettings(_)) => Verdict::Drop,
         _ => Verdict::Keep,
     }
 }
@@ -53,6 +60,28 @@ pub(super) fn handle(
 /// Resets the gesture to `Idle` (consumes the guard, releasing the lock).
 fn release_to_idle(mut g: MutexGuard<'_, Gesture>) {
     *g = Gesture::Idle;
+}
+
+/// What a press is made of besides where it happened: who pressed, how long the hold has already
+/// lasted, and whether it is the second half of a double-click that was measured elsewhere.
+#[derive(Clone, Copy)]
+struct Press {
+    source: Source,
+    /// Time already spent holding when the press is reported (a trackpad hold is reported after
+    /// `ARM_DELAY`): the hold timer counts only what is left of `pie_hold_ms`.
+    already: Duration,
+    /// A trackpad tap came just before: open the app's own pie at once, as a second click would.
+    double: bool,
+}
+
+impl Press {
+    fn mouse() -> Self {
+        Self {
+            source: Source::Mouse,
+            already: Duration::ZERO,
+            double: false,
+        }
+    }
 }
 
 /// Button pressed. Either the second press of a double-click (open the app's pie at once) or a
@@ -63,7 +92,19 @@ fn on_press<'a>(
     mut g: MutexGuard<'a, Gesture>,
     p: Point,
     button: i64,
+    press: Press,
 ) -> Verdict {
+    let source = press.source;
+    // The pie is off while Settings is open. The press is still swallowed with the rest of its
+    // gesture (`InSettings`: its drags and its release are dropped), but nothing opens, hovers or
+    // runs, and no timer starts. The UI only says why nothing happened.
+    if settings_open() {
+        diag::log!("tap", "press_blocked", reason = "settings_open");
+        *g = Gesture::InSettings(source);
+        drop(g);
+        notifier.send(Msg::PieBlocked { x: p.x, y: p.y });
+        return Verdict::Drop;
+    }
     let (hold_profile, app) = resolve_profiles(p);
     diag::log!(
         "tap",
@@ -71,7 +112,8 @@ fn on_press<'a>(
         x = p.x,
         y = p.y,
         button = button,
-        profile = hold_profile
+        profile = hold_profile,
+        touch = source == Source::Touch
     );
     // lets the UI load the icons while the hold timer runs (never blocks, see the tap rules)
     notifier.send(Msg::Warm {
@@ -83,6 +125,29 @@ fn on_press<'a>(
     // (A) second press inside the double-click window: open the app's own pie at once
     let prev = std::mem::replace(&mut *g, Gesture::Idle);
     let mut late: Option<Point> = None;
+    if source == Source::Touch && press.double {
+        // the recognizer measured the gap between the tap and this touch
+        if let Some(ap) = app {
+            let id = NEXT_ID.fetch_add(1, Ordering::SeqCst);
+            *g = Gesture::ActivePie {
+                id,
+                center: p,
+                profile: ap,
+                path: Vec::new(),
+                hover: None,
+                source,
+            };
+            drop(g);
+            notifier.send(Msg::ShowPie {
+                x: p.x,
+                y: p.y,
+                profile: ap,
+                path: Vec::new(),
+            });
+            haptic::emit(notifier, Tick::Open);
+            return Verdict::Drop;
+        }
+    }
     if let Gesture::WaitSecond {
         pos: first,
         app: ap,
@@ -106,6 +171,7 @@ fn on_press<'a>(
                 profile: ap,
                 path: Vec::new(),
                 hover: None,
+                source,
             };
             drop(g);
             notifier.send(Msg::ShowPie {
@@ -132,23 +198,25 @@ fn on_press<'a>(
         pos: p,
         profile: hold_profile,
         app,
+        source,
     };
     drop(g);
-    spawn_hold_timer(state.clone(), notifier.clone(), id);
+    spawn_hold_timer(state.clone(), notifier.clone(), id, press.already);
     Verdict::Drop
 }
 
 /// Timer thread for one press: opens the pie after `pie_hold_ms`, and Settings after
 /// `settings_hold_ms` if the cursor is still in the center. It gives up silently as soon as the
-/// gesture is no longer the one it started with (`id` differs or the state moved on).
-fn spawn_hold_timer(st: Arc<Mutex<Gesture>>, n: Notifier, id: u64) {
+/// gesture is no longer the one it started with (`id` differs or the state moved on). `already` is
+/// the time the hold has lasted before the timer starts (zero for a mouse).
+fn spawn_hold_timer(st: Arc<Mutex<Gesture>>, n: Notifier, id: u64, already: Duration) {
     std::thread::spawn(move || {
         let (pie_ms, settings_ms) = {
             let c = cfg();
             (c.pie_hold_ms, c.settings_hold_ms)
         };
 
-        std::thread::sleep(Duration::from_millis(pie_ms));
+        std::thread::sleep(Duration::from_millis(pie_ms).saturating_sub(already));
         // one lock per step (locking twice in one expression would deadlock)
         let opened = {
             let mut gg = lock(&st);
@@ -157,22 +225,31 @@ fn spawn_hold_timer(st: Arc<Mutex<Gesture>>, n: Notifier, id: u64) {
                     id: cur,
                     pos,
                     profile,
+                    source,
                     ..
-                } if *cur == id => Some((*pos, *profile)),
+                } if *cur == id => Some((*pos, *profile, *source)),
                 _ => None,
             };
-            if let Some((pos, profile)) = found {
+            if let Some((_, _, source)) = found
+                && settings_open()
+            {
+                // Settings opened (menu bar) while the button was held: the pie never opens
+                *gg = Gesture::InSettings(source);
+                return;
+            }
+            if let Some((pos, profile, source)) = found {
                 *gg = Gesture::ActivePie {
                     id,
                     center: pos,
                     profile,
                     path: Vec::new(),
                     hover: None,
+                    source,
                 };
             }
             found
         };
-        let Some((pos, profile)) = opened else {
+        let Some((pos, profile, source)) = opened else {
             // released, dragged away or replaced by a newer press before the timer ran out
             diag::log!("tap", "hold_cancelled", id = id, after_ms = pie_ms);
             return;
@@ -184,6 +261,9 @@ fn spawn_hold_timer(st: Arc<Mutex<Gesture>>, n: Notifier, id: u64) {
             profile,
             path: Vec::new(),
         });
+        if source == Source::Touch {
+            haptic::emit(&n, Tick::Open);
+        }
 
         std::thread::sleep(Duration::from_millis(settings_ms.saturating_sub(pie_ms)));
         let open_settings = {
@@ -193,12 +273,15 @@ fn spawn_hold_timer(st: Arc<Mutex<Gesture>>, n: Notifier, id: u64) {
                 Gesture::ActivePie { id: cur, hover: None, path, .. } if *cur == id && path.is_empty()
             );
             if go {
-                *gg = Gesture::InSettings;
+                *gg = Gesture::InSettings(source);
             }
             go
         };
         diag::log!("tap", "hold_settings", id = id, opened = open_settings);
         if open_settings {
+            if source == Source::Touch {
+                haptic::emit(&n, Tick::Open);
+            }
             n.send(Msg::OpenSettings {
                 x: pos.x,
                 y: pos.y,
@@ -244,12 +327,16 @@ fn on_drag_pending(
     flick: bool,
 ) -> Verdict {
     let Gesture::Pending {
-        id, pos, profile, ..
+        id,
+        pos,
+        profile,
+        source,
+        ..
     } = &*g
     else {
         return Verdict::Drop;
     };
-    let (id, start, profile) = (*id, *pos, *profile);
+    let (id, start, profile, source) = (*id, *pos, *profile, *source);
     let limit = if flick {
         FLICK_DISTANCE
     } else {
@@ -264,6 +351,7 @@ fn on_drag_pending(
                 profile,
                 path: Vec::new(),
                 hover: None,
+                source,
             };
             drop(g);
             notifier.send(Msg::ShowPie {
@@ -291,11 +379,13 @@ fn on_drag_in_pie(notifier: &Notifier, mut g: MutexGuard<'_, Gesture>, p: Point)
         profile,
         path,
         hover,
+        source,
         ..
     } = &mut *g
     else {
         return Verdict::Drop;
     };
+    let touch = *source == Source::Touch;
     let hit = eval(*profile, path, *center, p);
     if hit.enter {
         if let Some(h) = hit.hover {
@@ -316,6 +406,9 @@ fn on_drag_in_pie(notifier: &Notifier, mut g: MutexGuard<'_, Gesture>, p: Point)
         *hover = hit.hover;
         drop(g);
         notifier.send(Msg::Hover(hit.hover));
+        if touch {
+            haptic::emit(notifier, Tick::Hover(hit.hover));
+        }
     }
     Verdict::Drop
 }
@@ -327,10 +420,24 @@ fn on_release_pending(
     mut g: MutexGuard<'_, Gesture>,
     button: i64,
 ) -> Verdict {
-    let Gesture::Pending { id, pos, app, .. } = &*g else {
+    let Gesture::Pending {
+        id,
+        pos,
+        app,
+        source,
+        ..
+    } = &*g
+    else {
         return Verdict::Drop;
     };
-    let (id, start, app) = (*id, *pos, *app);
+    let (id, start, app, source) = (*id, *pos, *app, *source);
+    if source == Source::Touch {
+        // a trackpad hold that ended early: nothing was pressed, so there is no click to hand back
+        // (and a tap measures its own double-click gap, see `touch::recognizer`)
+        diag::log!("tap", "on_release", pie = false, touch = true);
+        *g = Gesture::Idle;
+        return Verdict::Drop;
+    }
     diag::log!(
         "tap",
         "on_release",
@@ -386,8 +493,140 @@ fn on_release_in_pie(notifier: &Notifier, mut g: MutexGuard<'_, Gesture>, p: Poi
         slice = hover.is_some()
     );
     if let Some(h) = hover {
-        select(profile, &path, h);
+        if settings_open() {
+            // the pie was open when Settings opened (menu bar): closing it must not run anything
+            diag::log!("tap", "select_blocked", reason = "settings_open");
+        } else {
+            select(profile, &path, h);
+        }
     }
     notifier.send(Msg::HidePie);
     Verdict::Drop
+}
+
+// ------------------------------------------------------------------ trackpad entry points
+//
+// The touch source (`touch::Bridge`) does not have a state machine of its own: it calls these,
+// which feed the same functions a mouse press, drag and release feed. They only act on a gesture
+// that the touch source started (`Source::Touch`), so a stale or late touch event can never
+// disturb a mouse gesture.
+
+/// A trackpad hold was armed at `p`. Starts the gesture if nothing else is running (a mouse
+/// gesture that is running owns the pie, and so does the pause switch); returns whether it did.
+/// `already` is how long the fingers have been down, `double` whether a tap came just before.
+pub(super) fn touch_press(
+    state: &Arc<Mutex<Gesture>>,
+    notifier: &Notifier,
+    p: Point,
+    already: Duration,
+    double: bool,
+) -> bool {
+    if PAUSED.load(Ordering::SeqCst) {
+        return false;
+    }
+    // The pie is off while Settings is open. A mouse press says so (`on_press`: the UI brings
+    // Settings forward); a trackpad hold has to do the same, or the two triggers behave
+    // differently: with Settings behind another window, the mouse brings it back and the
+    // trackpad does nothing. Nothing is swallowed here: the fingers only move the pointer.
+    if settings_open() {
+        let idle = matches!(&*lock(state), Gesture::Idle);
+        if idle {
+            diag::log!("tap", "touch_blocked", reason = "settings_open");
+            notifier.send(Msg::PieBlocked { x: p.x, y: p.y });
+        }
+        return false;
+    }
+    let g = lock(state);
+    if !matches!(&*g, Gesture::Idle) {
+        return false;
+    }
+    let button = cfg().trigger_button;
+    on_press(
+        state,
+        notifier,
+        g,
+        p,
+        button,
+        Press {
+            source: Source::Touch,
+            already,
+            double,
+        },
+    );
+    true
+}
+
+/// The holding fingers moved: the pointer is now at `p`.
+pub(super) fn touch_move(state: &Arc<Mutex<Gesture>>, notifier: &Notifier, p: Point) {
+    let g = lock(state);
+    if matches!(
+        &*g,
+        Gesture::ActivePie {
+            source: Source::Touch,
+            ..
+        }
+    ) {
+        on_drag_in_pie(notifier, g, p);
+    }
+}
+
+/// A holding finger lifted. With the pointer at `p` the slice under it runs; without a position
+/// (the pointer could not be read) the pie closes and nothing runs.
+pub(super) fn touch_release(state: &Arc<Mutex<Gesture>>, notifier: &Notifier, p: Option<Point>) {
+    let g = lock(state);
+    match (&*g, p) {
+        (
+            Gesture::Pending {
+                source: Source::Touch,
+                ..
+            },
+            _,
+        ) => {
+            let button = cfg().trigger_button;
+            on_release_pending(state, g, button);
+        }
+        (
+            Gesture::ActivePie {
+                source: Source::Touch,
+                ..
+            },
+            Some(p),
+        ) => {
+            on_release_in_pie(notifier, g, p);
+        }
+        (
+            Gesture::ActivePie {
+                source: Source::Touch,
+                ..
+            },
+            None,
+        ) => {
+            release_to_idle(g);
+            notifier.send(Msg::HidePie);
+        }
+        (Gesture::InSettings(Source::Touch), _) => release_to_idle(g),
+        _ => {}
+    }
+}
+
+/// The hold was broken (too many fingers, a slide, the device went away): back to `Idle`, the pie
+/// closed, nothing run.
+pub(super) fn touch_cancel(state: &Arc<Mutex<Gesture>>, notifier: &Notifier) {
+    let mut g = lock(state);
+    match &*g {
+        Gesture::ActivePie {
+            source: Source::Touch,
+            ..
+        } => {
+            *g = Gesture::Idle;
+            drop(g);
+            notifier.send(Msg::HidePie);
+        }
+        Gesture::Pending {
+            source: Source::Touch,
+            ..
+        }
+        | Gesture::InSettings(Source::Touch) => *g = Gesture::Idle,
+        _ => {}
+    }
 }

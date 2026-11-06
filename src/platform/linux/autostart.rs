@@ -1,5 +1,9 @@
 //! "Launch at login" on Linux: an XDG autostart entry, `~/.config/autostart/cursorpie.desktop`.
 //! This module builds and reads the file text; the backend reads and writes the file.
+//!
+//! The entry asks the session to wait a few seconds (`X-GNOME-Autostart-Delay`, after the panel on
+//! KDE): at the very start of a session the X server (XWayland) or the input devices may not be
+//! ready yet, and the program would start without a working display.
 
 /// File name of the autostart entry.
 pub const FILE_NAME: &str = "cursorpie.desktop";
@@ -40,7 +44,11 @@ pub fn contents(exec_path: &str) -> String {
          Exec={}\n\
          Icon=cursorpie\n\
          Terminal=false\n\
-         X-GNOME-Autostart-enabled=true\n",
+         StartupNotify=false\n\
+         StartupWMClass=cursorpie\n\
+         X-GNOME-Autostart-enabled=true\n\
+         X-GNOME-Autostart-Delay=5\n\
+         X-KDE-autostart-after=panel\n",
         quote_exec(exec_path)
     )
 }

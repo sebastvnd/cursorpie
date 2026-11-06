@@ -10,6 +10,7 @@ Everything about using CursorPie once it is installed. New here? Read [The gestu
 - [Profiles](#profiles)
 - [Side buttons and app pies](#side-buttons-and-app-pies)
 - [Your mouse and its extra buttons](#your-mouse-and-its-extra-buttons)
+- [Trackpad (macOS, Windows and Linux X11)](#trackpad-macos-windows-and-linux-x11)
 - [Settings](#settings)
 - [Undo, redo and backups](#undo-redo-and-backups)
 - [Sharing a profile](#sharing-a-profile)
@@ -18,7 +19,7 @@ Everything about using CursorPie once it is installed. New here? Read [The gestu
 
 ## The gesture
 
-1. **Hold** the trigger (the middle mouse button by default) for 500 ms. The pie opens under the cursor.
+1. **Hold** the trigger (the middle mouse button by default) for 150 ms. The pie opens under the cursor.
 2. **Move** toward a slice. It highlights as you hover.
 3. **Release** to run it. Release in the center dead zone to cancel.
 
@@ -26,7 +27,7 @@ What else the trigger does:
 
 | You do this | CursorPie does this |
 |---|---|
-| **Hold** for 500 ms | Opens your general pie under the cursor |
+| **Hold** for 150 ms | Opens your general pie under the cursor |
 | **Double-click** (default mode) | Opens the pie of the app under the pointer, instantly, if that app has its own profile |
 | **Right-click** while the pie is open | Switches which pie the side buttons follow, and the ring changes color at once |
 | **Click** quickly | Passes the click through to the app. If the app has its own profile, the click is delivered after the double-click window (260 ms) |
@@ -107,6 +108,57 @@ front right before it sends one, unless it already is. Both are options in Behav
 front* for the old behavior. If CursorPie cannot tell which window is under the pointer, it uses the app in
 front.
 
+## Trackpad (macOS, Windows and Linux X11)
+
+On a Mac a trackpad, on Windows a **precision touchpad** and on Linux (X11) a touchpad can do what the middle button does. It is **off by default**: turn on *Open the pie with a
+trackpad hold* in **Settings > Behavior > Trackpad** (and press Save). A mouse keeps working exactly as before, and
+a mouse and a trackpad can be used in any order, with the same pie, hold time, double-click speed and profiles.
+
+| You do this | With a mouse | With a trackpad |
+|---|---|---|
+| Open the general pie | Hold the middle button | Touch and hold still with the chosen number of fingers for the hold time |
+| Choose a slice | Move toward it | Move the finger toward it |
+| Run it | Release the button | Lift the finger |
+| Cancel | Release in the center | Lift the finger in the center |
+| Open Settings | Keep holding in the center | Keep holding in the center |
+| Switch the mode | Right-click | Click (or tap) with one more finger |
+| Open the app's own pie | Double-click the trigger | Tap, then touch and hold again within the double-click speed |
+
+- One finger holds and one more finger clicks. A hold with two fingers is not supported: the system scrolls with
+  two fingers, so the pointer would not move.
+- **How still the finger must stay** is measured in millimeters on the trackpad. A finger that slides before the hold
+  time ran out just moves the pointer, as always; scrolling, tapping and dragging are not affected.
+- Palms and the thin border of the trackpad are ignored, and a hold does not start within the **typing guard** time
+  after a key press.
+- **Extra click** can switch the pie like the right-click (default), make the hovered Mode slice the active mode, or do
+  nothing. The click never reaches the app under the pie.
+- **Haptic feedback** (macOS only): a tick when the pie opens, a soft one when the slice changes and a distinct one
+  when the mode switches. Only a trackpad ticks; the system's *Force Click and haptic feedback* setting stays in charge.
+
+On a Mac the fingers are read through an undocumented macOS interface, loaded only while the feature is on. If macOS
+changes it, Settings says *Trackpad support is not available on this macOS* and the mouse is unaffected.
+
+On Windows the touchpad's reports are read through Raw Input, a public interface, and nothing is registered while the
+feature is off. Only a **precision touchpad** works: an older touchpad that Windows treats as a plain mouse sends no
+finger positions, and Settings says *No precision touchpad found*. If a tap followed by a hold clicks the app under the
+pie, turn off *Tap twice and drag to multi-select* in Settings > Bluetooth & devices > Touchpad.
+
+### On Linux (X11)
+
+- Everything above works the same way, except **haptic feedback**: a Linux touchpad has no standard way to tick, so
+  those switches are not shown.
+- The fingers are read straight from `/dev/input/event*` (libinput does not pass touch positions on to X11), and
+  only while *Open the pie with a trackpad hold* is on. Your user must be in the **`input` group**:
+  `sudo usermod -aG input $USER`, then log out and in. Without it Settings says so under the switch; the mouse is
+  unaffected. Only touchpads are opened (never a touchscreen, a graphics tablet or a program's virtual device), and
+  nothing is recorded: positions are used to decide and then dropped.
+- While a hold is running, the left and right buttons are grabbed so the click of the extra finger never reaches the
+  app; a click that is not the extra one is sent again when it is released, a moment late.
+- *Ignore holds after typing* hears that a key was pressed (not which key) while the switch is on.
+- Nothing happens? Run `cursorpie --touchpad-debug` in a terminal: it says which step fails (switch not saved, no
+  `input` group, device not recognized, the hold not still enough) and shows your fingers live.
+- Wayland is not covered: the evdev reading would work there, but CursorPie's mouse layer is X11 only for now.
+
 ## Your mouse and its extra buttons
 
 A Mode slice lists one action for each extra button your mouse has: **Back button**, **Forward button**, then
@@ -138,9 +190,13 @@ extra buttons may be handled by the maker's own software.
 
 ## Settings
 
-Open it from the menu bar or tray icon, or by holding the trigger in the center of the pie. **Save** applies
-and stores your changes. **Cancel**, **Esc** and **Cmd+W** (Ctrl+W elsewhere) discard them. **Undo** and
-**Redo** step through your edits.
+Open it from the menu bar or tray icon, or by holding the trigger in the center of the pie. The top right
+corner has two small round buttons, like the dots of a window: the green one (the accent color) **saves** and
+closes, applying and storing your changes; the red one **cancels**. **Cmd+S** (Ctrl+S elsewhere) saves and
+keeps Settings open. **Cancel**, **Esc** and **Cmd+W** (Ctrl+W elsewhere) close Settings without saving. While
+something is not saved, a yellow dot shows between the two buttons, and Cancel, Esc and Cmd+W first ask
+"Discard changes?": **Enter** discards the changes, **Esc** or a click outside keeps you editing. There are
+no Undo and Redo buttons; use their keys (see [Undo, redo and backups](#undo-redo-and-backups)).
 
 **Quitting.** **Quit CursorPie** (in the sidebar, in **General**, or in the tray / menu bar icon while Settings
 is open) always asks first:
@@ -159,18 +215,22 @@ from behind other windows or minimized) and its footer says to Save or Cancel to
 **Menu** is where you build pies.
 
 - Choose, create, rename and delete profiles, list the apps each one applies to (type an id or use **Pick
-  app...**), and **Share** a profile.
+  app...**), and **Share** a profile. The **...** button unfolds Rename, Export, Import and Delete as a row of
+  icons (hover for their names) and turns into an **x** that folds them again; **+** is hidden meanwhile.
 - An interactive pie shows the ring you are editing. Click a slice to edit it, a selected
   submenu slice again to step into it, and the center to go back. Two round buttons under the pie add a slice
   (**+**) and delete the selected one (the trash); you can also drag a slice onto the trash.
 - Per slice: name, icon, kind, action (for **App**, **Pick...** opens the list of installed apps), and Move.
 - Ready-made slices on the **+** button: *side-button modes* (History, Brackets, Clipboard, Browser, Tabs, Zoom,
-  Scroll, Edit), *quick actions* (Screenshot, Mission Ctrl, Spotlight, Emoji, Lock) and *custom* ones (Shortcut,
-  Open app, Open URL, Command, Submenu).
+  Scroll, Edit), *quick actions* and *custom* ones (Shortcut, Open app, Open URL, Command, Submenu). The quick
+  actions depend on the system: Screenshot, Mission Ctrl, Spotlight, Emoji and Lock on macOS; Screenshot, Task
+  view, Search, Emoji and Lock on Windows; Screenshot, Files, Terminal, Emoji and Lock on Linux.
 
 **Behavior** holds the knobs.
 
 - Trigger button, hold times for the pie and for Settings, pie size, accent color.
+- Look: **Appearance** (System, Light or Dark, for Settings and the pie) and **Pie material** (*Solid* or *Glass*;
+  Glass has sliders for Clearness, Frost and Shine).
 - Whether holding opens the general pie or the app's own, and the double-click speed.
 - App detection: under the pointer or in front, and whether to bring it forward before sending shortcuts.
 - *Other desktops / Other Spaces*: what an Open app slice does when the app's window is elsewhere. Switch to it
@@ -178,14 +238,16 @@ from behind other windows or minimized) and its footer says to Save or Cancel to
   [OTHER_DESKTOPS.md](OTHER_DESKTOPS.md).
 - Side-button options: default pie, pick-to-follow, forget on app switch, right-click switching, ring colors,
   preview time.
-- Instant flick, hover sound, app icon in the pie center, launch at login, and **Memory** (free caches after an
+- Instant flick, hover sound, names under the icons, app icon in the pie center (with its look: glyph or color,
+  and its shadow), launch at login, and **Memory** (free caches after an
   idle time, on by default, 60 s).
 
 **General** shows the permission status (macOS) with shortcuts to System Settings, the config file location,
 **Reveal in Finder** (Explorer, or the file manager on Linux), **Export...**, **Import...** (a file over
 4 MiB is refused), **Reset to defaults** and **Backups**. On Linux it also has Pause and Quit.
 
-**About** shows the version, author, project links, privacy note and credits.
+**About** shows the version, author, privacy note and credits. Website, GitHub, Report an issue and Downloads
+are the four round icon buttons in the corner of the top card.
 
 ## Undo, redo and backups
 
@@ -194,12 +256,13 @@ Deleting a slice or a profile by accident is easy to fix.
 **While Settings is open**, every change is recorded: adding, deleting or moving slices and profiles, editing
 actions and apps, changing options, importing a file and **Reset to defaults**.
 
-- **Undo** and **Redo** are in the top bar. Use **Cmd+Z** and **Cmd+Shift+Z** (**Cmd+Y** also redoes; Ctrl
+- **Undo** and **Redo** are on the keyboard: **Cmd+Z** and **Cmd+Shift+Z** (**Cmd+Y** also redoes; Ctrl
   instead of Cmd on Windows and Linux).
 - Typing and dragging a slider count as **one** step: a step ends when you pause for a moment.
 - Up to 50 steps are kept. A new change after an undo discards the steps you undid.
 - In a text field, **Cmd+Z** undoes the text first. While you record a shortcut, the keys go to the recorder.
-- The history lives only as long as the Settings window. **Save**, **Cancel** and **Esc** close it and forget it.
+- The history lives only as long as the Settings window. Closing it, with Save or Cancel, forgets it. **Cmd+S**
+  keeps it, so you can still undo after saving.
 
 **After you have saved**, use backups. Every **Save** first stores the version it replaces as
 `config.backup.1.json` (the newest) next to `config.json` and keeps the last five. Open **Settings > General >
@@ -219,7 +282,7 @@ temporary one, so a crash or a full disk cannot leave half a file. Where the fil
   text and emoji need nothing embedded. Missing or oversized images show up as `?` for the receiver.
 - **Import a profile...** adds the file as a **new** profile (nothing is overwritten) and selects it. The
   embedded images are copied into the `icons` folder next to `config.json`: an identical file is reused, a
-  different one with the same name gets a number. Press **Save** to apply it, or **Undo** to take it back.
+  different one with the same name gets a number. Press **Save** to apply it, or **Undo** (Cmd+Z) to take it back.
 - A profile must list at least one app. A name already taken gets ` (2)`, ` (3)`...
 - Only PNG, JPEG and WebP data is written, whatever the file claims, and nothing outside the icons folder.
 
@@ -233,10 +296,11 @@ A fresh install comes with three profiles:
 | Profile | Apps | Slices |
 |---|---|---|
 | Default (general) | all apps without a profile | History (undo/redo), Clipboard (copy/paste), Brackets, and a *Launch* submenu with a file manager, terminal, browser and screenshot tool |
-| Browsers | Safari, Chrome, Firefox, Arc, Brave, Edge | Browser (back/forward), Tabs (previous/next), Zoom, Scroll (Page Up/Down) |
-| Code | VS Code, Xcode | History, Brackets, Edit (Return/Delete) |
+| Browsers | The common browsers of your system (on macOS Safari, Chrome, Firefox, Arc, Brave and Edge) | Browser (back/forward), Tabs (previous/next), Zoom, Scroll (Page Up/Down) |
+| Code | The code editors of your system (on macOS VS Code and Xcode; on Windows VS Code and Visual Studio; on Linux VS Code and its variants) | History, Brackets, Edit (Return/Delete) |
 
-The Launch submenu and the app ids adapt to your system (for example Finder on macOS, Explorer on Windows).
+The Launch submenu and the app ids adapt to your system (for example Finder on macOS, Explorer on Windows and the
+file manager, terminal and browser roles on Linux).
 
 ## Memory and performance
 

@@ -93,7 +93,7 @@ pub fn frameless_ex_style(style_ex: u32) -> u32 {
 
 /// The value written to the `Run` registry key: the executable path in quotes.
 pub fn run_value(exe: &str) -> String {
-    format!("\"{exe}\"")
+    format!("\"{exe}\" {}", crate::about::AUTOSTART_ARG)
 }
 
 /// File name of the installed executable.
@@ -367,7 +367,7 @@ mod tests {
     fn registry_and_command_lines() {
         assert_eq!(
             run_value(r"C:\Apps\cursorpie.exe"),
-            r#""C:\Apps\cursorpie.exe""#
+            r#""C:\Apps\cursorpie.exe" --autostart"#
         );
         assert_eq!(shell_params("echo hi"), r#"/S /C "echo hi""#);
         assert_eq!(

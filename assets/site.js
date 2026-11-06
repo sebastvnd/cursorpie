@@ -157,6 +157,7 @@
     { file: 'docs/WINDOWS_MIGRATION.md', label: 'Windows migration' },
     { file: 'docs/OTHER_DESKTOPS.md', label: 'Other desktops' },
     { file: 'docs/UI_DESIGN.md', label: 'UI design' },
+    { file: 'docs/TRACKPAD_HAPTICS_PLAN.md', label: 'Trackpad and haptics plan' },
     { file: 'README.md', label: 'Project README' },
     { file: 'diag/README.md', label: 'Diagnostic crate notes' }
   ];
@@ -344,7 +345,7 @@
   if (docParam) showDocumentation();
 
   // ---------------------------------------------------------------
-  // Interactive four-slice demo: mirrors the default general pie.
+  // Interactive four-slice demo: mirrors the default general pie: icons only, no names.
   // Slice 0 is History, centered on the left side of the ring.
   // ---------------------------------------------------------------
   const stage = document.getElementById('pie-stage');
@@ -364,7 +365,6 @@
   const sweep = Math.PI * 2 / items.length;
   const slices = [];
   const icons = [];
-  const labels = [];
   const point = (radius, angle) => [radius * Math.cos(angle), radius * Math.sin(angle)];
 
   items.forEach((item, index) => {
@@ -385,19 +385,11 @@
     const iconPoint = point((outerRadius + innerRadius) / 2, middle);
     const icon = document.createElementNS(SVG_NS, 'text');
     icon.setAttribute('x', iconPoint[0]);
-    icon.setAttribute('y', iconPoint[1] - outerRadius * 0.04);
+    icon.setAttribute('y', iconPoint[1]);
     icon.setAttribute('class', 'pie-icon');
     icon.textContent = item.glyph;
     svg.appendChild(icon);
     icons.push(icon);
-
-    const label = document.createElementNS(SVG_NS, 'text');
-    label.setAttribute('x', iconPoint[0]);
-    label.setAttribute('y', iconPoint[1] + outerRadius * 0.17);
-    label.setAttribute('class', 'pie-label');
-    label.textContent = item.name;
-    svg.appendChild(label);
-    labels.push(label);
   });
 
   const outline = document.createElementNS(SVG_NS, 'circle');
@@ -438,13 +430,11 @@
     if (highlighted >= 0) {
       slices[highlighted].classList.remove('hot');
       icons[highlighted].classList.remove('hot');
-      labels[highlighted].classList.remove('hot');
     }
     highlighted = index;
     if (highlighted >= 0) {
       slices[highlighted].classList.add('hot');
       icons[highlighted].classList.add('hot');
-      labels[highlighted].classList.add('hot');
     }
   }
 

@@ -6,6 +6,7 @@
 
 pub mod autostart;
 pub mod desktop_entry;
+pub(crate) mod evdev_io;
 pub mod icontheme;
 pub mod inputdev;
 pub mod launch;

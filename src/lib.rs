@@ -48,8 +48,11 @@
 //! When published, docs.rs builds them for the Apple targets listed in `Cargo.toml`.
 
 // The stub (targets without a backend) has no hook, so the gesture machinery is only exercised by
-// tests there.
-#![cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
+// tests there. macOS, Windows and Linux have a backend, so dead code is reported on them.
+#![cfg_attr(
+    not(any(target_os = "macos", windows, target_os = "linux")),
+    allow(dead_code)
+)]
 
 pub mod about;
 pub mod actions;
@@ -96,7 +99,21 @@ pub fn run() -> eframe::Result<()> {
         }
     }
     if !platform::single_instance() {
+        if ui::vtrackpad::options().is_some() {
+            // the trackpad is a window of the *running* app: a second copy cannot show it, and
+            // exiting without a word looks like the tool did nothing
+            eprintln!(
+                "CursorPie is already running, so the virtual trackpad cannot start. Quit that copy first \
+                 (its menu bar icon, or Ctrl-C in the terminal where it runs), then run the tool again."
+            );
+            std::process::exit(1);
+        }
         return Ok(());
+    }
+    // Started by the login entry: let the desktop come up first (tray, taskbar, antivirus scan of
+    // the new session), otherwise the tray icon or the input hooks can fail at that moment.
+    if std::env::args().skip(1).any(|a| a == about::AUTOSTART_ARG) {
+        platform::wait_for_login_ready();
     }
     debug::init(); // the opt-in debug log; does nothing unless it is switched on
     actions::init();
@@ -114,11 +131,23 @@ pub fn run() -> eframe::Result<()> {
         .with_active(false)
         .with_visible(false);
     // no taskbar button for the hidden pie window (Windows only; macOS hides the Dock icon instead)
-    #[cfg(windows)]
-    let viewport = viewport.with_taskbar(false);
+    let viewport = if platform::OS == platform::Os::Windows {
+        viewport.with_taskbar(false)
+    } else {
+        viewport
+    };
     // the X11 window class: lets a window manager rule or a launcher recognize CursorPie
-    #[cfg(target_os = "linux")]
-    let viewport = viewport.with_app_id("cursorpie");
+    let viewport = if platform::OS == platform::Os::Linux {
+        let viewport = viewport.with_app_id("cursorpie");
+        // Windows takes the icon from the .exe and macOS from the .app; on X11 the window has to
+        // carry it itself, or the taskbar and Alt+Tab show a generic icon.
+        match window_icon() {
+            Some(icon) => viewport.with_icon(icon),
+            None => viewport,
+        }
+    } else {
+        viewport
+    };
     let options = eframe::NativeOptions {
         viewport,
         ..Default::default()
@@ -152,4 +181,19 @@ pub fn run() -> eframe::Result<()> {
             Ok(Box::new(App::new(rx, tx, win, tray)))
         }),
     )
+}
+
+/// The application icon as pixels for the window (`_NET_WM_ICON` on X11): the same artwork as the
+/// Windows and macOS icons, rounded like the other icons of a Linux desktop.
+fn window_icon() -> Option<egui::IconData> {
+    const PNG: &[u8] = include_bytes!("../assets/app-icon-256.png");
+    let img = image::load_from_memory_with_format(PNG, image::ImageFormat::Png)
+        .ok()?
+        .into_rgba8();
+    let (width, height) = img.dimensions();
+    Some(egui::IconData {
+        rgba: img.into_raw(),
+        width,
+        height,
+    })
 }

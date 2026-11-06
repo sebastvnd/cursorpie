@@ -106,6 +106,10 @@
 //!
 //! Notes:
 //!
+//! * Every non-idle state carries its `Source` (`Mouse` or `Touch`). A trackpad hold (macOS, Windows and Linux X11, see
+//!   `tap/touch/`) feeds the same states through `trigger::touch_press`, `touch_move`, `touch_release`
+//!   and `touch_cancel`; a trackpad gesture that ends early replays no click, and the mouse trigger
+//!   passes through while a trackpad gesture runs.
 //! * A quick click must still reach the app, so the press is *swallowed* and, if it turns out to
 //!   be a click, **replayed** with [`actions::post_mouse`](crate::actions::post_mouse). Replayed
 //!   events carry [`SYNTH_TAG`](crate::actions::SYNTH_TAG) so the tap ignores them.
@@ -163,7 +167,7 @@
 //! **2. Warming up on press.** [`tap::trigger`](crate::tap) sends [`Msg::Warm`](crate::msg::Msg::Warm)
 //! as soon as the trigger goes down, carrying the profiles that may open. The UI loads their icons
 //! ([`icons_to_warm`](crate::ui::icons::icons_to_warm)) while the hold timer runs, which is
-//! `pie_hold_ms` (500 ms by default) before the first pie frame. A warm cache costs only hash
+//! `pie_hold_ms` (150 ms by default) before the first pie frame. A warm cache costs only hash
 //! lookups, so this is free in the common case. Sending the message follows the tap rules below:
 //! it never blocks.
 //!

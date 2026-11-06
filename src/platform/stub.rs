@@ -76,6 +76,9 @@ pub fn open_app(_app: &str) {}
 pub fn reveal_app(_app: &str, _mode: DesktopMode) {}
 /// Ignored.
 pub fn open_url(_target: &str) {}
+/// Nothing to wait for: the login entry already starts the app when the session is ready.
+pub fn wait_for_login_ready() {}
+
 /// Ignored.
 pub fn run_shell(_cmd: &str) {}
 /// Ignored.
@@ -88,6 +91,8 @@ pub fn choose_file(_kind: FileKind, _prompt: &str) -> Option<String> {
 }
 /// Silent.
 pub fn tick() {}
+/// No haptics.
+pub fn haptic(_kind: crate::platform::HapticKind) {}
 
 /// Never enabled.
 pub fn launch_at_login_enabled() -> bool {

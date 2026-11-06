@@ -19,11 +19,17 @@
 //! * While CursorPie is paused the grabs are lifted, so every event reaches the apps untouched.
 //! * Keys: only while Settings records a shortcut is the keyboard grabbed; it is let go as soon as
 //!   the key was captured.
+//! * Touchpad: the finger positions come from `/dev/input` (`touch::evdev`), because libinput hides
+//!   them from X. What X must do for it is here: while a touchpad hold is running, the left and
+//!   right buttons are grabbed too, so the click of the extra finger can be swallowed
+//!   (`touch::extra`); a click that is not the extra one is sent again at its release, like a side
+//!   button. With the trackpad hold on, the press of any key is heard (raw, no key is named) for the
+//!   typing guard.
 //! * The loop never blocks in `dispatch` and fails open: a panic passes the event on.
 
 use super::{
     Ev, Gesture, Kind, PAUSED, RECORDING, RIGHT_BUTTON, SIDE_BACK, SIDE_FORWARD, SWALLOW_KEY,
-    TAP_ACTIVE, Verdict, dispatch,
+    TAP_ACTIVE, Verdict, dispatch, touch,
 };
 use crate::config::{cfg, extra_buttons_in_use, lock};
 use crate::geometry::Point;
@@ -101,6 +107,47 @@ pub(super) fn wanted_buttons(trigger: i64, extras: &BTreeSet<i64>) -> Vec<c_int>
     v
 }
 
+/// The X buttons of the left and the right button: grabbed while a touchpad hold is running.
+const TOUCH_BUTTONS: [c_int; 2] = [1, 3];
+/// The X buttons of the wheel (up, down, left, right): a touchpad's two-finger scroll arrives as
+/// presses of these. They are grabbed, and their presses ignored, while a touchpad hold runs, so
+/// the scrolling the fingers make does not reach the app under the pie.
+const SCROLL_BUTTONS: [c_int; 4] = [4, 5, 6, 7];
+/// A kept left or right press is forgotten after this long without its release (the button was let
+/// go while no grab heard it); its click is then lost, never repeated late.
+const PENDING_CLICK_MAX: Duration = Duration::from_secs(3);
+
+/// The buttons to grab: `base` (see [`wanted_buttons`]), the left and the right button (the extra
+/// click) while a touchpad hold needs them (`touch_active`), and the wheel (the scrolling of the
+/// fingers) while a hold runs or the tail of its scroll is still open (`scroll_active`, see
+/// [`touch::scroll`]).
+pub(super) fn grabs_for(base: &[c_int], touch_active: bool, scroll_active: bool) -> Vec<c_int> {
+    let mut v = base.to_vec();
+    let wanted = [
+        (touch_active, &TOUCH_BUTTONS[..]),
+        (scroll_active, &SCROLL_BUTTONS[..]),
+    ];
+    for b in wanted
+        .into_iter()
+        .filter(|w| w.0)
+        .flat_map(|w| w.1.iter().copied())
+    {
+        if !v.contains(&b) {
+            v.push(b);
+        }
+    }
+    v
+}
+
+/// Index of a left or right button (macOS numbering) in the table of kept presses.
+fn basic_slot(button: i64) -> Option<usize> {
+    match button {
+        0 => Some(0),
+        RIGHT_BUTTON => Some(1),
+        _ => None,
+    }
+}
+
 /// Starts the tap on its own thread (retrying while the X server cannot be reached).
 pub fn spawn(notifier: Notifier) {
     let session = Session::current();
@@ -117,6 +164,8 @@ pub fn spawn(notifier: Notifier) {
     );
     x11::warm_index();
     let state = Arc::new(Mutex::new(Gesture::Idle));
+    touch::start(state.clone(), notifier.clone());
+    touch::register_virtual(state.clone(), notifier.clone());
     let started = std::thread::Builder::new()
         .name("cursorpie-x11-tap".into())
         .spawn(move || run(state, notifier));
@@ -153,7 +202,8 @@ fn run(state: Arc<Mutex<Gesture>>, notifier: Notifier) {
 
 /// Installs the grabs and handles events. Returns only if the trigger button could not be grabbed.
 fn serve(conn: &'static Conn, state: &Arc<Mutex<Gesture>>, notifier: &Notifier) -> bool {
-    conn.select_raw_buttons();
+    let raw_keys = cfg().touch_trigger;
+    conn.select_raw(raw_keys);
     let (trigger, extras) = {
         let c = cfg();
         (c.trigger_button, extra_buttons_in_use(&c))
@@ -184,6 +234,10 @@ fn serve(conn: &'static Conn, state: &Arc<Mutex<Gesture>>, notifier: &Notifier) 
         extras,
         lifted: false,
         pending_click: [false; mouse::SLOTS],
+        pending_basic: [None; 2],
+        touch_grabs: false,
+        scroll_grabs: false,
+        raw_keys,
         keyboard: false,
         keyboard_deadline: None,
     };
@@ -219,6 +273,15 @@ struct Tap {
     /// A side or extra button press the state machine kept, by `mouse::slot`. Its click is sent
     /// again when the button is released.
     pending_click: [bool; mouse::SLOTS],
+    /// The same for the left and the right button (grabbed while a touchpad hold runs), with the time
+    /// of the press.
+    pending_basic: [Option<Instant>; 2],
+    /// The left and the right button are grabbed for a touchpad hold.
+    touch_grabs: bool,
+    /// The wheel is grabbed for a touchpad hold and the tail of its scroll.
+    scroll_grabs: bool,
+    /// The press of any key is selected (the trackpad hold is on).
+    raw_keys: bool,
     /// The keyboard is grabbed to record a shortcut.
     keyboard: bool,
     /// When to give up waiting for the recorded key's release.
@@ -271,6 +334,7 @@ impl Tap {
                         XI_RAW_BUTTON_RELEASE => {
                             self.on_raw_release(&*(data as *const XIRawEvent));
                         }
+                        XI_RAW_KEY_PRESS => touch::note_key(),
                         _ => {}
                     }
                     XFreeEventData(self.conn.dpy, cookie);
@@ -295,6 +359,16 @@ impl Tap {
 
     fn on_device(&mut self, evtype: c_int, e: &XIDeviceEvent) {
         self.conn.set_master(e.deviceid);
+        // A grabbed wheel press: swallowed (there is nothing to route) and it keeps the tail of the
+        // scroll alive. It comes before the filter and the log below, because scrolling arrives as
+        // emulated presses (a touchpad makes hundreds a second) and the log asks the server where
+        // the pointer is.
+        if matches!(evtype, XI_BUTTON_PRESS | XI_BUTTON_RELEASE)
+            && SCROLL_BUTTONS.contains(&e.detail)
+        {
+            touch::scroll::swallows();
+            return;
+        }
         if e.flags & XI_POINTER_EMULATED != 0 {
             return;
         }
@@ -340,6 +414,21 @@ impl Tap {
             );
         }
         // the trigger's own press and release are handled by its gesture
+        if button != self.trigger
+            && let Some(i) = basic_slot(button)
+        {
+            match kind {
+                Kind::Down if matches!(verdict, Verdict::Keep) => {
+                    self.pending_basic[i] = Some(Instant::now());
+                }
+                Kind::Up if self.pending_basic[i].take().is_some() => {
+                    post_mouse(pos, Kind::Down, button);
+                    post_mouse(pos, Kind::Up, button);
+                }
+                _ => {}
+            }
+            return;
+        }
         let side = mouse::slot(button).filter(|_| button != self.trigger);
         let Some(i) = side else { return };
         match kind {
@@ -411,9 +500,44 @@ impl Tap {
         };
         if !self.lifted && (trigger != self.trigger || extras != self.extras) {
             self.wanted = wanted_buttons(trigger, &extras);
-            self.conn.set_grabs(&self.wanted);
+            self.conn.set_grabs(&grabs_for(
+                &self.wanted,
+                self.touch_grabs,
+                self.scroll_grabs,
+            ));
             self.trigger = trigger;
             self.extras = extras;
+        }
+
+        // a touchpad hold takes the left and the right button for its extra click, and lets them go
+        // when it is over (not while a click it kept or swallowed is still down: its release must
+        // reach us)
+        self.pending_basic
+            .iter_mut()
+            .filter(|p| p.is_some_and(|t| t.elapsed() > PENDING_CLICK_MAX))
+            .for_each(|p| *p = None);
+        let busy =
+            self.pending_basic.iter().any(Option::is_some) || touch::extra::interested(Kind::Up);
+        let want = touch::ACTIVE.load(Ordering::SeqCst) || (self.touch_grabs && busy);
+        // the wheel is grabbed for as long as the pie swallows scrolling: the hold, and the tail
+        // of the scroll its fingers began (checking it also closes a tail that ran out)
+        let want_scroll = touch::scroll::wanted();
+        if !self.lifted && (want != self.touch_grabs || want_scroll != self.scroll_grabs) {
+            self.touch_grabs = want;
+            self.scroll_grabs = want_scroll;
+            self.conn.set_grabs(&grabs_for(
+                &self.wanted,
+                self.touch_grabs,
+                self.scroll_grabs,
+            ));
+            diag::log!("touch", "x_grabs", left_right = want, wheel = want_scroll);
+        }
+
+        // the typing guard listens to keys only while the trackpad hold is on
+        let keys = cfg().touch_trigger;
+        if keys != self.raw_keys {
+            self.raw_keys = keys;
+            self.conn.select_raw(keys);
         }
 
         // recording a shortcut: take the keyboard, and give it back once the key is released
@@ -486,6 +610,48 @@ mod tests {
         assert_eq!(wanted_buttons(2, &extras), [2, 8, 9, 10, 12]);
         // the trigger is not grabbed twice
         assert_eq!(wanted_buttons(5, &extras), [10, 8, 9, 12]);
+    }
+
+    #[test]
+    fn a_touchpad_hold_adds_the_left_and_right_button_to_the_grabs() {
+        let base = wanted_buttons(2, &BTreeSet::new());
+        assert_eq!(
+            grabs_for(&base, false, false),
+            base,
+            "nothing changes without a hold"
+        );
+        assert_eq!(grabs_for(&base, true, true), [2, 8, 9, 1, 3, 4, 5, 6, 7]);
+        // a trigger that already is one of them is not grabbed twice
+        let left = wanted_buttons(0, &BTreeSet::new());
+        assert_eq!(grabs_for(&left, true, true), [1, 8, 9, 3, 4, 5, 6, 7]);
+        for x in grabs_for(&base, true, true) {
+            // the wheel is grabbed to be swallowed: it has no button of its own
+            assert_eq!(
+                mac_button(x).is_some(),
+                !SCROLL_BUTTONS.contains(&x),
+                "X button {x}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_wheel_is_grabbed_on_its_own_for_the_tail_of_a_scroll() {
+        let base = wanted_buttons(2, &BTreeSet::new());
+        // the pie is closed, the glide of its scroll is not over: the wheel only, clicks pass
+        assert_eq!(grabs_for(&base, false, true), [2, 8, 9, 4, 5, 6, 7]);
+        // a hold with no scroll to swallow yet is not asked for the wheel by this function
+        assert_eq!(grabs_for(&base, true, false), [2, 8, 9, 1, 3]);
+    }
+
+    #[test]
+    fn only_the_left_and_the_right_button_have_a_kept_press_slot() {
+        assert_eq!(basic_slot(0), Some(0));
+        assert_eq!(basic_slot(RIGHT_BUTTON), Some(1));
+        assert_eq!(basic_slot(2), None, "middle");
+        assert_eq!(basic_slot(SIDE_BACK), None);
+        // the left and the right X buttons are the ones that are grabbed
+        assert_eq!(mac_button(TOUCH_BUTTONS[0]), Some(0));
+        assert_eq!(mac_button(TOUCH_BUTTONS[1]), Some(RIGHT_BUTTON));
     }
 
     #[test]

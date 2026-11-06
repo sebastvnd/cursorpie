@@ -48,8 +48,9 @@ A set variable wins over the file, so `CURSORPIE_DEBUG=0` silences a `debug` fil
 | `diag` | the first line: version, OS, session variables (`XDG_SESSION_TYPE`, `DISPLAY`, ...) |
 | `sys` | the monitors and the pointer as the platform reports them at start |
 | `x11` | the display scale chosen for the pointer coordinates; bringing Settings forward: `raise_own` (the window the window manager listed, its workspace and the one shown) and, 200 ms later, `raise_own_seen` (whether it became the active window and which workspace is shown) |
-| `tap` | the session type, the button grabs, every press and release (position from the event **and** from the X server), the verdict, the hold timer (`hold_open`, or `hold_cancelled` when it gave up), the double-click window, which profile a press resolved to (`resolve`: whether a target app was found, never which), the slice that was selected, the side buttons, the mice (`mouse_look`: how many are connected and whether it was a new one, a returning one or the same; `mouse_scan`: how many buttons a scan found; never a name), and whether the input hook runs (`hook`: `running`, or why not: `blocked` on macOS, `refused` on Windows, `no_x_server` or `grab_failed` on Linux) |
-| `ui` | the message that opens the pie, the position the pie asks for, the monitor it picked, the cursor fallback; closing the pie, opening and closing Settings (`close_settings` is timed: saving; `raise_settings` says why Settings was brought forward; `chooser_open`, `chooser_busy`, `chooser_closed` (with `waited_ms`) and `chooser_abandoned` (the user pressed Stop waiting) follow the native file chooser), importing a config, and the timed `warm` (icon loading) and `sleep` (freeing memory) |
+| `tap` | the session type, the button grabs, every press and release, `pie_click_swallowed` (a click while a pie is open that no path took, swallowed: `button`) (position from the event **and** from the X server), the verdict, the hold timer (`hold_open`, or `hold_cancelled` when it gave up), the double-click window, which profile a press resolved to (`resolve`: whether a target app was found, never which), the slice that was selected, the side buttons, the mice (`mouse_look`: how many are connected and whether it was a new one, a returning one or the same; `mouse_scan`: how many buttons a scan found; never a name), and whether the input hook runs (`hook`: `running`, or why not: `blocked` on macOS, `refused` on Windows, `no_x_server` or `grab_failed` on Linux) |
+| `touch` | the trackpad source (macOS, Windows and Linux, off unless `touch_trigger` is on): `framework` (macOS: whether the system's touch library loaded), `source` (`running`, `stopped`; Windows also `refused`, `no_window`), `layout` (Windows: finger slots and the size in mm of a touchpad whose descriptor was read), `devices` (on Linux also `denied`: touchpads found but not readable, so the `input` group is missing; how many trackpads were seen and started), `device_open` and `device_closed` (Linux: one touchpad's reader and its size in mm), `x_grabs` (Linux: the left and right buttons, and the wheel (`wheel`), are grabbed for a hold or the tail of its scroll, or let go), `device_skipped` (a device that is not trackpad-sized: its size in mm; on Windows a touchpad whose descriptor is not understood: `why`), `arm` (a hold was armed: `elapsed_ms`, `double`, `started`), `open`, `release`, `cancel` (`why`: `slid`, `too_many_fingers`, `stale`, `device_lost`), `scroll_tail` (a pie that opened closed while its scrolling may still be coming: `fingers` still down, `dropped` wheel events swallowed so far), `scroll_tail_end` (`why`: `quiet`, `capped`, `new_touch`, `next_gesture`, `stopped`; `dropped` in all, `in_tail` after the pie closed), `scroll_swallowed` (a hold that never opened swallowed `dropped` wheel events), `scroll_drop` (`trace` only: one line per swallowed wheel event, `tail`), `extra_click` (`via`: `press`, `tap`, `tap_click`), `extra_action` (the action and whether it did something) and `haptic` (which tick, whether it played). Counts and decisions only: never a finger position |
+| `ui` | the message that opens the pie, the position the pie asks for, the monitor it picked, the cursor fallback; `pie_input` (whether the pie window takes the pointer: a trackpad hold does), closing the pie, opening and closing Settings (`close_settings` is timed: saving; `raise_settings` says why Settings was brought forward; `chooser_open`, `chooser_busy`, `chooser_closed` (with `waited_ms`) and `chooser_abandoned` (the user pressed Stop waiting) follow the native file chooser), importing a config, and the timed `warm` (icon loading) and `sleep` (freeing memory) |
 | `win` | where the toolkit says the window really is, for two seconds after a window was placed |
 | `cfg` | loading `config.json` (outcome, size, time) and every save of it (`ok`, and the error kind when it failed: a failed save is otherwise silent) |
 | `act` | every action the worker runs: its kind (never its content), how long it waited in the queue (`wait_ms`) and how long it ran (`ms`); every program it starts (`exited` with its exit code, `spawn_failed` with the error kind, on Windows `shell_execute` with the code), by program name only, never its arguments |
@@ -165,7 +166,28 @@ The full reference (every function, the switch, the line format, how to test cod
 of the crate: `cargo docs`, crate `cursorpie_diag`. Another program of the workspace can use the same log with
 `diag::Builder::new("name")...init()`; the environment variables and the file names follow the name.
 
+## The touchpad does nothing (Linux)
+
+`cursorpie --touchpad-debug [seconds]` (default 20) prints why, without starting the app (stop a running
+CursorPie first). It checks, in order, and marks each line `[ok]`, `[..]` (information) or `[!!]` (a problem):
+
+1. the session (`XDG_SESSION_TYPE`, `DISPLAY`, `WAYLAND_DISPLAY`) and the saved `touch_trigger` (the switch must be
+   on **and saved**);
+2. the groups of this session (`input`), and whether `/etc/group` lists you in it before you logged in again;
+3. every device of `/proc/bus/input/devices` that has anything to do with touch, and why it was taken as a touchpad or
+   left out (a touchscreen, a virtual device, no finger count, no finger positions);
+4. for each touchpad: whether `/dev/input/eventN` can be opened (permission), and the size of the surface in mm;
+5. live: each change of the fingers with their position in mm and, as `-> recognizer:`, what the hold logic decides
+   (`HoldArmed`, `HoldOpen`, `Release`, `Cancel(..)`) with your config (hold time, how still, typing guard).
+
+It ends with `[->]` lines naming the broken link. The positions are printed to the terminal only because you ran
+it; the app never logs them. If this says everything works but the pie does not open, run the app with
+`CURSORPIE_DEBUG=1` and read the `touch` and `tap` lines (`touch`: `devices`, `device_open`, `arm`, `open`, `cancel`,
+`x_grabs`).
+
 ## Facts for a bug report
+
+Linux touchpad: paste the output of `cursorpie --touchpad-debug` as well.
 
 `cargo tools info` prints the OS, the desktop session variables, the tool versions and the number of logs, as a
 block to paste into the issue.
@@ -179,3 +201,27 @@ the gesture was made two or three times at different places on the screen:
 CURSORPIE_DEBUG=1 cursorpie 2> stderr.txt
 cargo tools diag
 ```
+
+## Trying the trackpad gestures without a trackpad
+
+`cargo tools trackpad` starts the app with a *virtual trackpad*: a trackpad that floats exactly in the middle of the
+screen. Your real pointer is the finger on it (over the glass it touches, off the glass it is lifted), and a virtual
+pointer, an arrow drawn on the screen outside the trackpad, is what the finger moves, relatively and with acceleration
+like a real trackpad does. The pie opens at the virtual pointer, aims with it and acts on the app under it.
+
+It feeds the same recognizer as a real trackpad, so the whole chain (hold, aim, lift, extra click, the palm and edge
+rules) is the real one, and `CURSORPIE_DEBUG=touch` logs it as it logs a real trackpad (the device id is `0x56495254`).
+Nothing is written to the settings; the red dot closes the trackpad, and the app keeps running. The app allows one
+copy at a time: if another CursorPie is running (the installed one, or another `cargo run`), quit it first, or the
+tool says so and stops.
+
+| Option | Meaning |
+|---|---|
+| `--width POINTS` | width of the trackpad, 240 to 640 (default 360); the slider in its lower frame changes it too |
+| `--silent` | no click sound (the switch in the lower frame does the same) |
+| `--release` | build the app with optimizations |
+
+Behind the command is the environment the app reads: `CURSORPIE_VTRACKPAD=1` (turns the tool on),
+`CURSORPIE_VTRACKPAD_WIDTH` and `CURSORPIE_VTRACKPAD_SOUND=0`. The haptic click of a real trackpad cannot be given by a
+mouse; the tool shows it (the surface sinks, a ring, a glow) and plays a click, and the tick is also sent to the
+system's haptic engine, which only a finger on a real trackpad feels.

@@ -1,6 +1,6 @@
 [package]
 name = "cursorpie"
-version = "0.7.6"
+version = "0.8.2"
 edition = "2024"
 rust-version = "1.88"
 description = "Hold-to-open pie menu for macOS, Windows and Linux (X11): per-app profiles, shortcuts, launchers and submenus."
@@ -8,6 +8,39 @@ license = "MIT"
 
 authors = ["sebastvnd@gmail.com"]
 repository = "https://github.com/sebastvnd/cursorpie"
+readme = "README.md"
+keywords = ["pie-menu", "mouse", "launcher", "shortcuts", "egui"]
+categories = ["gui"]
+
+# What `cargo publish` leaves out of the package: the website, the CI files and the packaging scripts.
+# `diag/` and `tools/` are packages of their own and are never part of this one. What the build needs
+# stays in: `src/`, `assets/fonts/`, `assets/cursorpie-mark.png`, `assets/cursorpie-logo-black.png` (all
+# `include_bytes!`) and `CONTRIBUTING.md` (the `guides::contributing` page includes it as documentation).
+# Check the list with `cargo package --list` before publishing.
+exclude = [
+    "/.cargo",
+    "/.github",
+    "/.githooks",
+    "/.nojekyll",
+    "/.editorconfig",
+    "/.gitattributes",
+    "/index.html",
+    "/googlebdeb0f49ec379d7f.html",
+    "/robots.txt",
+    "/sitemap.xml",
+    "/README-WEBSITE.md",
+    "/assets/js",
+    "/assets/site.css",
+    "/assets/site.js",
+    "/assets/og-image.png",
+    "/assets/cursorpie-logo.png",
+    "/assets/icons",
+    "/assets/app-icon-macos.png",
+    "/icon",
+    "/installer",
+    "/packaging",
+    "/scripts",
+]
 
 # The developer tools (`cargo tools ...`, see CONTRIBUTING.md) are a second package of this workspace.
 # It is not part of the app: `cargo build` and `cargo test` of the root package never touch it, so
@@ -46,6 +79,7 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 
 # Windows backend, only enabled by the `check-windows` feature on other targets (see [target.'cfg(windows)']).
 windows-sys = { version = "0.61", optional = true, features = [
+    "Win32_Devices_HumanInterfaceDevice",
     "Win32_Foundation",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
@@ -60,6 +94,7 @@ windows-sys = { version = "0.61", optional = true, features = [
     "Win32_System_Threading",
     "Win32_UI_Controls_Dialogs",
     "Win32_UI_HiDpi",
+    "Win32_UI_Input",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
@@ -92,6 +127,7 @@ core-foundation = "0.10"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = [
     "NSApplication",
+    "NSHapticFeedback",
     "NSResponder",
     "NSRunningApplication",
     "NSWorkspace",
@@ -119,6 +155,7 @@ eframe = { version = "0.36", default-features = false, features = [
     "glow",
 ] }
 windows-sys = { version = "0.61", features = [
+    "Win32_Devices_HumanInterfaceDevice",
     "Win32_Foundation",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
@@ -133,6 +170,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Threading",
     "Win32_UI_Controls_Dialogs",
     "Win32_UI_HiDpi",
+    "Win32_UI_Input",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
@@ -150,3 +188,8 @@ rustdoc-args = ["--document-private-items"]
 opt-level = 3
 lto = "thin"
 strip = true
+
+[build-dependencies]
+# Embed the app icon in cursorpie.exe (Explorer, taskbar and shortcut icon).
+# The build script checks the target OS, so this also supports cross-compilation.
+winresource = { version = "0.1.34", default-features = false }

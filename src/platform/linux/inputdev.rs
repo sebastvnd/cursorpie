@@ -124,6 +124,118 @@ pub fn parse_devices(text: &str) -> Vec<Device> {
     text.split("\n\n").filter_map(mouse_of).collect()
 }
 
+/// A touchpad the kernel lists: its name and its `eventN` node under `/dev/input`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Touchpad {
+    pub name: String,
+    /// `event9`, from the `Handlers=` line.
+    pub node: String,
+}
+
+/// `INPUT_PROP_DIRECT`: a touchscreen, not a touchpad.
+const PROP_DIRECT: usize = 1;
+/// `BTN_TOOL_FINGER`: a touchpad reports how many fingers touch it.
+const BTN_TOOL_FINGER: usize = 0x145;
+/// `ABS_MT_POSITION_X` and `ABS_MT_POSITION_Y`: the position of each finger.
+const ABS_MT_POSITION_X: usize = 0x35;
+const ABS_MT_POSITION_Y: usize = 0x36;
+
+/// What the kernel's description of one input device says about it, for [`touchpad_of`] and for
+/// the debug report (`cursorpie --touchpad-debug`).
+struct Block<'a> {
+    name: &'a str,
+    node: &'a str,
+    /// `Ok` for a touchpad; otherwise the first thing that rules it out.
+    verdict: Result<(), &'static str>,
+    /// The device has some of what a touchpad has (the finger button, finger positions, or the
+    /// word in its name): worth listing when it was not taken.
+    looks_related: bool,
+}
+
+fn judge(block: &str) -> Option<Block<'_>> {
+    let (mut name, mut handlers) = (None, "");
+    let (mut key, mut abs, mut prop) = ("", "", None);
+    for line in block.lines() {
+        if let Some(rest) = line.strip_prefix("N: Name=") {
+            name = Some(rest.trim().trim_matches('"'));
+        } else if let Some(rest) = line.strip_prefix("H: Handlers=") {
+            handlers = rest;
+        } else if let Some(rest) = line.strip_prefix("B: KEY=") {
+            key = rest;
+        } else if let Some(rest) = line.strip_prefix("B: ABS=") {
+            abs = rest;
+        } else if let Some(rest) = line.strip_prefix("B: PROP=") {
+            prop = Some(rest);
+        }
+    }
+    let name = name?;
+    let node = handlers
+        .split_whitespace()
+        .find(|h| h.starts_with("event"))?;
+    let lower = name.to_ascii_lowercase();
+    let finger = bit_set(key, BTN_TOOL_FINGER);
+    let position = bit_set(abs, ABS_MT_POSITION_X) && bit_set(abs, ABS_MT_POSITION_Y);
+    let verdict = if !finger {
+        Err("does not report a finger count (no BTN_TOOL_FINGER)")
+    } else if !position {
+        Err("does not report finger positions (no ABS_MT_POSITION_X/Y)")
+    } else if prop.is_some_and(|p| bit_set(p, PROP_DIRECT)) {
+        Err("is a touchscreen (INPUT_PROP_DIRECT)")
+    } else if VIRTUAL.iter().any(|v| lower.contains(v)) {
+        Err("is a virtual device made by a program")
+    } else {
+        Ok(())
+    };
+    Some(Block {
+        name,
+        node,
+        verdict,
+        looks_related: finger
+            || position
+            || lower.contains("touchpad")
+            || lower.contains("trackpad"),
+    })
+}
+
+/// The touchpad of one block, if it is one: it reports the position of several fingers
+/// (multitouch) and the number of fingers (`BTN_TOOL_FINGER`), and it is not a touchscreen.
+fn touchpad_of(block: &str) -> Option<Touchpad> {
+    let b = judge(block)?;
+    b.verdict.is_ok().then(|| Touchpad {
+        name: b.name.to_string(),
+        node: b.node.to_string(),
+    })
+}
+
+/// One device that looks like it could be a touchpad, and what was decided about it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Candidate {
+    pub name: String,
+    pub node: String,
+    /// `Ok` = taken as a touchpad; `Err` says why not.
+    pub verdict: Result<(), &'static str>,
+}
+
+/// Every device of `/proc/bus/input/devices` that has anything to do with touch, with the verdict:
+/// what `cursorpie --touchpad-debug` prints, so a touchpad that is not found says why.
+pub fn explain_touchpads(text: &str) -> Vec<Candidate> {
+    text.split("\n\n")
+        .filter_map(judge)
+        .filter(|b| b.looks_related)
+        .map(|b| Candidate {
+            name: b.name.to_string(),
+            node: b.node.to_string(),
+            verdict: b.verdict,
+        })
+        .collect()
+}
+
+/// The touchpads in the text of `/proc/bus/input/devices`. Readable by everyone, unlike the
+/// `/dev/input/event*` nodes, so Settings can say "there is a touchpad, but no permission".
+pub fn parse_touchpads(text: &str) -> Vec<Touchpad> {
+    text.split("\n\n").filter_map(touchpad_of).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -255,5 +367,70 @@ B: ABS=260800000000003
         assert!(parse_devices("").is_empty());
         assert!(parse_devices("not a device list\n\nat all").is_empty());
         assert!(parse_devices("N: Name=\"x\"\nH: Handlers=mouse0\n").is_empty());
+    }
+
+    #[test]
+    fn a_touchpad_is_found_by_its_fingers_and_a_mouse_is_not() {
+        let text = blocks(&[GAMING, TOUCHPAD, KEYBOARD, OFFICE]);
+        assert_eq!(
+            parse_touchpads(&text),
+            vec![Touchpad {
+                name: "ELAN0412:00 04F3:3140 Touchpad".into(),
+                node: "event9".into()
+            }]
+        );
+        assert!(parse_touchpads(&blocks(&[GAMING, OFFICE, KEYBOARD])).is_empty());
+    }
+
+    #[test]
+    fn a_touchscreen_is_not_a_touchpad() {
+        let screen = "\
+I: Bus=0018 Vendor=04f3 Product=2a12 Version=0100
+N: Name=\"ELAN Touchscreen\"
+H: Handlers=mouse3 event11
+B: PROP=2
+B: EV=b
+B: KEY=e520 10000 0 0 0 0
+B: ABS=260800000000003
+";
+        assert!(parse_touchpads(screen).is_empty());
+        // a touchscreen without the finger button is no touchpad either
+        let no_finger = screen.replace("e520", "400");
+        assert!(parse_touchpads(&no_finger).is_empty(), "no BTN_TOOL_FINGER");
+    }
+
+    #[test]
+    fn the_debug_list_says_why_a_device_was_not_taken() {
+        let list = explain_touchpads(&blocks(&[GAMING, OFFICE, KEYBOARD]));
+        assert!(
+            list.is_empty(),
+            "a mouse and a keyboard are not touch related"
+        );
+        let pad = explain_touchpads(TOUCHPAD);
+        assert_eq!(pad.len(), 1);
+        assert_eq!(pad[0].verdict, Ok(()));
+        assert_eq!(pad[0].node, parse_touchpads(TOUCHPAD)[0].node);
+        // still listed (it has positions), but not taken: no finger button
+        let no_finger = explain_touchpads(&TOUCHPAD.replace("e520", "400"));
+        assert_eq!(no_finger.len(), 1);
+        assert!(
+            no_finger[0]
+                .verdict
+                .unwrap_err()
+                .contains("BTN_TOOL_FINGER")
+        );
+        let fake = TOUCHPAD.replace(
+            "ELAN0412:00 04F3:3140 Touchpad",
+            "ydotoold virtual touchpad",
+        );
+        let fake = explain_touchpads(&fake);
+        assert_eq!(fake.len(), 1);
+        assert!(fake[0].verdict.unwrap_err().contains("virtual"));
+    }
+
+    #[test]
+    fn a_program_s_virtual_touchpad_is_left_out() {
+        let fake = TOUCHPAD.replace("ELAN0412:00 04F3:3140 Touchpad", "ydotoold virtual device");
+        assert!(parse_touchpads(&fake).is_empty());
     }
 }

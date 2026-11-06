@@ -101,7 +101,7 @@ impl Config {
                 p.active = first_mode(&p.items).unwrap_or_default();
             }
         }
-        self.pie_hold_ms = self.pie_hold_ms.clamp(150, 2000);
+        self.pie_hold_ms = self.pie_hold_ms.clamp(50, 2000);
         self.settings_hold_ms = self.settings_hold_ms.max(self.pie_hold_ms + 300);
         self.pie_size = self.pie_size.clamp(140.0, 360.0);
         self.preview_ms = self.preview_ms.min(3000);
@@ -118,6 +118,12 @@ impl Config {
         if !matches!(self.trigger_button, 2 | 5 | 6 | 7) {
             self.trigger_button = 2;
         }
+        self.touch_still_mm = if self.touch_still_mm.is_finite() {
+            self.touch_still_mm.clamp(0.5, 6.0)
+        } else {
+            Config::default().touch_still_mm
+        };
+        self.touch_typing_guard_ms = self.touch_typing_guard_ms.min(2000);
         self
     }
 }
@@ -125,6 +131,7 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::TouchClickAction;
 
     fn parse(json: &str) -> Config {
         crate::config::parse_config(json).expect("valid config")
@@ -147,6 +154,55 @@ mod tests {
     }
 
     #[test]
+    fn the_trackpad_settings_are_off_by_default_and_old_files_load_unchanged() {
+        let old = parse(r#"{"version":2}"#);
+        assert!(!old.touch_trigger, "the trackpad trigger is opt-in");
+        assert_eq!(old.touch_still_mm, 2.0);
+        assert_eq!(old.touch_click_action, TouchClickAction::SwitchPie);
+        assert_eq!(old.touch_typing_guard_ms, 400);
+        assert!(old.haptics && old.haptic_hover);
+        assert_eq!(
+            old,
+            Config {
+                version: old.version,
+                ..Config::default()
+            }
+        );
+        // the two-finger mode is gone: the old field is ignored and never comes back
+        let two = parse(r#"{"version":2,"touch_fingers":2}"#);
+        assert_eq!(
+            two,
+            Config {
+                version: two.version,
+                ..Config::default()
+            }
+        );
+        assert!(
+            !serde_json::to_string(&two)
+                .unwrap()
+                .contains("touch_fingers")
+        );
+    }
+
+    #[test]
+    fn the_trackpad_settings_are_clamped() {
+        let wild = parse(
+            r#"{"version":2,"touch_trigger":true,"touch_still_mm":99.0,"touch_typing_guard_ms":99999,"touch_click_action":"PickHovered"}"#,
+        );
+        assert!(wild.touch_trigger);
+        assert_eq!(wild.touch_still_mm, 6.0);
+        assert_eq!(wild.touch_typing_guard_ms, 2000);
+        assert_eq!(wild.touch_click_action, TouchClickAction::PickHovered);
+        let tiny = parse(r#"{"version":2,"touch_still_mm":0.0}"#);
+        assert_eq!(tiny.touch_still_mm, 0.5);
+        let nan = Config {
+            touch_still_mm: f32::NAN,
+            ..Config::default()
+        };
+        assert_eq!(nan.sanitize().touch_still_mm, 2.0);
+    }
+
+    #[test]
     fn the_old_default_blue_becomes_the_new_default_accent() {
         let old = parse(r#"{"version":2,"accent":[64,156,255]}"#);
         assert_eq!(old.accent, Config::default().accent);
@@ -163,7 +219,7 @@ mod tests {
         let c = parse(
             r#"{"version":2,"pie_hold_ms":1,"settings_hold_ms":1,"double_click_ms":9999,"pie_size":10}"#,
         );
-        assert_eq!(c.pie_hold_ms, 150);
+        assert_eq!(c.pie_hold_ms, 50);
         assert_eq!(c.settings_hold_ms, 450, "at least 300 ms after the pie");
         assert_eq!(c.double_click_ms, 500);
         assert_eq!(c.pie_size, 140.0);

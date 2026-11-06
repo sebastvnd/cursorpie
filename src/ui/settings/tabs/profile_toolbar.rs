@@ -11,7 +11,8 @@
 //!   profile, each with its icon and how many apps it covers;
 //! * the **apps button** shows the real icons of the profile's apps and opens a sheet with one big
 //!   tile per app (see [`ProfileSheet`]);
-//! * **+** opens the "New profile" sheet; **...** holds rename, export, import and delete.
+//! * **+** opens the "New profile" sheet; **...** unfolds rename, export, import and delete as a
+//!   row of icons to its left (hiding **+** and turning into an X while they show).
 //!
 //! Everything that needs typing opens as a [`sheet`]: a dimmed window with the dialog in the
 //! middle, the same as "Add a slice", so nothing hangs off a small button any more.
@@ -24,6 +25,7 @@ use crate::msg::Msg;
 use crate::platform;
 use crate::ui::appicon;
 use crate::ui::fonts;
+use crate::ui::icons::IconState;
 use crate::ui::settings::picker::spawn_file_picker;
 use crate::ui::settings::state::{AppScan, Ed, PickFor, ProfileSheet};
 use crate::ui::settings::theme::*;
@@ -75,13 +77,18 @@ fn avatar(
     accent: Color32,
 ) {
     let key = appicon::icon_string(AppIconStyle::Color, bundle);
-    if let Some(tex) = ed.icon_for(ctx, &key) {
+    // the icon is read off the UI thread: scrolling a long list must not wait for the system
+    let state = ed.app_icon_async(ctx, &key);
+    if let IconState::Ready(tex) = &state {
         let whole = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
         painter.image(tex.id(), rect, whole, Color32::WHITE);
         return;
     }
     let radius = (rect.width() * 0.28).round() as u8;
     painter.rect_filled(rect, CornerRadius::same(radius), wash(accent, 0.14));
+    if matches!(state, IconState::Pending) {
+        return; // the icon follows in a moment: a plain tile, not a letter that then changes
+    }
     let letter: String = app_label(bundle).chars().take(1).collect();
     painter.text(
         rect.center(),
@@ -328,55 +335,96 @@ pub(super) fn profile_toolbar(
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
-            // the "more" menu holds what is used rarely
-            let more = icon_button_look(ui, Look::Soft, symbols::DOTS_THREE, "More", true);
-            popover(&more, "Profile", 260.0, |ui| {
-                if menu_item(ui, symbols::PENCIL_SIMPLE, "Rename\u{2026}").clicked() {
-                    ed.new_profile_name = edit.profiles[pi].name.clone();
-                    open_sheet(ctx, ed, ProfileSheet::Rename);
-                    ui.close();
-                }
-                if menu_item(ui, symbols::UPLOAD_SIMPLE, "Export this profile\u{2026}").clicked() {
-                    match share::export_to_downloads(&edit.profiles[pi]) {
-                        Ok(path) => {
-                            platform::reveal_in_file_manager(&path);
-                            notice(tx, ctx, format!("Exported to {}", path.display()));
-                        }
-                        Err(e) => notice(tx, ctx, format!("Export failed: {e}")),
-                    }
-                    ui.close();
-                }
-                if menu_item(ui, symbols::DOWNLOAD_SIMPLE, "Import a profile\u{2026}").clicked() {
-                    spawn_file_picker(
-                        tx.clone(),
-                        ctx.clone(),
-                        platform::FileKind::Json,
-                        "Choose a CursorPie profile",
-                        |file| Some(Msg::ProfileImportPicked(file)),
-                    );
-                    ui.close();
-                }
-                // the general profile is the fallback for every app, so it must stay
-                let can_delete = edit.profiles.len() > 1 && !edit.profiles[pi].is_general();
-                let delete = ui
-                    .add_enabled_ui(can_delete, |ui| {
-                        menu_item(ui, symbols::TRASH, "Delete profile")
-                    })
-                    .inner;
-                if delete.clicked() && can_delete {
-                    edit.profiles.remove(pi);
-                    ed.profile = pi.saturating_sub(1);
-                    ed.reset_nav();
-                    ed.stop_recording();
-                    ui.close();
-                }
-            });
-            let new = icon_button_look(ui, Look::Soft, symbols::PLUS, "New profile", true);
-            if new.clicked() {
-                ed.new_profile_name.clear();
-                ed.new_profile_app.clear();
-                open_sheet(ctx, ed, ProfileSheet::New);
+            // "..." unfolds the rarely used actions as a row of icons to its left (hiding "+"
+            // meanwhile) and turns into an X that folds them again
+            let more_id = egui::Id::new("profile_more_open");
+            let mut open = ctx.data(|d| d.get_temp::<bool>(more_id)).unwrap_or(false);
+            let (icon, tip) = if open {
+                (symbols::X, "Close")
+            } else {
+                (symbols::DOTS_THREE, "More")
+            };
+            if icon_button_look(ui, Look::Soft, icon, tip, true).clicked() {
+                open = !open;
             }
+            let t = ctx.animate_bool_with_time(more_id.with("t"), open, 0.15);
+            if open {
+                // added from the right edge inwards, so this is Rename, Export, Import, Delete
+                // from left to right
+                ui.scope(|ui| {
+                    ui.set_opacity(t);
+                    // the general profile is the fallback for every app, so it must stay
+                    let can_delete = edit.profiles.len() > 1 && !edit.profiles[pi].is_general();
+                    let delete = icon_button_look(
+                        ui,
+                        Look::Danger,
+                        symbols::TRASH,
+                        "Delete profile",
+                        can_delete,
+                    );
+                    if delete.clicked() && can_delete {
+                        edit.profiles.remove(pi);
+                        ed.profile = pi.saturating_sub(1);
+                        ed.reset_nav();
+                        ed.stop_recording();
+                        open = false;
+                    }
+                    let import = icon_button_look(
+                        ui,
+                        Look::Soft,
+                        symbols::DOWNLOAD_SIMPLE,
+                        "Import a profile\u{2026}",
+                        true,
+                    );
+                    if import.clicked() {
+                        spawn_file_picker(
+                            tx.clone(),
+                            ctx.clone(),
+                            platform::FileKind::Json,
+                            "Choose a CursorPie profile",
+                            |file| Some(Msg::ProfileImportPicked(file)),
+                        );
+                        open = false;
+                    }
+                    let export = icon_button_look(
+                        ui,
+                        Look::Soft,
+                        symbols::UPLOAD_SIMPLE,
+                        "Export this profile\u{2026}",
+                        true,
+                    );
+                    if export.clicked() {
+                        match share::export_to_downloads(&edit.profiles[pi]) {
+                            Ok(path) => {
+                                platform::reveal_in_file_manager(&path);
+                                notice(tx, ctx, format!("Exported to {}", path.display()));
+                            }
+                            Err(e) => notice(tx, ctx, format!("Export failed: {e}")),
+                        }
+                        open = false;
+                    }
+                    let rename = icon_button_look(
+                        ui,
+                        Look::Soft,
+                        symbols::PENCIL_SIMPLE,
+                        "Rename\u{2026}",
+                        true,
+                    );
+                    if rename.clicked() {
+                        ed.new_profile_name = edit.profiles[pi].name.clone();
+                        open_sheet(ctx, ed, ProfileSheet::Rename);
+                        open = false;
+                    }
+                });
+            } else {
+                let new = icon_button_look(ui, Look::Soft, symbols::PLUS, "New profile", true);
+                if new.clicked() {
+                    ed.new_profile_name.clear();
+                    ed.new_profile_app.clear();
+                    open_sheet(ctx, ed, ProfileSheet::New);
+                }
+            }
+            ctx.data_mut(|d| d.insert_temp(more_id, open));
         });
     });
 

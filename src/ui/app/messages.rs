@@ -35,6 +35,7 @@ impl App {
                 );
                 self.show_pie(ctx, x, y, profile, path);
             }
+            Msg::PieBlocked { x, y } => self.pie_blocked(ctx, x, y),
             Msg::OpenSettings { x, y, about } => {
                 self.open_settings(ctx, egui::pos2(x as f32, y as f32), about);
             }
@@ -49,6 +50,10 @@ impl App {
                     self.last_tick = Instant::now();
                 }
                 self.hover = h;
+            }
+            Msg::Haptic(kind) => {
+                platform::haptic(kind);
+                self.vt_cue(ctx, crate::ui::vtrackpad::Cue::Tick(kind));
             }
             Msg::NewProfileAppPicked(bundle) => self.ed.new_profile_app = bundle,
             Msg::InstalledApps(apps) => {
@@ -82,6 +87,8 @@ impl App {
                 self.hover = None;
                 self.pie_open = false;
                 self.preview_until = None;
+                // the pie that took the pointer for a trackpad hold lets it through again while it fades
+                ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(true));
             }
             Msg::KeyCaptured(sc) => {
                 if let Some(rec) = self.ed.recording.take()

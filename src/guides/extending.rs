@@ -225,6 +225,10 @@
 //!   dispatched from `trigger::handle`.
 //! * Anything that waits (a timer) is a thread that re-checks the gesture `id` after waking up.
 //! * Return `CallbackResult::Drop` only for events the program owns; when in doubt use `Keep`.
+//! * A new **gesture source** (the trackpad is the model, `tap/touch/`) does not get a state
+//!   machine of its own: a pure recognizer turns native frames into events, and a small bridge calls
+//!   the `touch_*` entry points of `tap/trigger.rs`, which act only on gestures that carry its
+//!   `Source`. Give the native layer one file, load system libraries at run time and fail soft.
 //! * Pure decisions (which profile, which pie follows the side buttons) belong in code that does
 //!   not touch macOS APIs, so they can be unit tested; see [`side::resolve`](crate::side::resolve).
 //!

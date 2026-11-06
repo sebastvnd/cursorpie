@@ -113,7 +113,7 @@ jobs:
       - name: Install Linux build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libx11-dev libxi-dev libxtst-dev libxrandr-dev imagemagick
+          sudo apt-get install -y build-essential libx11-dev libxi-dev libxtst-dev libxrandr-dev
       - name: Build Linux package
         run: scripts/package-linux.sh
       - name: Prepare Ubuntu release asset name
@@ -153,7 +153,7 @@ jobs:
             --workdir /workspace \
             fedora:44 \
             bash -euxo pipefail -c '
-              dnf install -y gcc libX11-devel libXi-devel libXtst-devel libXrandr-devel ImageMagick curl tar gzip
+              dnf install -y gcc libX11-devel libXi-devel libXtst-devel libXrandr-devel curl tar gzip
               curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
               source /root/.cargo/env
               rustup update stable

@@ -43,7 +43,7 @@ pub fn matches(app: &InstalledApp, query: &str) -> bool {
 /// (`open -a` and the "follow the app" lookup both work with names such as "Safari"), the id
 /// everywhere else (the desktop entry id, the executable name).
 pub fn action_text(app: &InstalledApp) -> String {
-    if cfg!(target_os = "macos") {
+    if matches!(crate::platform::OS, crate::platform::Os::Mac) {
         app.name.clone()
     } else {
         app.id.clone()
@@ -60,6 +60,7 @@ pub fn installed_apps() -> Vec<InstalledApp> {
 /// The desktop entries that are meant to be listed.
 #[cfg(target_os = "linux")]
 fn collect() -> Vec<InstalledApp> {
+    use crate::platform::linux::xdg;
     let home = crate::config::home();
     let dirs = xdg::application_dirs(
         &home,
@@ -281,7 +282,7 @@ mod tests {
     fn an_action_stores_the_name_on_macos_and_the_id_elsewhere() {
         let a = app("com.apple.Safari", "Safari");
         let text = action_text(&a);
-        if cfg!(target_os = "macos") {
+        if matches!(crate::platform::OS, crate::platform::Os::Mac) {
             assert_eq!(text, "Safari");
         } else {
             assert_eq!(text, "com.apple.Safari");

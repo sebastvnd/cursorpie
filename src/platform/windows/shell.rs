@@ -72,6 +72,9 @@ pub fn tick() {
     unsafe { MessageBeep(MB_OK) };
 }
 
+/// No haptics: only a Mac trackpad ticks.
+pub fn haptic(_kind: crate::platform::HapticKind) {}
+
 /// The native open dialog. Blocks until the user answers, so call it off the UI thread.
 pub fn choose_file(kind: FileKind, prompt: &str) -> Option<String> {
     let filter = filter_for(kind);

@@ -7,14 +7,17 @@ CursorPie, the trigger button and the output of `cargo run --release` from a ter
 ## All systems
 
 - Shortcut labels and the shifted-symbol display assume a US/ANSI layout. Key codes themselves are physical keys.
-- The back and forward side buttons are fixed to mouse buttons 4 and 5. Only the trigger button is configurable.
+- The back and forward side buttons are fixed: they are the mouse's back and forward buttons (buttons 3 and 4 in
+  [CONFIGURATION.md](CONFIGURATION.md#extra-mouse-buttons), X buttons 8 and 9 on Linux). Only the trigger button is
+  configurable.
 - With a per-app profile and the default gesture, a plain middle-click in that app is delivered after the
   double-click window (260 ms by default). Use classic mode, or a shorter window, if that bothers you.
 - The right-click that switches the side-button pie is swallowed only while a pie is open. Otherwise right-clicks
   pass through untouched.
 - "App under the pointer" looks at normal app windows (not the Dock, menu bar or desktop). Bringing it to the
   front activates the whole app, not one particular window.
-- Sequences cannot be edited in Settings yet, only in `config.json`.
+- Sequences cannot be created or edited in Settings yet, only in `config.json`. Settings shows how many steps a
+  sequence has and keeps it.
 - **Image icons have size limits.** An image over 4096 px on a side, or one that cannot be decoded, is not drawn: the slice shows `?`. The **Mine** page of the icon picker lists at most 120 images of 2 MB each and says how many it left out. Choosing a big image with **Image...** avoids all of this: CursorPie saves a smaller copy in the `icons` folder and tells you (see [USER_GUIDE.md](USER_GUIDE.md)).
 - **Import... refuses a config file over 4 MiB**, and Menu > Share refuses a profile file over 24 MiB.
 - Undo covers one Settings session. After you save and close, use **Settings > General > Backups** (the last
@@ -30,6 +33,16 @@ CursorPie, the trigger button and the output of `cargo run --release` from a ter
   buttons it has, and it will not notice that you changed mouse.
 - Ad-hoc signed builds may need the Accessibility permission again after each rebuild. Sign with a stable
   identity (`SIGN_ID`) to avoid that.
+- **Trackpad** (off by default): it uses Apple's private `MultitouchSupport` framework, which Apple may change in any
+  release (the feature turns itself off and says so), so it cannot be in a Mac App Store build. The surface of a
+  Magic Mouse is not used. Haptic ticks need a Force Touch trackpad and the system's haptic setting on. **Not yet
+  verified on a Mac:** see the manual checklist in [TRACKPAD_HAPTICS_PLAN.md](TRACKPAD_HAPTICS_PLAN.md#manual-verification-checklist).
+- **Trackpad on Linux (X11)** (off by default): the touchpad is read from `/dev/input`, so the user must be in the
+  `input` group (Settings says so when not). No haptic ticks. The click of the extra finger is swallowed by grabbing
+  the left and right buttons while a hold runs; a click that is not the extra one reaches the app a moment late, like
+  a side-button click. Touchpads that report no finger count or no size (some virtual or very old ones) are skipped.
+  Wayland sessions are not covered. **Not yet verified on real hardware:** the parser, the recognizer and the X grab
+  logic are tested, the device thread and the permissions are not.
 - **Launch at login** points at the executable that was running when you enabled it. Toggle it off and on again
   if you move the app.
 - **Other Spaces** tries three ways, each only when the previous one did not bring a window of the app onto the
@@ -50,6 +63,24 @@ CursorPie, the trigger button and the output of `cargo run --release` from a ter
 
 ## Windows
 
+- **Antivirus stops CursorPie or it does not start at login.** CursorPie watches the mouse and keyboard with
+  low-level hooks and sends shortcuts, which is also what a keylogger does, so some antivirus programs
+  are wary of an unsigned `cursorpie.exe`. What the program does about it: the `.exe` carries version information
+  and a manifest, it only writes to the registry when it installs or updates (not at every start), and a start from
+  the login entry (`--autostart`) waits for the taskbar before it creates its tray icon and hooks. What it cannot do
+  by itself: a code signing certificate (`SIGN_CERT_THUMBPRINT` in `scripts/package-windows.ps1`) is the one fix
+  that lasts. Until then, add an exclusion for `%LOCALAPPDATA%\Programs\CursorPie` (Windows Security > Virus & threat
+  protection > Manage settings > Exclusions) or report the file as a false positive at
+  <https://www.microsoft.com/wdsi/filesubmission> (other products have a similar form).
+  Without any outside party: the first start no longer installs itself silently (it asks once), and
+  `scripts\sign-local.ps1` signs your own build with a certificate you create and trusts it on your PC. That
+  helps only the PCs that trust the certificate; it does not help other people's PCs. Building from source
+  (`cargo build --release`) on the PC that will run it also avoids most "new file" detections.
+
+- **Touchpad** (off by default): only a Windows *precision* touchpad can open the pie; an older touchpad that Windows
+  treats as a plain mouse cannot be read. It is read through Raw Input, so no driver and no permission is needed. A tap followed by a hold may start a Windows tap-and-drag and click the app under the pie unless *Tap
+  twice and drag to multi-select* is off. No haptic ticks. **Not yet verified on Windows:** see the manual checklist
+  in [TRACKPAD_HAPTICS_PLAN.md](TRACKPAD_HAPTICS_PLAN.md#windows-precision-touchpad).
 - Only the middle button can be the trigger. Windows reports only the middle, back and forward buttons, so a
   mode can use only those two side buttons, and CursorPie cannot tell two mice apart, only mice with a different
   number of buttons.

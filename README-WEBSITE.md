@@ -25,6 +25,7 @@ The site does not contain converted copies of the documentation. It reads the Ma
 - `docs/WINDOWS_MIGRATION.md`
 - `docs/OTHER_DESKTOPS.md`
 - `docs/UI_DESIGN.md`
+- `docs/TRACKPAD_HAPTICS_PLAN.md`
 - `CONTRIBUTING.md`
 - `CHANGELOG.md`
 - `README.md`

@@ -27,14 +27,18 @@ settings of a Mac, and follows from that:
   space around everything. Nothing competes with the pie or with the thing you are editing.
 - **One accent.** The user picks the accent color (sage by default, the green of the website). It marks
   focus, the primary button and the selected entry, so it always means "this".
-- **One kind of popup.** Whatever opens on top of a page is either a *sheet* (a modal card over a dimmed
-  window: adding a slice, choosing an icon, confirming a quit) or a *popover* (a small card under the button that opened it:
-  New, Rename, All apps, Share). Both are drawn by `widgets::sheet` and `widgets::popover`, close with Esc
-  or a click outside, and look the same everywhere. There are no other floating panels.
+- **One kind of popup.** Whatever opens on top of a page is a *sheet*: a modal card over a dimmed window
+  (adding a slice, choosing an icon, New, Rename, Apps and Share of a profile, confirming a quit, discarding
+  changes). It is drawn by `widgets::sheet`, closes with Esc or a click outside, and looks the same
+  everywhere. Lists of choices (the profile list, drop-downs) use `widgets::select` or a list under their
+  button, and a few icon buttons that unfold in a row (the "..." of the profile toolbar) are drawn in place.
+  `widgets::popover` (a small card under a button) is still there for a short form, but nothing uses it
+  at the moment. There are no other floating panels.
 - **One icon set.** Every icon in the interface, and the default slice icons, come from the same set
   (Phosphor, outline for rest and filled for selected). No icon is a combination of letters.
-- **Predictable.** The buttons you confirm with never move: Undo, Redo, Cancel and Save are in the top
-  bar on every tab, Quit is at the bottom of the sidebar.
+- **Predictable.** The buttons you confirm with never move: Cancel (red) and Save (the accent) are two small
+  round dots in the top right corner on every tab, with a yellow dot between them while changes are unsaved.
+  Undo and Redo are keys only, Quit is at the bottom of the sidebar.
 - **Sharp and smooth.** Edges are anti-aliased and aligned to pixels, and animations take a fixed time.
 
 ## Fonts and icons
@@ -56,7 +60,7 @@ missing from either weight.
 
 ```text
 +--------------+-------------------------------------------------------+
-| logo         |  Title                              undo redo Cancel Save |  top bar, 76 pt
+| logo         |  Title                                          (o)(o)(o) |  top bar, 76 pt
 | CursorPie    |  one-line subtitle                                    |
 |              +-------------------------------------------------------+
 | (o) Menu     |                                                       |
@@ -128,7 +132,7 @@ Skip), a page in the middle and a footer (page dots, Back, Next or Get started).
 - It is a mode of the Settings window, not a second window: `App::welcome` is `Some` and
   `settings_open` is true, so the pie stays hidden while it is open.
 - The only text that depends on the OS lives in pure functions of `Os` (`setup_title`, `setup_lead`,
-  `tips`), so a test covers both systems.
+  `setup_steps`, `tips`), so a test covers both systems.
 - Esc and Skip close it without applying anything; Get started and Open Settings also apply the
   launch-at-login box. Either way it is remembered as shown.
 
@@ -333,8 +337,8 @@ at the very least change the display scaling once:
 - [ ] Shrink the display width (or use a 1366 x 768 display): the card fits, and the Menu editor still shows
       its fields without a horizontal scroll.
 - [ ] Pick a very light accent (yellow) and a very dark one: Save and the selected slice stay readable.
-- [ ] Every popup is a sheet or a popover: add a slice, pick an icon, New, Rename, All apps and Share all
-      close with Esc and with a click outside, and Esc closes only the top one.
+- [ ] Every popup is a sheet: add a slice, pick an icon, New, Rename, Apps and Share all close with Esc and
+      with a click outside, and Esc closes only the top one.
 - [ ] Press Quit (sidebar, General on Linux, tray) with nothing changed: a sheet asks "Do you really want to
       quit?"; Cancel, Esc, the x and a click outside keep you in Settings. Change something and press Quit:
       the sheet names the unsaved changes; "Save and quit" saves, "Quit without saving" does not. All three
@@ -342,7 +346,11 @@ at the very least change the display scaling once:
 - [ ] With Settings open (behind another window, or minimized), hold the trigger: Settings comes forward and
       the footer explains why the pie did not open.
 - [ ] No icon is a pair of letters, on the sidebar, the buttons, the pie and the icon picker.
-- [ ] Undo and Redo are dimmed when unavailable and show a tooltip.
+- [ ] Top bar: red, (yellow) and green dots sit in the corner and show a tooltip. The yellow dot appears only
+      while something is unsaved and goes away after Ctrl/Cmd+S or when you undo back to the start. Cancel or Esc
+      with unsaved changes asks "Discard changes?": Enter discards, Esc keeps editing; with nothing unsaved they
+      close at once. Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z still undo and redo.
+- [ ] Menu: **...** unfolds four icons to its left, hides **+** and becomes an **x**; each action folds it again.
 - [ ] Shrink the screen height (or use a short laptop display): the Menu tab still fits.
 - [ ] Use an image icon with a transparent background: no dark halo around it.
 - [ ] Icon picker, **Mine** page, with 100 or more images in the `icons` folder: scrolling stays smooth, tiles show a dot-dot-dot for a moment and then their image, and memory does not jump when the page opens.

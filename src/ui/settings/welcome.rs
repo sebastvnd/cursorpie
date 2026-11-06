@@ -91,27 +91,50 @@ pub fn setup_title(os: Os) -> &'static str {
     }
 }
 
-/// Explanation under the heading of the second page.
+/// The sentence under the heading of the second page: what the page is about, in one line.
 pub fn setup_lead(os: Os) -> &'static str {
     match os {
-        Os::Mac => {
-            "macOS only lets an app watch the mouse after you allow it. Open System Settings, go to \
-             Privacy & Security > Accessibility and switch CursorPie on (macOS may also ask for Input \
-             Monitoring). If CursorPie is not in the list, press + and add it from Applications. \
-             This page notices the change by itself; there is nothing to restart."
-        }
+        Os::Mac => "Do this once, in System Settings:",
         Os::Windows => {
-            "CursorPie has no window of its own: look for its pie icon next to the clock (click the ^ \
-             arrow if you do not see it). Right-click it for Settings, Pause and Quit. Windows asks \
-             for no permission. Programs that run as administrator only react if CursorPie runs as \
-             administrator too."
+            "CursorPie has no window of its own: look for its pie icon next to the clock."
         }
-        Os::Linux => {
-            "X11 asks for no permission. CursorPie has no tray icon on Linux yet: hold the trigger in \
-             the center of the pie to open Settings, and quit from the bottom of Settings. In a \
-             Wayland session it only sees X11 and XWayland windows, so log in with an X11 session for \
-             full support."
+        Os::Linux => "X11 asks for no permission.",
+    }
+}
+
+/// What to do, one short step each, under [`setup_lead`]. On macOS they are numbered.
+pub fn setup_steps(os: Os) -> &'static [&'static str] {
+    match os {
+        Os::Mac => &[
+            "Open Privacy & Security > Accessibility.",
+            "Switch CursorPie on. Not listed? Press + and choose it in Applications.",
+            "If macOS asks for Input Monitoring, allow that too.",
+        ],
+        Os::Windows => &[
+            "Click the ^ arrow next to the clock if you do not see the icon.",
+            "Right-click the icon for Settings, Pause and Quit.",
+            "Windows asks for no permission. Programs that run as administrator only react if \
+             CursorPie runs as administrator too.",
+        ],
+        Os::Linux => &[
+            "CursorPie has no tray icon on Linux yet: hold the trigger in the center of the pie \
+             to open Settings.",
+            "Quit from the bottom of Settings.",
+            "In a Wayland session it only sees X11 and XWayland windows, so log in with an X11 \
+             session for full support.",
+        ],
+    }
+}
+
+/// A line of small print for the right column of the second page, shown while the permission is
+/// still missing. Empty where nothing needs saying.
+pub fn setup_note(os: Os) -> &'static str {
+    match os {
+        Os::Mac => {
+            "macOS only lets an app watch the mouse after you allow it. This page notices the \
+             change by itself; there is nothing to restart."
         }
+        Os::Windows | Os::Linux => "",
     }
 }
 
@@ -136,9 +159,13 @@ pub fn gesture_steps(hold_ms: u64) -> [(&'static str, String); 3] {
     ]
 }
 
-/// `ms` as seconds with one decimal: "0.5 s".
+/// `ms` as a short time: "150 ms" below one second, "1.2 s" from one second on.
 fn seconds(ms: u64) -> String {
-    format!("{:.1} s", ms as f64 / 1000.0)
+    if ms < 1000 {
+        format!("{ms} ms")
+    } else {
+        format!("{:.1} s", ms as f64 / 1000.0)
+    }
 }
 
 /// Short tips of the last page.
@@ -167,6 +194,11 @@ impl App {
     /// Draws the welcome window: animation, top bar, current page, footer.
     pub fn welcome_ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
+
+        // the window is still becoming the card: an empty frame, the animation waits
+        if self.window_settling(&ctx) {
+            return;
+        }
 
         // open / close animation (the same as Settings)
         let dt = ctx.input(|i| i.stable_dt).min(0.05);
@@ -255,10 +287,10 @@ impl App {
                 ui.set_clip_rect(ui.clip_rect().intersect(body));
                 match page {
                     0 => intro_page(ui, accent),
-                    1 => setup_page(ui, accent),
+                    1 => setup_page(ui, accent, platform::OS),
                     _ => {
                         if let Some(w) = self.welcome.as_mut()
-                            && ready_page(ui, w, accent)
+                            && ready_page(ui, w, accent, platform::OS)
                         {
                             step = Step::Finish {
                                 open_settings: true,
@@ -431,24 +463,25 @@ fn hero(ui: &mut egui::Ui, accent: Color32, height: f32) {
     painter.circle_stroke(c, r0 - 2.0, Stroke::new(1.0, wash(accent, 0.35)));
     draw_logo(&painter, c, r0 * 0.58);
 
-    // the words
+    // the words; on a short banner (a small screen) they shrink together
+    let k = (height / 150.0).clamp(0.72, 1.0);
     let x = c.x + r0 + 34.0;
     painter.text(
-        egui::pos2(x, rect.center().y - 44.0),
+        egui::pos2(x, rect.center().y - 44.0 * k),
         egui::Align2::LEFT_CENTER,
         "WELCOME TO",
         egui::FontId::new(11.5, fonts::semibold()),
         accent_text(accent),
     );
     painter.text(
-        egui::pos2(x - 2.0, rect.center().y - 10.0),
+        egui::pos2(x - 2.0, rect.center().y - 10.0 * k),
         egui::Align2::LEFT_CENTER,
         APP_NAME,
-        egui::FontId::new(52.0, fonts::brand()),
+        egui::FontId::new(52.0 * k, fonts::brand()),
         pal().text,
     );
     painter.text(
-        egui::pos2(x, rect.center().y + 28.0),
+        egui::pos2(x, rect.center().y + 28.0 * k),
         egui::Align2::LEFT_CENTER,
         TAGLINE,
         egui::FontId::new(14.0, egui::FontFamily::Proportional),
@@ -456,7 +489,7 @@ fn hero(ui: &mut egui::Ui, accent: Color32, height: f32) {
     );
     ui.scope_builder(
         egui::UiBuilder::new().max_rect(egui::Rect::from_min_size(
-            egui::pos2(x, rect.center().y + 42.0),
+            egui::pos2(x, rect.center().y + 42.0 * k),
             Vec2::new(260.0, 28.0),
         )),
         |ui| badge(ui, &format!("Version {VERSION}"), accent_text(accent)),
@@ -467,16 +500,21 @@ fn hero(ui: &mut egui::Ui, accent: Color32, height: f32) {
 fn intro_page(ui: &mut egui::Ui, accent: Color32) {
     let ctx = ui.ctx().clone();
     let avail = ui.available_height();
-    let hero_h = (avail - 190.0).clamp(132.0, 168.0);
+    // the title row and the gaps around it take about 42 points; the cards need up to 190
+    let hero_h = (avail - 50.0 - 190.0).clamp(104.0, 176.0);
     hero(ui, accent, hero_h);
 
-    ui.add_space(GAP + 4.0);
+    ui.add_space(GAP + 2.0);
     ui.horizontal(|ui| {
+        // a row is at least as high as a button by default, which left a gap under this one
+        ui.spacing_mut().interact_size.y = 18.0;
         ui.label(fonts::title("Three moves open anything", 15.0, pal().text));
         ui.add_space(4.0);
         muted(ui, "Try them once you finish this guide.");
     });
-    ui.add_space(GAP - 2.0);
+    ui.add_space(GAP - 4.0);
+    // what is left for the cards, less the frame around their content
+    let card_h = (ui.available_height() - 6.0).clamp(126.0, 176.0);
 
     let steps = gesture_steps(cfg().pie_hold_ms);
     let icons = [
@@ -502,11 +540,25 @@ fn intro_page(ui: &mut egui::Ui, accent: Color32) {
                 i == active,
                 0.35,
             );
-            let shown = card().show(col, |ui| {
-                ui.with_layout(left, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.set_min_height((ui.available_height() - 14.0).clamp(112.0, 150.0));
-                    ui.add_space(GAP);
+            // The card is a rectangle of a fixed height, drawn by hand, and its content is laid out
+            // inside it and clipped to it. A card that grew with its text would be taller when the
+            // text takes three lines (cut off at the bottom of the page) than when it takes two.
+            let (r, _) = col.allocate_exact_size(
+                Vec2::new(col.available_width(), card_h),
+                egui::Sense::hover(),
+            );
+            col.painter().rect_filled(r, PANEL_R, pal().card);
+            col.painter().rect_stroke(
+                r,
+                PANEL_R,
+                Stroke::new(1.0, pal().divider),
+                egui::StrokeKind::Inside,
+            );
+            let inner = r.shrink2(Vec2::new(f32::from(PANEL_PAD), 14.0));
+            let content =
+                col.scope_builder(egui::UiBuilder::new().max_rect(inner).layout(left), |ui| {
+                    ui.set_clip_rect(ui.clip_rect().intersect(r));
+                    ui.spacing_mut().item_spacing.y = 4.0;
                     ui.horizontal(|ui| {
                         let (rect, _) =
                             ui.allocate_exact_size(Vec2::splat(42.0), egui::Sense::hover());
@@ -531,14 +583,17 @@ fn intro_page(ui: &mut egui::Ui, accent: Color32) {
                             wash(accent, 0.28),
                         ));
                     });
-                    ui.add_space(8.0);
+                    ui.add_space(6.0);
                     ui.label(fonts::title(label, 17.0, pal().text));
-                    ui.add_space(3.0);
                     muted(ui, &text);
-                    ui.add_space(GAP);
-                })
+                });
+            // how far the text reaches below the card's padding: the test of this page reads it
+            let over = (content.response.rect.max.y - inner.max.y).max(0.0);
+            ctx.data_mut(|d| {
+                let id = egui::Id::new("welcome_card_overflow");
+                let worst: f32 = d.get_temp(id).unwrap_or(0.0);
+                d.insert_temp(id, worst.max(over));
             });
-            let r = shown.response.rect;
             painter.rect_stroke(
                 r,
                 PANEL_R,
@@ -562,14 +617,64 @@ fn intro_page(ui: &mut egui::Ui, accent: Color32) {
     }
 }
 
+/// The free area of `ui` cut in two side by side: the left one `left_frac` of the width, a gap of
+/// [`PAD`] between them. Both start at the top of the free area.
+fn two_columns(ui: &egui::Ui, left_frac: f32) -> (egui::Rect, egui::Rect) {
+    let area = ui.available_rect_before_wrap();
+    let left_w = ((area.width() - PAD) * left_frac).floor();
+    let left = egui::Rect::from_min_size(area.min, Vec2::new(left_w, area.height()));
+    let right =
+        egui::Rect::from_min_max(egui::pos2(area.min.x + left_w + PAD, area.min.y), area.max);
+    (left, right)
+}
+
+/// A short list, one item per row: a round badge (the number of the step, or a dot) and the text
+/// wrapped beside it. Each item is laid out as a whole, so a line never runs under the badge and
+/// the rows are spaced evenly.
+fn step_list(ui: &mut egui::Ui, accent: Color32, items: &[&str], numbered: bool) {
+    const BADGE: f32 = 22.0;
+    const TEXT_X: f32 = BADGE + 12.0;
+    let width = ui.available_width();
+    for (i, item) in items.iter().enumerate() {
+        if i > 0 {
+            ui.add_space(8.0);
+        }
+        let text = ui.painter().layout(
+            (*item).to_owned(),
+            egui::FontId::proportional(14.0),
+            pal().text,
+            (width - TEXT_X).max(80.0),
+        );
+        let h = text.size().y.max(BADGE);
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(width, h), egui::Sense::hover());
+        let painter = ui.painter();
+        let c = egui::pos2(rect.min.x + BADGE / 2.0, rect.min.y + BADGE / 2.0);
+        painter.circle_filled(c, BADGE / 2.0, wash(accent, 0.14));
+        if numbered {
+            painter.text(
+                c,
+                egui::Align2::CENTER_CENTER,
+                (i + 1).to_string(),
+                egui::FontId::new(12.0, fonts::semibold()),
+                accent_text(accent),
+            );
+        } else {
+            painter.circle_filled(c, 3.0, accent_text(accent));
+        }
+        // the first line is as high as the badge, so the text starts a little above its top
+        let top = rect.min.y + ((BADGE - 17.0) / 2.0).max(0.0);
+        painter.galley(
+            egui::pos2(rect.min.x + TEXT_X, top).round(),
+            text,
+            Color32::PLACEHOLDER,
+        );
+    }
+}
+
 /// Page 2: the permission (macOS) or the tray (Windows), with the live status.
-fn setup_page(ui: &mut egui::Ui, accent: Color32) {
-    let os = platform::OS;
+fn setup_page(ui: &mut egui::Ui, accent: Color32, os: Os) {
     eyebrow(ui, &format!("Step 2 of {PAGES}"), accent);
     heading(ui, setup_title(os));
-    ui.set_max_width(ui.available_width().min(640.0));
-    muted(ui, setup_lead(os));
-    ui.add_space(PAD);
 
     let running = TAP_ACTIVE.load(Ordering::SeqCst);
     let ready = if os.needs_permission() {
@@ -577,72 +682,82 @@ fn setup_page(ui: &mut egui::Ui, accent: Color32) {
     } else {
         running
     };
-    panel(ui, "Status", |ui| {
-        if os.needs_permission() {
-            let granted = platform::is_trusted_cached();
-            info_row(ui, "Accessibility", |ui| {
-                status(
+    // the explanation on the left, the live status on the right: nothing is left empty or cut off
+    let (left, right) = two_columns(ui, 0.5);
+    ui.scope_builder(egui::UiBuilder::new().max_rect(left), |ui| {
+        ui.add_space(4.0);
+        muted(ui, setup_lead(os));
+        ui.add_space(GAP - 2.0);
+        step_list(ui, accent, setup_steps(os), os.needs_permission());
+        ui.add_space(GAP);
+        if os.needs_permission() && !ready {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::splat(8.0);
+                if button(
                     ui,
-                    granted,
-                    if granted {
-                        "Granted"
-                    } else {
-                        "Not granted yet"
-                    },
-                );
+                    Look::Soft,
+                    Some(symbols::ARROW_SQUARE_OUT),
+                    "Accessibility settings",
+                )
+                .clicked()
+                {
+                    platform::open_accessibility_settings();
+                }
+                if button(
+                    ui,
+                    Look::Soft,
+                    Some(symbols::ARROW_SQUARE_OUT),
+                    "Input Monitoring settings",
+                )
+                .clicked()
+                {
+                    platform::open_input_monitoring_settings();
+                }
             });
         }
-        let name = if os.needs_permission() {
-            "Event tap"
-        } else {
-            "Mouse hook"
-        };
-        info_row(ui, name, |ui| {
-            status(
-                ui,
-                running,
-                if running {
-                    "Running"
-                } else {
-                    "Not running (retrying every 2 s)"
-                },
-            );
-        });
     });
-    if os.needs_permission() && !ready {
-        ui.horizontal(|ui| {
-            if button(
-                ui,
-                Look::Soft,
-                Some(symbols::ARROW_SQUARE_OUT),
-                "Accessibility settings",
-            )
-            .clicked()
-            {
-                platform::open_accessibility_settings();
+    ui.scope_builder(egui::UiBuilder::new().max_rect(right), |ui| {
+        panel(ui, "Status", |ui| {
+            // the control of each row is as wide as its pill: the label keeps the rest and is
+            // never broken in two ("Accessibilit" / "y")
+            if os.needs_permission() {
+                let granted = platform::is_trusted_cached();
+                let text = if granted {
+                    "Granted"
+                } else {
+                    "Not granted yet"
+                };
+                let w = status_width(ui, text) + 2.0;
+                row_wide(ui, "Accessibility", "", w, |ui| status(ui, granted, text));
             }
-            if button(
-                ui,
-                Look::Soft,
-                Some(symbols::ARROW_SQUARE_OUT),
-                "Input Monitoring settings",
-            )
-            .clicked()
-            {
-                platform::open_input_monitoring_settings();
-            }
+            let name = if os.needs_permission() {
+                "Event tap"
+            } else {
+                "Mouse hook"
+            };
+            let text = if running { "Running" } else { "Not running" };
+            // the pill says the state; the way out goes in small print under the name
+            let hint = if running { "" } else { "Retrying every 2 s" };
+            let w = status_width(ui, text) + 2.0;
+            row_wide(ui, name, hint, w, |ui| status(ui, running, text));
         });
-    } else if ready {
-        ui.horizontal(|ui| {
-            status(ui, true, "Ready");
-            muted(ui, "CursorPie can see your mouse. Continue when you like.");
-        });
-    }
+        if ready {
+            ui.horizontal(|ui| {
+                status(ui, true, "Ready");
+                muted(ui, "CursorPie can see your mouse.");
+            });
+        } else if !setup_note(os).is_empty() {
+            ui.add(egui::Label::new(
+                egui::RichText::new(setup_note(os))
+                    .size(13.0)
+                    .color(pal().muted),
+            ));
+        }
+    });
 }
 
 /// Page 3: tips and the launch-at-login box. Returns true when "Open Settings" was clicked.
-fn ready_page(ui: &mut egui::Ui, w: &mut Welcome, accent: Color32) -> bool {
-    let os = platform::OS;
+fn ready_page(ui: &mut egui::Ui, w: &mut Welcome, accent: Color32, os: Os) -> bool {
     eyebrow(ui, &format!("Step 3 of {PAGES}"), accent);
     ui.horizontal(|ui| {
         ui.label(fonts::title("You're all set", 28.0, pal().text));
@@ -655,33 +770,40 @@ fn ready_page(ui: &mut egui::Ui, w: &mut Welcome, accent: Color32) -> bool {
             symbols::CHECK,
             17.0,
             on_accent(accent),
-            true,
+            false,
         );
     });
     ui.add_space(GAP);
-    ui.set_max_width(ui.available_width().min(640.0));
     let hold = cfg().settings_hold_ms;
-    panel(ui, "Good to know", |ui| {
-        for tip in tips(os, hold) {
-            note(ui, &tip);
-        }
+    let mut open_settings = false;
+    // the tips on the left, the startup choice and the way into Settings on the right
+    let (left, right) = two_columns(ui, 0.56);
+    ui.scope_builder(egui::UiBuilder::new().max_rect(left), |ui| {
+        panel(ui, "Good to know", |ui| {
+            for tip in tips(os, hold) {
+                note(ui, &tip);
+            }
+        });
     });
-    panel(ui, "Startup", |ui| {
-        toggle_row(
+    ui.scope_builder(egui::UiBuilder::new().max_rect(right), |ui| {
+        panel(ui, "Startup", |ui| {
+            toggle_row(
+                ui,
+                &mut w.launch_at_login,
+                "Launch CursorPie at login",
+                os.welcome_startup_hint(),
+                accent,
+            );
+        });
+        open_settings = button(
             ui,
-            &mut w.launch_at_login,
-            "Launch CursorPie at login",
-            os.startup_hint(),
-            accent,
-        );
+            Look::Soft,
+            Some(symbols::SLIDERS_HORIZONTAL),
+            "Open Settings now",
+        )
+        .clicked();
     });
-    button(
-        ui,
-        Look::Soft,
-        Some(symbols::SLIDERS_HORIZONTAL),
-        "Open Settings now",
-    )
-    .clicked()
+    open_settings
 }
 
 #[cfg(test)]
@@ -691,16 +813,41 @@ mod tests {
     #[test]
     fn both_systems_have_their_own_setup_page() {
         assert_ne!(setup_title(Os::Mac), setup_title(Os::Windows));
-        assert!(setup_lead(Os::Mac).contains("Accessibility"));
+        assert!(
+            setup_steps(Os::Mac)
+                .iter()
+                .any(|s| s.contains("Accessibility"))
+        );
         assert!(setup_title(Os::Windows).contains("system tray"));
-        assert!(setup_lead(Os::Windows).contains("administrator"));
+        assert!(
+            setup_steps(Os::Windows)
+                .iter()
+                .any(|s| s.contains("administrator"))
+        );
+        assert!(
+            !setup_steps(Os::Windows)
+                .iter()
+                .any(|s| s.contains("Accessibility"))
+        );
         assert!(!setup_lead(Os::Windows).contains("Accessibility"));
     }
 
     #[test]
+    fn every_setup_step_is_one_short_sentence_or_two() {
+        // a wall of text is what the steps replaced: keep each one easy to take in at a glance
+        for os in [Os::Mac, Os::Windows, Os::Linux] {
+            assert!(setup_lead(os).len() < 90, "{os:?}");
+            assert!(setup_note(os).len() < 160, "{os:?}");
+            for step in setup_steps(os) {
+                assert!(step.len() < 160, "{os:?}: {step}");
+            }
+        }
+    }
+
+    #[test]
     fn the_gesture_uses_the_configured_hold_time() {
-        let steps = gesture_steps(500);
-        assert!(steps[0].1.contains("0.5 s"), "{}", steps[0].1);
+        let steps = gesture_steps(150);
+        assert!(steps[0].1.contains("150 ms"), "{}", steps[0].1);
         assert!(gesture_steps(1200)[0].1.contains("1.2 s"));
         assert_eq!(steps.len(), 3);
     }
@@ -719,9 +866,13 @@ mod tests {
     #[test]
     fn linux_has_its_own_setup_page_and_no_tray_tip() {
         assert!(setup_title(Os::Linux).contains("X11"));
-        let lead = setup_lead(Os::Linux);
-        assert!(lead.contains("no tray icon"), "{lead}");
-        assert!(!lead.contains("Accessibility"));
+        let steps = setup_steps(Os::Linux);
+        assert!(
+            steps.iter().any(|s| s.contains("no tray icon")),
+            "{steps:?}"
+        );
+        assert!(!steps.iter().any(|s| s.contains("Accessibility")));
+        assert!(!setup_lead(Os::Linux).contains("Accessibility"));
         let t = tips(Os::Linux, 1200);
         assert_eq!(t.len(), 3);
         assert!(t.iter().all(|x| !x.contains("icon.")), "{t:?}");
@@ -747,12 +898,71 @@ mod tests {
                 };
                 let mut output = ctx.run_ui(input, |ui| match page {
                     0 => intro_page(ui, accent),
-                    1 => setup_page(ui, accent),
+                    1 => setup_page(ui, accent, platform::OS),
                     _ => {
-                        ready_page(ui, &mut w, accent);
+                        ready_page(ui, &mut w, accent, platform::OS);
                     }
                 });
                 output.textures_delta.clear(); // nothing uploads the textures here
+            }
+        }
+    }
+
+    /// The body of the card, as `welcome_ui` cuts it, for a card of `card` points.
+    fn body_size(card: [f32; 2]) -> Vec2 {
+        Vec2::new(
+            card[0] - 2.0 * PAD,
+            card[1] - TOP_H - GAP - FOOT_H + GAP / 2.0,
+        )
+    }
+
+    /// Every OS variant must fit both card sizes, regardless of the host running the test.
+    #[test]
+    fn every_page_fits_the_body_of_the_card() {
+        use crate::ui::app::{WELCOME_MIN, WELCOME_SIZE};
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        let accent = egui::Color32::from_rgb(90, 120, 94);
+        let mut w = Welcome::new(false);
+
+        for os in [Os::Mac, Os::Windows, Os::Linux] {
+            for card in [WELCOME_SIZE, WELCOME_MIN] {
+                let body = body_size(card);
+                for page in 0..PAGES {
+                    let mut used = 0.0;
+                    ctx.data_mut(|d| {
+                        d.insert_temp(egui::Id::new("welcome_card_overflow"), 0.0_f32)
+                    });
+                    for _ in 0..3 {
+                        let input = egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, body)),
+                            ..Default::default()
+                        };
+                        let mut output = ctx.run_ui(input, |ui| {
+                            match page {
+                                0 => intro_page(ui, accent),
+                                1 => setup_page(ui, accent, os),
+                                _ => {
+                                    ready_page(ui, &mut w, accent, os);
+                                }
+                            }
+                            used = ui.min_rect().height();
+                        });
+                        output.textures_delta.clear();
+                    }
+                    let over: f32 = ctx
+                        .data(|d| d.get_temp(egui::Id::new("welcome_card_overflow")))
+                        .unwrap_or(0.0);
+                    assert!(
+                        over <= 0.5,
+                        "page {page} on {os:?}: step card text reaches {over} points out of its card ({card:?})"
+                    );
+                    assert!(
+                        used <= body.y + 0.5,
+                        "page {page} on {os:?} needs {used} points but the body of a {card:?} card has {}",
+                        body.y
+                    );
+                }
             }
         }
     }

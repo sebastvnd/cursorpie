@@ -71,7 +71,7 @@ impl App {
         if !self.pie_open && self.anim <= 0.0 {
             if self.visible {
                 self.visible = false;
-                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                self.hide_root(&ctx);
             }
             return;
         }

@@ -123,7 +123,7 @@ Each phase is one commit and leaves macOS working. Tests come first.
 
 Run on macOS 11+ and on Windows 10 and 11:
 
-1. Hold the middle button 500 ms: pie opens under the cursor; release over a slice runs it.
+1. Hold the middle button for the hold time (150 ms by default): pie opens under the cursor; release over a slice runs it.
 2. Quick middle click passes through; middle-drag still pans in a browser or design tool.
 3. Double-click opens the app's own pie in an app that has a profile.
 4. Back/forward buttons send the active mode's shortcuts; right-click while the pie is open switches pies.

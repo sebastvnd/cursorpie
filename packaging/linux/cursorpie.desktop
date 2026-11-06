@@ -8,4 +8,5 @@ Icon=cursorpie
 Terminal=false
 Categories=Utility;
 Keywords=pie;menu;mouse;shortcuts;launcher;
+StartupNotify=false
 StartupWMClass=cursorpie

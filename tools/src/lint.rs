@@ -33,7 +33,7 @@ use crate::diag::{EXPECTED, Expected};
 /// The categories of the log: the layers of the app. A new one is added here and to the table of
 /// categories in `docs/DEBUGGING.md` (the lint checks that it is there).
 pub const CATEGORIES: &[&str] = &[
-    "diag", "sys", "x11", "tap", "ui", "win", "panic", "cfg", "act",
+    "diag", "sys", "x11", "tap", "touch", "ui", "win", "panic", "cfg", "act",
 ];
 
 /// Written by the `diag` crate, not by a line in `src/`.

@@ -13,13 +13,20 @@
 //! * It is **warmed up** while the trigger is held, before the pie opens, see
 //!   [`icons_to_warm`] and `Msg::Warm`.
 //! * It is **dropped** when the UI goes to sleep ([`IconCache::clear`]).
+//! * Lists that show many app icons at once (the app picker) ask with
+//!   [`IconCache::get_app_async`]: the system call and the decoding then run on a worker thread,
+//!   so scrolling never waits for them (on macOS one icon is a multi-size TIFF of several MiB).
 
 use crate::cache::Lru;
 use crate::config::{Config, Item, ItemKind};
 use crate::ui::appicon;
 use crate::ui::draw::{icon_path, load_icon};
 use eframe::egui;
+use std::collections::HashSet;
+use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 /// Most textures kept between frames. An icon is at most
@@ -29,6 +36,120 @@ pub const CAPACITY: usize = 96;
 
 /// How long to wait before trying again to load an app icon that could not be loaded.
 const APP_ICON_RETRY: Duration = Duration::from_secs(3);
+
+/// Most decoded app icons turned into textures in one frame (an upload is cheap, but a long list
+/// scrolled fast should not put them all into one frame).
+const UPLOADS_PER_FRAME: usize = 8;
+
+/// How many threads read app icons. On macOS one icon is a few MiB of TIFF and decoding it is the
+/// cost, so one thread is enough (more would only pile up memory). On Windows and Linux the wait
+/// is for the system instead: a scan of the running processes and the executable's file, or the
+/// icon theme folders and, for an SVG, a `rsvg-convert` process. Two threads overlap those waits.
+const WORKERS: usize = if matches!(crate::platform::OS, crate::platform::Os::Mac) {
+    1
+} else {
+    2
+};
+
+/// Where an app icon asked for with [`IconCache::get_app_async`] stands.
+pub enum IconState {
+    /// Ready to paint.
+    Ready(egui::TextureHandle),
+    /// Being read on the worker thread; the window is repainted when it arrives.
+    Pending,
+    /// The icon cannot be loaded (not an app icon, or the system has none).
+    Missing,
+}
+
+/// The requests of the worker thread. The newest request is served first: a list that is scrolled
+/// fast asks for rows that are gone before the worker gets to them, and the rows on screen now
+/// must not wait behind those.
+#[derive(Default)]
+struct QueueState {
+    stack: Vec<String>,
+    closed: bool,
+}
+
+struct Queue {
+    state: Mutex<QueueState>,
+    wake: Condvar,
+}
+
+impl Queue {
+    fn lock(&self) -> std::sync::MutexGuard<'_, QueueState> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+/// The loop of one worker thread: takes the newest request, reads and decodes the icon, hands it
+/// back and asks for a repaint. Ends when the cache is dropped.
+fn serve(q: &Queue, tx: &mpsc::Sender<(String, Option<egui::ColorImage>)>, ctx: &egui::Context) {
+    loop {
+        let key = {
+            let mut s = q.lock();
+            loop {
+                if s.closed {
+                    return;
+                }
+                if let Some(k) = s.stack.pop() {
+                    break k;
+                }
+                s = q.wake.wait(s).unwrap_or_else(|e| e.into_inner());
+            }
+        };
+        // a panic while decoding one odd icon must not end the thread
+        let img = std::panic::catch_unwind(AssertUnwindSafe(|| appicon::load_string(&key)))
+            .unwrap_or(None);
+        if tx.send((key, img)).is_err() {
+            return; // the cache is gone
+        }
+        ctx.request_repaint();
+    }
+}
+
+/// The threads that read and decode app icons, see [`IconCache::get_app_async`].
+struct Worker {
+    queue: Arc<Queue>,
+    done: Receiver<(String, Option<egui::ColorImage>)>,
+}
+
+impl Worker {
+    /// Starts the threads ([`WORKERS`]). None if the system refuses to start even one.
+    fn start(ctx: &egui::Context) -> Option<Self> {
+        let queue = Arc::new(Queue {
+            state: Mutex::new(QueueState::default()),
+            wake: Condvar::new(),
+        });
+        let (tx, done) = mpsc::channel();
+        let mut started = 0;
+        for n in 0..WORKERS {
+            let (q, tx, ctx) = (Arc::clone(&queue), tx.clone(), ctx.clone());
+            let spawned = std::thread::Builder::new()
+                .name(format!("cursorpie-icons-{n}"))
+                .spawn(move || serve(&q, &tx, &ctx));
+            if spawned.is_ok() {
+                started += 1;
+            }
+        }
+        (started > 0).then_some(Self { queue, done })
+    }
+
+    fn request(&self, key: &str) {
+        self.queue.lock().stack.push(key.to_string());
+        self.queue.wake.notify_one();
+    }
+
+    /// Forgets the requests that were not started yet, and the answers not taken yet.
+    fn cancel_all(&self) {
+        self.queue.lock().stack.clear();
+        while self.done.try_recv().is_ok() {}
+    }
+
+    fn close(&self) {
+        self.queue.lock().closed = true;
+        self.queue.wake.notify_all();
+    }
+}
 
 /// What identifies a version of an image file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -62,6 +183,18 @@ struct Entry {
 #[derive(Default)]
 pub struct IconCache {
     lru: Lru<String, Entry>,
+    /// Reads app icons off the UI thread (started by the first [`IconCache::get_app_async`]).
+    worker: Option<Worker>,
+    /// App icons asked of the worker whose answer has not been taken yet.
+    pending: HashSet<String>,
+}
+
+impl Drop for IconCache {
+    fn drop(&mut self) {
+        if let Some(w) = &self.worker {
+            w.close();
+        }
+    }
 }
 
 impl IconCache {
@@ -88,6 +221,11 @@ impl IconCache {
     /// Drops every texture and gives the table's memory back.
     pub fn clear(&mut self) {
         self.lru.clear();
+        if let Some(w) = &self.worker {
+            w.cancel_all();
+        }
+        // an answer that is still on its way is ignored: it is not in `pending` any more
+        self.pending.clear();
     }
 
     /// Forgets what is stale: image files that changed, vanished or failed to load. Cheap (one
@@ -106,6 +244,77 @@ impl IconCache {
             return self.lru.contains(icon);
         }
         icon_path(icon).is_some_and(|p| self.lru.contains(&*p.to_string_lossy()))
+    }
+
+    /// Like [`IconCache::get`], but an app icon that is not cached yet is read and decoded on a
+    /// worker thread instead of on this one: this returns [`IconState::Pending`] at once and the
+    /// window is repainted when the icon is there. For lists with many icons that are scrolled.
+    /// Other icon strings are answered as `get` does.
+    pub fn get_app_async(&mut self, ctx: &egui::Context, icon: &str) -> IconState {
+        if !appicon::is_app_icon(icon) {
+            return self
+                .get(ctx, icon)
+                .map_or(IconState::Missing, IconState::Ready);
+        }
+        self.receive(ctx);
+        if let Some(e) = self.lru.get(icon) {
+            if let Some(tex) = &e.tex {
+                return IconState::Ready(tex.clone());
+            }
+            // a failure is tried again after a pause, not on every frame
+            if e.failed_at.is_some_and(|at| at.elapsed() < APP_ICON_RETRY) {
+                return IconState::Missing;
+            }
+        }
+        if self.pending.contains(icon) {
+            return IconState::Pending;
+        }
+        if self.worker.is_none() {
+            self.worker = Worker::start(ctx);
+        }
+        match &self.worker {
+            Some(w) => {
+                w.request(icon);
+                self.pending.insert(icon.to_string());
+                IconState::Pending
+            }
+            // no thread to be had: load it here, as `get` does
+            None => self
+                .get(ctx, icon)
+                .map_or(IconState::Missing, IconState::Ready),
+        }
+    }
+
+    /// Turns the icons the worker has finished into textures (a few per frame).
+    fn receive(&mut self, ctx: &egui::Context) {
+        let Some(w) = &self.worker else {
+            return;
+        };
+        let mut ready = Vec::new();
+        while ready.len() < UPLOADS_PER_FRAME {
+            match w.done.try_recv() {
+                Ok(r) => ready.push(r),
+                Err(_) => break,
+            }
+        }
+        if ready.len() == UPLOADS_PER_FRAME {
+            ctx.request_repaint(); // there may be more waiting
+        }
+        for (key, img) in ready {
+            if !self.pending.remove(&key) {
+                continue; // the cache was cleared since: the answer is stale
+            }
+            let tex = img.map(|img| ctx.load_texture(&key, img, egui::TextureOptions::LINEAR));
+            let failed_at = tex.is_none().then(Instant::now);
+            self.lru.insert(
+                key,
+                Entry {
+                    tex,
+                    file: None,
+                    failed_at,
+                },
+            );
+        }
     }
 
     /// The texture for an icon string. None for text icons and for images that cannot be loaded.
@@ -209,6 +418,34 @@ mod tests {
             *p = image::Rgba(rgba);
         }
         img.save(path).unwrap();
+    }
+
+    #[test]
+    fn an_app_icon_is_loaded_off_the_ui_thread() {
+        let ctx = egui::Context::default();
+        let mut c = IconCache::new();
+        let key = "appcolor:com.cursorpie.no-such-app";
+        assert!(
+            matches!(c.get_app_async(&ctx, key), IconState::Pending),
+            "the first ask must not wait for the system"
+        );
+        let started = Instant::now();
+        loop {
+            match c.get_app_async(&ctx, key) {
+                IconState::Pending if started.elapsed() < Duration::from_secs(10) => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                IconState::Pending => panic!("the worker never answered"),
+                IconState::Missing => break,
+                IconState::Ready(_) => panic!("there is no such app"),
+            }
+        }
+        assert_eq!(
+            c.len(),
+            1,
+            "the failure is remembered, not asked again per frame"
+        );
+        assert!(matches!(c.get_app_async(&ctx, "<>"), IconState::Missing));
     }
 
     #[test]

@@ -8,13 +8,14 @@ use super::util::{exe_id_from_path, from_wide, logical_to_px, px_to_logical, wid
 use crate::geometry::Point;
 use crate::platform::{NativeIcon, ScreenRect};
 use std::time::Duration;
-use windows_sys::Win32::Foundation::{CloseHandle, HWND, LPARAM, POINT, RECT};
+use windows_sys::Win32::Foundation::{CloseHandle, HWND, LPARAM, POINT, RECT, S_FALSE, S_OK};
 use windows_sys::Win32::Graphics::Gdi::{
     BI_RGB, BITMAP, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, DeleteObject,
     EnumDisplayMonitors, GetDC, GetDIBits, GetMonitorInfoW, GetObjectW, HDC, HMONITOR, MONITORINFO,
     ReleaseDC,
 };
 use windows_sys::Win32::Storage::FileSystem::SearchPathW;
+use windows_sys::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
 use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
 };
@@ -362,6 +363,9 @@ unsafe fn bitmap_bgra(
     };
     let mut px = vec![0u8; (w * h * 4) as usize];
     let dc = unsafe { GetDC(std::ptr::null_mut()) };
+    if dc.is_null() || bmp.is_null() {
+        return None;
+    }
     let lines = unsafe {
         GetDIBits(
             dc,
@@ -377,8 +381,46 @@ unsafe fn bitmap_bgra(
     (lines == h).then_some(px)
 }
 
+/// COM, started on the thread that asks for icons and ended with it. The shell's icon call
+/// (`SHGetFileInfoW`, the fallback of [`icon_handle`]) needs COM on its thread. The UI thread has it
+/// already; the worker threads that read icons for the app list (see `ui::icons`) get it here, the
+/// first time they ask, so the caller does not have to know.
+struct ComForThread {
+    /// Whether this value has to balance a successful `CoInitializeEx`.
+    uninitialize: bool,
+}
+
+impl ComForThread {
+    fn enter() -> Self {
+        // SAFETY: plain COM setup of this thread; `Drop` undoes it when the thread ends.
+        let init = unsafe { CoInitializeEx(std::ptr::null(), COINIT_APARTMENTTHREADED as u32) };
+        // S_OK and S_FALSE both count a use that has to be balanced; a thread that runs COM in the
+        // other mode (RPC_E_CHANGED_MODE) can use it all the same, but is not ours to close
+        Self {
+            uninitialize: init == S_OK || init == S_FALSE,
+        }
+    }
+}
+
+impl Drop for ComForThread {
+    fn drop(&mut self) {
+        if self.uninitialize {
+            // SAFETY: balances the successful `CoInitializeEx` of `enter`, on the same thread.
+            unsafe { CoUninitialize() };
+        }
+    }
+}
+
+thread_local! {
+    static COM: ComForThread = ComForThread::enter();
+}
+
 /// The real icon of the app with this id as RGBA, or `None` when the app cannot be found.
+///
+/// Slow (a scan of the running processes, then the executable is read): call it off the UI thread
+/// when many icons are needed, as the app list does.
 pub fn app_icon(exe: &str) -> Option<NativeIcon> {
+    COM.with(|_| {}); // COM for this thread, once
     let path = exe_path_for(exe)?;
     let hicon = icon_handle(&path)?;
     // SAFETY: every GDI object created below is deleted, and the icon handle destroyed.
@@ -394,7 +436,9 @@ pub fn app_icon(exe: &str) -> Option<NativeIcon> {
             std::mem::size_of::<BITMAP>() as i32,
             (&mut bm as *mut BITMAP).cast(),
         );
-        let result = (ok != 0 && bm.bmWidth > 0 && bm.bmHeight > 0)
+        // a sane icon: positive and not absurdly big (the buffers below are `w * h * 4` bytes)
+        let sane = ok != 0 && (1..=4096).contains(&bm.bmWidth) && (1..=4096).contains(&bm.bmHeight);
+        let result = sane
             .then(|| {
                 let (w, h) = (bm.bmWidth, bm.bmHeight);
                 let mut color = bitmap_bgra(ii.hbmColor, w, h)?;

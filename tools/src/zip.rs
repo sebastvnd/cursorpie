@@ -510,7 +510,7 @@ mod tests {
         assert!(is_excluded("tools/target/release/x"));
         assert!(is_excluded(".git/config"));
         assert!(is_excluded("web/node_modules/a/b.js"));
-        assert!(is_excluded("icon/.DS_Store"));
+        assert!(is_excluded("assets/.DS_Store"));
         assert!(!is_excluded("src/main.rs"));
         assert!(
             !is_excluded("src/tap/target.rs"),

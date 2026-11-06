@@ -116,7 +116,7 @@ pub fn app_id_for_action(app: &str, installed: &[InstalledApp]) -> Option<String
         return Some(a.id.clone());
     }
     let mut tries = vec![app.to_string()];
-    if cfg!(windows) && !app.to_ascii_lowercase().ends_with(".exe") {
+    if platform::OS == platform::Os::Windows && !app.to_ascii_lowercase().ends_with(".exe") {
         tries.push(format!("{app}.exe"));
     }
     tries
@@ -143,6 +143,9 @@ pub fn parse(icon: &str) -> Option<(AppIconStyle, &str)> {
             .map(|bundle| (AppIconStyle::Color, bundle))
     }
 }
+
+/// The largest side (px) of an icon the system may hand over; anything bigger is not an icon.
+const MAX_NATIVE: u32 = 4096;
 
 /// Size (px) of the icon texture. The pie shows it at about a third of that.
 const SIZE: u32 = 128;
@@ -171,6 +174,18 @@ pub fn load(bundle: &str, style: AppIconStyle) -> Option<egui::ColorImage> {
 
 /// The icon of `bundle` in `tone`, ready to become a texture (see [`load`] for when it is None).
 pub fn load_tone(bundle: &str, tone: SliceTone) -> Option<egui::ColorImage> {
+    // One odd icon (a broken resource, an unexpected size) must cost that icon only, not the app:
+    // a panic here would end the whole process, as the UI thread has no one to catch it.
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        load_tone_inner(bundle, tone)
+    }))
+    .unwrap_or_else(|_| {
+        eprintln!("CursorPie: app icon for {bundle}: decoding failed, the icon is left out");
+        None
+    })
+}
+
+fn load_tone_inner(bundle: &str, tone: SliceTone) -> Option<egui::ColorImage> {
     let img = resize_straight(&native_image(bundle)?);
     let img = match tone {
         SliceTone::Color => img,
@@ -211,7 +226,14 @@ fn native_image(bundle: &str) -> Option<RgbaImage> {
             width,
             height,
             data,
-        } => RgbaImage::from_raw(width, height, data),
+        } => {
+            // nothing to resize in an empty image, and no icon is this big
+            if width == 0 || height == 0 || width > MAX_NATIVE || height > MAX_NATIVE {
+                eprintln!("CursorPie: app icon for {bundle}: unusable size {width}x{height}");
+                return None;
+            }
+            RgbaImage::from_raw(width, height, data)
+        }
     }
 }
 

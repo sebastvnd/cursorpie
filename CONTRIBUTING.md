@@ -41,7 +41,7 @@ are under [Development workflow](#development-workflow).
 ## Build, run and package
 
 GitHub Actions packages macOS, Windows, Ubuntu and Fedora on pull requests, pushes to `main`, and manual runs;
-those runs expose temporary files under **Actions → workflow run → Artifacts**. A push of a stable `v*` tag also
+those runs expose temporary files under **Actions → workflow run → Artifacts**. A push of a `v*` tag also
 publishes the packages as GitHub Release assets, but only after all platform jobs succeed. The public download
 links in `README.md` and `docs/INSTALL.md` point to this repository's latest stable release.
 
@@ -115,9 +115,10 @@ package (standard library only, never part of the app) and behave the same on ma
 | `cargo tools diag [FILE]` | reads a debug log of the app (`CURSORPIE_DEBUG=1`) and says where positions stop agreeing, see [docs/DEBUGGING.md](docs/DEBUGGING.md) |
 | `cargo tools log VIEW` | other views of a debug log: `summary`, `timeline`, `grep`, `slow`, `diff`, `follow`, `report` (see [docs/DEBUGGING.md](docs/DEBUGGING.md)) |
 | `cargo tools diag-lint` | checks the log lines in `src/` against the rules and against what the analyzer reads (part of `ci --quick`) |
-| `cargo tools clean-logs` | deletes old debug logs (`--keep N`, `--older-than DAYS`, `--all`, `--dry-run`) |
-| `cargo tools zip` | packs the project into a `.zip` without `target/` and `.git/` (`-o FILE`, `--list`) |
+| `cargo tools clean-logs` | deletes old debug logs, keeping the newest 3 by default (`--keep N`, `--older-than DAYS`, `--all`, `--dir PATH`, `--dry-run`) |
+| `cargo tools zip` | packs the project into a `.zip` without `target/` and `.git/` (`-o FILE`, `--list`, `--no-git`) |
 | `cargo tools info` | prints the facts a bug report needs: OS, desktop session, tool versions |
+| `cargo tools trackpad` | starts the app with the virtual trackpad, to try trackpad gestures with a mouse (`--width POINTS`, `--silent`, `--release`; see `docs/DEBUGGING.md`) |
 
 ### The loop
 
@@ -143,6 +144,7 @@ one definition of "the checks pass".
 |---|---|---|
 | format | `cargo fmt --all -- --check` | everywhere |
 | version files agree | `cargo tools check` | everywhere |
+| diagnostic log lines | `cargo tools diag-lint` | everywhere |
 | clippy | `cargo clippy --workspace --all-targets -- -D warnings` | everywhere |
 | tests | `cargo test --workspace --all-targets` | everywhere |
 | doc tests | `cargo test --doc` | everywhere |
@@ -278,14 +280,14 @@ map at the top of the crate docs (`src/lib.rs`) instead of a copy here.
 Outside `src/`, the repository is laid out like this:
 
 ```text
-tools/         the repository tools, run as `cargo tools ...`: ci, check, bump, hooks, commit-msg, diag, log, diag-lint, clean-logs, zip, info
+tools/         the repository tools, run as `cargo tools ...`: ci, check, bump, hooks, commit-msg, diag, log, diag-lint, clean-logs, zip, info, trackpad
 diag/          the diagnostic log (`CURSORPIE_DEBUG=1`): a crate of its own, no dependencies, see docs/DEBUGGING.md
 .githooks/     Git hooks that call the tools (turned on with `cargo tools hooks install`)
 .github/       the CI workflow and the pull request template
 scripts/       packaging: bundle.sh and make-dmg.sh (macOS), package-windows.ps1, package-linux.sh
 installer/     Inno Setup script of the Windows Setup wizard
 packaging/     Linux desktop entry
-icon/          the logo and sample icons (the in-app logo is drawn in code, see src/ui/settings/widgets.rs)
+assets/       app icons for macOS, Windows and Linux; logos, fonts and the editable brand artwork
 docs/          user documentation and design records
 ```
 
@@ -350,6 +352,25 @@ The tool prints these at the end of every run, with a `WARNING:` where something
    `BUNDLE_ID` equal in `src/about.rs` and `scripts/bundle.sh`.
 
 If `check` reports a mismatch, someone changed the version by hand: undo that change and run the tool instead.
+
+### Publishing to crates.io
+
+The app depends on the `cursorpie-diag` crate in `diag/` (`path` plus `version`). `cargo publish` packs only
+the root package, and crates.io must already know every dependency, so `diag` goes first. Otherwise cargo says
+`no matching package named cursorpie-diag found`.
+
+```bash
+cargo login                           # once, with a token from crates.io
+cargo publish -p cursorpie-diag --dry-run
+cargo publish -p cursorpie-diag       # first: only when diag/ changed or was never published
+cargo publish --dry-run               # wait a minute so the index sees it, then check the app's package
+cargo package --list                  # what goes into the package (the website files are excluded)
+cargo publish
+```
+
+`cursorpie-diag` has its own version (`diag/Cargo.toml`). The release tool never changes it: raise it by hand
+when `diag/` changes, publish it, and then require that version in the `diag = { ... version = "..." }` line of
+the root `Cargo.toml`. A published version cannot be replaced, only yanked.
 
 ## Reporting bugs
 

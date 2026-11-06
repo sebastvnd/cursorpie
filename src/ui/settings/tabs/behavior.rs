@@ -6,8 +6,9 @@
 
 use crate::config::{
     AppGesture, AppIconStyle, Appearance, Config, DesktopMode, IconShadow, PieStyle, SideTarget,
-    TargetApp,
+    TargetApp, TouchClickAction,
 };
+use crate::platform::Os;
 use crate::ui::app::App;
 use crate::ui::draw::rgb;
 use crate::ui::pie::glass::Glass;
@@ -80,7 +81,7 @@ impl App {
                 ui,
                 "Hold to open the pie",
                 &mut cfg.pie_hold_ms,
-                150..=1500,
+                50..=1500,
                 " ms",
                 accent,
             );
@@ -439,6 +440,195 @@ impl App {
                 );
             }
         });
+        if crate::platform::OS.has_trackpad() {
+            trackpad_panel(ui, cfg, accent, crate::tap::touch_status());
+        }
+    }
+}
+
+/// The line under the Trackpad switch: what the touch source found.
+fn trackpad_status_text(on: bool, status: crate::tap::TouchStatus) -> String {
+    trackpad_status_text_for(crate::platform::OS, on, status)
+}
+
+/// [`trackpad_status_text`] for an OS (so the tests can say what each one tells).
+fn trackpad_status_text_for(os: Os, on: bool, status: crate::tap::TouchStatus) -> String {
+    use crate::tap::TouchStatus::*;
+    let windows = os == Os::Windows;
+    let linux = os == Os::Linux;
+    match (on, status) {
+        (false, _) if linux => "Off. The touchpad is not read.".into(),
+        (false, _) if windows => "Off. Nothing is registered with Windows.".into(),
+        (false, _) => "Off. The system's touch interface is not loaded.".into(),
+        (true, Off) => "Starts when you press Save.".into(),
+        (true, Unavailable) if linux => {
+            "Touchpads cannot be read here (no /dev/input).".into()
+        }
+        (true, Unavailable) if windows => {
+            "Windows refused to deliver touchpad input to CursorPie.".into()
+        }
+        (true, Unavailable) => "Trackpad support is not available on this macOS.".into(),
+        (true, NoDevice) if windows => {
+            "No precision touchpad found. A touchpad that Windows treats as a plain mouse cannot be read."
+                .into()
+        }
+        (true, NoDevice) => "No trackpad found.".into(),
+        (true, NoPermission { devices }) => format!(
+            "{} found, but this user may not read it. Add yourself to the `input` group \
+             (sudo usermod -aG input $USER) and log in again.",
+            if devices == 1 {
+                "A touchpad".to_string()
+            } else {
+                format!("{devices} touchpads")
+            }
+        ),
+        (true, Ready { devices, built_in }) if linux => {
+            let _ = built_in;
+            if devices == 1 {
+                "Touchpad found.".into()
+            } else {
+                format!("{devices} touchpads found.")
+            }
+        }
+        (true, Ready { devices, built_in }) => {
+            let what = if windows && devices == 1 {
+                "Precision touchpad".to_string()
+            } else if windows {
+                format!("{devices} precision touchpads")
+            } else if devices == 1 && built_in {
+                "Built-in trackpad".to_string()
+            } else if devices == 1 {
+                "Trackpad".to_string()
+            } else {
+                format!("{devices} trackpads")
+            };
+            if windows {
+                format!("{what} found.")
+            } else {
+                format!(
+                    "{what} found. Haptics follow the system's \"Force Click and haptic feedback\" setting."
+                )
+            }
+        }
+    }
+}
+
+fn touch_click_label(a: TouchClickAction) -> &'static str {
+    match a {
+        TouchClickAction::SwitchPie => "Switch the pie (like right-click)",
+        TouchClickAction::PickHovered => "Pick the hovered mode",
+        TouchClickAction::Nothing => "Do nothing",
+    }
+}
+
+/// The Trackpad panel (macOS, Windows and Linux X11): hold with fingers to open the pie, one more finger clicks
+/// to switch the mode, haptic ticks (macOS only). Everything is off until the switch is on.
+fn trackpad_panel(
+    ui: &mut egui::Ui,
+    cfg: &mut Config,
+    accent: Color32,
+    status: crate::tap::TouchStatus,
+) {
+    let os = crate::platform::OS;
+    panel(ui, "Trackpad", |ui| {
+        note(
+            ui,
+            if os == Os::Linux {
+                "Touch and hold on the touchpad to open the pie, move the finger to a slice, lift to run it. \
+                 The touchpad is read from /dev/input, which needs the `input` group (X11 only)."
+            } else if os == Os::Windows {
+                "Touch and hold on a precision touchpad to open the pie, move the finger to a slice, lift to run it. \
+                 This reads the touchpad's raw input (registered only while this is on)."
+            } else {
+                "Touch and hold on the trackpad to open the pie, move the finger to a slice, lift to run it. \
+                 This uses an undocumented system interface (loaded only while this is on)."
+            },
+        );
+        toggle_row(
+            ui,
+            &mut cfg.touch_trigger,
+            "Open the pie with a trackpad hold",
+            "Uses the hold time above. Off by default: a finger resting on a trackpad is common.",
+            accent,
+        );
+        note(ui, &trackpad_status_text(cfg.touch_trigger, status));
+        ui.add_enabled_ui(cfg.touch_trigger, |ui| {
+            note(ui, extra_finger_hint(os));
+            slider_row(
+                ui,
+                "How still the finger must stay",
+                &mut cfg.touch_still_mm,
+                0.5..=6.0,
+                " mm",
+                accent,
+            );
+            row(
+                ui,
+                "Extra click",
+                "What one more finger does while the pie is open.",
+                |ui| {
+                    let all = [
+                        TouchClickAction::SwitchPie,
+                        TouchClickAction::PickHovered,
+                        TouchClickAction::Nothing,
+                    ];
+                    let labels: Vec<&str> = all.iter().map(|&a| touch_click_label(a)).collect();
+                    let at = all
+                        .iter()
+                        .position(|&a| a == cfg.touch_click_action)
+                        .unwrap_or(0);
+                    if let Some(i) = select(ui, 230.0, touch_click_label(cfg.touch_click_action), &labels, at) {
+                        cfg.touch_click_action = all[i];
+                    }
+                },
+            );
+            slider_row(
+                ui,
+                "Ignore holds after typing",
+                &mut cfg.touch_typing_guard_ms,
+                0..=2000,
+                " ms",
+                accent,
+            );
+            if os.has_haptics() {
+                toggle_row(
+                    ui,
+                    &mut cfg.haptics,
+                    "Haptic feedback",
+                    "A tick when the pie opens and when the mode switches. Trackpad only; a mouse is silent.",
+                    accent,
+                );
+                ui.add_enabled_ui(cfg.haptics, |ui| {
+                    toggle_row(
+                        ui,
+                        &mut cfg.haptic_hover,
+                        "Tick when the slice changes",
+                        "",
+                        accent,
+                    );
+                });
+            }
+        });
+    });
+}
+
+/// The note under the trackpad switch: one finger holds, a second one clicks, and which system
+/// gesture may take that second finger instead.
+fn extra_finger_hint(os: Os) -> &'static str {
+    match os {
+        Os::Linux => {
+            "One finger holds, a second clicks. The system may call that a right-click; CursorPie \
+             swallows it while the pie is open."
+        }
+        Os::Windows => {
+            "One finger holds, a second clicks. Windows may call that a right-click; CursorPie \
+             swallows it while the pie is open. If a tap and hold clicks the app under the pie, turn \
+             off \"Tap twice and drag to multi-select\" in Settings > Bluetooth & devices > Touchpad."
+        }
+        Os::Mac => {
+            "One finger holds, a second clicks. macOS may call that a secondary click; CursorPie \
+             swallows it while the pie is open."
+        }
     }
 }
 
@@ -499,6 +689,99 @@ fn glass_preview(ui: &mut egui::Ui, cfg: &Config) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_trackpad_panel_draws_in_every_state_and_says_what_is_going_on() {
+        use crate::tap::TouchStatus::*;
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        for on in [false, true] {
+            for st in [
+                Off,
+                Unavailable,
+                NoDevice,
+                NoPermission { devices: 1 },
+                Ready {
+                    devices: 1,
+                    built_in: true,
+                },
+                Ready {
+                    devices: 2,
+                    built_in: false,
+                },
+            ] {
+                let mut cfg = Config {
+                    touch_trigger: on,
+                    ..Config::default()
+                };
+                ctx.run_ui(Default::default(), |ui| {
+                    trackpad_panel(ui, &mut cfg, Color32::GRAY, st);
+                })
+                .drop_without_applying_deltas();
+            }
+        }
+        assert!(trackpad_status_text_for(Os::Mac, true, Unavailable).contains("not available"));
+        assert!(
+            trackpad_status_text_for(
+                Os::Mac,
+                true,
+                Ready {
+                    devices: 1,
+                    built_in: true
+                }
+            )
+            .contains("Built-in")
+        );
+        assert!(trackpad_status_text_for(Os::Mac, true, NoDevice).contains("No trackpad"));
+        assert!(
+            trackpad_status_text_for(
+                Os::Mac,
+                false,
+                Ready {
+                    devices: 1,
+                    built_in: true
+                }
+            )
+            .starts_with("Off")
+        );
+        // Windows says touchpad things, and has no haptics to talk about
+        let win = |on, st| trackpad_status_text_for(Os::Windows, on, st);
+        assert!(win(true, Unavailable).contains("Windows"));
+        assert!(win(true, NoDevice).contains("precision touchpad"));
+        let ready = win(
+            true,
+            Ready {
+                devices: 1,
+                built_in: false,
+            },
+        );
+        assert!(ready.starts_with("Precision touchpad") && !ready.contains("Haptics"));
+        assert!(win(false, Off).starts_with("Off"));
+        // Linux: no haptics sentence, and a missing permission names the fix
+        let lin = |on, st| trackpad_status_text_for(Os::Linux, on, st);
+        let found = lin(
+            true,
+            Ready {
+                devices: 1,
+                built_in: false,
+            },
+        );
+        assert!(found.contains("Touchpad found") && !found.contains("Haptics"));
+        let denied = lin(true, NoPermission { devices: 1 });
+        assert!(denied.contains("input") && denied.contains("usermod"));
+        assert!(lin(false, Off).starts_with("Off"));
+        assert!(!extra_finger_hint(Os::Linux).contains("macOS"));
+        assert!(extra_finger_hint(Os::Windows).contains("Windows"));
+        assert!(extra_finger_hint(Os::Mac).contains("macOS"));
+        let labels: Vec<_> = [
+            TouchClickAction::SwitchPie,
+            TouchClickAction::PickHovered,
+            TouchClickAction::Nothing,
+        ]
+        .map(touch_click_label)
+        .to_vec();
+        assert!(labels[0] != labels[1] && labels[1] != labels[2]);
+    }
 
     #[test]
     fn every_desktop_choice_has_its_own_label() {

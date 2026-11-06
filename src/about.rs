@@ -16,6 +16,11 @@ pub const BUNDLE_ID: &str = "io.github.cursorpie";
 
 /// Author name shown in About.
 pub const AUTHOR_NAME: &str = "Sebastvnd";
+
+/// Command-line switch the startup entry adds: "I was started by the login, not by the user".
+/// The Windows build then waits for the desktop to be ready before it installs its hooks and its
+/// tray icon (see `platform::wait_for_login_ready`). Other platforms ignore it.
+pub const AUTOSTART_ARG: &str = "--autostart";
 /// GitHub user name of the author (without `@`).
 pub const AUTHOR_GITHUB_USER: &str = "sebastvnd";
 /// GitHub profile of the author.

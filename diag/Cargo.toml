@@ -5,7 +5,13 @@ edition = "2024"
 rust-version = "1.88"
 description = "A small diagnostic log for developers: switch-on-demand JSON lines, written from anywhere with one macro. Used by CursorPie, not specific to it."
 license = "MIT"
-publish = false
+repository = "https://github.com/sebastvnd/cursorpie"
+readme = "README.md"
+keywords = ["logging", "diagnostics", "debugging"]
+categories = ["development-tools::debugging"]
+# Published on crates.io because the app depends on it: `cargo publish` of `cursorpie` needs this
+# crate to be there already (CONTRIBUTING.md, "Publishing to crates.io"). The root package leaves
+# this folder out of its own package, since it is a package of its own.
 
 # No dependencies, on purpose: the log builds in a second, is the same on every OS, and adds
 # nothing to the app besides its own code. It writes JSON by hand (see `value.rs`).

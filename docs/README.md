@@ -27,6 +27,7 @@ written for people changing the code, not for users.
 | [LINUX_MIGRATION.md](LINUX_MIGRATION.md) | X11 supported but experimental, checklist under internal observation; Wayland designed | The Linux design, what is implemented, and the Linux checklist |
 | [OTHER_DESKTOPS.md](OTHER_DESKTOPS.md) | Done | How *Open app* follows an app to another desktop or Space |
 | [UI_DESIGN.md](UI_DESIGN.md) | Living | Look, rendering rules and the visual checklist |
+| [TRACKPAD_HAPTICS_PLAN.md](TRACKPAD_HAPTICS_PLAN.md) | Implemented in code; native macOS, Windows and Linux X11 layers awaiting verification on real hardware | How a trackpad on macOS, Windows and Linux X11 (hold, extra-finger click) and haptic feedback on a Mac can work with the same pie as the mouse, and the spikes to run first |
 
 ## Keeping the docs in sync
 

@@ -17,6 +17,9 @@ pub enum Msg {
         profile: usize,
         path: Vec<usize>,
     },
+    /// The trigger was pressed at (x, y) while Settings is open, so the pie stays off. The UI says
+    /// so and brings Settings forward (a press that seems to do nothing is confusing).
+    PieBlocked { x: f64, y: f64 },
     /// Open the Settings window centered on the screen containing (x, y); `about` selects the About tab.
     OpenSettings { x: f64, y: f64, about: bool },
     /// Open the welcome window centered on the screen containing (x, y) (first launch, or the
@@ -68,6 +71,9 @@ pub enum Msg {
     },
     /// An extra button (its button number) was pressed while Settings scans the mouse.
     ButtonScanned(i64),
+    /// Play one haptic tick on the trackpad (a trackpad hold only; see
+    /// [`tap::touch::haptic`](crate::tap)). Handled on the UI thread: AppKit is not called from the tap.
+    Haptic(crate::platform::HapticKind),
     /// An app was chosen for an "Open app" action of the slice at `path` (`slot` = which action).
     ActionAppPicked {
         profile: usize,
@@ -86,8 +92,19 @@ pub struct Notifier {
 
 impl Notifier {
     /// Queues `m` and requests a repaint so the UI picks it up promptly. Never blocks.
+    ///
+    /// The repaint is asked of the *root* window, which is where `App::logic` reads the messages.
+    /// A plain `request_repaint` means "the window that was drawn last", and once the virtual
+    /// trackpad has a window of its own that may be the trackpad's: the message would wait there
+    /// until the root window happened to draw again.
     pub fn send(&self, m: Msg) {
         let _ = self.tx.send(m);
-        self.ctx.request_repaint();
+        self.wake();
+    }
+
+    /// Asks the root window for a frame (see [`send`](Self::send)): the tap does this to make the
+    /// UI notice a change of state that has no message.
+    pub fn wake(&self) {
+        self.ctx.request_repaint_of(egui::ViewportId::ROOT);
     }
 }

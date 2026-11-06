@@ -827,10 +827,16 @@ impl Conn {
     /// Asks for the press and the release of any button as raw events: they are also reported while
     /// a grab is lifted (the end of a handed-over drag is noticed that way) and for buttons that are
     /// not grabbed at all (which is how a scan of the mouse in Settings hears them).
-    pub fn select_raw_buttons(&self) {
+    ///
+    /// With `keys`, the press of any key is reported too (raw: no key is named, only that one was
+    /// pressed). Only the trackpad hold asks for this, for its "ignore holds after typing" guard.
+    pub fn select_raw(&self, keys: bool) {
         let mut bits = [0u8; XI_MASK_LEN];
         set_bit(&mut bits, XI_RAW_BUTTON_PRESS);
         set_bit(&mut bits, XI_RAW_BUTTON_RELEASE);
+        if keys {
+            set_bit(&mut bits, XI_RAW_KEY_PRESS);
+        }
         let mut mask = XIEventMask {
             deviceid: XI_ALL_MASTER_DEVICES,
             mask_len: XI_MASK_LEN as c_int,

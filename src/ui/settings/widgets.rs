@@ -571,14 +571,82 @@ fn slider_fraction(v: f64, range: (f64, f64)) -> f32 {
     }
 }
 
-/// The value of `range` at `fraction` along the rail; whole numbers when `integral`.
-fn slider_value(fraction: f32, range: (f64, f64), integral: bool) -> f64 {
-    let v = range.0 + (range.1 - range.0) * f64::from(fraction.clamp(0.0, 1.0));
-    if integral { v.round() } else { v }
+/// The "nice" numbers steps and anchors are taken from: 1, 2, 5, 10, 20, 50, 100, ... (and the
+/// tenths below one, for a slider of small fractional numbers). With `quarters`, 25, 250, ... too,
+/// which suit marks (0, 25, 50, 75, 100) but not steps (2.5 is no whole number).
+fn nice_numbers(integral: bool, quarters: bool) -> impl Iterator<Item = f64> {
+    let tenths: &[f64] = if integral { &[] } else { &[0.1, 0.2, 0.5] };
+    tenths.iter().copied().chain((0..9).flat_map(move |e| {
+        let k = 10f64.powi(e);
+        [
+            Some(k),
+            Some(2.0 * k),
+            quarters.then_some(2.5 * k),
+            Some(5.0 * k),
+        ]
+        .into_iter()
+        .flatten()
+    }))
 }
 
-/// A rail with a round knob, as wide as the space left. Dragging or clicking sets `value`; the
-/// arrow keys move it by a fiftieth of the range while the slider has the focus.
+/// The smallest nice number that is at least `at_least`.
+fn nice_at_least(at_least: f64, integral: bool, quarters: bool) -> f64 {
+    nice_numbers(integral, quarters)
+        .find(|n| *n >= at_least)
+        .unwrap_or(at_least)
+}
+
+/// How a slider is anchored: the `step` its value moves in, and the `majors`, the values that get a
+/// long mark and a number. The ends of the range are always majors.
+#[derive(Clone, Debug, PartialEq)]
+struct Anchors {
+    step: f64,
+    majors: Vec<f64>,
+}
+
+/// Anchors for a slider over `bounds`: about 20 to 40 steps in all, and a major mark about every
+/// fifth of the range, at round numbers (a slider from 150 to 500 gets 200, 300 and 400 besides its
+/// ends), never so close to an end that two numbers would touch.
+fn slider_anchors(bounds: (f64, f64), integral: bool) -> Anchors {
+    let (lo, hi) = bounds;
+    let span = hi - lo;
+    if span <= 0.0 {
+        return Anchors {
+            step: 1.0,
+            majors: vec![lo],
+        };
+    }
+    let step = nice_at_least(span / 40.0, integral, false);
+    let major = nice_at_least(span / 5.0, integral, true).max(step);
+    let mut majors = vec![lo];
+    let mut m = (lo / major).floor() * major + major;
+    while m < hi - span * 0.07 {
+        if m > lo + span * 0.07 {
+            majors.push(m);
+        }
+        m += major;
+    }
+    majors.push(hi);
+    Anchors { step, majors }
+}
+
+/// The value the pointer at `fraction` of the rail means: the nearest of the grid of `step`, the
+/// start and the end of the range. `free` (Shift held) skips the grid.
+fn slider_snap(fraction: f32, bounds: (f64, f64), step: f64, integral: bool, free: bool) -> f64 {
+    let raw = bounds.0 + (bounds.1 - bounds.0) * f64::from(fraction.clamp(0.0, 1.0));
+    if free {
+        return if integral { raw.round() } else { raw };
+    }
+    let grid = ((raw / step).round() * step).clamp(bounds.0, bounds.1);
+    [grid, bounds.0, bounds.1]
+        .into_iter()
+        .min_by(|a, b| (raw - a).abs().total_cmp(&(raw - b).abs()))
+        .map_or(grid, |v| if integral { v.round() } else { v })
+}
+
+/// A rail with a round knob, as wide as the space left, with marks under it (see
+/// [`slider_anchors`]). Dragging or clicking sets `value`, snapped to the marks (hold Shift to move
+/// freely); the arrow keys move it by one step while the slider has the focus.
 pub(in crate::ui::settings) fn slider<Num: egui::emath::Numeric>(
     ui: &mut egui::Ui,
     value: &mut Num,
@@ -588,10 +656,12 @@ pub(in crate::ui::settings) fn slider<Num: egui::emath::Numeric>(
     const RAIL_H: f32 = 6.0;
     const KNOB: f32 = 11.0;
     let bounds = (range.start().to_f64(), range.end().to_f64());
-    let size = Vec2::new(ui.available_width().max(60.0), 28.0);
+    let anchors = slider_anchors(bounds, Num::INTEGRAL);
+    // room for the rail with its knob, the marks under it and their numbers
+    let size = Vec2::new(ui.available_width().max(60.0), 46.0);
     let (rect, mut resp) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
     let rail = Rect::from_center_size(
-        rect.center(),
+        Pos2::new(rect.center().x, rect.top() + 15.0),
         Vec2::new((rect.width() - 2.0 * KNOB).max(1.0), RAIL_H),
     );
 
@@ -599,14 +669,17 @@ pub(in crate::ui::settings) fn slider<Num: egui::emath::Numeric>(
         && (resp.dragged() || resp.clicked() || resp.is_pointer_button_down_on())
     {
         let f = ((p.x - rail.min.x) / rail.width().max(1.0)).clamp(0.0, 1.0);
-        let new = slider_value(f, bounds, Num::INTEGRAL);
+        // Shift moves freely; otherwise the value snaps to the marks, which is what makes a round
+        // number easy to land on
+        let free = ui.input(|i| i.modifiers.shift);
+        let new = slider_snap(f, bounds, anchors.step, Num::INTEGRAL, free);
         if new != value.to_f64() {
             *value = Num::from_f64(new);
             resp.mark_changed();
         }
     }
     if resp.has_focus() {
-        let step = ((bounds.1 - bounds.0) / 50.0).max(if Num::INTEGRAL { 1.0 } else { 0.0 });
+        let step = anchors.step;
         let dir = ui.input(|i| {
             i64::from(i.key_pressed(egui::Key::ArrowRight) || i.key_pressed(egui::Key::ArrowUp))
                 - i64::from(
@@ -624,6 +697,44 @@ pub(in crate::ui::settings) fn slider<Num: egui::emath::Numeric>(
     let f = slider_fraction(value.to_f64(), bounds);
     let x = rail.min.x + rail.width() * f;
     let painter = ui.painter();
+    // the marks: a small one at every step, a long one with its number at the majors
+    let at = |v: f64| rail.min.x + rail.width() * slider_fraction(v, bounds);
+    let steps = ((bounds.1 - bounds.0) / anchors.step).floor() as usize;
+    if (1..=60).contains(&steps) {
+        let mut v = (bounds.0 / anchors.step).ceil() * anchors.step;
+        while v <= bounds.1 + 1e-9 {
+            painter.line_segment(
+                [
+                    Pos2::new(at(v), rail.max.y + 5.0),
+                    Pos2::new(at(v), rail.max.y + 8.0),
+                ],
+                Stroke::new(1.0, pal().border),
+            );
+            v += anchors.step;
+        }
+    }
+    for m in &anchors.majors {
+        let on = (value.to_f64() - m).abs() < 1e-6;
+        painter.line_segment(
+            [
+                Pos2::new(at(*m), rail.max.y + 5.0),
+                Pos2::new(at(*m), rail.max.y + 12.0),
+            ],
+            Stroke::new(1.5, if on { accent } else { pal().muted }),
+        );
+        let text = if Num::INTEGRAL || m.fract() == 0.0 {
+            format!("{}", *m as i64)
+        } else {
+            format!("{m:.1}")
+        };
+        painter.text(
+            Pos2::new(at(*m), rail.max.y + 14.0),
+            egui::Align2::CENTER_TOP,
+            text,
+            FontId::proportional(10.5),
+            if on { accent_text(accent) } else { pal().muted },
+        );
+    }
     painter.rect_filled(rail, PILL, pal().track);
     let filled = Rect::from_min_max(rail.min, Pos2::new(x, rail.max.y));
     painter.rect_filled(filled, PILL, accent);
@@ -737,6 +848,15 @@ pub(in crate::ui::settings) fn status(ui: &mut egui::Ui, ok: bool, text: &str) {
         g,
         Color32::PLACEHOLDER,
     );
+}
+
+/// The width a [`status`] pill needs for `text`: what a row gives its control so the pill is not
+/// squeezed (and the label beside it is not, either).
+pub(in crate::ui::settings) fn status_width(ui: &egui::Ui, text: &str) -> f32 {
+    galley(ui, text, text_font(13.0, true), Color32::PLACEHOLDER)
+        .size()
+        .x
+        + 32.0
 }
 
 /// A line of secondary text.
@@ -1124,6 +1244,10 @@ pub(in crate::ui::settings) fn sheet<R>(
 /// list is one of these: a title, the content, a close button; it stays open while you click and
 /// type inside and closes on a click outside, on its button again, on Esc, or when `add_contents`
 /// calls `ui.close()`.
+///
+/// Nothing uses it at the moment (the profile actions unfold in a row instead); it stays for the
+/// next small form that belongs under its button.
+#[allow(dead_code)]
 pub(in crate::ui::settings) fn popover<R>(
     trigger: &egui::Response,
     title: &str,
@@ -1527,16 +1651,88 @@ mod tests {
         assert_eq!(slider_fraction(9999.0, range), 1.0, "clamped");
         assert_eq!(slider_fraction(5.0, (3.0, 3.0)), 0.0, "an empty range");
         for v in [150.0, 500.0, 1200.0, 1500.0] {
-            let back = slider_value(slider_fraction(v, range), range, true);
+            let back = slider_snap(slider_fraction(v, range), range, 50.0, true, true);
             assert_eq!(back, v, "{v} survives the round trip");
         }
         assert_eq!(
-            slider_value(0.5, (0.0, 3.0), true),
+            slider_snap(0.5, (0.0, 3.0), 1.0, true, true),
             2.0,
             "rounds to a whole number"
         );
-        assert_eq!(slider_value(0.5, (0.0, 3.0), false), 1.5);
-        assert_eq!(slider_value(7.0, (0.0, 10.0), true), 10.0, "clamped");
+        assert_eq!(slider_snap(0.5, (0.0, 3.0), 1.0, false, true), 1.5);
+        assert_eq!(
+            slider_snap(7.0, (0.0, 10.0), 1.0, true, true),
+            10.0,
+            "clamped"
+        );
+    }
+
+    #[test]
+    fn every_slider_of_settings_gets_round_anchors() {
+        // (range, step, majors) of the sliders Settings has
+        let cases: [((f64, f64), f64, Vec<f64>); 5] = [
+            ((0.0, 100.0), 5.0, vec![0.0, 20.0, 40.0, 60.0, 80.0, 100.0]),
+            (
+                (150.0, 500.0),
+                10.0,
+                vec![150.0, 200.0, 300.0, 400.0, 500.0],
+            ),
+            ((150.0, 1500.0), 50.0, vec![150.0, 500.0, 1000.0, 1500.0]),
+            (
+                (500.0, 4000.0),
+                100.0,
+                vec![500.0, 1000.0, 2000.0, 3000.0, 4000.0],
+            ),
+            ((10.0, 600.0), 20.0, vec![10.0, 200.0, 400.0, 600.0]),
+        ];
+        for (range, step, majors) in cases {
+            let a = slider_anchors(range, true);
+            assert_eq!((a.step, a.majors), (step, majors), "{range:?}");
+        }
+        let pie = slider_anchors((140.0, 360.0), false);
+        assert_eq!(pie.step, 10.0);
+        assert_eq!(pie.majors.first(), Some(&140.0));
+        assert_eq!(pie.majors.last(), Some(&360.0));
+        assert!(pie.majors.windows(2).all(|w| w[1] - w[0] >= 220.0 * 0.07));
+        assert_eq!(
+            slider_anchors((3.0, 3.0), true).majors,
+            vec![3.0],
+            "an empty range"
+        );
+    }
+
+    #[test]
+    fn the_slider_snaps_to_the_grid_and_the_ends_unless_shift_is_held() {
+        let r = (150.0, 500.0);
+        let at = |v: f64| slider_fraction(v, r);
+        assert_eq!(slider_snap(at(263.0), r, 10.0, true, false), 260.0);
+        assert_eq!(slider_snap(at(268.0), r, 10.0, true, false), 270.0);
+        assert_eq!(
+            slider_snap(at(263.0), r, 10.0, true, true),
+            263.0,
+            "Shift is free"
+        );
+        assert_eq!(
+            slider_snap(0.0, r, 10.0, true, false),
+            150.0,
+            "the start is reachable"
+        );
+        assert_eq!(
+            slider_snap(1.0, r, 10.0, true, false),
+            500.0,
+            "so is the end"
+        );
+        // a range that does not start on the grid: the start beats the nearest grid point
+        assert_eq!(
+            slider_snap(
+                slider_fraction(14.0, (10.0, 600.0)),
+                (10.0, 600.0),
+                20.0,
+                true,
+                false
+            ),
+            10.0
+        );
     }
 
     #[test]

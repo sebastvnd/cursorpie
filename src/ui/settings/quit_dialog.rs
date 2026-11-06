@@ -63,12 +63,93 @@ impl App {
             );
             self.ed.stop_recording();
             self.ed.close_sheet();
+            self.confirm_discard = false;
             self.confirm_quit = true;
             self.raise_settings(ctx, "quit");
             ctx.request_repaint();
         } else {
             self.quit(ctx);
         }
+    }
+
+    /// Cancel, Esc and the window's close button. With nothing unsaved the window closes at once;
+    /// otherwise it opens the sheet that asks before the edits are thrown away.
+    pub fn request_cancel(&mut self) {
+        if self.confirm_discard || self.confirm_quit {
+            return;
+        }
+        if self.has_unsaved_changes() {
+            self.ed.stop_recording();
+            self.ed.close_sheet();
+            self.confirm_discard = true;
+        } else {
+            self.closing = Some(false);
+        }
+    }
+
+    /// Draws the "discard changes?" sheet while `confirm_discard` is set. Enter accepts (closes
+    /// without saving), Esc or a click outside keeps editing.
+    pub(super) fn discard_dialog(&mut self, ctx: &egui::Context) {
+        if !self.confirm_discard {
+            return;
+        }
+        let enter = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+        let mut discard = enter;
+        let mut keep = false;
+        let (floating, ()) = sheet(
+            ctx,
+            "confirm_discard",
+            self.ed.card,
+            Vec2::new(520.0, 200.0),
+            "Discard changes?",
+            |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    ui.label(
+                        RichText::new(symbols::WARNING.to_string())
+                            .font(egui::FontId::new(18.0, crate::ui::fonts::icons()))
+                            .color(pal().bad),
+                    );
+                    ui.label(crate::ui::fonts::title(
+                        "You have unsaved changes",
+                        15.0,
+                        pal().text,
+                    ));
+                });
+                ui.add_space(6.0);
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(
+                            "If you cancel now, the changes you made in Settings are lost. \
+                             Press Enter to discard them, or Esc to keep editing.",
+                        )
+                        .size(13.5)
+                        .color(pal().muted),
+                    )
+                    .wrap(),
+                );
+                ui.add_space(GAP);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    if button(ui, Look::Danger, None, "Discard (Enter)").clicked() {
+                        discard = true;
+                    }
+                    if button(ui, Look::Soft, None, "Keep editing (Esc)").clicked() {
+                        keep = true;
+                    }
+                });
+            },
+        );
+        if floating.close && !discard {
+            keep = true;
+        }
+        if discard {
+            self.confirm_discard = false;
+            self.closing = Some(false);
+        } else if keep {
+            self.confirm_discard = false;
+        }
+        ctx.request_repaint();
     }
 
     /// Draws the sheet while `confirm_quit` is set and applies the answer. It is a plain "are you

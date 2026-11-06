@@ -58,6 +58,9 @@ pub fn spawn(notifier: Notifier) {
         .name("cursorpie-tap".into())
         .spawn(move || {
             let state = Arc::new(Mutex::new(Gesture::Idle));
+            // the trackpad source (idle until "touch_trigger" is switched on) shares the gesture
+            super::touch::start(state.clone(), notifier.clone());
+            super::touch::register_virtual(state.clone(), notifier.clone());
             let mut warned = false;
             loop {
                 let (st, n) = (state.clone(), notifier.clone());
@@ -72,6 +75,12 @@ pub fn spawn(notifier: Notifier) {
                         CGEventType::RightMouseDown,
                         CGEventType::RightMouseUp,
                         CGEventType::RightMouseDragged,
+                        // only the trackpad's extra click looks at the left button, and only while
+                        // a trackpad pie is open (see `handle`: one atomic read otherwise)
+                        CGEventType::LeftMouseDown,
+                        CGEventType::LeftMouseUp,
+                        CGEventType::LeftMouseDragged,
+                        CGEventType::ScrollWheel,
                         CGEventType::KeyDown,
                         CGEventType::KeyUp,
                     ],
@@ -89,7 +98,7 @@ pub fn spawn(notifier: Notifier) {
                         tap.enable();
                         super::TAP_ACTIVE.store(true, Ordering::SeqCst);
                         diag::log!("tap", "hook", backend = "macos", state = "running");
-                        notifier.ctx.request_repaint();
+                        notifier.wake();
                         CFRunLoop::run_current();
                         super::TAP_ACTIVE.store(false, Ordering::SeqCst);
                         diag::log!("tap", "hook", backend = "macos", state = "stopped");
@@ -104,7 +113,7 @@ pub fn spawn(notifier: Notifier) {
                                  to this app in System Settings -> Privacy & Security. Retrying every 2 s..."
                             );
                         }
-                        notifier.ctx.request_repaint();
+                        notifier.wake();
                     }
                 }
                 std::thread::sleep(Duration::from_secs(2));
@@ -146,6 +155,9 @@ fn translate(etype: CGEventType, event: &CGEvent) -> Option<Ev> {
         CGEventType::RightMouseDown => mouse(Kind::Down, super::RIGHT_BUTTON),
         CGEventType::RightMouseUp => mouse(Kind::Up, super::RIGHT_BUTTON),
         CGEventType::RightMouseDragged => mouse(Kind::Drag, super::RIGHT_BUTTON),
+        CGEventType::LeftMouseDown => mouse(Kind::Down, super::LEFT_BUTTON),
+        CGEventType::LeftMouseUp => mouse(Kind::Up, super::LEFT_BUTTON),
+        CGEventType::LeftMouseDragged => mouse(Kind::Drag, super::LEFT_BUTTON),
         CGEventType::OtherMouseDown => other(Kind::Down),
         CGEventType::OtherMouseUp => other(Kind::Up),
         CGEventType::OtherMouseDragged => other(Kind::Drag),
@@ -169,6 +181,30 @@ fn handle(
             unsafe { CGEventTapEnable(port as CFMachPortRef, true) };
         }
         reset(state, notifier);
+        return CallbackResult::Keep;
+    }
+    // the holding finger and the extra one are two fingers, which scroll: while a trackpad hold
+    // runs that must not reach the app under the pie
+    // (one atomic read for every scroll event)
+    if matches!(etype, CGEventType::ScrollWheel) {
+        return if super::touch::swallows_scroll() || super::pie_clicks::swallows_wheel(state) {
+            CallbackResult::Drop
+        } else {
+            CallbackResult::Keep
+        };
+    }
+    // a left click or drag is none of our business unless a pie is open: one atomic read and, for
+    // a press, a try_lock that never waits
+    let left = match etype {
+        CGEventType::LeftMouseDown => Some(Kind::Down),
+        CGEventType::LeftMouseUp => Some(Kind::Up),
+        CGEventType::LeftMouseDragged => Some(Kind::Drag),
+        _ => None,
+    };
+    if let Some(kind) = left
+        && !super::touch::extra::interested(kind)
+        && !super::pie_clicks::interested(state, kind)
+    {
         return CallbackResult::Keep;
     }
     if event.get_integer_value_field(EventField::EVENT_SOURCE_USER_DATA) == SYNTH_TAG {

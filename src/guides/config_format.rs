@@ -55,7 +55,7 @@
 //! | slices per ring | at most 8; every profile has at least one slice |
 //! | menu depth | at most [`MAX_DEPTH`](crate::config::MAX_DEPTH) = 5 (deeper submenus are emptied) |
 //! | `active` | points at a `Mode` slice, otherwise the first `Mode` found (or empty) |
-//! | `pie_hold_ms` | 150 to 2000 |
+//! | `pie_hold_ms` | 50 to 2000 |
 //! | `settings_hold_ms` | at least `pie_hold_ms + 300` |
 //! | `double_click_ms` | 150 to 500 |
 //! | `pie_size` | 140 to 360 |

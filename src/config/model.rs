@@ -63,6 +63,20 @@ pub enum AppGesture {
     DoubleClick,
 }
 
+/// What the extra click does while a pie opened by a trackpad hold is open (macOS trackpad, see
+/// `docs/TRACKPAD_HAPTICS_PLAN.md`).
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq, Default)]
+pub enum TouchClickAction {
+    /// The same as the right-click: the side buttons now follow the other pie; the pie stays open.
+    #[default]
+    SwitchPie,
+    /// The hovered *Mode* slice becomes the active mode of its profile, without closing the pie.
+    /// Over any other slice the click does nothing.
+    PickHovered,
+    /// The click is swallowed and does nothing.
+    Nothing,
+}
+
 /// How the app's icon looks in the center of an app's own pie.
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq, Default)]
 pub enum AppIconStyle {
@@ -257,6 +271,12 @@ impl Profile {
     }
 }
 
+/// The value of `show_labels` for a file that does not have the field: before the setting existed
+/// the pie always showed the names.
+fn names_on() -> bool {
+    true
+}
+
 /// The whole configuration. `#[serde(default)]` keeps older files loadable: every field
 /// missing from a file takes its value from [`Config::default`].
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
@@ -302,7 +322,9 @@ pub struct Config {
     pub app_icon_style: AppIconStyle,
     /// With `center_app_icon`: when the icon gets a shadow (see [`IconShadow`]).
     pub app_icon_shadow: IconShadow,
-    /// Each slice shows its name under its icon. Off: the pie shows icons only.
+    /// Each slice shows its name under its icon. Off (the default): the pie shows icons only. A
+    /// file saved before this setting existed keeps the names.
+    #[serde(default = "names_on")]
     pub show_labels: bool,
     /// Seconds without a pie or Settings on screen before the UI frees its caches and Settings
     /// state (0 = never). See [`ui::sleep`](crate::ui::sleep).
@@ -318,6 +340,21 @@ pub struct Config {
     pub glass_frost: u8,
     /// Glass only: how bright the rim and the sheen are, in percent.
     pub glass_shine: u8,
+    /// Trackpad (macOS) or precision touchpad (Windows): touching and holding opens the pie. Off:
+    /// the touch source never starts (on macOS the private touch framework is never loaded, on
+    /// Windows nothing is registered with Raw Input).
+    pub touch_trigger: bool,
+    /// Trackpad: how little the holding finger may move, in millimeters on the surface, before the
+    /// hold stops counting.
+    pub touch_still_mm: f32,
+    /// Trackpad: what the extra click does while the pie is open.
+    pub touch_click_action: TouchClickAction,
+    /// Trackpad: no hold is armed this soon after a key press, in ms (0 = off).
+    pub touch_typing_guard_ms: u64,
+    /// Haptic ticks on a trackpad (macOS), when the pie opens, the slice changes and the mode switches.
+    pub haptics: bool,
+    /// With `haptics`: also a tick when the hovered slice changes.
+    pub haptic_hover: bool,
 }
 
 impl Config {

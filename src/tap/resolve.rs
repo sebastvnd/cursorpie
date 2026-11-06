@@ -67,20 +67,35 @@ pub(super) fn select(profile: usize, path: &[usize], index: usize) {
         }
     );
     match kind {
-        Some(ItemKind::Mode { .. }) => {
-            let mut full = path.to_vec();
-            full.push(index);
-            config::set_active(profile, full);
-            // the side buttons now follow the pie this mode was picked in
-            let target = side::target();
-            let c = cfg();
-            if c.side_adopt {
-                side::adopt(&c, target.as_deref(), profile);
-            }
-        }
+        Some(ItemKind::Mode { .. }) => pick_mode(profile, path, index),
         Some(ItemKind::Run(action)) => run_action(action, side::target()),
         _ => {}
     }
+}
+
+/// Makes the *Mode* slice at `path` + `index` the active mode of `profile`, and, if the settings
+/// say so, makes the side buttons follow the pie it was picked in. The caller has checked that the
+/// slice is a mode.
+pub(super) fn pick_mode(profile: usize, path: &[usize], index: usize) {
+    let mut full = path.to_vec();
+    full.push(index);
+    config::set_active(profile, full);
+    // the side buttons now follow the pie this mode was picked in
+    let target = side::target();
+    let c = cfg();
+    if c.side_adopt {
+        side::adopt(&c, target.as_deref(), profile);
+    }
+}
+
+/// Whether the slice at `path` + `index` of `profile` is a *Mode* slice.
+pub(super) fn is_mode(profile: usize, path: &[usize], index: usize) -> bool {
+    let c = cfg();
+    c.profiles
+        .get(profile)
+        .and_then(|pr| items_at(&pr.items, path))
+        .and_then(|items| items.get(index))
+        .is_some_and(|i| matches!(i.kind, ItemKind::Mode { .. }))
 }
 
 /// Runs an action. If the settings say so, the target app is brought to the front first, because

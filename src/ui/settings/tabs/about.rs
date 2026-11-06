@@ -8,7 +8,7 @@ use crate::ui::fonts;
 use crate::ui::settings::theme::*;
 use crate::ui::settings::widgets::*;
 use crate::ui::symbols;
-use eframe::egui::{self, Color32, Vec2};
+use eframe::egui::{self, Color32, Pos2, Rect, Vec2};
 
 /// Opens `url` (or a `mailto:` address) with the system's default handler.
 ///
@@ -37,11 +37,20 @@ fn link_row(ui: &mut egui::Ui, label: &str, text: &str, url: &str) {
     });
 }
 
-/// A button that opens `url` in the browser.
+/// Diameter of the round link buttons in the hero card.
+const LINK_SIZE: f32 = 32.0;
+
+/// A round icon button that opens `url` in the browser. The tooltip names it and shows the address.
 fn link_button(ui: &mut egui::Ui, icon: char, text: &str, url: &str) {
-    if button(ui, Look::Soft, Some(icon), text)
-        .on_hover_text(url)
-        .clicked()
+    if round_button(
+        ui,
+        Look::Soft,
+        icon,
+        &format!("{text}\n{url}"),
+        true,
+        LINK_SIZE,
+    )
+    .clicked()
     {
         open_link(url);
     }
@@ -52,6 +61,7 @@ pub(in crate::ui::settings) fn about_tab(ui: &mut egui::Ui, accent: Color32) {
     // ------------------------------------------------------------ hero
     card().show(ui, |ui| {
         ui.set_width(ui.available_width());
+        let (corner, room) = (ui.cursor().min, ui.available_width());
         ui.add_space(GAP);
         ui.horizontal(|ui| {
             ui.add_space(4.0);
@@ -69,16 +79,27 @@ pub(in crate::ui::settings) fn about_tab(ui: &mut egui::Ui, accent: Color32) {
                 });
                 ui.add_space(2.0);
                 muted(ui, TAGLINE);
+                // room under the tagline, the card's bottom edge must not crowd it
+                ui.add_space(GAP);
             });
         });
-        ui.add_space(GAP);
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = Vec2::splat(8.0);
-            link_button(ui, symbols::GLOBE, "Website", WEBSITE_URL);
-            link_button(ui, symbols::GITHUB_LOGO, "GitHub repository", REPO_URL);
-            link_button(ui, symbols::BUG, "Report an issue", ISSUES_URL);
-            link_button(ui, symbols::DOWNLOAD_SIMPLE, "Downloads", RELEASES_URL);
-        });
+        // the links sit in the top right corner of the card as a row of round icons
+        let row_w = 4.0 * LINK_SIZE + 3.0 * 8.0;
+        ui.scope_builder(
+            egui::UiBuilder::new()
+                .max_rect(Rect::from_min_size(
+                    Pos2::new(corner.x + room - row_w - GAP, corner.y + GAP),
+                    Vec2::new(row_w, LINK_SIZE),
+                ))
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+            |ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                link_button(ui, symbols::GLOBE, "Website", WEBSITE_URL);
+                link_button(ui, symbols::GITHUB_LOGO, "GitHub repository", REPO_URL);
+                link_button(ui, symbols::BUG, "Report an issue", ISSUES_URL);
+                link_button(ui, symbols::DOWNLOAD_SIMPLE, "Downloads", RELEASES_URL);
+            },
+        );
         ui.add_space(GAP);
     });
     ui.add_space(SECTION_GAP);

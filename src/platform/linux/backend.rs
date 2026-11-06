@@ -516,6 +516,9 @@ pub fn choose_file(kind: FileKind, prompt: &str) -> Option<String> {
     chooser::run(&mut cmd)
 }
 
+/// No haptics: only a Mac trackpad ticks.
+pub fn haptic(_kind: crate::platform::HapticKind) {}
+
 /// A soft hover sound through the sound theme, if `canberra-gtk-play` is installed. At most about
 /// fifteen times a second.
 pub fn tick() {
@@ -575,10 +578,14 @@ pub fn ensure_installed() -> Option<PathBuf> {
     None
 }
 
-/// No command-line switches yet.
+/// The one command-line switch: `--touchpad-debug` (the app does not start).
 pub fn handle_command_line() -> bool {
-    false
+    // `cursorpie --touchpad-debug [seconds]`: a report on the touchpad, no window
+    crate::tap::touchpad_debug_from_args()
 }
+
+/// Nothing to wait for: the login entry already starts the app when the session is ready.
+pub fn wait_for_login_ready() {}
 
 /// Takes a lock file in the runtime directory. `false` if another copy holds it.
 pub fn single_instance() -> bool {

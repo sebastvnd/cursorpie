@@ -2,7 +2,7 @@
 //! otherwise pass through.
 
 use super::resolve::{remember_target, run_action, target_bundle_at};
-use super::{Gesture, Kind, Verdict};
+use super::{Gesture, Kind, Verdict, settings_open};
 use crate::config::{Action, cfg, extra_buttons_in_use, item_at, lock};
 use crate::geometry::Point;
 use crate::mouse;
@@ -34,6 +34,12 @@ pub(super) fn handle_side(
     };
     match kind {
         Kind::Down => {
+            // The pie is off while Settings is open: the side buttons send no action, the press is
+            // the app's (back and forward keep working in the Settings window).
+            if settings_open() {
+                SIDE_SWALLOWED[idx].store(false, Ordering::SeqCst);
+                return Verdict::Keep;
+            }
             let (pie_profile, hovered) = {
                 let g = lock(state);
                 match &*g {

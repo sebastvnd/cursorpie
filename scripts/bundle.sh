@@ -28,6 +28,7 @@ OUT="target/bundle/$APP.app"
 rm -rf "$OUT"
 mkdir -p "$OUT/Contents/MacOS" "$OUT/Contents/Resources"
 cp "$BIN" "$OUT/Contents/MacOS/$APP"
+cp assets/app-icon.icns "$OUT/Contents/Resources/CursorPie.icns"
 
 cat > "$OUT/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -38,19 +39,31 @@ cat > "$OUT/Contents/Info.plist" <<PLIST
   <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
   <key>CFBundleExecutable</key><string>$APP</string>
   <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleIconFile</key><string>CursorPie.icns</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
   <key>CFBundleVersion</key><string>$VERSION</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>NSHumanReadableCopyright</key><string>Copyright (c) 2026 Sebastvnd</string>
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
 PLIST
 
+# Finder metadata and quarantine flags inside the bundle break the signature ("app is damaged").
+xattr -cr "$OUT" 2>/dev/null || true
+
 SIGN_ARGS=(--force --deep --sign "${SIGN_ID:--}")
 if [ -n "${SIGN_ID:-}" ]; then
     # a Developer ID signature needs the hardened runtime and a timestamp to be notarized
     SIGN_ARGS+=(--options runtime --timestamp)
+else
+    # Ad-hoc signature: pin the identity to the bundle id instead of the binary hash. Without
+    # this, macOS treats every rebuild as a new app and forgets the Accessibility / Input
+    # Monitoring permission, so the app starts at login but its event tap stays dead.
+    SIGN_ARGS+=(-r="designated => identifier \"$BUNDLE_ID\"")
 fi
 codesign "${SIGN_ARGS[@]}" "$OUT"
+codesign --verify --deep --strict "$OUT"
 echo "Built $OUT ($(lipo -archs "$OUT/Contents/MacOS/$APP"))"
 echo "Note: with the ad-hoc signature macOS may ask you to re-grant Accessibility after every rebuild."
