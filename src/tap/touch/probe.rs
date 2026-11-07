@@ -78,9 +78,15 @@ pub fn probe() -> usize {
             .max()
             .unwrap_or(0)
     }
-    #[cfg(all(any(windows, feature = "check-windows"), not(target_os = "macos")))]
+    #[cfg(all(windows, not(target_os = "macos")))]
     {
         super::precision::probe()
+    }
+    // `check-windows` on another OS only type-checks the Windows code: its Raw Input calls do not
+    // exist there, so they must not be reachable, or the test binary fails to link.
+    #[cfg(all(feature = "check-windows", not(windows), not(target_os = "macos")))]
+    {
+        0
     }
     #[cfg(all(
         target_os = "linux",
