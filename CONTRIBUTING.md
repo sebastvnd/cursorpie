@@ -28,7 +28,7 @@ are under [Development workflow](#development-workflow).
 
 ## Prerequisites
 
-- **macOS 11 or later, Windows 10 (1809) / 11, or Linux with an X11 session.** Other Unixes build a do-nothing
+- **macOS 11 or later, Windows 10 (1809) / 11, or Linux with an X11 or Wayland session.** Other Unixes build a do-nothing
   stub, enough to run `cargo test`.
 - **Rust 1.88 or later** (edition 2024), installed with [rustup](https://rustup.rs).
 - **macOS:** Xcode Command Line Tools (`xcode-select --install`) for the linker and `codesign`.
@@ -82,7 +82,7 @@ packaged exe from the unzipped folder and follow checks 7a to 7c of `docs/WINDOW
 wizard with check 7d.
 
 **Linux.** The app works in an **X11 session** (supported, but experimental: its checklist is under internal
-observation); in a Wayland session a separate layer (`tap/wayland.rs`, `platform/linux/wayland/`) takes over (see
+observation) and in a **Wayland session**, where a separate layer (`tap/wayland.rs`, `platform/linux/wayland/`) takes over (written, not yet run on real hardware; see
 `docs/LINUX_MIGRATION.md`; the research and plan for Wayland, starting with KDE Plasma, are in
 `docs/WAYLAND_SUPPORT.md`). `scripts/package-linux.sh` builds a tarball with an `install.sh`. Build on an older
 distribution if the binary must start on older ones. `CURSORPIE_BACKEND=x11` forces the X11 backend, for bug

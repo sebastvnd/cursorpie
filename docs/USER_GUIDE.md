@@ -11,7 +11,7 @@ Everything about using CursorPie once it is installed. New here? Read [The gestu
 - [Profiles](#profiles)
 - [Side buttons and app pies](#side-buttons-and-app-pies)
 - [Your mouse and its extra buttons](#your-mouse-and-its-extra-buttons)
-- [Trackpad (macOS, Windows and Linux X11)](#trackpad-macos-windows-and-linux-x11)
+- [Trackpad (macOS, Windows and Linux)](#trackpad-macos-windows-and-linux)
 - [Settings](#settings)
 - [Undo, redo and backups](#undo-redo-and-backups)
 - [Sharing a profile](#sharing-a-profile)
@@ -145,9 +145,9 @@ front right before it sends one, unless it already is. Both are options in Behav
 front* for the old behavior. If CursorPie cannot tell which window is under the pointer, it uses the app in
 front.
 
-## Trackpad (macOS, Windows and Linux X11)
+## Trackpad (macOS, Windows and Linux)
 
-On a Mac a trackpad, on Windows a **precision touchpad** and on Linux (X11) a touchpad can do what the middle button does. It is **off by default**: turn on *Open the pie with a
+On a Mac a trackpad, on Windows a **precision touchpad** and on Linux (X11 or Wayland) a touchpad can do what the middle button does. It is **off by default**: turn on *Open the pie with a
 trackpad hold* in **Settings > Behavior > Trackpad** (and press Save). A mouse keeps working exactly as before, and
 a mouse and a trackpad can be used in any order, with the same pie, hold time, double-click speed and profiles.
 
@@ -180,7 +180,7 @@ feature is off. Only a **precision touchpad** works: an older touchpad that Wind
 finger positions, and Settings says *No precision touchpad found*. If a tap followed by a hold clicks the app under the
 pie, turn off *Tap twice and drag to multi-select* in Settings > Bluetooth & devices > Touchpad.
 
-### On Linux (X11)
+### On Linux (X11 and Wayland)
 
 - Everything above works the same way, except **haptic feedback**: a Linux touchpad has no standard way to tick, so
   those switches are not shown.

@@ -1,6 +1,6 @@
 # Install CursorPie
 
-CursorPie runs on macOS, Windows and Linux (X11). You can install a ready-made package from the latest
+CursorPie runs on macOS, Windows and Linux (X11 and Wayland). You can install a ready-made package from the latest
 [GitHub Release](https://github.com/sebastvnd/cursorpie/releases/latest), or build from source.
 
 ## Download a ready-made package
@@ -19,16 +19,16 @@ for your system:
 
 The macOS CI build uses an ad-hoc signature and is not notarized; the Windows CI binaries are not code-signed.
 macOS may require **right-click > Open** on first launch, and Windows SmartScreen may show a warning. Linux
-packages are built on the named distribution and require an X11 session. The release page also contains the
+packages are built on the named distribution and run in an X11 or a Wayland session (Wayland needs one extra step, see [Linux](#linux-x11-and-wayland)). The release page also contains the
 version-specific release notes.
 
 ## Requirements
 
 | | macOS | Windows | Linux |
 |---|---|---|---|
-| System | macOS 11 or later | Windows 10 (1809) or 11 | A distribution with an **X11 session** |
+| System | macOS 11 or later | Windows 10 (1809) or 11 | A distribution with an **X11 or Wayland session** |
 | To build | Rust 1.88+, Xcode Command Line Tools | Rust 1.88+, MSVC build tools | Rust 1.88+, a C linker, libx11, libxi, libxtst and libxrandr development files |
-| Permission | Accessibility | none | none |
+| Permission | Accessibility | none | none on X11; on Wayland the udev rule `70-cursorpie.rules` |
 
 Install Rust with [rustup](https://rustup.rs). Platform build tools are listed in
 [CONTRIBUTING.md](../CONTRIBUTING.md#prerequisites).
@@ -129,11 +129,11 @@ tray menu.
 Windows needs no permission. To control windows of programs that run as administrator, start CursorPie as
 administrator too, because Windows blocks input to them otherwise.
 
-## Linux (X11)
+## Linux (X11 and Wayland)
 
-Linux (X11) is supported but **experimental**: it works, but its behavior on different distributions and
+Linux (X11 and Wayland) is supported but **experimental**: it works, but its behavior on different distributions and
 desktops is still being observed, so expect rough edges and please report them. You do not need development
-packages to install one of the ready-made archives. Log in with an X11 session before launching CursorPie.
+packages to install one of the ready-made archives. CursorPie works in an X11 session and in a Wayland session; Wayland support is newer and has not yet been run on real hardware (see *Good to know* below).
 
 **Install a ready-made build:** download the package matching the distribution where you will run CursorPie:
 
@@ -165,7 +165,7 @@ cd cursorpie-*-linux-*
 ./install.sh --user                           # under ~/.local; plain ./install.sh uses /usr/local
 ```
 
-Start CursorPie from your applications menu or run `cursorpie`. It needs no permission and can start at login
+Start CursorPie from your applications menu or run `cursorpie`. In an X11 session it needs no permission (Wayland: see below), and it can start at login
 from **Settings > Behavior**. The package carries the icon in every size (16 to 512 px) and `install.sh` refreshes
 the icon cache, so no image tool is needed. Build on an older distribution if the binary must also start on older ones.
 
@@ -194,10 +194,10 @@ the pie with a trackpad hold* in **Settings > Behavior > Trackpad** and press Sa
 
 - **macOS:** works with any trackpad and needs the same Accessibility permission as the mouse.
 - **Windows:** needs a *precision* touchpad (most laptops since Windows 10). No permission is needed.
-- **Linux (X11):** your user must be in the `input` group: `sudo usermod -aG input $USER`, then log out and in.
-  If nothing happens, run `cursorpie --touchpad-debug` in a terminal.
+- **Linux (X11 and Wayland):** your user must be in the `input` group: `sudo usermod -aG input $USER`, then log out and in
+  (on Wayland the udev rule `70-cursorpie.rules` covers it too). If nothing happens, run `cursorpie --touchpad-debug` in a terminal.
 
-The [user guide](USER_GUIDE.md#trackpad-macos-windows-and-linux-x11) explains the gesture and its settings.
+The [user guide](USER_GUIDE.md#trackpad-macos-windows-and-linux) explains the gesture and its settings.
 
 ## First launch
 

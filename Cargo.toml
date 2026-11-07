@@ -3,7 +3,7 @@ name = "cursorpie"
 version = "0.8.6"
 edition = "2024"
 rust-version = "1.88"
-description = "Hold-to-open pie menu for macOS, Windows and Linux (X11): per-app profiles, shortcuts, launchers and submenus."
+description = "Hold-to-open pie menu for macOS, Windows and Linux (X11 and Wayland): per-app profiles, shortcuts, launchers and submenus."
 license = "MIT"
 
 authors = ["sebastvnd@gmail.com"]

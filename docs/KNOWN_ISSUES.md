@@ -37,7 +37,7 @@ CursorPie, the trigger button and the output of `cargo run --release` from a ter
   release (the feature turns itself off and says so), so it cannot be in a Mac App Store build. The surface of a
   Magic Mouse is not used. Haptic ticks need a Force Touch trackpad and the system's haptic setting on. **Not yet
   verified on a Mac:** see the manual checklist in [TRACKPAD_HAPTICS_PLAN.md](TRACKPAD_HAPTICS_PLAN.md#manual-verification-checklist).
-- **Trackpad on Linux (X11)** (off by default): the touchpad is read from `/dev/input`, so the user must be in the
+- **Trackpad on Linux (X11 and Wayland)** (off by default): the touchpad is read from `/dev/input`, so the user must be in the
   `input` group (Settings says so when not). No haptic ticks. The click of the extra finger is swallowed by grabbing
   the left and right buttons while a hold runs; a click that is not the extra one reaches the app a moment late, like
   a side-button click. Touchpads that report no finger count or no size (some virtual or very old ones) are skipped.
@@ -101,7 +101,7 @@ CursorPie, the trigger button and the output of `cargo run --release` from a ter
 
 ## Linux
 
-Linux (X11) is supported but experimental. Its behavior is still being observed on real desktops, and some
+Linux (X11 and Wayland) is supported but experimental. Its behavior is still being observed on real desktops, and some
 parts may turn out to be wrong, so a surprise here may be a bug rather than a limit. See
 [LINUX_MIGRATION.md](LINUX_MIGRATION.md) for what is built and for the checklist being run; when you report
 something, say which distribution, desktop, session type and scaling you use.

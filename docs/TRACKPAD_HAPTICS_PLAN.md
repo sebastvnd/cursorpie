@@ -1,6 +1,6 @@
-# Trackpad and haptics: design and plan (macOS, with Windows and Linux X11 sections)
+# Trackpad and haptics: design and plan (macOS, with Windows and Linux sections)
 
-**Status: implemented in code (phases T1 to T5 and T7), and for Linux X11 (see [Linux (X11)](#linux-x11)); the native layers are not yet verified on a Mac or on a Linux touchpad.** The
+**Status: implemented in code (phases T1 to T5 and T7), and for Linux, X11 and Wayland (see [Linux (X11)](#linux-x11)); the native layers are not yet verified on a Mac or on a Linux touchpad.** The
 portable core (recognizer, bridge, extra click, haptic limiter, config, Settings panel) is unit tested on every OS.
 The code that talks to `MultitouchSupport.framework`, the added `LeftMouse*` events of the tap and the haptic call
 compile only on macOS and were written without a Mac: spikes S1 to S10 and the manual checklist below are still to
@@ -54,7 +54,7 @@ feature on.
 4. **Haptics use the public `NSHapticFeedbackManager`.** It needs no private call, is ignored by the system when
    no finger touches the trackpad, and so is harmless with a mouse. A private actuator API exists for richer
    waveforms; it is a later, optional step.
-5. **Everything is off by default.** macOS first; Windows (precision touchpad) and Linux X11 were added afterwards, so all three systems are covered.
+5. **Everything is off by default.** macOS first; Windows (precision touchpad) and Linux (X11, then Wayland) were added afterwards, so all three systems are covered.
 
 ## Goals and non-goals
 
@@ -74,7 +74,7 @@ feature on.
 
 - No code is written by this document. It is the research and the plan.
 - No support for the Magic Mouse's touch surface in the first release (see [Open decisions](#open-decisions-for-the-maintainer)).
-- No Wayland touchpad work. Linux X11 has a design, in [Linux (X11)](#linux-x11); the Windows Precision Touchpad has one, in [Windows Precision Touchpad](#windows-precision-touchpad).
+- Wayland touchpad work came after this plan: the reader of the touchpad is the same, see [Linux (X11)](#linux-x11). Linux X11 has a design, in [Linux (X11)](#linux-x11); the Windows Precision Touchpad has one, in [Windows Precision Touchpad](#windows-precision-touchpad).
 - No custom gestures (swipes, pinches, rotations) and no replacement of the system's own trackpad gestures.
 - No Mac App Store build. CursorPie is distributed as a DMG, and a private framework is not allowed in the store.
 
@@ -582,4 +582,5 @@ little X work. No haptics (no standard Linux interface), so `Os::has_haptics` is
 - **Typing guard.** `XI_RawKeyPress` is selected only while `touch_trigger` is on, and only calls `touch::note_key`.
 - **Not verified:** the thread, the `EVIOCGABS` ioctl, permissions and the grab timing on real hardware. The parser,
   the repeat-frame logic, the device detection and the grab arithmetic are unit tested.
-- **Not covered:** Wayland (the mouse layer is X11 only), touchscreens, tablets.
+- **Wayland:** the same evdev reader is used. While a hold runs, the Wayland layer grabs the touchpad's node (`EVIOCGRAB`) so the extra finger's click and the scroll do not reach the app, and moves the pointer itself through a small virtual mouse (`/dev/uinput`). It needs the udev rule (or the `input` group). Not run on real hardware yet.
+- **Not covered:** touchscreens, tablets.

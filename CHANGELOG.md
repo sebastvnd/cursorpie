@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Docs: Linux is described as X11 and Wayland everywhere.** The README, install guide, user guide, configuration
+  reference, known issues, contributing guide, trackpad plan, the website and the package description still said that
+  Linux means X11 (and that Wayland only works with XWayland windows). They now say that both session types work, what
+  Wayland needs (the udev rule), and that the Wayland layer has not been run on real hardware yet. The user guide
+  section is now `#trackpad-macos-windows-and-linux`.
+
 ## 0.8.6
 
 - **Linux: no more black flash when the pie or Settings appears.** The window was shown right after it was resized

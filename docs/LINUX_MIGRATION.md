@@ -4,8 +4,8 @@
 status](#implementation-status)) is implemented and supported, but experimental. The manual
 [checklist](#manual-verification-checklist) is under internal observation: the maintainers are
 watching how CursorPie behaves on real desktops and whether any part of the X11 implementation is
-wrong, so no item is signed off yet and no results are recorded here. Wayland (L5 to L7) is a design
-only.** Releases up to 0.4.2 supported macOS and Windows only (Linux built a do-nothing stub so
+wrong, so no item is signed off yet and no results are recorded here. Wayland (L5 to L7) is partly
+written and has not yet been run on real hardware: see [Implementation status](WAYLAND_SUPPORT.md#implementation-status).** Releases up to 0.4.2 supported macOS and Windows only (Linux built a do-nothing stub so
 `cargo test` runs); the X11 backend arrived in 0.5.0 (see `CHANGELOG.md`).
 
 **Update, November 2026:** KDE Plasma no longer offers an X11 session from its 6.8 release (October 2026), and GNOME

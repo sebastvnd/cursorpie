@@ -36,7 +36,7 @@ Built with **Rust** and [egui](https://github.com/emilk/egui), CursorPie is insp
 
 - **A quick, natural gesture.** Hold for 150 ms by default, flick toward a slice, and release. Hold in the center to open Settings.
 - **A menu for every app.** Keep a general pie and create app-specific profiles for the tools you use most.
-- **Mouse or trackpad.** Touch and hold a trackpad instead of pressing a button, on macOS, Windows and Linux (X11). It is off by default and uses the same pie, timings and profiles; see [Trackpad](#trackpad).
+- **Mouse or trackpad.** Touch and hold a trackpad instead of pressing a button, on macOS, Windows and Linux (X11 and Wayland). It is off by default and uses the same pie, timings and profiles; see [Trackpad](#trackpad).
 - **Useful mouse buttons.** Assign actions to back, forward and other supported extra buttons with configurable modes.
 - **Actions that fit your workflow.** Trigger shortcuts, open apps, links and files, run shell commands, or chain actions into a sequence.
 - **Nested menus.** Organize up to 8 slices per ring and 5 levels of submenus.
@@ -74,7 +74,7 @@ No middle button? Turn on *Open the pie with a trackpad hold* in **Settings > Be
 |---|---|---|
 | **macOS 11+** | Supported | Requires the Accessibility permission. The trigger can be the middle button or one of three extra mouse buttons. Any trackpad works; Force Touch trackpads also give haptic ticks. |
 | **Windows 10 (1809) / 11** | Supported · stable | No special permission required. The middle button is the only trigger; Windows exposes the back and forward buttons as extra buttons. Trackpad hold needs a precision touchpad. |
-| **Linux (X11)** | Supported · experimental | x86_64 packages are provided for Ubuntu 24.04+ and Fedora 44. Wayland sessions (KDE Plasma 6.8 and newer) are handled by a separate layer that needs a udev rule; per-app profiles work on KDE Plasma. It is written and tested but not yet run on a Plasma 6.8 machine ([status](docs/WAYLAND_SUPPORT.md)). There is no tray icon yet. Trackpad hold reads the touchpad from `/dev/input` and needs your user in the `input` group. |
+| **Linux (X11 and Wayland)** | Supported · experimental | x86_64 packages are provided for Ubuntu 24.04+ and Fedora 44. X11 sessions need nothing set up. Wayland sessions (KDE Plasma 6.8 and newer) are handled by a separate layer that needs a udev rule; per-app profiles work on KDE Plasma. It is written and tested but not yet run on a Plasma 6.8 machine ([status](docs/WAYLAND_SUPPORT.md)). There is no tray icon yet. Trackpad hold reads the touchpad from `/dev/input` and needs your user in the `input` group (on Wayland the udev rule covers it). |
 
 Linux support is still being tested across distributions and desktop environments. Read [Known issues](docs/KNOWN_ISSUES.md) before installing, especially when using Wayland.
 
@@ -86,9 +86,9 @@ Touch and hold opens the pie, moving the finger hovers a slice, lifting runs it,
 |---|---|---|
 | **macOS** | any trackpad, through Apple's private `MultitouchSupport` framework (loaded only while the feature is on) | the Accessibility permission; haptic ticks on a Force Touch trackpad |
 | **Windows** | a *precision* touchpad, through Raw Input | nothing extra; no haptics |
-| **Linux (X11)** | a touchpad, from `/dev/input/event*` | your user in the `input` group (`sudo usermod -aG input $USER`, then log out and in); no haptics |
+| **Linux (X11 and Wayland)** | a touchpad, from `/dev/input/event*` | your user in the `input` group (`sudo usermod -aG input $USER`, then log out and in), or on Wayland the udev rule `70-cursorpie.rules`; no haptics |
 
-The trackpad paths are new and have not been verified on every device yet; see [Known issues](docs/KNOWN_ISSUES.md) and the [user guide](docs/USER_GUIDE.md#trackpad-macos-windows-and-linux-x11). On Linux, `cursorpie --touchpad-debug` shows which step fails.
+The trackpad paths are new and have not been verified on every device yet; see [Known issues](docs/KNOWN_ISSUES.md) and the [user guide](docs/USER_GUIDE.md#trackpad-macos-windows-and-linux). On Linux, `cursorpie --touchpad-debug` shows which step fails.
 
 ## Documentation
 

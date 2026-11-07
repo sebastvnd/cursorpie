@@ -25,11 +25,11 @@ written for people changing the code, not for users.
 | Document | Status | What it covers |
 |---|---|---|
 | [WINDOWS_MIGRATION.md](WINDOWS_MIGRATION.md) | Done, Windows is stable | How the macOS-only code base became macOS and Windows, and the Windows checklist |
-| [LINUX_MIGRATION.md](LINUX_MIGRATION.md) | X11 supported but experimental, checklist under internal observation; Wayland designed | The Linux design, what is implemented, and the Linux checklist |
-| [WAYLAND_SUPPORT.md](WAYLAND_SUPPORT.md) | Research and plan, nothing built | Why Wayland support is needed now (current KDE Plasma has no X11 session), what Plasma offers, what "behaves like the other platforms" means, and the milestones and spikes |
+| [LINUX_MIGRATION.md](LINUX_MIGRATION.md) | X11 supported but experimental, checklist under internal observation; Wayland partly written, not yet run on real hardware | The Linux design, what is implemented, and the Linux checklist |
+| [WAYLAND_SUPPORT.md](WAYLAND_SUPPORT.md) | Research, plan and a first implementation; not yet run on a Plasma 6.8 machine | Why Wayland support is needed now (current KDE Plasma has no X11 session), what Plasma offers, what "behaves like the other platforms" means, and the milestones and spikes |
 | [OTHER_DESKTOPS.md](OTHER_DESKTOPS.md) | Done | How *Open app* follows an app to another desktop or Space |
 | [UI_DESIGN.md](UI_DESIGN.md) | Living | Look, rendering rules and the visual checklist |
-| [TRACKPAD_HAPTICS_PLAN.md](TRACKPAD_HAPTICS_PLAN.md) | Implemented in code; native macOS, Windows and Linux X11 layers awaiting verification on real hardware | How a trackpad on macOS, Windows and Linux X11 (hold, extra-finger click) and haptic feedback on a Mac can work with the same pie as the mouse, and the spikes to run first |
+| [TRACKPAD_HAPTICS_PLAN.md](TRACKPAD_HAPTICS_PLAN.md) | Implemented in code; native macOS, Windows and Linux (X11 and Wayland) layers awaiting verification on real hardware | How a trackpad on macOS, Windows and Linux (hold, extra-finger click) and haptic feedback on a Mac can work with the same pie as the mouse, and the spikes to run first |
 
 ## Keeping the docs in sync
 
