@@ -44,6 +44,77 @@ impl Action {
             _ => None,
         }
     }
+
+    /// What this action opens that a slice can offer the choice for: the first "Open app" step
+    /// with a name, or the first "Open URL" step with a web link, in the order they run (a
+    /// [`Action::Sequence`] is looked through). `None` for everything else, a blank app name, and a
+    /// link that is not a web link (a file, `mailto:`...).
+    ///
+    /// [`Action::open_target`] is the same for apps only.
+    ///
+    /// Use [`Action::open_choice_key`] to know what the pie asks about: a web link only counts
+    /// when the browser extension is on.
+    pub fn open_choice_target(&self) -> Option<OpenTarget<'_>> {
+        match self {
+            Action::OpenApp(app) => Some(app.trim())
+                .filter(|a| !a.is_empty())
+                .map(OpenTarget::App),
+            Action::OpenUrl(url) => Some(url.trim())
+                .filter(|u| is_web_url(u))
+                .map(OpenTarget::Url),
+            Action::Sequence(steps) => steps.iter().find_map(Action::open_choice_target),
+            _ => None,
+        }
+    }
+
+    /// The key of what a press asks about for this action (see [`OpenTarget::key`]): an app, or a
+    /// web link when `bridge` is true. A web link needs the browser extension (the setting
+    /// [`Config::browser_bridge`]): without it CursorPie cannot know which pages are open, so the
+    /// slice just opens the link, with no choice.
+    pub fn open_choice_key(&self, bridge: bool) -> Option<String> {
+        match self.open_choice_target()? {
+            OpenTarget::Url(_) if !bridge => None,
+            target => Some(target.key()),
+        }
+    }
+}
+
+/// What an "Open" slice can offer the choice "new window or the one that is open" for: an app, or a
+/// web page (an `http://` or `https://` link).
+///
+/// The choice is made by [`Action::open_choice_target`]; [`OpenTarget::key`] is the one string the
+/// cache of [`running`](crate::running) knows it by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OpenTarget<'a> {
+    /// The text of an [`Action::OpenApp`], trimmed and not blank.
+    App(&'a str),
+    /// The text of an [`Action::OpenUrl`], trimmed, when it is a web link (see [`is_web_url`]).
+    Url(&'a str),
+}
+
+/// What a web link's key starts with, so it can never be mistaken for an app (see
+/// [`OpenTarget::key`]).
+pub const URL_KEY_PREFIX: &str = "url:";
+
+impl OpenTarget<'_> {
+    /// The key the running-cache knows this target by: the app as typed, or [`URL_KEY_PREFIX`] and
+    /// the link.
+    pub fn key(&self) -> String {
+        match self {
+            OpenTarget::App(app) => (*app).to_string(),
+            OpenTarget::Url(url) => format!("{URL_KEY_PREFIX}{url}"),
+        }
+    }
+}
+
+/// Whether `text` is a web link: `http://` or `https://` (any case). Only those get the choice
+/// between a new window and the page that is open. A file path, a `mailto:` link or any other scheme
+/// is opened as it always was.
+pub fn is_web_url(text: &str) -> bool {
+    let t = text.trim();
+    ["http://", "https://"]
+        .iter()
+        .any(|p| t.get(..p.len()).is_some_and(|h| h.eq_ignore_ascii_case(p)))
 }
 
 /// What a slice does.
@@ -327,6 +398,11 @@ pub struct Config {
     /// green + (a new window) and a yellow square (the app that is open). Off: the slice always
     /// does what it did before this setting existed (see [`running`](crate::running)).
     pub open_app_choice: bool,
+    /// Use the CursorPie browser extension (it ships inside the program) to know which web pages
+    /// are open, go to one, and open a link in a new window, for the choice of an "Open URL" slice
+    /// (see [`bridge`](crate::bridge)). Off by default: the person installs the extension and
+    /// switches this on.
+    pub browser_bridge: bool,
     /// Which pie the side buttons follow in an app that has its own pie, until you choose another.
     pub side_default: SideTarget,
     /// Choosing a side-button mode in a pie makes the side buttons follow that pie.

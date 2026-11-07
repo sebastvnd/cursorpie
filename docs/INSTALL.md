@@ -171,8 +171,17 @@ the icon cache, so no image tool is needed. Build on an older distribution if th
 
 Good to know:
 
-- Log in with an **X11 session**. In a Wayland session CursorPie only sees X11 and XWayland windows. See
-  [KNOWN_ISSUES.md](KNOWN_ISSUES.md).
+- **Wayland sessions** (KDE Plasma 6.8 and newer have no X11 session): CursorPie grabs your mouse through
+  `/dev/input` and writes what it does not use to a virtual mouse, so it needs the udev rule
+  `70-cursorpie.rules` (in the package; `install.sh` installs it when run with `sudo`, otherwise it prints the
+  command). Log out and in once. General > "Wayland" in Settings says what is missing. Per-app profiles and
+  "bring the app forward" work on KDE Plasma, on Hyprland (through its control socket) and on GNOME (after you
+  install the extension: copy `gnome-extension/cursorpie-adapter@sebastvnd.github.io` from the package to
+  `~/.local/share/gnome-shell/extensions/`, log out and in, then `gnome-extensions enable
+  cursorpie-adapter@sebastvnd.github.io`). On Sway they work except "app under the cursor", which is the focused app
+  there (Sway cannot say where the pointer is). Other desktops get mouse capture and shortcuts only. Written and
+  tested, not yet run on a Plasma 6.8, GNOME, Hyprland or Sway machine: see [WAYLAND_SUPPORT.md](WAYLAND_SUPPORT.md). `CURSORPIE_BACKEND=x11`
+  forces the X11 layer. In an X11 session nothing needs setting up.
 - There is no tray icon yet. Pause and Quit are in **Settings > General**, and Settings opens by holding the
   trigger in the middle of the pie.
 - A minimal system may lack libraries the window toolkit loads at run time (OpenGL, libxkbcommon-x11, libxcursor).

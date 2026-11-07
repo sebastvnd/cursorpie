@@ -694,6 +694,107 @@ mod tests {
         f
     }
 
+    // ---- the examples of docs/FLOWS_FOR_AI.md: what an agent is told to write must load as written
+
+    const EX_OPEN_APP: &str =
+        include_str!("../../docs/examples/flows/open-app-and-new-note.cursorpie-flow.json");
+    const EX_COPY_PASTE: &str =
+        include_str!("../../docs/examples/flows/copy-switch-paste.cursorpie-flow.json");
+    const EX_COMMAND: &str =
+        include_str!("../../docs/examples/flows/link-wait-command.cursorpie-flow.json");
+    const EX_CONFIG: &str = include_str!("../../docs/examples/flows/config-with-flow.json");
+
+    /// A flow loads "as written" when cleaning it changes nothing: every block is on the chain, in
+    /// the order of the file's ids, and the chain runs from Start to End.
+    fn assert_untouched_by_clean(text: &str) -> Flow {
+        let raw: serde_json::Value = serde_json::from_str(text).unwrap();
+        let written: FlowFile = serde_json::from_value(raw).unwrap();
+        let flow = parse_flow(text).expect("the example is a valid flow file");
+        assert_eq!(
+            flow, written.flow,
+            "clean() repaired something in the example"
+        );
+        let chain = flow.chain();
+        assert_eq!(chain.len(), flow.nodes.len(), "a block is not on the chain");
+        assert!(matches!(chain.first().unwrap().kind, NodeKind::Start));
+        assert!(matches!(chain.last().unwrap().kind, NodeKind::End));
+        flow
+    }
+
+    #[test]
+    fn the_documented_examples_load_untouched_and_run_in_order() {
+        let f = assert_untouched_by_clean(EX_OPEN_APP);
+        assert_eq!(
+            f.steps(),
+            vec![
+                Action::OpenApp("Notes".into()),
+                Action::Wait(600),
+                Action::Key(Shortcut::new(45, MOD_CMD)),
+            ]
+        );
+        let f = assert_untouched_by_clean(EX_COPY_PASTE);
+        assert_eq!(
+            f.steps(),
+            vec![
+                Action::Key(Shortcut::new(8, MOD_CMD)),
+                Action::Wait(150),
+                Action::Key(Shortcut::new(48, MOD_CMD)),
+                Action::Wait(250),
+                Action::Key(Shortcut::new(9, MOD_CMD)),
+            ]
+        );
+        let f = assert_untouched_by_clean(EX_COMMAND);
+        assert!(f.has_commands() && f.runs_commands());
+        assert_eq!(f.steps().len(), 3);
+    }
+
+    #[test]
+    fn the_documented_config_example_has_a_slice_that_reaches_its_flow() {
+        let c = crate::config::parse_config(EX_CONFIG).expect("the example config loads");
+        assert_eq!(c.flows.len(), 1);
+        let ids = flow_ids_used(&c.profiles[0].items);
+        assert!(ids.contains("morning") && c.flows.iter().any(|f| f.id == "morning"));
+        assert_eq!(c.flows[0].steps().len(), 3);
+    }
+
+    #[test]
+    fn the_documented_failure_modes_are_what_the_page_says() {
+        // a missing Start leaves nothing to run
+        let no_start = r#"{"cursorpie_flow":1,"flow":{"id":"a","name":"A","nodes":[
+            {"id":1,"x":0,"y":0,"kind":{"Wait":10},"next":2},
+            {"id":2,"x":0,"y":0,"kind":"End","next":null}]}}"#;
+        assert!(parse_flow(no_start).unwrap().steps().is_empty());
+        // an unknown kind refuses the file
+        let unknown = r#"{"cursorpie_flow":1,"flow":{"id":"a","name":"A","nodes":[
+            {"id":1,"x":0,"y":0,"kind":"Start","next":null},
+            {"id":2,"x":0,"y":0,"kind":{"TypeText":"hi"},"next":null}]}}"#;
+        assert!(parse_flow(unknown).is_err());
+        // a wait above the cap is cut, a negative one is a wrong shape
+        let long = r#"{"cursorpie_flow":1,"flow":{"id":"a","name":"A","nodes":[
+            {"id":1,"x":0,"y":0,"kind":"Start","next":2},
+            {"id":2,"x":0,"y":0,"kind":{"Wait":99999},"next":3},
+            {"id":3,"x":0,"y":0,"kind":"End","next":null}]}}"#;
+        assert_eq!(
+            parse_flow(long).unwrap().steps(),
+            vec![Action::Wait(MAX_WAIT_MS)]
+        );
+        assert!(parse_flow(&long.replace("99999", "-5")).is_err());
+        // two wires into one block: only the first keeps its wire
+        let two = r#"{"cursorpie_flow":1,"flow":{"id":"a","name":"A","nodes":[
+            {"id":1,"x":0,"y":0,"kind":"Start","next":3},
+            {"id":2,"x":0,"y":0,"kind":{"Wait":1},"next":3},
+            {"id":3,"x":0,"y":0,"kind":"End","next":null}]}}"#;
+        let f = parse_flow(two).unwrap();
+        assert_eq!(f.node(1).unwrap().next, Some(3));
+        assert_eq!(f.node(2).unwrap().next, None);
+        // a file made by a newer version is refused with its own sentence
+        assert!(
+            parse_flow(&long.replace("\"cursorpie_flow\":1", "\"cursorpie_flow\":2"))
+                .unwrap_err()
+                .contains("newer")
+        );
+    }
+
     #[test]
     fn a_new_flow_is_start_wired_to_end_and_does_nothing() {
         let f = Flow::new("a", "A");

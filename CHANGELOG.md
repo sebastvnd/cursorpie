@@ -2,6 +2,117 @@
 
 ## Unreleased
 
+## 0.8.5
+
+- **Open URL slices: new window or the page that is open, with the browser extension that ships in the program.** An
+  "Open URL" slice with an `http(s)` link now offers the same two badges as "Open app" (green + = new window, yellow =
+  go to the tab that has the page), **only when the browser extension is on** (Settings > Behavior > Browser
+  extension, off by default). Without it the slice just opens its link: a browser does not say which pages are open,
+  and guessing opened the same page twice. The extension (`assets/browser-extension/`, compiled in with
+  `include_str!`; Firefox and Chrome, Edge, Brave, Vivaldi) reports the open `http(s)` tabs; a tab is the page of a
+  link by address, then by site and path (redirects, `www.`, query), then by site. CursorPie is its own native
+  messaging host (`bridge::host`, started by the browser; no second program), registered per browser by
+  `bridge::install` (a file on Linux and macOS, a registry key on Windows), and talks to the running app over a
+  token-protected loopback socket (`bridge`). New switches: `--export-extension [DIR]`, `--install-browser-bridge`,
+  `--uninstall-browser-bridge`. See `docs/OPEN_URL_CHOICE.md` and `docs/BROWSER_BRIDGE.md`. Not yet run on a real
+  browser, and a release needs a signed Firefox add-on to stay installed.
+- **The first press after a long idle time is no longer slow, and the listeners keep listening (macOS, Windows).**
+  After minutes of doing nothing the pie sometimes took long to appear, or the press seemed lost and had to be
+  repeated. These are the causes found by reading the code (not yet reproduced on a machine), each addressed:
+  *Windows* trimmed the whole working set when the UI went to sleep (`SetProcessWorkingSetSize(-1, -1)`), which also
+  evicted the code of the mouse hooks and the UI, so the next press page-faulted it all back in; a low-level hook
+  that answers too slowly is dropped by Windows. Sleep now compacts the heap (`HeapCompact`), which gives back freed
+  memory and leaves what is in use alone. Windows can also remove low-level hooks silently (it is known to after a slow
+  callback, and reported after a resume or an unlock) and the message loop then never ended, so the hooks were never
+  installed again: a **watchdog**
+  notices that the system still sees input while no hook has run, and reinstalls both hooks at once (at most every
+  15 s); a watchdog tick that arrives more than 10 s late means the machine slept, and the hooks are then
+  reinstalled before the first press. The hook thread runs a little above normal priority, and the process opts out of power throttling (EcoQoS)
+  and of the timer-resolution rule for hidden programs, which Windows 11 applies to a program with no window.
+  *macOS* can put the hidden accessory app into App Nap, which stretches timers (the hold timer, the trackpad thread) and
+  lowers thread priority; the process now declares a user-initiated activity that still lets the Mac sleep. The event
+  tap is now looked at every 2 s and turned on again when macOS switched it off while nothing was calling the
+  callback. The trackpad source decided "the Mac slept" with `Instant`, which does not count sleep, so a real sleep
+  went unnoticed (the trackpad stayed dead until a restart) while a throttled thread was taken for one and restarted
+  a healthy source; it now also compares the wall clock.
+  *Both:* sleep emptied the whole icon cache, which saved a few KiB and made the first pie decode its icons (a
+  multi-size TIFF each on macOS) while the hold timer ran. The icons of the general pie now stay decoded
+  (`icons_to_keep_asleep`, at most 32 strings). New: `platform::stay_responsive`, `IconCache::keep_only`,
+  `platform/windows/power.rs`, `platform/macos/activity.rs`. Not yet run on Windows or on a Mac: check with
+  `CURSORPIE_DEBUG=1` (new events `sys/power_throttling`, `sys/app_nap`, `tap/hook` with `restarting` and
+  `re_enabled`).
+  Icons in a submenu that showed their text first and the app icon a second later: the warm-up on press covered
+  only one level of submenus (it now walks every level, shallowest first), and a warm-up miss on a cold system was
+  noted as a failure, which kept the pie's own lookup from trying again for 3 s (the pie now hands such an icon to
+  the worker thread at once, which notes a real failure).
+- **Wayland: adapters for Hyprland, Sway and GNOME (written from their documentation, not run, not compiled where
+  written).** Per-app profiles, "app under the cursor" and "bring the app forward" were KDE-only. `wayland/adapter.rs`
+  now picks an adapter from the compositor, and every adapter fills the same state as the KWin one, so the rest of
+  the program is unchanged. **Hyprland** is read through its control socket (`j/clients`, `j/monitors`,
+  `j/activewindow`, `j/cursorpos`); **Sway** through its IPC socket (`GET_TREE`), without a pointer, because Sway has
+  no call to read it: the focused app then stands in for the app under the cursor and the report says so; **GNOME**
+  through a small extension, `packaging/linux/gnome-extension/`, that pushes the pointer and the window list (no
+  titles) to CursorPie's D-Bus service and answers one `Sync` call, and which the user installs and enables (the
+  report text gives the steps). Settings and the welcome page name the adapter that is in use. `Session` also finds
+  Hyprland and Sway by `HYPRLAND_INSTANCE_SIGNATURE` and `SWAYSOCK` when `XDG_CURRENT_DESKTOP` is empty. Still open:
+  COSMIC and niri, a layer-shell reader of the pointer for Sway, and the new spikes SW11 to SW15 in
+  `docs/WAYLAND_SUPPORT.md`.
+
+- **Flows can be written by an AI agent.** New `docs/FLOWS_FOR_AI.md` describes the flow JSON for someone who cannot
+  open the app: the two places a flow lives (a `.cursorpie-flow.json` file to import, or `flows` in `config.json`),
+  every field, the seven block kinds, shortcut key codes and modifier bits, what running a flow does (40 ms between
+  steps, commands are not waited for), the repair rules and which mistakes silently change behaviour (a missing
+  `Start` leaves nothing to run), a recipe, a checklist and a short validator. `docs/flow.schema.json` is a JSON
+  Schema of the file and `docs/examples/flows/` holds examples that the unit tests parse, so the page cannot drift
+  from `config::flow`.
+- **Trackpad scan, and the trackpad hold is on from the first start (macOS, Windows, Linux).** The trackpad hold
+  was off until someone found the switch, although the welcome window already says "touch and hold the trackpad".
+  Now `tap::touch::probe` counts the trackpads without starting anything: the Raw Input device list on Windows (the
+  same precision-touchpad test the source uses, no registration), `/proc/bus/input/devices` on Linux (readable
+  without the `input` group) and `ioreg` on macOS (the private framework stays unloaded). A **new** user who has one
+  gets the hold switched on before the tap starts; it is written to `config.json` when the welcome window ends, so
+  a quit during the welcome still shows it again. Someone with a `config.json` already keeps their choice. Settings
+  has a **Scan for trackpad** button (it switches the hold on when it finds one; Save keeps it) and "Detect again"
+  of the Mouse panel counts the trackpads too. The count on macOS (`ioreg` classes `AppleMultitouchTrackpad`,
+  `BNBTrackpadDevice`) is not yet run on a Mac.
+- **Windows: Settings no longer needs two clicks with a trackpad.** While Settings was open, every pause of the
+  finger on the trackpad (aiming at a button) looked like a hold, was answered with "the pie is off", and made the
+  window take the focus again. On Windows the toolkit does that by injecting an Alt key press, which turned the next
+  click into a menu activation: two clicks, or a very long hold, were needed. A trackpad hold that lands on a Settings
+  window that already has the focus is now ignored; one that lands while Settings is behind another window still
+  brings it back. A mouse press is answered as before, except that a focused window is not raised again.
+- **Wayland: the pie opens on the cursor at fractional scales.** The pie and the Settings card are XWayland windows
+  placed in the toolkit's points, while the pointer comes from KWin in its own, and the two differ at a fractional scale
+  or with KDE's "scale X11 applications by the system" setting. The position is now mapped from the KWin output it is
+  on to the X monitor of the same screen (`wayland::coords`, `platform::window_point`), which is exact whatever either
+  scale is; X11 sessions, other systems and screens that cannot be matched keep the position as it was. Not yet run on
+  Plasma 6.8; the size of the pie is not converted (see `docs/WAYLAND_SUPPORT.md`).
+- **Wayland: the welcome page and the lint.** The second page of the welcome window no longer tells a Plasma 6.8
+  user to "log in with an X11 session" (there is none). In a Wayland session it shows the two steps of the udev rule
+  and a live status that follows `wayland::report`: **Mouse access** (Allowed / Missing), **Mouse capture** and the
+  **KWin adapter** (when it is off, only per-app profiles are, and the page says so); it turns to Ready by itself once
+  the rule is in place and the session has been restarted. In an X11 session the page says that a Wayland session
+  works too. `uinput::decode_all` uses `as_chunks` (clippy `chunks_exact_to_as_chunks`, Rust 1.88 and later), which
+  fixes `cargo tools ci`.
+- **Wayland: the rest of the first pass, and the checks pass.** `zbus` is now an ordinary Linux dependency (the
+  `wayland-kde` feature is gone: the KDE adapter is always built on Linux). New: while the screen is locked or the
+  session is in the background (a VT or user switch) the mouse is given back to the desktop (`logind`, the same
+  path as the pause switch); a shortcut is recorded from the Settings window's own key events (no keyboard is ever
+  opened, so the udev rule gives no program a way to read what is typed; Super and the order of the modifiers are
+  recorded too); the trackpad's extra-finger click and two-finger scroll are swallowed by grabbing the touchpad's
+  node while a hold runs (never for more than 15 s); the udev rule also covers touchpads, and `install.sh` installs
+  it when it runs as root. The `wayland` log category is in `docs/DEBUGGING.md` and the lint, which fixes
+  `cargo tools ci`. Still not run on a Plasma 6.8 machine; see `docs/WAYLAND_SUPPORT.md`.
+- **Wayland backend (first code, not yet run on a Plasma 6.8 machine).** In a Wayland session CursorPie
+  now grabs the mouse through evdev and writes everything it does not use to a virtual mouse it makes
+  with `/dev/uinput` (`tap/wayland.rs`, `platform/linux/uinput.rs`); shortcuts go through a virtual
+  keyboard. The state machine, `config.json` and the X11 backend are unchanged, and
+  `CURSORPIE_BACKEND=x11` still selects the X11 layer. It needs the udev rule
+  `packaging/linux/70-cursorpie.rules`; without it capture stays off and Settings says what to do. The
+  KDE Plasma adapter (pointer, windows, app under the cursor, bring an app forward) is a script loaded
+  into KWin over D-Bus. Not done yet: a native pie window, adapters for other compositors. See
+  `docs/WAYLAND_SUPPORT.md`.
+
 ## 0.8.4
 
 - **Flow tab: a node editor for chains of steps.** A new **Flow** section in Settings draws a sequence of actions as
@@ -32,7 +143,7 @@
   Playing the shortcut presses the modifiers in that same order.
 - **Windows: launch at login that survives odd paths.** The installed copy compared its own path with the install
   folder as plain text. A short 8.3 name (`C:\Users\JOHNDO~1`), a junction, or the other case of a non-ASCII user
-  name made it believe it was a *different* copy: it started "the installed copy" (itself) and exited, and so did
+  name made it believe it was a _different_ copy: it started "the installed copy" (itself) and exited, and so did
   that one, over and over, so nothing ever reached the tray at login. Paths are now compared as the file system
   sees them, and the copy that was handed over to never hands over again (`--handover`; `--autostart` is passed on).
   A zip copy no longer copies itself over an install made by the Setup wizard.
@@ -150,8 +261,8 @@
 
 - **The two-finger trackpad hold is gone, on macOS, Windows and Linux.** Two fingers on a trackpad are what the
   system scrolls with, so the pointer did not move and the pie had to be aimed by the fingers themselves, which was
-  never reliable. A hold is now always one finger, with one more finger for the extra click. Removed: the *Fingers to
-  hold* setting, the config field `touch_fingers` (an old file that has it still loads; the field is ignored and
+  never reliable. A hold is now always one finger, with one more finger for the extra click. Removed: the _Fingers to
+  hold_ setting, the config field `touch_fingers` (an old file that has it still loads; the field is ignored and
   dropped at the next save), the code that aimed the pie by finger travel, and on Linux the X11 pointer grab that
   went with it. Scrolling is still swallowed while a hold runs, because the extra finger makes two.
 
@@ -167,12 +278,12 @@
 ## 0.8.0
 
 - **README, website and docs now say that the trackpad works on all three systems.** The README (tagline,
-  highlights, "Try it", platform table and a new *Trackpad* section), the website (description, hero, steps, feature
-  card, platform cards and FAQ), `docs/INSTALL.md` (a new *Trackpad hold* section with the `input` group on Linux) and
+  highlights, "Try it", platform table and a new _Trackpad_ section), the website (description, hero, steps, feature
+  card, platform cards and FAQ), `docs/INSTALL.md` (a new _Trackpad hold_ section with the `input` group on Linux) and
   the plan's title and summary describe trackpad hold on macOS, Windows (precision touchpad) and Linux (X11).
 
 - **Trackpad hold and haptics on macOS (off by default).** `docs/TRACKPAD_HAPTICS_PLAN.md` is implemented: with
-  *Settings > Behavior > Trackpad* on, touching and holding opens the pie, moving the finger hovers a slice and
+  _Settings > Behavior > Trackpad_ on, touching and holding opens the pie, moving the finger hovers a slice and
   lifting runs it; one more finger that clicks or taps switches the mode (or picks the hovered mode, or does
   nothing); the pie ticks on a Force Touch trackpad. Mouse and trackpad are one input: the same state machine
   (`Gesture` now records its `Source`), the same timings and profiles. New config fields `touch_trigger`,
@@ -183,7 +294,7 @@
 
 - **Trackpad hold on Linux (X11), off by default.** The same feature as on macOS and Windows, for a touchpad under
   X11: hold to open the pie, move to a slice, lift to run it, one more finger to click. The fingers are read from
-  `/dev/input/event*` (libinput hides them from X), only while *Open the pie with a trackpad hold* is on, which needs
+  `/dev/input/event*` (libinput hides them from X), only while _Open the pie with a trackpad hold_ is on, which needs
   the `input` group; Settings says so when it is missing. While a hold runs the left and right buttons are grabbed so
   the extra click never reaches the app (any other click is sent again at its release), and the typing guard listens
   for key presses (not which key). No haptic ticks on Linux. The reader repeats the last frame every 20 ms because

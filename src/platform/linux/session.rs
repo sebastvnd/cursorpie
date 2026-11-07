@@ -9,6 +9,34 @@ pub enum DisplayServer {
     Unknown,
 }
 
+/// The compositor of a Wayland session, as far as `XDG_CURRENT_DESKTOP` says (and, for Hyprland and
+/// Sway, the variable each sets for its own socket). Plasma, GNOME, Hyprland and Sway have an
+/// adapter (see `wayland::adapter`); the others get mouse capture and shortcuts without per-app
+/// features.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Compositor {
+    Plasma,
+    Gnome,
+    Sway,
+    Hyprland,
+    Cosmic,
+    Other,
+}
+
+impl Compositor {
+    /// The name for Settings and the log.
+    pub fn name(self) -> &'static str {
+        match self {
+            Compositor::Plasma => "KDE Plasma",
+            Compositor::Gnome => "GNOME",
+            Compositor::Sway => "Sway",
+            Compositor::Hyprland => "Hyprland",
+            Compositor::Cosmic => "COSMIC",
+            Compositor::Other => "This desktop",
+        }
+    }
+}
+
 /// What the environment says about the session.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Session {
@@ -17,6 +45,11 @@ pub struct Session {
     pub desktops: Vec<String>,
     /// Whether an X server (or XWayland) can be reached through `DISPLAY`.
     pub has_x_display: bool,
+    /// `HYPRLAND_INSTANCE_SIGNATURE` is set: Hyprland started this session, whatever
+    /// `XDG_CURRENT_DESKTOP` says.
+    pub hyprland_signature: bool,
+    /// `SWAYSOCK` is set: Sway started this session.
+    pub sway_socket: bool,
 }
 
 fn nonempty(get: &dyn Fn(&str) -> Option<String>, key: &str) -> Option<String> {
@@ -58,12 +91,33 @@ impl Session {
             server,
             desktops,
             has_x_display: nonempty(get, "DISPLAY").is_some(),
+            hyprland_signature: nonempty(get, "HYPRLAND_INSTANCE_SIGNATURE").is_some(),
+            sway_socket: nonempty(get, "SWAYSOCK").is_some(),
         }
     }
 
     /// The session of this process.
     pub fn current() -> Session {
         Session::detect(&|k| std::env::var(k).ok())
+    }
+
+    /// The compositor, from the desktop names. The first name that is known wins (`ubuntu:GNOME`).
+    /// When none is known, the variable Hyprland or Sway sets for its own socket decides: a session
+    /// started from a login manager or a script often leaves `XDG_CURRENT_DESKTOP` empty.
+    pub fn compositor(&self) -> Compositor {
+        self.desktops
+            .iter()
+            .find_map(|d| match d.as_str() {
+                "kde" | "plasma" => Some(Compositor::Plasma),
+                "gnome" => Some(Compositor::Gnome),
+                "sway" => Some(Compositor::Sway),
+                "hyprland" => Some(Compositor::Hyprland),
+                "cosmic" => Some(Compositor::Cosmic),
+                _ => None,
+            })
+            .or(self.hyprland_signature.then_some(Compositor::Hyprland))
+            .or(self.sway_socket.then_some(Compositor::Sway))
+            .unwrap_or(Compositor::Other)
     }
 
     /// Whether the current desktop environment list names `name` (case-insensitive).
@@ -86,9 +140,9 @@ impl Session {
                 "no X display (DISPLAY is not set). CursorPie needs an X11 session or XWayland.",
             ),
             (DisplayServer::Wayland, true) => Some(
-                "this is a Wayland session: the X11 backend only sees X11 and XWayland windows, so \
-                 the gesture works over those only. Wayland support is planned \
-                 (docs/LINUX_MIGRATION.md); log in with an X11 session for full support.",
+                "this is a Wayland session and the X11 backend was asked for: it only sees X11 and \
+                 XWayland windows, so the gesture works over those only. Unset CURSORPIE_BACKEND to \
+                 use the Wayland backend (docs/WAYLAND_SUPPORT.md).",
             ),
             _ => None,
         }
@@ -163,5 +217,52 @@ mod tests {
         let s = Session::detect(&env(&[("DISPLAY", "  "), ("XDG_CURRENT_DESKTOP", ":")]));
         assert!(!s.has_x_display);
         assert!(s.desktops.is_empty());
+    }
+
+    #[test]
+    fn the_compositor_comes_from_the_desktop_names() {
+        let c = |d: &str| {
+            Session::detect(&env(&[
+                ("XDG_SESSION_TYPE", "wayland"),
+                ("XDG_CURRENT_DESKTOP", d),
+            ]))
+            .compositor()
+        };
+        assert_eq!(c("KDE"), Compositor::Plasma);
+        assert_eq!(c("ubuntu:GNOME"), Compositor::Gnome);
+        assert_eq!(c("sway"), Compositor::Sway);
+        assert_eq!(c("Hyprland"), Compositor::Hyprland);
+        assert_eq!(c("COSMIC"), Compositor::Cosmic);
+        assert_eq!(c("river"), Compositor::Other);
+        assert_eq!(c(""), Compositor::Other);
+    }
+
+    #[test]
+    fn hyprland_and_sway_are_found_by_their_own_variables_when_the_desktop_name_is_missing() {
+        let with = |pairs: &[(&str, &str)]| Session::detect(&env(pairs)).compositor();
+        assert_eq!(
+            with(&[
+                ("XDG_SESSION_TYPE", "wayland"),
+                ("HYPRLAND_INSTANCE_SIGNATURE", "abc_123"),
+            ]),
+            Compositor::Hyprland
+        );
+        assert_eq!(
+            with(&[
+                ("XDG_SESSION_TYPE", "wayland"),
+                ("SWAYSOCK", "/run/user/1000/sway-ipc.sock"),
+            ]),
+            Compositor::Sway
+        );
+        // a desktop name that is known wins over the variables
+        assert_eq!(
+            with(&[
+                ("XDG_CURRENT_DESKTOP", "KDE"),
+                ("SWAYSOCK", "/run/user/1000/s")
+            ]),
+            Compositor::Plasma
+        );
+        // an empty value is not set
+        assert_eq!(with(&[("SWAYSOCK", "  ")]), Compositor::Other);
     }
 }

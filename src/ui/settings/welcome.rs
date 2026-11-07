@@ -87,7 +87,7 @@ pub fn setup_title(os: Os) -> &'static str {
     match os {
         Os::Mac => "Allow CursorPie to see your mouse",
         Os::Windows => "CursorPie lives in the system tray",
-        Os::Linux => "CursorPie works in your X11 session",
+        Os::Linux => "CursorPie works in X11 and Wayland sessions",
     }
 }
 
@@ -120,10 +120,39 @@ pub fn setup_steps(os: Os) -> &'static [&'static str] {
             "CursorPie has no tray icon on Linux yet: hold the trigger in the center of the pie \
              to open Settings.",
             "Quit from the bottom of Settings.",
-            "In a Wayland session it only sees X11 and XWayland windows, so log in with an X11 \
-             session for full support.",
+            "A Wayland session works too (Plasma 6.8 has no other): it needs the udev rule in \
+             packaging/linux/.",
         ],
     }
+}
+
+/// The sentence under the heading of the second page in a Wayland session, where (unlike X11) one
+/// permission is needed.
+pub fn wayland_setup_lead() -> &'static str {
+    "A Wayland session needs one permission, once:"
+}
+
+/// What to do in a Wayland session, one short step each. The first two are the install of the
+/// udev rule (`wayland::UDEV_RULE_FILE`); they are what the status on this page waits for.
+pub fn wayland_setup_steps() -> &'static [&'static str] {
+    &[
+        "Copy 70-cursorpie.rules (in the package, or in packaging/linux/) to /etc/udev/rules.d/.",
+        "Run `sudo udevadm control --reload && sudo udevadm trigger`, then log out and in.",
+        "No tray icon on Linux yet: hold the trigger in the center of the pie to open Settings.",
+    ]
+}
+
+/// Small print under the status in a Wayland session while the permission is missing.
+pub fn wayland_setup_note() -> &'static str {
+    "Until then CursorPie does not touch your mouse. This page notices the change by itself."
+}
+
+/// Whether this is a Linux build running in a Wayland session (the second page then shows the
+/// permission step and its live status).
+fn wayland_session() -> bool {
+    platform::OS == Os::Linux
+        && crate::platform::linux::session::Session::current().server
+            == crate::platform::linux::session::DisplayServer::Wayland
 }
 
 /// A line of small print for the right column of the second page, shown while the permission is
@@ -677,8 +706,18 @@ fn setup_page(ui: &mut egui::Ui, accent: Color32, os: Os) {
     heading(ui, setup_title(os));
 
     let running = TAP_ACTIVE.load(Ordering::SeqCst);
+    // Linux in a Wayland session: the permission is the udev rule, and the compositor's adapter is a second
+    // line of the status (`wayland::report` decides, the same text as in Settings > General)
+    let wayland = os == Os::Linux && wayland_session();
+    let wl = if wayland {
+        Some(crate::platform::linux::wayland::cached_report())
+    } else {
+        None
+    };
     let ready = if os.needs_permission() {
         platform::is_trusted_cached() && running
+    } else if let Some(r) = &wl {
+        r.ready && running
     } else {
         running
     };
@@ -686,9 +725,15 @@ fn setup_page(ui: &mut egui::Ui, accent: Color32, os: Os) {
     let (left, right) = two_columns(ui, 0.5);
     ui.scope_builder(egui::UiBuilder::new().max_rect(left), |ui| {
         ui.add_space(4.0);
-        muted(ui, setup_lead(os));
-        ui.add_space(GAP - 2.0);
-        step_list(ui, accent, setup_steps(os), os.needs_permission());
+        if wayland {
+            muted(ui, wayland_setup_lead());
+            ui.add_space(GAP - 2.0);
+            step_list(ui, accent, wayland_setup_steps(), true);
+        } else {
+            muted(ui, setup_lead(os));
+            ui.add_space(GAP - 2.0);
+            step_list(ui, accent, setup_steps(os), os.needs_permission());
+        }
         ui.add_space(GAP);
         if os.needs_permission() && !ready {
             ui.horizontal_wrapped(|ui| {
@@ -730,8 +775,20 @@ fn setup_page(ui: &mut egui::Ui, accent: Color32, os: Os) {
                 let w = status_width(ui, text) + 2.0;
                 row_wide(ui, "Accessibility", "", w, |ui| status(ui, granted, text));
             }
+            if let Some(r) = &wl {
+                let text = if r.ready { "Allowed" } else { "Missing" };
+                let hint = if r.ready {
+                    ""
+                } else {
+                    "See the steps on the left"
+                };
+                let w = status_width(ui, text) + 2.0;
+                row_wide(ui, "Mouse access", hint, w, |ui| status(ui, r.ready, text));
+            }
             let name = if os.needs_permission() {
                 "Event tap"
+            } else if wayland {
+                "Mouse capture"
             } else {
                 "Mouse hook"
             };
@@ -740,17 +797,34 @@ fn setup_page(ui: &mut egui::Ui, accent: Color32, os: Os) {
             let hint = if running { "" } else { "Retrying every 2 s" };
             let w = status_width(ui, text) + 2.0;
             row_wide(ui, name, hint, w, |ui| status(ui, running, text));
+            if let Some(r) = &wl
+                && r.ready
+            {
+                // the pie still works without the adapter, but not per-app profiles: say so, do not fail
+                let text = if r.per_app { "Running" } else { "Not running" };
+                let hint = if r.per_app {
+                    ""
+                } else {
+                    "Per-app profiles are off"
+                };
+                let w = status_width(ui, text) + 2.0;
+                let label = crate::platform::linux::wayland::adapter_label();
+                row_wide(ui, label, hint, w, |ui| status(ui, r.per_app, text));
+            }
         });
         if ready {
             ui.horizontal(|ui| {
                 status(ui, true, "Ready");
                 muted(ui, "CursorPie can see your mouse.");
             });
-        } else if !setup_note(os).is_empty() {
+        } else if wayland || !setup_note(os).is_empty() {
+            let note = if wayland {
+                wayland_setup_note()
+            } else {
+                setup_note(os)
+            };
             ui.add(egui::Label::new(
-                egui::RichText::new(setup_note(os))
-                    .size(13.0)
-                    .color(pal().muted),
+                egui::RichText::new(note).size(13.0).color(pal().muted),
             ));
         }
     });
@@ -877,6 +951,28 @@ mod tests {
         assert_eq!(t.len(), 3);
         assert!(t.iter().all(|x| !x.contains("icon.")), "{t:?}");
         assert!(t[2].contains("bottom of Settings"));
+    }
+
+    #[test]
+    fn the_wayland_setup_page_names_the_udev_rule_and_is_short() {
+        let steps = wayland_setup_steps();
+        assert_eq!(steps.len(), 3);
+        // the same file name as the report in Settings > General and the package
+        assert!(
+            steps[0].contains(crate::platform::linux::wayland::UDEV_RULE_FILE),
+            "{steps:?}"
+        );
+        assert!(steps[1].contains("udevadm"), "{steps:?}");
+        assert!(steps[2].contains("tray icon"), "{steps:?}");
+        assert!(wayland_setup_lead().len() < 90);
+        assert!(wayland_setup_note().len() < 160);
+        for step in steps {
+            assert!(step.len() < 160, "{step}");
+        }
+        // the old advice cannot be followed on Plasma 6.8: no page may still send people to X11
+        for os_step in setup_steps(Os::Linux) {
+            assert!(!os_step.contains("log in with an X11"), "{os_step}");
+        }
     }
 
     /// Draws every page for a few frames in a headless egui context: a smoke test for layout

@@ -50,7 +50,7 @@ impl PieView {
         let open_apps = ring
             .iter()
             .map(|i| match &i.kind {
-                ItemKind::Run(a) if c.open_app_choice => a.open_target().map(str::to_string),
+                ItemKind::Run(a) if c.open_app_choice => a.open_choice_key(c.browser_bridge),
                 _ => None,
             })
             .collect();

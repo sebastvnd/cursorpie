@@ -29,6 +29,7 @@ impl App {
         *cfg() = new.clone();
         side::forget_all(); // a changed default should apply at once
         config::save_config_with_backup(&new);
+        crate::bridge::apply(new.browser_bridge); // starts or stops the browser extension link
         if let Err(e) = platform::set_launch_at_login(login) {
             eprintln!("CursorPie: could not update launch-at-login: {e}");
         }
@@ -190,7 +191,9 @@ impl App {
             .unwrap_or_else(|| egui::Rect::from_center_size(at, egui::vec2(1600.0, 1000.0)));
         let card = fit(area.size());
         let win_sz = card + Vec2::splat(2.0 * WIN_MARGIN);
-        let top_left = area.center() - win_sz / 2.0;
+        let center = area.center();
+        let (cx, cy) = platform::window_point(f64::from(center.x), f64::from(center.y));
+        let top_left = egui::pos2(cx as f32, cy as f32) - win_sz / 2.0;
         diag::log!(
             "ui",
             "place_card",
@@ -224,6 +227,8 @@ impl App {
     /// hides the window or turns it into Settings (the "Open Settings" button).
     pub fn finish_welcome(&mut self, ctx: &egui::Context) {
         crate::config::mark_welcomed();
+        // a trackpad found at the first start switched its hold on; this is where it is written
+        crate::tap::save_first_start_trackpad();
         let (apply, login, open_settings) = match &self.welcome {
             Some(w) => (w.apply, w.launch_at_login, w.open_settings_after),
             None => (false, false, false),
@@ -266,9 +271,28 @@ impl App {
     /// The trigger was pressed while Settings is open, so the pie did not open. Settings may be
     /// behind other windows, minimized or on another desktop: without a sign the press looks like it
     /// did nothing. Brings the window forward and says why.
-    pub(super) fn pie_blocked(&mut self, ctx: &egui::Context, _x: f64, _y: f64) {
+    ///
+    /// A window that already has the focus is not raised again, and a trackpad hold that lands on
+    /// it says nothing at all. On a trackpad every pause of the finger before a click is a "hold"
+    /// to the recognizer, and the raise is not harmless: on Windows the toolkit takes the
+    /// foreground by injecting an Alt key press, which turns the next click into a menu
+    /// activation. The person then had to click twice, or hold for a long time, to get anything
+    /// done in Settings.
+    pub(super) fn pie_blocked(&mut self, ctx: &egui::Context, _x: f64, _y: f64, touch: bool) {
+        let focused = ctx.input(|i| i.viewport().focused).unwrap_or(false);
+        let reaction = blocked_reaction(touch, focused);
+        diag::log!(
+            "ui",
+            "pie_blocked",
+            touch = touch,
+            focused = focused,
+            raise = reaction == Blocked::Raise
+        );
+        if reaction == Blocked::Quiet {
+            return;
+        }
         // (not while a file chooser is open: it would end up under Settings)
-        if !crate::ui::settings::choosing() {
+        if reaction == Blocked::Raise && !crate::ui::settings::choosing() {
             self.raise_settings(ctx, "pie_press");
             ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
                 egui::UserAttentionType::Informational,
@@ -295,7 +319,7 @@ impl App {
                 x = x,
                 y = y
             );
-            self.pie_blocked(ctx, x, y);
+            self.pie_blocked(ctx, x, y, false);
             return;
         }
         self.win = cfg().pie_size;
@@ -328,7 +352,8 @@ impl App {
         ));
         // whole points: a window on a half-point offset is resampled by the compositor on
         // standard-density screens, which softens everything drawn in it
-        let top_left = egui::pos2((x as f32 - w / 2.0).round(), (y as f32 - w / 2.0).round());
+        let (wx, wy) = platform::window_point(x, y);
+        let top_left = egui::pos2((wx as f32 - w / 2.0).round(), (wy as f32 - w / 2.0).round());
         diag::log!(
             "ui",
             "show_pie",
@@ -471,9 +496,38 @@ impl App {
     }
 }
 
+/// What a blocked pie asks of the Settings window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Blocked {
+    /// Nothing: the person is using Settings with a trackpad.
+    Quiet,
+    /// Only the message: Settings is in front already.
+    Say,
+    /// Bring Settings forward and say why.
+    Raise,
+}
+
+/// Decides how to answer a blocked pie from where it came from and whether Settings has the focus.
+fn blocked_reaction(touch: bool, focused: bool) -> Blocked {
+    match (touch, focused) {
+        (true, true) => Blocked::Quiet,
+        (false, true) => Blocked::Say,
+        (_, false) => Blocked::Raise,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_trackpad_pause_does_not_raise_a_settings_window_that_has_the_focus() {
+        assert_eq!(blocked_reaction(true, true), Blocked::Quiet);
+        assert_eq!(blocked_reaction(false, true), Blocked::Say);
+        // behind another window, both triggers still bring Settings back
+        assert_eq!(blocked_reaction(true, false), Blocked::Raise);
+        assert_eq!(blocked_reaction(false, false), Blocked::Raise);
+    }
 
     #[test]
     fn a_window_has_arrived_when_it_has_the_size_asked_for() {

@@ -65,7 +65,8 @@ default external tagging, for example `{"Run": {"OpenApp": "Notes"}}`.
 `{"OpenUrl": ".."}`, `{"Command": ".."}` or `{"Wait": 500}` and `next` is the `id` of the node its wire leads to (or
 `null`). The flow runs from the one `Start` node along the `next` wires to the one `End` node (which has no `next`; a flow
 without one gets it when the file is loaded). At most 32 flows of 64 nodes; a wait is at
-most 10000 ms. Anything outside the limits is repaired when the file is loaded.
+most 10000 ms. Anything outside the limits is repaired when the file is loaded. The full reference for writing a flow by
+hand or with an AI agent (key codes, rules, recipe, examples, a JSON Schema) is [FLOWS_FOR_AI.md](FLOWS_FOR_AI.md).
 
 ```json
 {
@@ -182,7 +183,7 @@ most 10000 ms. Anything outside the limits is repaired when the file is loaded.
 | `touch_click_action` | `"SwitchPie"` (default, like the right-click), `"PickHovered"` (the hovered Mode slice becomes the active mode) or `"Nothing"`: what the extra click does |
 | `touch_typing_guard_ms` | 0 to 2000 (default `400`, `0` = off): no hold is armed this soon after a key press |
 | `haptics`, `haptic_hover` | macOS only (ignored on Windows and Linux): trackpad ticks when the pie opens and the mode switches (default on), and when the hovered slice changes (default on, needs `haptics`) |
-| `sleep_after_s` | Seconds without a pie or Settings before cached icons and the Settings copy are freed (10 to 3600, `0` = never) |
+| `sleep_after_s` | Seconds without a pie or Settings before cached icons (except those of the general pie) and the Settings copy are freed (10 to 3600, `0` = never) |
 | `apps` | App ids: bundle identifiers on macOS, executable names on Windows, desktop-entry ids on Linux. An empty list marks the general profile; only the first such profile is kept, all others need at least one app |
 | `active` | Path of the active side-button mode, as indices (`[3, 1]` = slice 1 inside slice 3) |
 | `Key` | `key` is a macOS virtual key code (a physical key; Windows and Linux map it to the key in the same position). `mods` is a bitmask: Shift = 1, Ctrl = 2, Opt/Alt = 4, Cmd/Win/Super = 8 |

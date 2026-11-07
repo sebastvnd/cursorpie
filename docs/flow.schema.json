@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/sebastvnd/cursorpie/docs/flow.schema.json",
+  "title": "CursorPie flow file (*.cursorpie-flow.json)",
+  "description": "One flow: a chain of blocks from the single Start block to the single End block. See docs/FLOWS_FOR_AI.md. The app repairs most violations on import, but a wrong shape (unknown block kind, wrong type) makes it refuse the whole file.",
+  "type": "object",
+  "required": ["cursorpie_flow", "flow"],
+  "properties": {
+    "cursorpie_flow": { "const": 1, "description": "File format version. Always 1." },
+    "flow": { "$ref": "#/$defs/flow" }
+  },
+  "$defs": {
+    "flow": {
+      "type": "object",
+      "required": ["id", "name", "nodes"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "description": "Unique in a config.json (Action::Flow refers to it). Replaced with a fresh id when the file is imported." },
+        "name": { "type": "string", "minLength": 1, "maxLength": 60, "description": "Shown in the Flow tab; trimmed, cut to 60 characters, made unique on import." },
+        "nodes": { "type": "array", "minItems": 2, "maxItems": 64, "items": { "$ref": "#/$defs/node" } }
+      }
+    },
+    "node": {
+      "type": "object",
+      "required": ["id", "x", "y", "kind"],
+      "properties": {
+        "id": { "type": "integer", "minimum": 0, "maximum": 4294967295, "description": "Unique inside the flow." },
+        "x": { "type": "number", "minimum": -20000, "maximum": 20000, "description": "Editor position only; has no effect on what runs." },
+        "y": { "type": "number", "minimum": -20000, "maximum": 20000 },
+        "kind": { "$ref": "#/$defs/kind" },
+        "next": { "type": ["integer", "null"], "minimum": 0, "description": "id of the block the wire from this block leads to; null or absent = no wire. End has none." }
+      }
+    },
+    "kind": {
+      "oneOf": [
+        { "const": "Start", "description": "Exactly one per flow. Nothing may be wired into it." },
+        { "const": "End", "description": "Exactly one per flow. It has no next." },
+        {
+          "type": "object", "required": ["Key"], "additionalProperties": false,
+          "properties": { "Key": { "$ref": "#/$defs/shortcut" } }
+        },
+        {
+          "type": "object", "required": ["OpenApp"], "additionalProperties": false,
+          "properties": { "OpenApp": { "type": "string", "description": "App name or path, as in an Open app slice: Safari, /Applications/X.app (macOS); chrome or C:\\Path\\App.exe (Windows); firefox or /usr/bin/app (Linux)." } }
+        },
+        {
+          "type": "object", "required": ["OpenUrl"], "additionalProperties": false,
+          "properties": { "OpenUrl": { "type": "string", "description": "A URL or a file path, opened with the system default." } }
+        },
+        {
+          "type": "object", "required": ["Command"], "additionalProperties": false,
+          "properties": { "Command": { "type": "string", "description": "A shell command line. Runs with the user's rights: the app warns about it when a flow with a command is imported." } }
+        },
+        {
+          "type": "object", "required": ["Wait"], "additionalProperties": false,
+          "properties": { "Wait": { "type": "integer", "minimum": 0, "maximum": 10000, "description": "Milliseconds. Values above 10000 are cut to 10000." } }
+        }
+      ]
+    },
+    "shortcut": {
+      "type": "object",
+      "required": ["key", "mods"],
+      "properties": {
+        "key": { "type": "integer", "minimum": 0, "maximum": 65535, "description": "macOS virtual key code = a physical key position (not a character). Table in docs/FLOWS_FOR_AI.md." },
+        "mods": { "type": "integer", "minimum": 0, "maximum": 15, "description": "Bit mask: Shift 1, Ctrl 2, Alt/Option 4, Cmd 8 (the Windows key on Windows)." },
+        "order": { "type": "integer", "minimum": 0, "maximum": 255, "description": "Optional. The order the modifiers are pressed in. Leave it out." }
+      }
+    }
+  }
+}

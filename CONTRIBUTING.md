@@ -82,8 +82,9 @@ packaged exe from the unzipped folder and follow checks 7a to 7c of `docs/WINDOW
 wizard with check 7d.
 
 **Linux.** The app works in an **X11 session** (supported, but experimental: its checklist is under internal
-observation); in Wayland it only sees X11 and XWayland windows (see
-`docs/LINUX_MIGRATION.md`). `scripts/package-linux.sh` builds a tarball with an `install.sh`. Build on an older
+observation); in a Wayland session a separate layer (`tap/wayland.rs`, `platform/linux/wayland/`) takes over (see
+`docs/LINUX_MIGRATION.md`; the research and plan for Wayland, starting with KDE Plasma, are in
+`docs/WAYLAND_SUPPORT.md`). `scripts/package-linux.sh` builds a tarball with an `install.sh`. Build on an older
 distribution if the binary must start on older ones. `CURSORPIE_BACKEND=x11` forces the X11 backend, for bug
 reports.
 
@@ -269,7 +270,7 @@ For step-by-step instructions on common changes (a new action kind, a setting, a
 | `README.md` | everyone | What CursorPie is, who it is for, quick start. Kept short on purpose |
 | `docs/INSTALL.md`, `USER_GUIDE.md`, `CONFIGURATION.md`, `KNOWN_ISSUES.md` | users | Installing, using, configuring, limits |
 | Rust docs (`cargo docs`, `src/guides/*.rs`) | developers | Architecture, config format, recipes for common changes. The source of truth for how the code works |
-| `docs/WINDOWS_MIGRATION.md`, `LINUX_MIGRATION.md`, `OTHER_DESKTOPS.md`, `UI_DESIGN.md` | developers | Design records and manual test checklists |
+| `docs/WINDOWS_MIGRATION.md`, `LINUX_MIGRATION.md`, `WAYLAND_SUPPORT.md`, `OTHER_DESKTOPS.md`, `UI_DESIGN.md` | developers | Design records and manual test checklists |
 | `docs/README.md` | everyone | An index of everything in `docs/` |
 | `CHANGELOG.md` | users | What changed in each release |
 

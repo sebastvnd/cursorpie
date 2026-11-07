@@ -22,6 +22,7 @@
 //! | `set_accessory_policy` | hide the Dock icon (macOS only, no-op elsewhere) |
 //! | `clear_window_frame` | strip the OS frame of the native window handle (Windows only, no-op elsewhere) |
 //! | `window_manager_may_recenter` | whether the window manager may ignore the position of a hidden window when it is shown again (X11 only) |
+//! | `window_point` | where to ask the toolkit to put a window centered on a point of the pointer's space (identity except on Linux in a Wayland session, where KWin's points and XWayland's differ) |
 //! | `raise_own_window` | bring CursorPie's own window (Settings) to the front, on whichever workspace it is (X11 only: the toolkit's own request is refused there, elsewhere it is enough) |
 //! | `cursor_pos`, `display_rects` | pointer position and display bounds, in logical points |
 //! | `is_trusted_cached`, `open_accessibility_settings`, `open_input_monitoring_settings` | input permission |
@@ -30,12 +31,14 @@
 //! | `click_at` | a left or right click at a given point, the pointer left where it was (the virtual trackpad's clicks) |
 //! | `open_app`, `reveal_app`, `open_url`, `run_shell`, `open_path`, `reveal_in_file_manager` | launching things; `reveal_app` is `open_app` that also goes to, or fetches, the app's desktop (see [`desktops`]) |
 //! | `running_among`, `open_app_new_window` | for the choice an "Open app" slice offers when its app already runs (see [`running`](crate::running)): which of some apps run (one look at the system for all of them, called off the tap thread), and a new window of an app (macOS: `open -a`, then Cmd+N; Windows and Linux: start it again) |
+//! | [`web`] | the same choice for an "Open URL" slice with a web link: which pages CursorPie opened and are still open, a new browser window, and going to the browser that has the page (not a backend function: it is built from `open_url`, `reveal_app` and `running_among`) |
 //! | `choose_file`, `tick` | file chooser and hover sound |
 //! | `haptic` | one haptic tick on a trackpad (macOS only, no-op elsewhere), see [`HapticKind`] |
 //! | `launch_at_login_enabled`, `set_launch_at_login` | start with the user session |
 //! | `ensure_installed`, `handle_command_line`, `single_instance` | Windows install step, `--uninstall`, one running copy (no-ops elsewhere) |
 //! | `wait_for_login_ready` | after a login start (`--autostart`) wait for the desktop (Windows only, no-op elsewhere) |
-//! | `release_unused_memory` | give freed pages back to the OS |
+//! | `release_unused_memory` | give freed pages back to the OS, without evicting what the next press needs |
+//! | `stay_responsive` | keep the OS from throttling the hidden program (App Nap on macOS, power throttling on Windows; no-op on Linux) |
 //! | [`layout`] | keyboard-layout snapshot |
 //!
 //! The **app id** is the key of per-app profiles: the bundle identifier on macOS
@@ -81,6 +84,9 @@ pub fn pointer_pos() -> Option<(f64, f64)> {
 pub mod desktops;
 pub mod installed;
 pub mod keymap;
+// Which web pages are open, a new browser window, going to the page that is open: built from the
+// functions of the backends, so it is the same on every OS.
+pub mod web;
 
 // Runs the file choosers that are separate programs: zenity and kdialog on Linux, osascript on macOS.
 #[cfg(unix)]

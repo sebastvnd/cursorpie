@@ -27,6 +27,7 @@
 //! | [`tap`] | `cursorpie-tap` thread | global event tap and the gesture state machine |
 //! | [`actions`] | `cursorpie-actions` thread | executes actions (shortcuts, `open`, shell) in order |
 //! | [`running`] | `cursorpie-running` thread | whether the app of an "Open app" slice already runs, and the new-window / open-app choice that follows |
+//! | [`bridge`] | `cursorpie-bridge*` threads | the optional browser extension (embedded in the program): which web pages are open, go to one, open a new window; also the native messaging host mode |
 //! | [`cache`] | any thread | bounded least-recently-used cache (backs the icon textures) |
 //! | [`debug`] | any thread | switches the opt-in diagnostic log on and holds the app's probes; the logging itself is the separate `diag` crate (`diag/`, `CURSORPIE_DEBUG=1`, `docs/DEBUGGING.md`) |
 //! | [`history`] | UI thread | undo / redo snapshots for the Settings editor |
@@ -57,6 +58,7 @@
 
 pub mod about;
 pub mod actions;
+pub mod bridge;
 pub mod cache;
 pub mod config;
 pub mod debug;
@@ -90,6 +92,15 @@ use ui::app::App;
 ///    Dock icon is hidden, the keyboard-layout snapshot is taken (TIS needs the main thread),
 ///    the event-tap thread is spawned and the menu bar icon is created.
 pub fn run() -> eframe::Result<()> {
+    // A browser starting the native messaging host, or a switch of the browser bridge: neither
+    // shows a window nor claims the single-instance lock, so this comes before everything else.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if bridge::host::wants_host(&args) {
+        std::process::exit(bridge::host::run());
+    }
+    if let Some(code) = bridge::host::command_line(&args) {
+        std::process::exit(code);
+    }
     if platform::handle_command_line() {
         return Ok(());
     }
@@ -125,6 +136,7 @@ pub fn run() -> eframe::Result<()> {
         platform::wait_for_login_ready();
     }
     debug::init(); // the opt-in debug log; does nothing unless it is switched on
+    platform::stay_responsive(); // a hidden program must still answer the first press at once
     actions::init();
     let (tx, rx) = mpsc::channel();
     let win = geometry::window_size(config::cfg().pie_size);
@@ -180,11 +192,17 @@ pub fn run() -> eframe::Result<()> {
                 ctx: cc.egui_ctx.clone(),
             };
             running::init(notifier.clone()); // before the tap: its presses ask what runs
+            bridge::apply(config::cfg().browser_bridge); // the optional browser extension link
+            // the very first start: decided before anything can write config.json, and before the
+            // tap starts, so a trackpad that is there works from the first hold (the switch is
+            // turned on for a new user who has one, see tap::touch::probe)
+            let first_start = config::welcome_due();
+            tap::enable_trackpad_on_first_start(first_start);
             tap::spawn(notifier.clone());
             mouse::spawn_watcher(notifier.clone());
             let tray = ui::tray::build(&notifier);
-            // the very first start: say hello (decided before anything can write config.json)
-            if config::welcome_due() {
+            // the very first start: say hello
+            if first_start {
                 let (x, y) = platform::cursor_pos().unwrap_or((400.0, 300.0));
                 notifier.send(msg::Msg::OpenWelcome { x, y });
             }

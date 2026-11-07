@@ -1,6 +1,8 @@
 //! The functions every platform backend provides (see the table in `platform/mod.rs`), for Linux.
 //!
-//! This first release supports X11 sessions (and XWayland for the windows it can see). What it does
+//! X11 sessions use the X11 backend (`x11`); a Wayland session uses the Wayland one (`wayland`, chosen
+//! once from the session, see `wayland::active`), which answers first and leaves the X11 code as the
+//! fallback for what it does not know yet. This first release supports X11 sessions (and XWayland for the windows it can see). What it does
 //! not do yet, and why, is listed in `docs/LINUX_MIGRATION.md`: a tray icon and keyboard-layout
 //! labels fall back to the same behavior as the stub, and Wayland-native windows are invisible to
 //! it.
@@ -9,7 +11,7 @@ use super::desktop_entry::Index;
 use super::icontheme::{self, Found};
 use super::launch::{self, Chooser, Launch};
 use super::roles::{self, Role};
-use super::{autostart, inputdev, x11, xdg, xlib};
+use super::{autostart, inputdev, wayland, x11, xdg, xlib};
 use crate::config::DesktopMode;
 use crate::geometry::Point;
 use crate::keys::Shortcut;
@@ -27,11 +29,25 @@ use std::time::{Duration, Instant};
 
 /// The app in front.
 pub fn frontmost_bundle_id() -> Option<String> {
+    // Wayland: what KWin says; until it has reported, what XWayland knows
+    if wayland::active()
+        && let Some(app) = wayland::kwin::frontmost()
+    {
+        return Some(app);
+    }
     x11::conn()?.frontmost()
 }
 
 /// The app of the window under the logical point `p`.
 pub fn bundle_id_at(p: Point) -> Option<String> {
+    if wayland::active() && wayland::kwin::snapshot().is_some() {
+        // Sway cannot say where the pointer is, so `p` would be XWayland's guess: the focused app
+        // stands in (it is the one under the pointer when focus follows the pointer)
+        if !wayland::kwin::knows_pointer() {
+            return wayland::kwin::frontmost();
+        }
+        return wayland::kwin::app_at(p);
+    }
     x11::conn()?.app_at(p)
 }
 
@@ -175,11 +191,40 @@ pub fn window_manager_may_recenter() -> bool {
 
 /// The pointer position in logical points.
 pub fn cursor_pos() -> Option<(f64, f64)> {
+    if wayland::active()
+        && let Some((_, p)) = wayland::kwin::pointer()
+    {
+        return Some((p.x, p.y));
+    }
     x11::conn()?.pointer()
+}
+
+/// Where to ask the toolkit to put a window whose center is `(x, y)`, a point in logical points
+/// like [`cursor_pos`]. In a Wayland session the pointer is KWin's and the window is an XWayland
+/// one: the point is mapped from the KWin output to the X monitor of the same screen, so the pie
+/// is centered on the cursor at any scale (see `wayland::coords`). X11 sessions, and a Wayland
+/// session where the screens cannot be matched, keep the point as it is.
+pub fn window_point(x: f64, y: f64) -> (f64, f64) {
+    if wayland::active() {
+        let outputs = wayland::kwin::displays();
+        if !outputs.is_empty()
+            && let Some(c) = x11::conn()
+            && let Some(p) = wayland::coords::to_window_point((x, y), &outputs, &c.monitors())
+        {
+            return p;
+        }
+    }
+    (x, y)
 }
 
 /// The monitors in logical points.
 pub fn display_rects() -> Vec<ScreenRect> {
+    if wayland::active() {
+        let outputs = wayland::kwin::displays();
+        if !outputs.is_empty() {
+            return outputs;
+        }
+    }
     x11::conn().map(|c| c.monitors()).unwrap_or_default()
 }
 
@@ -202,6 +247,10 @@ pub fn open_input_monitoring_settings() {}
 
 /// Sends a shortcut to the window that has the keyboard focus.
 pub fn press_shortcut(sc: Shortcut) {
+    if wayland::active() {
+        wayland::press_shortcut(sc);
+        return;
+    }
     if let Some(c) = x11::conn() {
         c.press_shortcut(sc);
     }
@@ -231,6 +280,14 @@ pub fn mouse_devices() -> Vec<crate::mouse::Device> {
 /// Re-posts a swallowed press or release of `button`. The event goes to the current pointer
 /// position, so `_pos` is not needed.
 pub fn post_mouse(_pos: Point, kind: Kind, button: i64) {
+    if wayland::active() {
+        match kind {
+            Kind::Down => wayland::inject_button(button, true),
+            Kind::Up => wayland::inject_button(button, false),
+            Kind::Drag => false,
+        };
+        return;
+    }
     let Some(xb) = x_button_for(button) else {
         return;
     };
@@ -260,6 +317,9 @@ pub fn click_at(pos: (f64, f64), button: i64, _clicks: u32) {
 
 /// Brings the top-most window of `bundle` to the front.
 pub fn activate_app(bundle: &str) {
+    if wayland::active() && wayland::kwin::raise(bundle) {
+        return;
+    }
     if let Some(c) = x11::conn() {
         c.activate(bundle);
     }
@@ -481,8 +541,23 @@ pub fn open_app_new_window(app: &str) {
 /// window manager's list serves them all. A role (`@browser`) is first turned into the app that
 /// fills it. Meant for a worker thread: it asks the X server, and a role asks the system.
 pub fn running_among(apps: &[String]) -> Vec<bool> {
-    let Some(conn) = x11::conn() else {
-        return vec![false; apps.len()];
+    let wayland_answers = wayland::active() && wayland::kwin::snapshot().is_some();
+    let Some(conn) = x11::conn().filter(|_| !wayland_answers) else {
+        if !wayland_answers {
+            return vec![false; apps.len()];
+        }
+        let index = x11::index().unwrap_or_else(|| std::sync::Arc::new(Index::default()));
+        let ids: Vec<Option<String>> = apps
+            .iter()
+            .map(|a| {
+                let a = a.trim();
+                match Role::parse(a) {
+                    Some(role) => role_app(role, &index),
+                    None => Some(a.to_string()),
+                }
+            })
+            .collect();
+        return wayland::kwin::running_among(&ids);
     };
     let index = x11::index().unwrap_or_else(|| std::sync::Arc::new(Index::default()));
     let ids: Vec<Option<String>> = apps
@@ -500,12 +575,24 @@ pub fn running_among(apps: &[String]) -> Vec<bool> {
 
 /// Raises the window of the app `a` if it has one, otherwise starts it.
 fn raise_or_open(a: &str) {
+    if wayland::active() && wayland::kwin::raise(a) {
+        return;
+    }
     if let Some(c) = x11::conn()
         && c.raise(a)
     {
         return;
     }
     open_app(a);
+}
+
+/// Raises the window of the app `a` if it has one; `false` when it has none (nothing is started).
+/// Used to bring the browser that holds a page to the front (see `platform::web`).
+pub fn raise_if_running(a: &str) -> bool {
+    if wayland::active() && wayland::kwin::raise(a) {
+        return true;
+    }
+    x11::conn().is_some_and(|c| c.raise(a))
 }
 
 /// Opens a link or a file with the default application.
@@ -517,6 +604,34 @@ pub fn open_url(target: &str) {
         scheme = target.split(':').next().unwrap_or(""),
         xdg_open = on_path("xdg-open")
     );
+    spawn_reaped(detached("xdg-open").arg(target));
+}
+
+/// Opens a web link in a **new window** of the default browser: the browser's program is started
+/// with `--new-window <link>` when it is one that takes it (see [`roles::new_window_args`]). Any
+/// other browser, or a system that cannot say which one it is, gets the link from `xdg-open`, which
+/// most browsers answer with a new tab.
+///
+/// Used by the choice of an "Open URL" slice (see `platform::web`).
+pub fn open_url_new_window(target: &str) {
+    let index = x11::index().unwrap_or_else(|| std::sync::Arc::new(Index::default()));
+    let launch = role_app(Role::Browser, &index)
+        .and_then(|id| index.find(&id).and_then(|e| e.exec_name.clone()))
+        .and_then(|program| roles::new_window_args(&program, target).map(|args| (program, args)));
+    // only the scheme is logged: the rest of a link can be personal
+    diag::log!(
+        "act",
+        "open_url_new_window",
+        scheme = target.split(':').next().unwrap_or(""),
+        known_browser = launch.is_some()
+    );
+    if let Some((program, args)) = launch {
+        let mut cmd = detached(&program);
+        cmd.args(args);
+        if started(&mut cmd) {
+            return;
+        }
+    }
     spawn_reaped(detached("xdg-open").arg(target));
 }
 
@@ -654,6 +769,9 @@ pub fn single_instance() -> bool {
     }
     locked
 }
+
+/// Nothing throttles a hidden X11 program the way Windows and macOS do.
+pub fn stay_responsive() {}
 
 /// Gives freed heap pages back to the OS (glibc only). The amount is not measured.
 pub fn release_unused_memory() -> usize {

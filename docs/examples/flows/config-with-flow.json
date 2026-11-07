@@ -1,0 +1,26 @@
+{
+  "version": 2,
+  "flows": [
+    {
+      "id": "morning",
+      "name": "Morning routine",
+      "nodes": [
+        { "id": 1, "x": 40.0,  "y": 60.0, "kind": "Start", "next": 2 },
+        { "id": 2, "x": 240.0, "y": 60.0, "kind": { "OpenUrl": "https://mail.example.com" }, "next": 3 },
+        { "id": 3, "x": 540.0, "y": 60.0, "kind": { "Wait": 500 }, "next": 4 },
+        { "id": 4, "x": 840.0, "y": 60.0, "kind": { "OpenApp": "Notes" }, "next": 5 },
+        { "id": 5, "x": 40.0,  "y": 190.0, "kind": "End", "next": null }
+      ]
+    }
+  ],
+  "profiles": [
+    {
+      "name": "General",
+      "apps": [],
+      "active": [],
+      "items": [
+        { "name": "Morning", "icon": "☀", "kind": { "Run": { "Flow": "morning" } } }
+      ]
+    }
+  ]
+}

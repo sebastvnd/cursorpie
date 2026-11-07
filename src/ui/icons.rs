@@ -12,7 +12,9 @@
 //!   reloaded ([`IconCache::revalidate`]), instead of throwing everything away every time.
 //! * It is **warmed up** while the trigger is held, before the pie opens, see
 //!   [`icons_to_warm`] and `Msg::Warm`.
-//! * It is **dropped** when the UI goes to sleep ([`IconCache::clear`]).
+//! * It is **trimmed** when the UI goes to sleep ([`IconCache::keep_only`]): what the next pie
+//!   needs first ([`icons_to_keep_asleep`]) stays, so the first press after a long idle time finds
+//!   its icons decoded instead of decoding them while the hold timer runs.
 //! * Lists that show many app icons at once (the app picker) ask with
 //!   [`IconCache::get_app_async`]: the system call and the decoding then run on a worker thread,
 //!   so scrolling never waits for them (on macOS one icon is a multi-size TIFF of several MiB).
@@ -33,6 +35,11 @@ use std::time::{Duration, Instant, SystemTime};
 /// [`ICON_MAX_PX`](crate::ui::draw::ICON_MAX_PX) pixels on its longest side (128 x 128 = 64 KiB),
 /// so this is a few MiB at the very most.
 pub const CAPACITY: usize = 96;
+
+/// Most icon strings [`icons_to_keep_asleep`] names: the general pie, then the others. Each is a
+/// texture of at most 64 KiB, so this is two MiB at the very most, and a few dozen KiB for the
+/// icons of an ordinary pie.
+pub const SLEEP_KEEP: usize = 32;
 
 /// How long to wait before trying again to load an app icon that could not be loaded.
 const APP_ICON_RETRY: Duration = Duration::from_secs(3);
@@ -228,6 +235,19 @@ impl IconCache {
         self.pending.clear();
     }
 
+    /// Drops every texture except the ones named in `keep` (icon strings, see
+    /// [`icons_to_keep_asleep`]), which stay decoded. Used when the UI sleeps: freeing the whole
+    /// cache gains a few KiB but makes the first pie after a long idle time decode its icons
+    /// while the hold timer runs, and on macOS one app icon is a multi-size TIFF.
+    pub fn keep_only(&mut self, keep: &[String]) {
+        self.lru.retain(|k, _| keep.iter().any(|s| s == k));
+        if let Some(w) = &self.worker {
+            w.cancel_all();
+        }
+        // an answer that is still on its way is ignored: it is not in `pending` any more
+        self.pending.clear();
+    }
+
     /// Forgets what is stale: image files that changed, vanished or failed to load. Cheap (one
     /// `stat` per cached file), so it runs whenever Settings opens or closes.
     pub fn revalidate(&mut self) {
@@ -333,13 +353,17 @@ impl IconCache {
             }
             let tex = appicon::load_string(icon)
                 .map(|img| ctx.load_texture(icon, img, egui::TextureOptions::LINEAR));
-            let failed_at = tex.is_none().then(Instant::now);
+            // No time is noted for a failure here. This is the warm-up, which runs while the
+            // system is still cold from a long idle time, so a miss is often only that; noting
+            // it would make `get_app_async` (the pie's own lookup) refuse for `APP_ICON_RETRY`
+            // and the slice would show its text for seconds. Without it the pie hands the icon
+            // to the worker thread at once, and the worker notes a failure that is real.
             self.lru.insert(
                 icon.to_string(),
                 Entry {
                     tex: tex.clone(),
                     file: None,
-                    failed_at,
+                    failed_at: None,
                 },
             );
             return tex;
@@ -364,8 +388,28 @@ impl IconCache {
     }
 }
 
-/// The icon strings a pie of `profile` needs on its first frames: its top ring, one level of
-/// submenus, the center icon and the app icon of the targeted app. Text icons are included on
+/// The icon strings to keep decoded while the UI sleeps: the pie of the general profile first (it
+/// is the one a press opens almost always), then those of the other profiles, up to
+/// [`SLEEP_KEEP`] strings. See [`IconCache::keep_only`].
+pub fn icons_to_keep_asleep(c: &Config) -> Vec<String> {
+    let general = c.global_profile();
+    let others = (0..c.profiles.len()).filter(|&i| i != general);
+    let mut out: Vec<String> = Vec::new();
+    for profile in std::iter::once(general).chain(others) {
+        for icon in icons_to_warm(c, profile, None) {
+            if out.len() >= SLEEP_KEEP {
+                return out;
+            }
+            if !out.contains(&icon) {
+                out.push(icon);
+            }
+        }
+    }
+    out
+}
+
+/// The icon strings a pie of `profile` needs on its first frames: its top ring, the submenus at
+/// every depth (shallowest first), the center icon and the app icon of the targeted app. Text icons are included on
 /// purpose: [`IconCache::get`] returns at once for them. At most [`CAPACITY`] strings.
 pub fn icons_to_warm(c: &Config, profile: usize, target: Option<&str>) -> Vec<String> {
     let Some(p) = c.profiles.get(profile) else {
@@ -385,16 +429,19 @@ pub fn icons_to_warm(c: &Config, profile: usize, target: Option<&str>) -> Vec<St
     {
         add(&appicon::icon_string(c.app_icon_style, b));
     }
-    let ring = |items: &[Item], add: &mut dyn FnMut(&str)| {
-        for it in items {
+    // level by level: the top ring first, then the submenus of that ring, then the submenus of
+    // those, and so on. Shallow icons come first because they are on screen first, and if the
+    // bound is reached it is the deepest ones that wait for the worker thread.
+    let mut level: Vec<&Item> = p.items.iter().collect();
+    while !level.is_empty() {
+        let mut next: Vec<&Item> = Vec::new();
+        for it in level {
             add(&it.icon);
+            if let ItemKind::Submenu(children) = &it.kind {
+                next.extend(children.iter());
+            }
         }
-    };
-    ring(&p.items, &mut add);
-    for it in &p.items {
-        if let ItemKind::Submenu(children) = &it.kind {
-            ring(children, &mut add);
-        }
+        level = next;
     }
     out
 }
@@ -568,6 +615,83 @@ mod tests {
     }
 
     #[test]
+    fn keep_only_drops_everything_but_the_named_icons() {
+        let dir = scratch("keep");
+        let ctx = egui::Context::default();
+        let mut c = IconCache::new();
+        let files: Vec<String> = (0..3)
+            .map(|i| {
+                let f = dir.join(format!("{i}.png"));
+                write_png(&f, [i as u8, 0, 0, 255], 4);
+                f.to_string_lossy().to_string()
+            })
+            .collect();
+        for f in &files {
+            let _ = c.get(&ctx, f);
+        }
+        assert_eq!(c.len(), 3);
+        c.keep_only(&files[..1]);
+        assert_eq!(c.len(), 1);
+        assert!(c.contains(&files[0]), "the kept icon is still decoded");
+        assert!(!c.contains(&files[2]));
+        c.keep_only(&[]);
+        assert!(c.is_empty());
+    }
+
+    #[test]
+    fn the_icons_kept_asleep_start_with_the_general_pie() {
+        use crate::config::{Action, Config, Item, Profile};
+        let profile = |name: &str, apps: Vec<String>, icon: &str| Profile {
+            name: name.into(),
+            apps,
+            items: vec![Item::run("X", icon, Action::Nothing)],
+            active: vec![],
+        };
+        let c = Config {
+            profiles: vec![
+                profile("App", vec!["com.example.App".into()], "~/app.png"),
+                profile("General", vec![], "~/general.png"),
+            ],
+            ..Default::default()
+        };
+        let keep = icons_to_keep_asleep(&c);
+        let at = |icon: &str| keep.iter().position(|s| s == icon);
+        assert!(at("~/general.png").is_some() && at("~/app.png").is_some());
+        assert!(
+            at("~/general.png") < at("~/app.png"),
+            "the general pie comes first"
+        );
+    }
+
+    #[test]
+    fn the_icons_kept_asleep_are_bounded_and_without_duplicates() {
+        use crate::config::{Action, Config, Item, Profile};
+        let many: Vec<Item> = (0..SLEEP_KEEP + 8)
+            .map(|i| Item::run("X", &format!("~/{i}.png"), Action::Nothing))
+            .collect();
+        let c = Config {
+            profiles: vec![Profile {
+                name: "General".into(),
+                apps: vec![],
+                items: many,
+                active: vec![],
+            }],
+            ..Default::default()
+        };
+        let keep = icons_to_keep_asleep(&c);
+        assert_eq!(keep.len(), SLEEP_KEEP);
+        let mut unique = keep.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), keep.len());
+        let none = Config {
+            profiles: vec![],
+            ..Default::default()
+        };
+        assert!(icons_to_keep_asleep(&none).is_empty());
+    }
+
+    #[test]
     fn warm_list_covers_ring_submenu_center_and_app_icon() {
         use crate::config::{Action, Config, Item, Profile};
         let c = Config {
@@ -602,5 +726,32 @@ mod tests {
             "no duplicates"
         );
         assert!(icons_to_warm(&c, 7, None).is_empty(), "unknown profile");
+    }
+
+    #[test]
+    fn warm_list_reaches_submenus_of_submenus_shallowest_first() {
+        use crate::config::{Action, Config, Item, Profile};
+        let leaf = |icon: &str| Item::run("L", icon, Action::Nothing);
+        let deep = Item::submenu("Deep", "~/deep.png", vec![leaf("~/c.png")]);
+        let mid = Item::submenu("Mid", "~/mid.png", vec![leaf("~/b.png"), deep]);
+        let c = Config {
+            profiles: vec![Profile {
+                name: "General".into(),
+                apps: vec![],
+                items: vec![leaf("~/a.png"), mid],
+                active: vec![],
+            }],
+            ..Default::default()
+        };
+        let w = icons_to_warm(&c, 0, None);
+        let at = |icon: &str| w.iter().position(|s| s == icon);
+        for icon in ["~/a.png", "~/mid.png", "~/b.png", "~/deep.png", "~/c.png"] {
+            assert!(at(icon).is_some(), "{icon} is warmed");
+        }
+        assert!(
+            at("~/mid.png") < at("~/b.png"),
+            "the ring before its submenu"
+        );
+        assert!(at("~/b.png") < at("~/c.png"), "a level before the next one");
     }
 }

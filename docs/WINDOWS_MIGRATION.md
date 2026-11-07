@@ -52,7 +52,8 @@ Non-goals (0.3.0)
 | Launch at login | `platform/login_item.rs` | LaunchAgent plist | `HKCU\...\Run` value pointing at the installed copy |
 | Install, uninstall | `platform/windows/install.rs` | none (the `.app` is the install) | copy to `%LOCALAPPDATA%\Programs\CursorPie`, `HKCU\...\Uninstall` entry, `--uninstall` |
 | One running copy | `platform/windows/instance.rs` | none | named mutex `Local\CursorPie-single-instance` |
-| Return memory to the OS | `platform/memory.rs` | `malloc_zone_pressure_relief` | `SetProcessWorkingSetSize(-1, -1)` |
+| Return memory to the OS | `platform/memory.rs` | `malloc_zone_pressure_relief` | `HeapCompact` on the process heap (`platform/windows/power.rs`); not `SetProcessWorkingSetSize(-1, -1)`, which evicts the hook code too and makes the first press after idle slow |
+| Not being throttled while hidden | `platform/macos/activity.rs` | `NSProcessInfo beginActivity` (opts out of App Nap) | `SetProcessInformation(ProcessPowerThrottling)` (opts out of EcoQoS), in `platform/windows/power.rs` |
 | File chooser, reveal, open, tick | `platform/shell.rs`, `ui/settings/icon_catalog.rs` | `osascript`, `open`, `mdls`, `afplay` | `GetOpenFileNameW`, `explorer`, `ShellExecuteW`, `MessageBeep` |
 | Run actions | `actions.rs` | `open -a`, `open`, `/bin/sh -c` | `ShellExecuteW`, `cmd /C` |
 | Menu bar icon | `ui/tray.rs` | `tray-icon` (template image) | `tray-icon` (coloured image) |

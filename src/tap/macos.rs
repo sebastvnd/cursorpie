@@ -10,7 +10,9 @@ use crate::keys::{MOD_ALT, MOD_CMD, MOD_CTRL, MOD_SHIFT};
 use crate::msg::Notifier;
 use core_foundation::base::TCFType;
 use core_foundation::mach_port::CFMachPortRef;
-use core_foundation::runloop::{CFRunLoop, kCFRunLoopCommonModes};
+use core_foundation::runloop::{
+    CFRunLoop, CFRunLoopRunResult, kCFRunLoopCommonModes, kCFRunLoopDefaultMode,
+};
 use core_graphics::event::{
     CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
     CGEventType, CallbackResult, EventField,
@@ -23,9 +25,15 @@ use std::time::Duration;
 /// The tap's mach port, kept so the callback can re-enable the tap after macOS disables it.
 static TAP_PORT: AtomicUsize = AtomicUsize::new(0);
 
+/// How often the run loop of the tap hands control back so the tap can be looked at. macOS sends
+/// a "disabled" event when it turns a tap off, but only to a callback that is called: after a
+/// sleep, a secure-input period or a timeout while nothing was pressed, nothing may ever call it.
+const WATCHDOG: Duration = Duration::from_secs(2);
+
 // Not exposed by the `core-graphics` crate.
 unsafe extern "C" {
     fn CGEventTapEnable(tap: CFMachPortRef, enable: bool);
+    fn CGEventTapIsEnabled(tap: CFMachPortRef) -> bool;
 }
 
 /// Converts event flags from a `CGEvent` into a `MOD_*` bitmask.
@@ -102,7 +110,8 @@ pub fn spawn(notifier: Notifier) {
                         super::TAP_ACTIVE.store(true, Ordering::SeqCst);
                         diag::log!("tap", "hook", backend = "macos", state = "running");
                         notifier.wake();
-                        CFRunLoop::run_current();
+                        watch(tap.mach_port().as_concrete_TypeRef(), &state, &notifier);
+                        TAP_PORT.store(0, Ordering::SeqCst);
                         super::TAP_ACTIVE.store(false, Ordering::SeqCst);
                         diag::log!("tap", "hook", backend = "macos", state = "stopped");
                     }
@@ -123,6 +132,45 @@ pub fn spawn(notifier: Notifier) {
             }
         })
         .expect("failed to spawn event tap thread");
+}
+
+/// Runs the run loop of the tap in slices of [`WATCHDOG`] and, between them, makes sure macOS has
+/// not turned the tap off. A tap that is off and cannot be turned on again is dead (its port is no
+/// longer valid), so this returns and the caller builds a new one. Also returns when the run loop
+/// ends.
+///
+/// `port` is the mach port of the tap, which the caller keeps alive for the whole call.
+fn watch(port: CFMachPortRef, state: &Arc<Mutex<Gesture>>, notifier: &Notifier) {
+    loop {
+        // SAFETY: the default mode is part of the common modes the source was added to.
+        let result = CFRunLoop::run_in_mode(unsafe { kCFRunLoopDefaultMode }, WATCHDOG, false);
+        if matches!(
+            result,
+            CFRunLoopRunResult::Finished | CFRunLoopRunResult::Stopped
+        ) {
+            return;
+        }
+        // SAFETY: `port` belongs to the tap, which the caller keeps alive for the whole call.
+        if unsafe { CGEventTapIsEnabled(port) } {
+            continue;
+        }
+        // SAFETY: as above.
+        unsafe { CGEventTapEnable(port, true) };
+        // a press whose release the disabled tap never saw would leave the pie open
+        reset(state, notifier);
+        // SAFETY: as above.
+        let back = unsafe { CGEventTapIsEnabled(port) };
+        diag::log!(
+            "tap",
+            "hook",
+            backend = "macos",
+            state = "re_enabled",
+            ok = back
+        );
+        if !back {
+            return;
+        }
+    }
 }
 
 /// Runs the handler and turns a panic into "let the event through".

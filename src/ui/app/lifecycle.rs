@@ -6,7 +6,7 @@ use super::App;
 use crate::config::cfg;
 use crate::platform;
 use crate::side;
-use crate::ui::icons::icons_to_warm;
+use crate::ui::icons::{icons_to_keep_asleep, icons_to_warm};
 use crate::ui::sleep::{Tick, sleep_after};
 use eframe::egui;
 use std::time::Instant;
@@ -31,13 +31,19 @@ impl App {
         }
     }
 
-    /// Frees what is only a cache or only needed while Settings is open, then hands the pages back
-    /// to macOS. Everything is rebuilt on demand, so nothing is lost: icons are decoded again by
-    /// [`App::warm`] when the trigger is pressed, and Settings copies the config when it opens.
+    /// Frees what is only a cache or only needed while Settings is open, then hands the freed
+    /// pages back to the OS. Everything is rebuilt on demand, so nothing is lost: Settings copies
+    /// the config when it opens, and the icons of other profiles are decoded again by
+    /// [`App::warm`] when the trigger is pressed.
+    ///
+    /// The icons of the general pie are **kept**. They are a few dozen KiB, and dropping them made
+    /// the first pie after a long idle time decode them while the hold timer ran (a multi-size TIFF
+    /// per app icon on macOS), so the pie opened late.
     fn enter_sleep(&mut self) {
         // how long freeing the caches and handing the pages back to the OS took
         let _t = diag::timed!("ui", "sleep");
-        self.ed.icons.clear();
+        let keep = icons_to_keep_asleep(&cfg());
+        self.ed.icons.keep_only(&keep);
         self.release_editor();
         self.toast = None;
         platform::release_unused_memory();

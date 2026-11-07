@@ -26,6 +26,17 @@ fn names_of(buttons: &[i64]) -> String {
         .join(", ")
 }
 
+/// The end of the status line of "Detect again": what the look at the trackpads found, or nothing
+/// where the OS has no trackpad support.
+fn trackpad_clause(found: Option<usize>) -> String {
+    match found {
+        None => String::new(),
+        Some(0) => " No trackpad found.".to_string(),
+        Some(1) => " 1 trackpad found.".to_string(),
+        Some(n) => format!(" {n} trackpads found."),
+    }
+}
+
 /// How long ago, for the list of mice.
 fn ago(seconds: u64) -> String {
     match seconds {
@@ -173,12 +184,18 @@ impl App {
         }
         if want.detect {
             let out = mouse::refresh();
-            self.say(match out.recognition {
+            // the same look also counts the trackpads (it starts nothing; the Trackpad panel
+            // shows the result and a scan there can switch the hold on)
+            let pads = crate::platform::OS
+                .has_trackpad()
+                .then(crate::tap::touch_scan);
+            let mouse_part = match out.recognition {
                 Recognition::Absent => {
                     "No mouse was listed by the system. Use Scan to find the buttons.".to_string()
                 }
                 _ => format!("{}: {} extra buttons.", out.name, out.extra),
-            });
+            };
+            self.say(format!("{mouse_part}{}", trackpad_clause(pads)));
         }
     }
 }
@@ -213,6 +230,14 @@ mod tests {
             names_of(&[3, 4, 5]),
             "Back button, Forward button, Extra button 6"
         );
+    }
+
+    #[test]
+    fn detecting_mice_also_reports_the_trackpads() {
+        assert_eq!(trackpad_clause(None), "");
+        assert_eq!(trackpad_clause(Some(0)), " No trackpad found.");
+        assert_eq!(trackpad_clause(Some(1)), " 1 trackpad found.");
+        assert_eq!(trackpad_clause(Some(2)), " 2 trackpads found.");
     }
 
     #[test]

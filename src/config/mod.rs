@@ -100,6 +100,17 @@ mod tests {
     }
 
     #[test]
+    fn the_browser_bridge_is_off_by_default_and_old_files_still_load() {
+        assert!(!Config::default().browser_bridge);
+        let old = parse_config(r#"{"version": 2}"#).expect("parses");
+        assert!(!old.browser_bridge);
+        let on = parse_config(r#"{"version": 2, "browser_bridge": true}"#).expect("parses");
+        assert!(on.browser_bridge);
+        let json = serde_json::to_string(&on).unwrap();
+        assert!(json.contains(r#""browser_bridge":true"#));
+    }
+
+    #[test]
     fn the_open_app_choice_is_on_by_default_and_can_be_switched_off() {
         assert!(Config::default().open_app_choice);
         // a file from before the setting existed gets the new behavior

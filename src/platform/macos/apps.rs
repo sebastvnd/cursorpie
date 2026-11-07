@@ -143,6 +143,11 @@ pub fn window_manager_may_recenter() -> bool {
     false
 }
 
+/// A window is placed in the same points the pointer is in.
+pub fn window_point(x: f64, y: f64) -> (f64, f64) {
+    (x, y)
+}
+
 /// The toolkit's focus request activates the app, also from another Space, so there is nothing more to ask.
 pub fn raise_own_window() {}
 

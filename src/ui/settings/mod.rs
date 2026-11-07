@@ -13,6 +13,7 @@
 //! | `picker` | native file choosers run off the UI thread |
 //! | `welcome` | the first-launch welcome window (`App::welcome_ui`), drawn in the same window and style |
 //! | `quit_dialog` | the "unsaved changes" sheet shown when you quit with edits that were not saved (`App::request_quit`) |
+//! | `wayland_keys` | recording a shortcut from the window's own key events in a Wayland session |
 //! | `undo` | undo / redo shortcuts and backup restore, on top of [`History`](crate::history::History) |
 //! | `theme`, `widgets` | palette, geometry, egui style and small reusable widgets |
 //!
@@ -39,6 +40,7 @@ mod state;
 mod tabs;
 pub mod theme;
 mod undo;
+mod wayland_keys;
 mod welcome;
 mod widgets;
 mod window;

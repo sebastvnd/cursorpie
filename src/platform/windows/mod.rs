@@ -21,6 +21,7 @@
 //! | `install` | per-user install, "Apps & features" entry, `--uninstall` |
 //! | `instance` | one running copy at a time |
 //! | `window` | makes the one native window truly frameless (no white box, border or shadow) |
+//! | `power` | no power throttling while hidden, a quicker hook thread, and freeing memory without evicting the working set |
 //!
 //! There is no permission to ask for on Windows, and nothing like a Dock icon to hide.
 
@@ -37,6 +38,7 @@ mod input;
 mod install;
 mod instance;
 mod login_item;
+mod power;
 mod registry;
 mod shell;
 mod shellitem;
@@ -49,13 +51,12 @@ pub use input::*;
 pub use install::*;
 pub use instance::*;
 pub use login_item::*;
+pub use power::*;
 pub use shell::*;
 pub use window::*;
 
 pub(crate) use dpi::{scale_at_physical, set_last_scale};
 pub(crate) use util::px_to_logical;
-
-use windows_sys::Win32::System::Threading::{GetCurrentProcess, SetProcessWorkingSetSize};
 
 /// Always `true`: input hooks and `SendInput` need no permission.
 pub fn is_trusted() -> bool {
@@ -75,13 +76,3 @@ pub fn open_input_monitoring_settings() {}
 
 /// There is no Dock icon to hide (the window is kept off the taskbar by the window builder).
 pub fn set_accessory_policy() {}
-
-/// Asks Windows to trim the working set, which returns freed pages to the system. Reports 0 because
-/// Windows does not say how much was released.
-pub fn release_unused_memory() -> usize {
-    // SAFETY: the pseudo handle of the current process is always valid; (-1, -1) means "trim".
-    unsafe {
-        SetProcessWorkingSetSize(GetCurrentProcess(), usize::MAX, usize::MAX);
-    }
-    0
-}

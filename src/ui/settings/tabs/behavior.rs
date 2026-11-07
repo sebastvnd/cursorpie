@@ -18,6 +18,35 @@ use crate::ui::settings::widgets::*;
 use crate::ui::symbols;
 use eframe::egui::{self, Color32, Vec2};
 
+/// How to put the extension in the browser: the files are written by the button above. A browser
+/// only takes an extension that is signed by its store or that the person loads by hand.
+const BRIDGE_INSTALL_HELP: &str = "Add the extension once: in Chrome, Edge, Brave or Vivaldi open the extensions page, turn on Developer mode, choose Load unpacked and pick the 'chromium' folder. In Firefox open about:debugging, choose This Firefox, then Load Temporary Add-on and pick manifest.json in the 'firefox' folder (Firefox forgets a temporary add-on when it closes; a signed copy from the release page stays). It connects within a minute.";
+
+/// The line under the switch: which browsers are connected, or what is still missing.
+fn bridge_status_text(st: &crate::bridge::Status) -> String {
+    if !st.running {
+        return "Not started yet: save the settings to start the link.".into();
+    }
+    if !st.browsers.is_empty() {
+        let list: Vec<String> = st
+            .browsers
+            .iter()
+            .map(|(b, n)| format!("{b} ({n} {})", if *n == 1 { "tab" } else { "tabs" }))
+            .collect();
+        return format!("Connected: {}.", list.join(", "));
+    }
+    if let Some(e) = st.errors.first() {
+        return format!("No browser connected yet. Could not register with a browser: {e}");
+    }
+    if st.registered.is_empty() {
+        return "No browser connected yet, and no supported browser was found (Flatpak and Snap browsers cannot be reached).".into();
+    }
+    format!(
+        "No browser connected yet. Ready for: {}. Add the extension below.",
+        st.registered.join(", ")
+    )
+}
+
 /// What the OS calls a desktop: a Space on macOS, a virtual desktop on Windows, a workspace on Linux.
 fn desktop_noun() -> &'static str {
     match crate::platform::OS {
@@ -326,25 +355,56 @@ impl App {
                 );
             });
         });
-        panel(ui, "Open app slices", |ui| {
+        panel(ui, "Open app and web page slices", |ui| {
             demo::open_choice_demo(ui, accent, cfg.open_app_choice);
             toggle_row(
                 ui,
                 &mut cfg.open_app_choice,
-                "Choose between a new window and the open app",
-                "When the app already runs, hovering its slice shows two round badges beside it: a green + (new window) and a yellow one with a square (the app that is open).",
+                "Choose between a new window and the open app or page",
+                "When the app already runs, hovering its slice shows two round badges beside it: a green + (new window) and a yellow one with a square (the app that is open). A web link gets the same badges only with the browser extension below.",
                 accent,
             );
             note(
                 ui,
                 if cfg.open_app_choice {
-                    "Release on the half of the slice nearer a badge to pick it: the green + is on the side where the slice starts, the yellow one on the side where it ends. An app that is not running is simply opened."
+                    "Release on the half of the slice nearer a badge to pick it: the green + is on the side where the slice starts, the yellow one on the side where it ends. An app that is not running, or a page that is not open, is simply opened."
                 } else {
                     "Off: an Open app slice always opens the app, or goes to it when it runs, as before."
                 },
             );
             if cfg.open_app_choice {
                 note(ui, new_window_hint());
+            }
+        });
+        panel(ui, "Browser extension (optional)", |ui| {
+            toggle_row(
+                ui,
+                &mut cfg.browser_bridge,
+                "Know which web pages are open",
+                "CursorPie carries a small extension for Firefox and Chromium browsers (Chrome, Edge, Brave, Vivaldi). With it, an Open URL slice with an http or https link shows the two badges when that page is open, goes to that very tab, and opens a real new window. Off, or without the extension, an Open URL slice just opens its link and shows no badges.",
+                accent,
+            );
+            if cfg.browser_bridge {
+                note(ui, &bridge_status_text(&crate::bridge::status()));
+                actions(ui, |ui| {
+                    if button(
+                        ui,
+                        Look::Soft,
+                        Some(symbols::FOLDER_OPEN),
+                        "Show the extension files",
+                    )
+                    .clicked()
+                        && let Err(e) = crate::bridge::extension::export_and_show()
+                    {
+                        eprintln!("CursorPie: could not write the browser extension: {e}");
+                    }
+                });
+                note(ui, BRIDGE_INSTALL_HELP);
+            } else {
+                note(
+                    ui,
+                    "Nothing is installed or listened to while this is off. The extension only tells CursorPie, on this computer, the address of the pages that are open; it sends nothing over the network.",
+                );
             }
         });
         panel(ui, desktops_title(), |ui| {
@@ -456,7 +516,7 @@ impl App {
                 ui,
                 &mut on,
                 "Free memory while idle",
-                "After this long without a pie or Settings, cached icons and the editor's working copy are dropped. They are loaded again when you press the trigger.",
+                "After this long without a pie or Settings, the editor's working copy and the cached icons of your other pies are dropped. They are loaded again when you press the trigger; the icons of your general pie stay, so it opens just as fast.",
                 accent,
             )
             .changed()
@@ -478,6 +538,33 @@ impl App {
             trackpad_panel(ui, cfg, accent, crate::tap::touch_status());
         }
     }
+}
+
+/// What the last scan found, for the line under the Scan button; `None` before the first scan.
+/// `on` is the state of the switch now.
+fn scan_text(os: Os, scanned: Option<usize>, on: bool) -> Option<String> {
+    let name = if os == Os::Windows {
+        "precision touchpad"
+    } else if os == Os::Linux {
+        "touchpad"
+    } else {
+        "trackpad"
+    };
+    scanned.map(|n| match (n, on) {
+        (0, _) if os == Os::Windows => {
+            "Scan: no precision touchpad found. A touchpad that Windows treats as a plain mouse cannot be read."
+                .to_string()
+        }
+        (0, _) => format!("Scan: no {name} found."),
+        (n, true) => format!(
+            "Scan: {n} {name}{} found. The hold is on; press Save to keep it.",
+            if n == 1 { "" } else { "s" }
+        ),
+        (n, false) => format!(
+            "Scan: {n} {name}{} found. Turn the switch on to use it.",
+            if n == 1 { "" } else { "s" }
+        ),
+    })
 }
 
 /// The line under the Trackpad switch: what the touch source found.
@@ -582,10 +669,23 @@ fn trackpad_panel(
             ui,
             &mut cfg.touch_trigger,
             "Open the pie with a trackpad hold",
-            "Uses the hold time above. Off by default: a finger resting on a trackpad is common.",
+            "Uses the hold time above. Switched on at the first start when a trackpad is found; a finger resting on a trackpad is common, so turn it off here if it gets in the way.",
             accent,
         );
         note(ui, &trackpad_status_text(cfg.touch_trigger, status));
+        // A scan looks at the system without starting the touch source, so it works while the
+        // switch is off. A trackpad that was not there at the first start (a Bluetooth one, a
+        // laptop that was docked) is switched on by it: that is the point of pressing it.
+        actions(ui, |ui| {
+            if button(ui, Look::Soft, Some(symbols::SCAN), "Scan for trackpad").clicked()
+                && crate::tap::touch_scan() > 0
+            {
+                cfg.touch_trigger = true;
+            }
+        });
+        if let Some(text) = scan_text(os, crate::tap::touch_last_scan(), cfg.touch_trigger) {
+            note(ui, &text);
+        }
         ui.add_enabled_ui(cfg.touch_trigger, |ui| {
             note(ui, extra_finger_hint(os));
             slider_row(
@@ -721,8 +821,70 @@ fn glass_preview(ui: &mut egui::Ui, cfg: &Config) {
 }
 
 #[cfg(test)]
+mod bridge_text_tests {
+    use super::*;
+    use crate::bridge::Status;
+
+    #[test]
+    fn the_status_line_says_what_is_connected_or_missing() {
+        let mut st = Status {
+            running: true,
+            ..Status::default()
+        };
+        assert!(bridge_status_text(&st).contains("no supported browser"));
+        st.registered = vec!["Chrome", "Firefox"];
+        assert!(bridge_status_text(&st).contains("Ready for: Chrome, Firefox"));
+        st.browsers = vec![("Firefox".into(), 1), ("Chrome".into(), 12)];
+        assert_eq!(
+            bridge_status_text(&st),
+            "Connected: Firefox (1 tab), Chrome (12 tabs)."
+        );
+        st.browsers.clear();
+        st.errors = vec!["Brave: permission denied".into()];
+        assert!(bridge_status_text(&st).contains("permission denied"));
+        assert_eq!(
+            bridge_status_text(&Status::default()),
+            "Not started yet: save the settings to start the link."
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_scan_says_what_it_found_in_the_words_of_the_os() {
+        assert_eq!(
+            scan_text(Os::Mac, None, false),
+            None,
+            "nothing before the first scan"
+        );
+        assert_eq!(
+            scan_text(Os::Mac, Some(0), false).as_deref(),
+            Some("Scan: no trackpad found.")
+        );
+        assert!(
+            scan_text(Os::Windows, Some(0), true)
+                .unwrap()
+                .contains("precision touchpad")
+        );
+        assert!(
+            scan_text(Os::Linux, Some(1), true)
+                .unwrap()
+                .contains("1 touchpad found")
+        );
+        assert!(
+            scan_text(Os::Mac, Some(2), true)
+                .unwrap()
+                .contains("2 trackpads found")
+        );
+        assert!(
+            scan_text(Os::Mac, Some(1), false)
+                .unwrap()
+                .contains("Turn the switch on")
+        );
+    }
 
     #[test]
     fn the_trackpad_panel_draws_in_every_state_and_says_what_is_going_on() {

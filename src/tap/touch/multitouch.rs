@@ -24,7 +24,7 @@ use crate::tap::gesture::Gesture;
 use std::ffi::{CString, c_char, c_int, c_void};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 /// Fixed system path of the framework.
 const FRAMEWORK: &str =
@@ -35,6 +35,17 @@ const TICK: Duration = Duration::from_millis(250);
 const RESCAN: Duration = Duration::from_secs(5);
 /// A loop that was not run for this long means the Mac slept: the source is restarted.
 const SLEEP_GAP: Duration = Duration::from_secs(3);
+
+/// Whether the loop was not run for longer than [`SLEEP_GAP`], by the clock of the machine
+/// (`wall`) or by the clock of the process (`mono`). `Instant` does not count the time the Mac is
+/// asleep, so alone it never noticed a real sleep (the devices then stayed dead until the program
+/// was restarted) and fired only when the thread itself was held back (App Nap), which restarted a
+/// source that was fine. The wall clock sees the sleep; the process clock keeps the case of a
+/// thread that stalls without the Mac sleeping, whose callbacks cannot be trusted either.
+fn loop_stalled(wall: Option<Duration>, mono: Duration) -> bool {
+    mono > SLEEP_GAP || wall.is_some_and(|w| w > SLEEP_GAP)
+}
+
 /// Most fingers read from one frame.
 const MAX_FINGERS: usize = 16;
 /// Frames with fingers that are checked before the data is trusted.
@@ -412,10 +423,14 @@ fn run(hub: &'static Hub) {
     let mut api: Option<Option<Api>> = None; // loaded the first time the setting is on
     let mut running: Option<Running> = None;
     let (mut last_loop, mut last_scan) = (Instant::now(), Instant::now());
+    let mut last_wall = SystemTime::now();
     loop {
         std::thread::sleep(TICK);
-        let slept = last_loop.elapsed() > SLEEP_GAP;
+        // `Err` = the clock was set back: no sign of a sleep
+        let wall = SystemTime::now().duration_since(last_wall).ok();
+        let slept = loop_stalled(wall, last_loop.elapsed());
         last_loop = Instant::now();
+        last_wall = SystemTime::now();
         let on = cfg().touch_trigger;
 
         if !on || slept || hub.broken.load(Ordering::SeqCst) {
@@ -516,6 +531,27 @@ mod tests {
         assert_eq!(std::mem::offset_of!(RawTouch, identifier), 16);
         assert_eq!(std::mem::offset_of!(RawTouch, state), 20);
         assert_eq!(std::mem::offset_of!(RawTouch, mm), 68);
+    }
+
+    #[test]
+    fn a_sleep_is_seen_by_the_wall_clock() {
+        let long = SLEEP_GAP + Duration::from_secs(1);
+        // the Mac slept: the process clock did not move, the wall clock did
+        assert!(loop_stalled(Some(long), TICK));
+        // the thread was held back: both clocks moved
+        assert!(loop_stalled(Some(long), long));
+        // the thread was held back and the wall clock was set back meanwhile
+        assert!(loop_stalled(None, long));
+        // an ordinary tick
+        assert!(!loop_stalled(Some(TICK), TICK));
+        assert!(
+            !loop_stalled(None, TICK),
+            "a clock set back alone is no sleep"
+        );
+        assert!(
+            !loop_stalled(Some(SLEEP_GAP), SLEEP_GAP),
+            "the gap itself is still fine"
+        );
     }
 
     #[test]

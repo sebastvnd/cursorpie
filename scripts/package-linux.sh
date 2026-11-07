@@ -21,6 +21,12 @@ rm -rf "$OUT" "$OUT.tar.gz"
 mkdir -p "$OUT"
 cp target/release/cursorpie "$OUT/cursorpie"
 cp packaging/linux/cursorpie.desktop "$OUT/cursorpie.desktop"
+# the udev rule a Wayland session needs (docs/WAYLAND_SUPPORT.md); install.sh installs it when it runs as root
+cp packaging/linux/70-cursorpie.rules "$OUT/70-cursorpie.rules"
+# the GNOME Shell extension that gives CursorPie the pointer and the windows on GNOME with Wayland
+# (the user copies it to ~/.local/share/gnome-shell/extensions/ and enables it; see docs/INSTALL.md)
+mkdir -p "$OUT/gnome-extension"
+cp -r packaging/linux/gnome-extension/. "$OUT/gnome-extension/"
 cp LICENSE README.md "$OUT/"
 
 # Keep the white mark on the sage background square; do not use the horizontal wordmark here.
@@ -53,6 +59,18 @@ fi
 if command -v update-desktop-database >/dev/null 2>&1; then
     update-desktop-database -q "$prefix/share/applications" 2>/dev/null || true
 fi
+# The udev rule a Wayland session needs (it lets the logged-in user make a virtual mouse and read the
+# mouse and touchpad). Installed system-wide when this runs as root; otherwise the command is printed.
+rule_cmd="sudo cp $here/70-cursorpie.rules /etc/udev/rules.d/ && sudo udevadm control --reload && sudo udevadm trigger"
+if [ "$(id -u)" = 0 ] && [ -d /etc/udev/rules.d ]; then
+    install -Dm644 "$here/70-cursorpie.rules" /etc/udev/rules.d/70-cursorpie.rules
+    udevadm control --reload 2>/dev/null || true
+    udevadm trigger 2>/dev/null || true
+    echo "Installed the udev rule for Wayland sessions. Log out and in once for it to apply to you."
+else
+    echo "Wayland session (KDE Plasma 6.8 and newer)? CursorPie also needs the udev rule: $rule_cmd, then log in again."
+fi
+echo "GNOME with Wayland? For per-app profiles also install the extension in $here/gnome-extension (see docs/INSTALL.md)."
 echo "Installed under $prefix. Start CursorPie from your applications menu or run: cursorpie"
 INSTALL
 chmod +x "$OUT/install.sh"

@@ -108,7 +108,11 @@ fn on_press<'a>(
         diag::log!("tap", "press_blocked", reason = "settings_open");
         *g = Gesture::InSettings(source);
         drop(g);
-        notifier.send(Msg::PieBlocked { x: p.x, y: p.y });
+        notifier.send(Msg::PieBlocked {
+            x: p.x,
+            y: p.y,
+            touch: source == Source::Touch,
+        });
         return Verdict::Drop;
     }
     let (hold_profile, app) = resolve_profiles(p);
@@ -558,7 +562,11 @@ pub(super) fn touch_press(
         let idle = matches!(&*lock(state), Gesture::Idle);
         if idle {
             diag::log!("tap", "touch_blocked", reason = "settings_open");
-            notifier.send(Msg::PieBlocked { x: p.x, y: p.y });
+            notifier.send(Msg::PieBlocked {
+                x: p.x,
+                y: p.y,
+                touch: true,
+            });
         }
         return false;
     }

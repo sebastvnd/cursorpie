@@ -37,6 +37,10 @@
     <priority>0.5</priority>
   </url>
   <url>
+    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/WAYLAND_SUPPORT.md</loc>
+    <priority>0.5</priority>
+  </url>
+  <url>
     <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/WINDOWS_MIGRATION.md</loc>
     <priority>0.5</priority>
   </url>

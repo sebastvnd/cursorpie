@@ -1,0 +1,11 @@
+{
+  "manifest_version": 2,
+  "name": "CursorPie Bridge",
+  "description": "Tells the CursorPie app on this computer which web pages are open, so its Open URL slice can go to a page that is already open. Nothing leaves your computer.",
+  "version": "{{VERSION}}",
+  "browser_specific_settings": {
+    "gecko": { "id": "browser-bridge@cursorpie", "strict_min_version": "91.0" }
+  },
+  "permissions": ["tabs", "nativeMessaging", "alarms"],
+  "background": { "scripts": ["background.js"] }
+}

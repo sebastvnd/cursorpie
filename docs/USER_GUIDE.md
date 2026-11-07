@@ -100,6 +100,9 @@ over this canvas while Settings is open), or scroll with two fingers on a trackp
 text is only sharp up to a little over 100%. The button with the arrows brings the blocks back into view at
 100%. Flows are saved with **Save**, and **Undo** (Cmd+Z) works in this section too.
 
+**Let an AI write one.** The file format is documented for AI agents in [FLOWS_FOR_AI.md](FLOWS_FOR_AI.md): ask an agent for
+a flow, save its answer as `<name>.cursorpie-flow.json` and **Import** it.
+
 **Sharing.** **Export** (the arrow up) writes `<name>.cursorpie-flow.json` to your Downloads folder; **Import** (the
 arrow down) adds such a file as a **new** flow and never overwrites one of yours. A shared profile (see
 [Sharing a profile](#sharing-a-profile)) carries the flows its slices use. **Only import flows you trust:** a
@@ -191,7 +194,8 @@ pie, turn off *Tap twice and drag to multi-select* in Settings > Bluetooth & dev
 - *Ignore holds after typing* hears that a key was pressed (not which key) while the switch is on.
 - Nothing happens? Run `cursorpie --touchpad-debug` in a terminal: it says which step fails (switch not saved, no
   `input` group, device not recognized, the hold not still enough) and shows your fingers live.
-- Wayland is not covered: the evdev reading would work there, but CursorPie's mouse layer is X11 only for now.
+- On Wayland the same switch works: while a hold runs CursorPie takes the touchpad away from the desktop, so the
+  extra finger's click and the scrolling do not reach the app below. It needs the udev rule (or the `input` group).
 
 ## Your mouse and its extra buttons
 
@@ -350,8 +354,14 @@ CursorPie sits in the menu bar all day, so it is built to cost almost nothing wh
   per frame, so a big `icons` folder neither freezes Settings nor fills memory. The list of ready-made slices
   exists only while the **Add a slice** panel is open.
 - **Sleep.** After 60 seconds without a pie or Settings (**Settings > Behavior > Memory**), CursorPie drops the
-  cached icons and the Settings working copy and asks the system to take the freed pages back. The next press
-  loads what the pie needs again. Switch the option off to keep everything in memory.
+  Settings working copy and the cached icons it does not need first, and asks the system to take the freed pages
+  back. The icons of your general pie stay, so the first press after a long idle time opens as fast as any other.
+  Switch the option off to keep everything in memory.
+- **Always listening.** CursorPie asks the system not to slow it down while it is hidden (App Nap on macOS,
+  power throttling on Windows). On Windows it also notices when the system has silently dropped its mouse
+  hooks (after waking from sleep or unlocking the session, for example) and installs them again within a few
+  seconds. On macOS it turns the event tap back on if the system switched it off, and restarts the trackpad
+  source after the Mac has slept.
 
 What sleep cannot free is the text and graphics buffers the UI library keeps for the process lifetime: a fixed
 base cost that does not grow with use.

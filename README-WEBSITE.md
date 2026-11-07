@@ -22,6 +22,7 @@ The site does not contain converted copies of the documentation. It reads the Ma
 - `docs/KNOWN_ISSUES.md`
 - `docs/DEBUGGING.md`
 - `docs/LINUX_MIGRATION.md`
+- `docs/WAYLAND_SUPPORT.md`
 - `docs/WINDOWS_MIGRATION.md`
 - `docs/OTHER_DESKTOPS.md`
 - `docs/UI_DESIGN.md`

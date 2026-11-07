@@ -4,7 +4,7 @@
 //! by [`init`]) sends keys through the platform backend (`CGEvent` on macOS, `SendInput` on Windows)
 //! and launches apps, URLs and shell commands through it as well. Events posted here carry [`SYNTH_TAG`] so the event tap ignores them.
 
-use crate::config::Action;
+use crate::config::{Action, is_web_url};
 use crate::geometry::Point;
 use crate::platform;
 use crate::running::{self, Choice};
@@ -122,9 +122,11 @@ fn flow_steps(id: &str) -> Vec<Action> {
 /// Runs one action on the worker thread. A sequence (and a flow) waits 40 ms between steps; a
 /// `Wait` adds its own pause on top of that.
 ///
-/// `choice` applies to the first "Open app" step that runs, whether it is the action itself or a step
-/// of a sequence: [`Choice::NewWindow`] opens a new window of the app, anything else does what an
-/// "Open app" always did. The other steps are not affected.
+/// `choice` applies to the first "Open app" step, or "Open URL" step with a web link, that runs,
+/// whether it is the action itself or a step of a sequence: [`Choice::NewWindow`] opens a new window
+/// of the app (or the link in a new browser window), [`Choice::Existing`] goes to the page that is
+/// open (see [`open_web`]), and `None` does what the step always did. The other steps are not
+/// affected.
 fn execute(action: &Action, choice: Option<Choice>) {
     let mut choice = choice;
     execute_step(action, &mut choice);
@@ -139,7 +141,14 @@ fn execute_step(action: &Action, choice: &mut Option<Choice>) {
             open_app(app.trim(), choice.take());
         }
         Action::OpenUrl(target) if !target.trim().is_empty() => {
-            platform::open_url(target.trim());
+            let target = target.trim();
+            // only a web link takes the choice: a file or a `mailto:` link leaves it for a later step
+            let picked = if is_web_url(target) {
+                choice.take()
+            } else {
+                None
+            };
+            open_web(target, picked);
         }
         Action::Command(cmd) if !cmd.trim().is_empty() => {
             platform::run_shell(cmd);
@@ -179,6 +188,22 @@ fn open_app(app: &str, choice: Option<Choice>) {
     }
     // from now on it runs, even if the next press is sooner than the system notices
     running::note_launched(app);
+}
+
+/// Opens `target` (a link or a file) the way `choice` says: [`Choice::NewWindow`] in a new browser
+/// window, [`Choice::Existing`] by going to the tab that has the page (it is opened as usual when
+/// that cannot be done), `None` as it always was. Only a link of a page that the browser extension
+/// reported as open gets a choice (see [`crate::bridge`]).
+fn open_web(target: &str, choice: Option<Choice>) {
+    match choice {
+        Some(Choice::NewWindow) => platform::web::open_new_window(target),
+        Some(Choice::Existing) => {
+            // read first: the config lock must not be held while the browser is looked for
+            let mode = crate::config::cfg().desktop_mode.effective(platform::OS);
+            platform::web::reveal(target, mode);
+        }
+        None => platform::open_url(target),
+    }
 }
 
 /// Re-posts a swallowed mouse press/release (used when a quick click must reach the app after all).
@@ -240,6 +265,41 @@ mod tests {
         assert_eq!(Action::OpenApp("  ".into()).open_target(), None);
         assert_eq!(Action::Command("true".into()).open_target(), None);
         assert_eq!(Action::Nothing.open_target(), None);
+    }
+
+    #[test]
+    fn the_choice_target_is_the_first_app_or_web_link_that_runs() {
+        use crate::config::OpenTarget;
+        let url = |u: &str| Action::OpenUrl(u.into());
+        assert_eq!(
+            url(" https://example.com ").open_choice_target(),
+            Some(OpenTarget::Url("https://example.com"))
+        );
+        assert_eq!(
+            Action::OpenApp(" Mail ".into()).open_choice_target(),
+            Some(OpenTarget::App("Mail"))
+        );
+        // not web links: opened as they always were
+        assert_eq!(url("/home/u/a.pdf").open_choice_target(), None);
+        assert_eq!(url("mailto:a@b.c").open_choice_target(), None);
+        assert_eq!(url("  ").open_choice_target(), None);
+        // the first one that runs wins, whichever kind it is
+        let seq = Action::Sequence(vec![
+            Action::Key(Shortcut::new(6, 0)),
+            url("mailto:a@b.c"),
+            url("HTTPS://example.com"),
+            Action::OpenApp("Notes".into()),
+        ]);
+        assert_eq!(
+            seq.open_choice_target(),
+            Some(OpenTarget::Url("HTTPS://example.com"))
+        );
+        assert_eq!(
+            OpenTarget::Url("https://x.y").key(),
+            "url:https://x.y",
+            "a link is told from an app by its key"
+        );
+        assert_eq!(OpenTarget::App("Notes").key(), "Notes");
     }
 
     #[test]

@@ -183,6 +183,17 @@ impl App {
         let t = self.settings_anim.clamp(0.0, 1.0);
         let slide = (1.0 - t) * (1.0 - t) * 26.0;
 
+        // a shortcut being recorded in a Wayland session: the window's own keys (see `wayland_keys`)
+        if self.ed.recording.is_some()
+            && super::wayland_keys::applies()
+            && let Some(msg) = super::wayland_keys::capture(&ctx, &mut self.ed.key_rec)
+        {
+            crate::tap::RECORDING.store(false, std::sync::atomic::Ordering::SeqCst);
+            self.ed.key_rec.reset();
+            let _ = self.tx.send(msg);
+            ctx.request_repaint();
+        }
+
         // Esc closes what is on top: a sheet, then a popup (egui closes it itself), then the window
         // (when not recording) = cancel
         if self.closing.is_none() && self.ed.recording.is_none() && !super::picker::choosing() {

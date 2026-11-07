@@ -18,8 +18,10 @@ pub enum Msg {
         path: Vec<usize>,
     },
     /// The trigger was pressed at (x, y) while Settings is open, so the pie stays off. The UI says
-    /// so and brings Settings forward (a press that seems to do nothing is confusing).
-    PieBlocked { x: f64, y: f64 },
+    /// so and brings Settings forward (a press that seems to do nothing is confusing). `touch` is
+    /// true for a trackpad hold: the UI then stays quiet while Settings already has the focus,
+    /// because a finger that pauses on the trackpad to aim at a button is not a call for the pie.
+    PieBlocked { x: f64, y: f64, touch: bool },
     /// Open the Settings window centered on the screen containing (x, y); `about` selects the About tab.
     OpenSettings { x: f64, y: f64, about: bool },
     /// Open the welcome window centered on the screen containing (x, y) (first launch, or the

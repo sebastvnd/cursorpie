@@ -32,7 +32,8 @@ const MAX_SECS: u64 = 600;
 /// What the report found, for [`hints`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Facts {
-    /// The session is Wayland and no X display is set.
+    /// The session is Wayland and no X display is set (CursorPie's Wayland layer then runs: it needs
+    /// the udev rule instead of an X server).
     pub wayland_only: bool,
     /// `touch_trigger` in the saved config.
     pub switch_on: bool,
@@ -61,9 +62,10 @@ pub fn hints(f: &Facts) -> Vec<&'static str> {
     let mut v = Vec::new();
     if f.wayland_only {
         v.push(
-            "This is a Wayland session without an X display: CursorPie's mouse layer needs X11 \
-             (log in with the \"on Xorg\" session), so the app does nothing here even though the \
-             touchpad can be read.",
+            "This is a Wayland session without an X display. CursorPie's Wayland layer takes the \
+             touchpad while a hold runs, so it needs read access to it: install the udev rule \
+             (70-cursorpie.rules, see docs/WAYLAND_SUPPORT.md) or be in the `input` group, then \
+             log in again.",
         );
     }
     if !f.switch_on {
@@ -184,7 +186,7 @@ fn run(live: Duration) {
     let wayland = std::env::var("WAYLAND_DISPLAY").unwrap_or_default();
     facts.wayland_only = display.is_empty() && !wayland.is_empty();
     say(
-        if facts.wayland_only { "!!" } else { "ok" },
+        if facts.wayland_only { ".." } else { "ok" },
         format!("session: type={session:?} DISPLAY={display:?} WAYLAND_DISPLAY={wayland:?}"),
     );
     let c = cfg();

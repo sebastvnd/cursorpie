@@ -49,13 +49,13 @@ pub(super) fn eval(profile: usize, path: &[usize], center: Point, p: Point) -> H
     let choice = hover
         .and_then(|h| items.get(h))
         .and_then(|i| match &i.kind {
-            ItemKind::Run(a) => a.open_target(),
+            ItemKind::Run(a) => a.open_choice_key(c.browser_bridge),
             _ => None,
         })
         .and_then(|app| {
             running::choose(
                 c.open_app_choice,
-                Some(app),
+                Some(app.as_str()),
                 center,
                 p,
                 hover.unwrap_or(0),

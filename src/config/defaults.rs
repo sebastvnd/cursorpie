@@ -336,6 +336,7 @@ impl Config {
             focus_target: true,
             desktop_mode: DesktopMode::SwitchToApp,
             open_app_choice: true,
+            browser_bridge: false,
             side_default: SideTarget::App,
             side_adopt: true,
             side_forget: false,

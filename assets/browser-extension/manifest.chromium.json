@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "CursorPie Bridge",
+  "description": "Tells the CursorPie app on this computer which web pages are open, so its Open URL slice can go to a page that is already open. Nothing leaves your computer.",
+  "version": "{{VERSION}}",
+  "minimum_chrome_version": "116",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmcGmO7YTUWZ1tiFqAvtMdSOQI17DNJlFj2jlBftquqpmPd5xHZwf9+hU2E10XM6YV1212qQGCh8Jyc8PJideVonlLVwVaRP+qCa5AhVDa0VnqKrDPGDe+FOt2cjk8XX/QJjt2bI0CodWTsFxcw0E8lgvgBJH3JawyxBmH8cwPMxGE8bxViPJxSg5zNVOxbXHBiAkYCMMwcP93cAPtgse8uFqqfI6dYr+k0zgkdzomYRLR78YI2u/YErHZfOPSl1psWihHrC/SfSOjc2dVd5zyVUlTJ7Fy5Ofz/UII+fjDURL4UaKNMaZxTy828hgjQDcG/WiNbom9dtj+C6xaVk9XwIDAQAB",
+  "permissions": ["tabs", "nativeMessaging", "alarms"],
+  "background": { "service_worker": "background.js" }
+}

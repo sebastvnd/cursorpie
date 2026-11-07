@@ -201,23 +201,35 @@
 //!
 //! `App::sleep_step` drives it from both `logic` and `ui`, and asks egui for one frame at the
 //! moment the idle time ends (`request_repaint_after`), because a hidden window schedules nothing
-//! itself. Entering sleep (`App::enter_sleep`) drops the icon cache, the Settings working copy and
-//! everything derived from it, then calls
+//! itself. Entering sleep (`App::enter_sleep`) trims the icon cache to the icons of the general pie
+//! ([`icons_to_keep_asleep`](crate::ui::icons::icons_to_keep_asleep), a few dozen KiB), drops the
+//! Settings working copy and everything derived from it, then calls
 //! [`platform::release_unused_memory`](crate::platform::release_unused_memory)
-//! (`malloc_zone_pressure_relief`), because freed memory is otherwise kept by the allocator and
-//! still counted against the process. A press counts as activity (`Sleeper::poke`), otherwise the
-//! first press after a long idle time could load icons and have them dropped by the sleep that was
-//! already due.
+//! (`malloc_zone_pressure_relief` on macOS, `HeapCompact` on Windows), because freed memory is
+//! otherwise kept by the allocator and still counted against the process. A press counts as
+//! activity (`Sleeper::poke`), otherwise the first press after a long idle time could load icons
+//! and have them dropped by the sleep that was already due.
+//!
+//! **Sleep must never make the next press slow.** The program exists to answer one press after
+//! hours of doing nothing, so what sleep frees is only what the next press does not touch: icons
+//! of other profiles, the editor, allocator slack. Two things were tried and are wrong. Emptying the
+//! whole icon cache saved a few KiB and made the first pie decode its icons while the hold timer
+//! ran. Trimming the whole working set on Windows (`SetProcessWorkingSetSize(-1, -1)`) evicted the
+//! code of the hooks and of the UI too, so the first press after a long idle time page-faulted
+//! thousands of pages, and a low-level hook that answers too slowly is dropped by Windows.
+//! `platform::stay_responsive` (called once from [`run`](crate::run)) also keeps the OS from
+//! throttling a program that shows no window: App Nap on macOS, power throttling (EcoQoS) on
+//! Windows. The hooks themselves are watched: see "Rules for the event-tap callback" below.
 //!
 //! | State | Freed when Settings closes | Freed when the UI sleeps | Never freed |
 //! |---|---|---|---|
 //! | `App::edit` (config copy), undo history, picker lists, backup list, `Ed::add_catalog` | yes | yes | |
-//! | icon textures | no (only changed files are re-read) | yes | |
+//! | icon textures | no (only changed files are re-read) | all but the general pie's (`icons_to_keep_asleep`) | the general pie's |
 //! | the live config, side-button state, gesture state | | | yes |
 //! | egui font atlas, GPU surface | | | yes |
 //!
 //! `Config::sleep_after_s` sets the idle time (0 = never sleep). Rules for new code: a cache must
-//! be bounded, must be cleared in `enter_sleep`, and must never be filled on the frame that opens
+//! be bounded, must be cleared (or trimmed to what the next press needs) in `enter_sleep`, and must never be filled on the frame that opens
 //! the pie (warm it instead). A list longer than a screenful is virtualized, and input is limited
 //! where it enters (see 3 above).
 //!
@@ -275,7 +287,7 @@
 //! | frontmost app | `NSWorkspace` | `GetForegroundWindow` + process image name | `_NET_ACTIVE_WINDOW` + `WM_CLASS`, mapped to a desktop-entry id | `platform::frontmost_bundle_id` |
 //! | app under the pointer | `CGWindowListCopyWindowInfo` + `NSRunningApplication` | `WindowFromPoint` | `_NET_CLIENT_LIST_STACKING` + window geometry, hit test in `platform/linux/toplevels.rs` | `platform::bundle_id_at` |
 //! | real app icon | `NSWorkspace.iconForFile` as TIFF, decoded by the `tiff` crate | `PrivateExtractIconsW` as RGBA | `Icon=` of the desktop entry through the icon themes (`platform/linux/icontheme.rs`), PNG read directly, SVG through `rsvg-convert` | [`ui::appicon`](crate::ui::appicon) |
-//! | give freed memory back | `malloc_zone_pressure_relief` | `SetProcessWorkingSetSize(-1, -1)` | `malloc_trim` (glibc only) | `platform::release_unused_memory` |
+//! | give freed memory back | `malloc_zone_pressure_relief` | `HeapCompact` on the process heap (never a working-set trim) | `malloc_trim` (glibc only) | `platform::release_unused_memory` |
 //! | key labels on any layout | TIS + `UCKeyTranslate`, snapshot taken on the main thread | `MapVirtualKeyExW` + `ToUnicodeEx` | not built yet: the US/ANSI fallback table | [`platform::layout`](crate::platform::layout) |
 //! | tray icon | `tray-icon` / `muda` (menu bar) | `tray-icon` / `muda` (notification area) | not built yet: Pause and Quit are in Settings > General | [`ui::tray`](crate::ui::tray) |
 //! | no Dock / taskbar entry | `NSApplicationActivationPolicyAccessory` | `with_taskbar(false)` | nothing set yet (no window-type hints) | `platform::set_accessory_policy`, [`run`](crate::run) |

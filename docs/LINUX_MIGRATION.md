@@ -8,6 +8,11 @@ wrong, so no item is signed off yet and no results are recorded here. Wayland (L
 only.** Releases up to 0.4.2 supported macOS and Windows only (Linux built a do-nothing stub so
 `cargo test` runs); the X11 backend arrived in 0.5.0 (see `CHANGELOG.md`).
 
+**Update, November 2026:** KDE Plasma no longer offers an X11 session from its 6.8 release (October 2026), and GNOME
+dropped it before that, so the Wayland phases below are no longer optional for Linux users on current desktops. The
+research behind that, a plan that starts with KDE Plasma on Wayland, and the definition of "behaves like the other
+platforms" are in [WAYLAND_SUPPORT.md](WAYLAND_SUPPORT.md). Nothing in the X11 design below changes.
+
 This document says how to make Linux behave like the other two, what
 stands in the way, and in which order to do it so macOS and Windows never change along the way. It follows the structure of [WINDOWS_MIGRATION.md](WINDOWS_MIGRATION.md) and reuses its rules
 (portable core, backends with identical function names, characterization tests first).
@@ -194,7 +199,8 @@ they need an abstraction with several answers, not a function with one body.
 | - | anything else (remote, TTY, unknown compositor with no adapter) | Capture and shortcuts may work; the app reports what is missing in Settings > General and falls back to the general profile and "app in front". |
 
 The tiers are a plan, not a measurement. Which compositors really belong in Tier 2 is decided by
-[spikes](#phase-0-spikes) S4 to S6.
+[spikes](#phase-0-spikes) S4 to S6. KDE Plasma 6 is the first Tier 2 target; its spikes, mechanisms and
+milestones are in [WAYLAND_SUPPORT.md](WAYLAND_SUPPORT.md).
 
 ## What is OS-specific today and its Linux counterpart
 

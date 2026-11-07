@@ -88,6 +88,45 @@ pub fn app_from_query(output: &str) -> Option<String> {
     if id.is_empty() { None } else { Some(id) }
 }
 
+/// Programs of the browsers that take `--new-window <link>` (the Firefox and Chromium families).
+const NEW_WINDOW_BROWSERS: [&str; 24] = [
+    "firefox",
+    "firefox-esr",
+    "firefox-bin",
+    "librewolf",
+    "waterfox",
+    "floorp",
+    "zen",
+    "zen-browser",
+    "google-chrome",
+    "google-chrome-stable",
+    "google-chrome-beta",
+    "google-chrome-unstable",
+    "chromium",
+    "chromium-browser",
+    "chrome",
+    "brave",
+    "brave-browser",
+    "brave-browser-stable",
+    "vivaldi",
+    "vivaldi-stable",
+    "microsoft-edge",
+    "microsoft-edge-stable",
+    "opera",
+    "thorium-browser",
+];
+
+/// The arguments that make the browser started by `program` (an `Exec` program, see
+/// `desktop_entry::exec_program`) open `url` in a **new window**. `None` for a browser that is
+/// not known to take `--new-window`, and for a link that could be read as an option: the caller then
+/// hands the link to `xdg-open`, which most browsers answer with a new tab.
+pub fn new_window_args(program: &str, url: &str) -> Option<Vec<String>> {
+    if url.starts_with('-') || !NEW_WINDOW_BROWSERS.contains(&program) {
+        return None;
+    }
+    Some(vec!["--new-window".to_string(), url.to_string()])
+}
+
 /// The first of the well-known terminals that is installed.
 pub fn terminal_app(index: &Index) -> Option<String> {
     TERMINALS
@@ -122,6 +161,30 @@ mod tests {
             icon: None,
             no_display: false,
         }
+    }
+
+    #[test]
+    fn a_known_browser_gets_a_new_window_and_others_do_not() {
+        let url = "https://example.com/a?b=c";
+        for program in [
+            "firefox",
+            "google-chrome-stable",
+            "brave-browser",
+            "chromium",
+        ] {
+            assert_eq!(
+                new_window_args(program, url),
+                Some(vec!["--new-window".to_string(), url.to_string()]),
+                "{program}"
+            );
+        }
+        assert_eq!(new_window_args("epiphany", url), None, "not known");
+        assert_eq!(new_window_args("", url), None);
+        assert_eq!(
+            new_window_args("firefox", "--profile=/tmp/x"),
+            None,
+            "a link is never an option"
+        );
     }
 
     #[test]

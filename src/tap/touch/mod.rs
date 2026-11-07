@@ -16,6 +16,7 @@
 //! | `multitouch` | macOS: the contact frames of the system, through the private `MultitouchSupport.framework` | by hand on a Mac (checklist) |
 //! | `ptp` | Windows: what the HID reports of a Precision Touchpad mean (layout, hybrid reports, palms; pure) | every OS |
 //! | `precision` | Windows: the reports of the touchpad, through Raw Input (`WM_INPUT`) and the `HidP_*` parser | by hand on Windows (checklist) |
+//! | [`probe`] | is there a trackpad at all? A count that starts nothing: the scan button and the first-start default | the decision everywhere, the count by hand |
 //! | `evdev` | Linux: the fingers of a touchpad, read from `/dev/input/event*` (the parser is pure) | the parser everywhere, the reader by hand on a Linux laptop |
 //!
 //! **Mouse and trackpad together.** One gesture runs at a time, owned by whoever started it
@@ -39,6 +40,7 @@ pub(crate) mod haptic;
 #[cfg(any(target_os = "macos", test))]
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 mod multitouch;
+pub(crate) mod probe;
 // Windows: the pure half is tested everywhere; the Win32 half is also compiled with
 // `--features check-windows` so it can be type-checked on other OSes.
 #[cfg(any(windows, feature = "check-windows"))]
@@ -49,6 +51,8 @@ mod precision;
 mod ptp;
 pub(crate) mod recognizer;
 pub(crate) mod scroll;
+
+pub(crate) use probe::{auto_enable_on_first_start, last_scan, scan, take_pending_save};
 
 use super::gesture::Gesture;
 use super::trigger;

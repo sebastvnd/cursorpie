@@ -1,0 +1,7 @@
+{
+  "uuid": "cursorpie-adapter@sebastvnd.github.io",
+  "name": "CursorPie adapter",
+  "description": "Lets CursorPie, the pie-menu launcher, know where the pointer is and which windows there are, so per-app profiles work on GNOME with Wayland. It sends the window list (ids, app names and positions, never titles) to org.cursorpie.Wayland on the session bus and answers one call, org.cursorpie.GnomeBridge.Sync. It reads and writes nothing else.",
+  "shell-version": ["47", "48", "49", "50"],
+  "url": "https://github.com/sebastvnd/cursorpie"
+}

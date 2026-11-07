@@ -31,6 +31,9 @@
 //! `Profile::apps` holds bundle ids on macOS and lower-case executable names on Windows. Enums use serde's default external tagging, e.g.
 //! `{"Run": {"OpenApp": "Notes"}}`.
 //!
+//! A step-by-step reference for writing a flow as JSON (written for AI agents, with a JSON Schema and tested
+//! examples) is `docs/FLOWS_FOR_AI.md`.
+//!
 //! The full annotated example and the table of fields are in the repository's `docs/CONFIGURATION.md`.
 //!
 //! ## Versioning and compatibility

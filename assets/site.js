@@ -154,6 +154,7 @@
     { file: 'CONTRIBUTING.md', label: 'Contributing' },
     { file: 'CHANGELOG.md', label: 'Changelog' },
     { file: 'docs/LINUX_MIGRATION.md', label: 'Linux migration' },
+    { file: 'docs/WAYLAND_SUPPORT.md', label: 'Wayland support plan' },
     { file: 'docs/WINDOWS_MIGRATION.md', label: 'Windows migration' },
     { file: 'docs/OTHER_DESKTOPS.md', label: 'Other desktops' },
     { file: 'docs/UI_DESIGN.md', label: 'UI design' },

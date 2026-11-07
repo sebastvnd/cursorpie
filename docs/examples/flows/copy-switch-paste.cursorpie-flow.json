@@ -1,0 +1,16 @@
+{
+  "cursorpie_flow": 1,
+  "flow": {
+    "id": "copy-switch-paste",
+    "name": "Copy, switch window, paste",
+    "nodes": [
+      { "id": 1, "x": 40.0,  "y": 60.0,  "kind": "Start", "next": 2 },
+      { "id": 2, "x": 240.0, "y": 60.0,  "kind": { "Key": { "key": 8, "mods": 8 } }, "next": 3 },
+      { "id": 3, "x": 540.0, "y": 60.0,  "kind": { "Wait": 150 }, "next": 4 },
+      { "id": 4, "x": 40.0,  "y": 190.0, "kind": { "Key": { "key": 48, "mods": 8 } }, "next": 5 },
+      { "id": 5, "x": 340.0, "y": 190.0, "kind": { "Wait": 250 }, "next": 6 },
+      { "id": 6, "x": 640.0, "y": 190.0, "kind": { "Key": { "key": 9, "mods": 8 } }, "next": 7 },
+      { "id": 7, "x": 40.0,  "y": 320.0, "kind": "End", "next": null }
+    ]
+  }
+}

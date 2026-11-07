@@ -79,32 +79,36 @@ fn collect_extra_buttons(items: &[Item], out: &mut BTreeSet<i64>) {
     }
 }
 
-/// Adds to `out` the app of every "Open app" slice in `items` (submenus included), once each, in
-/// the order they are met, as typed in the slice (trimmed).
-fn collect_open_apps(items: &[Item], out: &mut Vec<String>) {
+/// Adds to `out` the key of every "Open app" slice in `items` (submenus included), and of every
+/// "Open URL" slice with a web link when `web` is true, once each, in the order they are met: the
+/// app as typed in the slice (trimmed), or the link with its `url:` prefix (see `OpenTarget::key`).
+fn collect_open_apps(items: &[Item], web: bool, out: &mut Vec<String>) {
     for it in items {
         match &it.kind {
             ItemKind::Run(a) => {
-                if let Some(app) = a.open_target()
-                    && !out.iter().any(|o| o == app)
+                if let Some(key) = a.open_choice_key(web)
+                    && !out.contains(&key)
                 {
-                    out.push(app.to_string());
+                    out.push(key);
                 }
             }
-            ItemKind::Submenu(children) => collect_open_apps(children, out),
+            ItemKind::Submenu(children) => collect_open_apps(children, web, out),
             ItemKind::Mode { .. } => {}
         }
     }
 }
 
-/// The apps that the "Open app" slices of the pies `profiles` open, submenus included, each once.
-/// An index that is not a profile is skipped. Empty when no such slice exists, which is what lets a
-/// press skip looking at the running apps altogether.
+/// The keys of what the "Open app" slices of the pies `profiles` open, submenus included, each
+/// once: an app as typed. When the browser extension is on ([`Config::browser_bridge`]) the web
+/// links of "Open URL" slices are listed too, as `url:<link>`; without it they are not, because
+/// only the extension can tell which pages are open. An index that is not a profile is skipped.
+/// Empty when no such slice exists, which is what lets a press skip looking at the running apps
+/// and open pages altogether.
 pub fn open_apps_of(c: &Config, profiles: &[usize]) -> Vec<String> {
     let mut out = Vec::new();
     for &p in profiles {
         if let Some(profile) = c.profiles.get(p) {
-            collect_open_apps(&profile.items, &mut out);
+            collect_open_apps(&profile.items, c.browser_bridge, &mut out);
         }
     }
     out
@@ -190,11 +194,52 @@ mod tests {
         let c = config_with(vec![profile(vec![
             Item::run("key", "k", Action::Nothing),
             Item::run("blank", "b", Action::OpenApp("  ".into())),
-            Item::run("url", "u", Action::OpenUrl("https://example.com".into())),
+            // not web links: opened as they always were, with no choice
+            Item::run("file", "f", Action::OpenUrl("/home/u/notes.txt".into())),
+            Item::run("mail", "m", Action::OpenUrl("mailto:a@b.c".into())),
+            Item::run("blank url", "u", Action::OpenUrl("  ".into())),
         ])]);
         assert!(open_apps_of(&c, &[0]).is_empty());
         assert!(open_apps_of(&c, &[]).is_empty());
         assert!(open_apps_of(&c, &[7]).is_empty(), "not a profile");
+    }
+
+    #[test]
+    fn a_web_link_is_listed_by_its_key_next_to_the_apps_when_the_extension_is_on() {
+        let url = |name: &str, u: &str| Item::run(name, "u", Action::OpenUrl(u.into()));
+        let mut c = config_with(vec![profile(vec![
+            run_app("a", "Safari"),
+            url("x", " https://example.com/a "),
+            Item::submenu(
+                "more",
+                "m",
+                vec![
+                    url("y", "HTTP://example.org"),
+                    url("z", "https://example.com/a"),
+                ],
+            ),
+            Item::run(
+                "seq",
+                "s",
+                Action::Sequence(vec![
+                    Action::OpenUrl("mailto:a@b.c".into()),
+                    Action::OpenUrl("https://example.net".into()),
+                ]),
+            ),
+        ])]);
+        // without the browser extension no web link is asked about: only the apps
+        assert!(!c.browser_bridge);
+        assert_eq!(open_apps_of(&c, &[0]), ["Safari"]);
+        c.browser_bridge = true;
+        assert_eq!(
+            open_apps_of(&c, &[0]),
+            [
+                "Safari",
+                "url:https://example.com/a",
+                "url:HTTP://example.org",
+                "url:https://example.net"
+            ]
+        );
     }
 
     #[test]

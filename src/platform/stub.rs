@@ -35,6 +35,11 @@ pub fn clear_window_frame(_handle: isize) {}
 pub fn window_manager_may_recenter() -> bool {
     false
 }
+/// A window is placed in the same points the pointer is in.
+pub fn window_point(x: f64, y: f64) -> (f64, f64) {
+    (x, y)
+}
+
 /// There is no window.
 pub fn raise_own_window() {}
 /// No mice to list.
@@ -122,6 +127,8 @@ pub fn handle_command_line() -> bool {
 pub fn single_instance() -> bool {
     true
 }
+/// Nothing throttles it.
+pub fn stay_responsive() {}
 /// Nothing to release.
 pub fn release_unused_memory() -> usize {
     0

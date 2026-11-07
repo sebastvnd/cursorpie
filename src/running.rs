@@ -1,4 +1,5 @@
-//! "Open app" slices of an app that already runs: a new window, or the one that is open.
+//! "Open app" and "Open web page" slices of something that is already open: a new window, or the
+//! one that is open.
 //!
 //! While the pie is open and the pointer is over an *Open app* slice whose app is already running,
 //! two round badges appear just **outside the rim, in front of that slice**, side by side: a green
@@ -9,6 +10,18 @@
 //! toward a badge picks it. An app that does not run is simply opened, with no badges.
 //! The setting is [`Config::open_app_choice`](crate::config::Config::open_app_choice)
 //! (Settings > Behavior).
+//!
+//! # Web pages
+//!
+//! An "Open URL" slice whose text is an `http://` or `https://` link works the same way, **but only
+//! with the browser extension** (Settings > Behavior > Browser extension, see
+//! [`bridge`](crate::bridge)); a file, a `mailto:` link or anything else is opened as it always was.
+//! A browser does not tell other programs which pages it has open, and guessing opens the same page
+//! twice, so without the extension a web link is simply opened, with no badges. With it, "this page
+//! is open" means a tab of a connected browser has it. The green badge opens the link in a new
+//! browser window; the yellow one goes to that tab. In the cache a link is told from an app by its
+//! key (`url:<link>`, see [`OpenTarget::key`](crate::config::OpenTarget::key)); the keys of links are
+//! only asked about while the extension is on ([`open_apps_of`]).
 //!
 //! # Not asking the system on every hover
 //!
@@ -37,7 +50,7 @@
 //! The cache has a lock of its own. It is taken after the config lock (`eval` asks while it holds
 //! the config) and never while waiting for anything: the worker holds it only to store an answer.
 
-use crate::config::{cfg, open_apps_of};
+use crate::config::{URL_KEY_PREFIX, cfg, open_apps_of};
 use crate::geometry::{Point, pie_outer, slice_start, window_size};
 use crate::msg::Notifier;
 use crate::platform;
@@ -234,7 +247,45 @@ static CACHE: Mutex<Option<Cache>> = Mutex::new(None);
 /// One question for the worker.
 struct Request {
     generation: u64,
+    /// Keys of the apps and web links asked about (see [`OpenTarget::key`](crate::config::OpenTarget::key)).
     apps: Vec<String>,
+}
+
+/// Keys that kept the position they had in the list they came from.
+type Indexed = Vec<(usize, String)>;
+
+/// Splits `keys` into the apps and the web links they stand for (`url:` removed), each with the
+/// position it had in `keys`, so the answers can be put back in order.
+fn split_keys(keys: &[String]) -> (Indexed, Indexed) {
+    let (mut apps, mut urls) = (Vec::new(), Vec::new());
+    for (i, key) in keys.iter().enumerate() {
+        match key.strip_prefix(URL_KEY_PREFIX) {
+            Some(url) => urls.push((i, url.to_string())),
+            None => apps.push((i, key.clone())),
+        }
+    }
+    (apps, urls)
+}
+
+/// Asks the platform about each of `keys`: whether the app runs, or whether the web page is open.
+/// `flags[i]` is for `keys[i]`. One look at the system serves all the apps, and the web pages are
+/// answered from what CursorPie opened (see [`platform::web`]).
+fn ask_platform(keys: &[String]) -> Vec<bool> {
+    let (apps, urls) = split_keys(keys);
+    let mut flags = vec![false; keys.len()];
+    if !apps.is_empty() {
+        let names: Vec<String> = apps.iter().map(|(_, a)| a.clone()).collect();
+        for ((i, _), running) in apps.iter().zip(platform::running_among(&names)) {
+            flags[*i] = running;
+        }
+    }
+    if !urls.is_empty() {
+        let links: Vec<String> = urls.iter().map(|(_, u)| u.clone()).collect();
+        for ((i, _), open) in urls.iter().zip(platform::web::urls_open(&links)) {
+            flags[*i] = open;
+        }
+    }
+    flags
 }
 
 /// Sender side of the worker's queue; set once by [`init`].
@@ -273,7 +324,7 @@ pub fn init(notifier: Notifier) {
                     req = newer;
                 }
                 let t = diag::timed!("run", "scan", apps = req.apps.len());
-                let flags = platform::running_among(&req.apps);
+                let flags = ask_platform(&req.apps);
                 drop(t);
                 let stored =
                     with_cache(|c| c.finish(req.generation, &req.apps, &flags, Instant::now()));
@@ -318,8 +369,8 @@ pub fn is_running(app: &str) -> Option<bool> {
     try_with_cache(|c| c.get(app)).flatten()
 }
 
-/// CursorPie has just started `app` (or brought it forward): it runs from now on, whatever the
-/// answer of the press said.
+/// CursorPie has just started `app` (or brought it forward), or opened a web link (`app` is then
+/// its key, `url:<link>`): it runs, or is open, from now on, whatever the answer of the press said.
 pub fn note_launched(app: &str) {
     with_cache(|c| c.mark_running(app));
 }
@@ -500,6 +551,38 @@ mod tests {
         c.finish(g, &a, &[false], t0);
         c.mark_running(" Safari ");
         assert_eq!(c.get("Safari"), Some(true));
+    }
+
+    #[test]
+    fn keys_are_split_into_apps_and_links_keeping_their_places() {
+        let keys = apps(&[
+            "Safari",
+            "url:https://example.com",
+            "Notes",
+            "url:http://a.b/c?d=e",
+        ]);
+        let (a, u) = split_keys(&keys);
+        assert_eq!(a, [(0, "Safari".to_string()), (2, "Notes".to_string())]);
+        assert_eq!(
+            u,
+            [
+                (1, "https://example.com".to_string()),
+                (3, "http://a.b/c?d=e".to_string())
+            ]
+        );
+        assert_eq!(split_keys(&[]), (Vec::new(), Vec::new()));
+    }
+
+    #[test]
+    fn a_link_that_cursorpie_opened_is_open_from_then_on() {
+        let mut c = Cache::default();
+        let t0 = Instant::now();
+        let a = apps(&["url:https://example.com"]);
+        let g = c.begin(&a, t0).unwrap();
+        c.finish(g, &a, &[false], t0);
+        assert_eq!(c.get("url:https://example.com"), Some(false));
+        c.mark_running("url:https://example.com");
+        assert_eq!(c.get("url:https://example.com"), Some(true));
     }
 
     #[test]

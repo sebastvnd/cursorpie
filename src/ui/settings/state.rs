@@ -119,6 +119,8 @@ pub struct Ed {
     pub tab: Tab,
     pub profile: usize,
     pub recording: Option<Rec>,
+    /// Follows the modifier keys of a shortcut being recorded in a Wayland session.
+    pub(super) key_rec: super::wayland_keys::Recorder,
     pub icons: IconCache,
     pub new_app: String,
     /// the "New profile" form: name and the app the profile belongs to
@@ -185,6 +187,7 @@ impl Ed {
             tab: Tab::Menu,
             profile: 0,
             recording: None,
+            key_rec: super::wayland_keys::Recorder::default(),
             icons: IconCache::new(),
             new_app: String::new(),
             new_profile_name: String::new(),
@@ -247,6 +250,7 @@ impl Ed {
     pub fn stop_recording(&mut self) {
         RECORDING.store(false, Ordering::SeqCst);
         self.recording = None;
+        self.key_rec.reset();
     }
 
     /// Like [`Ed::icon_for`] for the icon of an app, but never waits for the system: while the

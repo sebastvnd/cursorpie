@@ -7,6 +7,7 @@
 | [INSTALL.md](INSTALL.md) | Installing or building CursorPie on macOS, Windows and Linux, and the permissions it needs |
 | [USER_GUIDE.md](USER_GUIDE.md) | The gesture, slices and actions, profiles, side buttons, Settings, undo and backups, sharing |
 | [CONFIGURATION.md](CONFIGURATION.md) | Where `config.json` lives, its structure and every field |
+| [FLOWS_FOR_AI.md](FLOWS_FOR_AI.md) | How to write a flow as JSON: the format, the rules, a recipe and checked examples. Written for AI agents; a JSON Schema is in `flow.schema.json` |
 | [KNOWN_ISSUES.md](KNOWN_ISSUES.md) | What does not work yet, grouped by system |
 
 ## For contributors
@@ -25,6 +26,7 @@ written for people changing the code, not for users.
 |---|---|---|
 | [WINDOWS_MIGRATION.md](WINDOWS_MIGRATION.md) | Done, Windows is stable | How the macOS-only code base became macOS and Windows, and the Windows checklist |
 | [LINUX_MIGRATION.md](LINUX_MIGRATION.md) | X11 supported but experimental, checklist under internal observation; Wayland designed | The Linux design, what is implemented, and the Linux checklist |
+| [WAYLAND_SUPPORT.md](WAYLAND_SUPPORT.md) | Research and plan, nothing built | Why Wayland support is needed now (current KDE Plasma has no X11 session), what Plasma offers, what "behaves like the other platforms" means, and the milestones and spikes |
 | [OTHER_DESKTOPS.md](OTHER_DESKTOPS.md) | Done | How *Open app* follows an app to another desktop or Space |
 | [UI_DESIGN.md](UI_DESIGN.md) | Living | Look, rendering rules and the visual checklist |
 | [TRACKPAD_HAPTICS_PLAN.md](TRACKPAD_HAPTICS_PLAN.md) | Implemented in code; native macOS, Windows and Linux X11 layers awaiting verification on real hardware | How a trackpad on macOS, Windows and Linux X11 (hold, extra-finger click) and haptic feedback on a Mac can work with the same pie as the mouse, and the spikes to run first |

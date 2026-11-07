@@ -209,6 +209,60 @@ pub fn decode(buf: &[u8]) -> impl Iterator<Item = (u16, u16, i32)> + '_ {
     })
 }
 
+// ------------------------------------------------------------------ the grab (Wayland)
+
+/// A touchpad is never held longer than this (ms) by the Wayland grab, whatever the gesture says:
+/// the fail-open rule of the layer (a pie is a few seconds, never half a minute).
+const PAD_GRAB_MAX_MS: u64 = 15_000;
+
+/// Decides when the Wayland layer takes the touchpad away from the desktop and gives it back.
+///
+/// On X11 the extra finger's click and the two-finger scroll are stopped by grabbing the X buttons
+/// that carry them. A Wayland client has no such grab, so while a trackpad hold runs (or the tail of
+/// its scroll is open) the node itself is grabbed (`EVIOCGRAB`): the compositor hears nothing from
+/// the pad, and this reader goes on reading it, so the recognizer still sees every finger.
+#[derive(Debug, Default)]
+pub(super) struct PadGrab {
+    since: Option<u64>,
+    /// The cap was reached: no new grab until the gesture ends.
+    capped: bool,
+}
+
+/// What [`PadGrab::step`] asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum GrabChange {
+    Take,
+    Give,
+}
+
+impl PadGrab {
+    /// `want`: the gesture wants the pad. `now` in ms on any clock that only grows.
+    pub(super) fn step(&mut self, want: bool, now: u64) -> Option<GrabChange> {
+        if !want {
+            self.capped = false;
+            return self.since.take().map(|_| GrabChange::Give);
+        }
+        match self.since {
+            Some(at) if now.saturating_sub(at) >= PAD_GRAB_MAX_MS => {
+                self.since = None;
+                self.capped = true;
+                Some(GrabChange::Give)
+            }
+            Some(_) => None,
+            None if self.capped => None,
+            None => {
+                self.since = Some(now);
+                Some(GrabChange::Take)
+            }
+        }
+    }
+
+    /// Whether the pad is held now.
+    pub(super) fn held(&self) -> bool {
+        self.since.is_some()
+    }
+}
+
 // ------------------------------------------------------------------ the kernel
 
 /// The range of an absolute axis of an open evdev node (the OS side: `platform::linux::evdev_io`).
@@ -262,7 +316,27 @@ fn read_device(hub: &'static Hub, file: std::fs::File, id: u64, generation: u64)
     let mut fingers = Vec::with_capacity(MAX_SLOTS);
     let mut buf = [0u8; EVENT_SIZE * 64];
     let mut reader = &file;
+    let mut pad_grab = PadGrab::default();
+    let wayland = crate::platform::linux::wayland::active();
+    let started = Instant::now();
     'run: while hub.generation.load(Ordering::SeqCst) == generation {
+        if wayland {
+            let want = super::ACTIVE.load(Ordering::SeqCst) || super::scroll::wanted();
+            match pad_grab.step(want, started.elapsed().as_millis() as u64) {
+                Some(GrabChange::Take) => {
+                    let ok = evdev_io::grab(fd, true);
+                    diag::log!("touch", "pad_grab", on = true, ok = ok);
+                    if !ok {
+                        pad_grab = PadGrab::default();
+                    }
+                }
+                Some(GrabChange::Give) => {
+                    evdev_io::grab(fd, false);
+                    diag::log!("touch", "pad_grab", on = false, ok = true);
+                }
+                None => {}
+            }
+        }
         let mut p = PollFd {
             fd,
             events: POLLIN,
@@ -299,9 +373,20 @@ fn read_device(hub: &'static Hub, file: std::fs::File, id: u64, generation: u64)
             hub.sink.feed(id, geo.size_mm(), &fingers);
         }
     }
+    if pad_grab.held() {
+        evdev_io::grab(fd, false);
+    }
     hub.sink.device_lost(id);
     lock(&hub.active).retain(|&d| d != id);
     diag::log!("touch", "device_closed");
+}
+
+/// How many touchpads the kernel lists, without opening any node: `/proc/bus/input/devices` is
+/// readable by everyone, so this works before the user is in the `input` group (see
+/// [`probe`](super::probe)).
+pub(super) fn probe() -> usize {
+    std::fs::read_to_string("/proc/bus/input/devices")
+        .map_or(0, |text| inputdev::parse_touchpads(&text).len())
 }
 
 /// Starts the thread. It idles while `touch_trigger` is off: nothing is opened then.
@@ -614,6 +699,37 @@ mod tests {
             &mut out,
         );
         assert_eq!(out.last(), Some(&TouchEvent::Release));
+    }
+
+    #[test]
+    fn the_pad_is_taken_when_a_hold_wants_it_and_given_back_when_it_ends() {
+        let mut g = PadGrab::default();
+        assert_eq!(g.step(false, 0), None);
+        assert_eq!(g.step(true, 10), Some(GrabChange::Take));
+        assert!(g.held());
+        assert_eq!(g.step(true, 500), None, "already held");
+        assert_eq!(g.step(false, 900), Some(GrabChange::Give));
+        assert!(!g.held());
+        assert_eq!(g.step(false, 1000), None);
+    }
+
+    #[test]
+    fn the_pad_is_never_held_past_the_cap_and_not_retaken_until_the_gesture_ends() {
+        let mut g = PadGrab::default();
+        assert_eq!(g.step(true, 0), Some(GrabChange::Take));
+        assert_eq!(g.step(true, PAD_GRAB_MAX_MS - 1), None);
+        assert_eq!(g.step(true, PAD_GRAB_MAX_MS), Some(GrabChange::Give));
+        assert_eq!(
+            g.step(true, PAD_GRAB_MAX_MS + 5),
+            None,
+            "a stuck flag cannot re-grab"
+        );
+        assert_eq!(g.step(false, PAD_GRAB_MAX_MS + 10), None);
+        assert_eq!(
+            g.step(true, PAD_GRAB_MAX_MS + 20),
+            Some(GrabChange::Take),
+            "the next gesture grabs again"
+        );
     }
 
     #[test]

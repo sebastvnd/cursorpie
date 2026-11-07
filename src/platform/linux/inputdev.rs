@@ -236,6 +236,78 @@ pub fn parse_touchpads(text: &str) -> Vec<Touchpad> {
     text.split("\n\n").filter_map(touchpad_of).collect()
 }
 
+/// A mouse the Wayland layer can grab: the `eventN` node under `/dev/input` and what the kernel
+/// lists about it. Unlike [`parse_devices`] this leaves out every device a program made (the
+/// kernel puts those under `/devices/virtual/`): the clone of a mouse that CursorPie made itself
+/// must never be grabbed, or its own output would be read back in an endless loop.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MouseNode {
+    pub name: String,
+    /// `event7`, from the `Handlers=` line.
+    pub node: String,
+    /// `046d:c08b`, empty when the kernel gives none.
+    pub hw_id: String,
+}
+
+/// `BTN_MIDDLE`: the trigger button, which a mouse for CursorPie must have.
+const BTN_MIDDLE: usize = 0x112;
+
+/// Whether a bitmap line such as `ABS=3` names any bit at all.
+fn any_bit(map: &str) -> bool {
+    map.split_whitespace()
+        .any(|w| u64::from_str_radix(w, 16).is_ok_and(|v| v != 0))
+}
+
+fn mouse_node_of(block: &str) -> Option<MouseNode> {
+    let (mut ids, mut name, mut handlers, mut sysfs) = (None, None, "", "");
+    let (mut key, mut rel, mut abs) = ("", "", "");
+    for line in block.lines() {
+        if let Some(rest) = line.strip_prefix("I: ") {
+            ids = Some(rest);
+        } else if let Some(rest) = line.strip_prefix("N: Name=") {
+            name = Some(rest.trim().trim_matches('"'));
+        } else if let Some(rest) = line.strip_prefix("S: Sysfs=") {
+            sysfs = rest.trim();
+        } else if let Some(rest) = line.strip_prefix("H: Handlers=") {
+            handlers = rest;
+        } else if let Some(rest) = line.strip_prefix("B: KEY=") {
+            key = rest;
+        } else if let Some(rest) = line.strip_prefix("B: REL=") {
+            rel = rest;
+        } else if let Some(rest) = line.strip_prefix("B: ABS=") {
+            abs = rest;
+        }
+    }
+    let name = name?;
+    let node = handlers
+        .split_whitespace()
+        .find(|h| h.starts_with("event"))?;
+    let is_mouse = handlers.split_whitespace().any(|h| h.starts_with("mouse"))
+        && bit_set(key, BTN_LEFT)
+        && bit_set(key, BTN_MIDDLE)
+        && bit_set(rel, REL_X)
+        && bit_set(rel, REL_Y);
+    let lower = name.to_ascii_lowercase();
+    if !is_mouse
+        || any_bit(abs)
+        || sysfs.contains("/virtual/")
+        || VIRTUAL.iter().any(|v| lower.contains(v))
+    {
+        return None;
+    }
+    Some(MouseNode {
+        name: name.to_string(),
+        node: node.to_string(),
+        hw_id: hardware_id(ids),
+    })
+}
+
+/// The mice the Wayland layer may grab, in the text of `/proc/bus/input/devices`: relative X and Y,
+/// a left and a middle button, no absolute axes, and not made by a program.
+pub fn parse_mouse_nodes(text: &str) -> Vec<MouseNode> {
+    text.split("\n\n").filter_map(mouse_node_of).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -432,5 +504,75 @@ B: ABS=260800000000003
     fn a_program_s_virtual_touchpad_is_left_out() {
         let fake = TOUCHPAD.replace("ELAN0412:00 04F3:3140 Touchpad", "ydotoold virtual device");
         assert!(parse_touchpads(&fake).is_empty());
+    }
+
+    #[test]
+    fn a_mouse_node_is_found_and_the_clone_of_it_is_not() {
+        if usize::BITS != 64 {
+            return; // the sample maps are those of a 64-bit kernel
+        }
+        // what the kernel lists after CursorPie made a clone of the G502: the same name and ids, but
+        // under /devices/virtual/
+        let clone = "\
+I: Bus=0003 Vendor=046d Product=c08b Version=0111
+N: Name=\"Logitech G502 HERO Gaming Mouse\"
+S: Sysfs=/devices/virtual/input/input31
+H: Handlers=mouse4 event12
+B: EV=17
+B: KEY=ffff0000 0 0 0 0
+B: REL=943
+";
+        let found = parse_mouse_nodes(&blocks(&[GAMING, clone, OFFICE, KEYBOARD, TOUCHPAD]));
+        let nodes: Vec<&str> = found.iter().map(|m| m.node.as_str()).collect();
+        assert_eq!(
+            nodes,
+            ["event7", "event3"],
+            "the clone (event12) is left out"
+        );
+        assert_eq!(found[0].name, "Logitech G502 HERO Gaming Mouse");
+        assert_eq!(found[0].hw_id, "046d:c08b");
+    }
+
+    #[test]
+    fn a_pointer_that_has_absolute_axes_or_no_middle_button_is_not_grabbed() {
+        if usize::BITS != 64 {
+            return;
+        }
+        let absolute = "\
+I: Bus=0003 Vendor=056a Product=0302 Version=0100
+N: Name=\"Wacom Pen\"
+H: Handlers=mouse5 event8
+B: EV=1f
+B: KEY=1f0000 0 0 0 0
+B: REL=903
+B: ABS=3
+";
+        // left and right only (0x30000 = BTN_LEFT, BTN_RIGHT)
+        let two_buttons = "\
+I: Bus=0003 Vendor=1234 Product=5678 Version=0100
+N: Name=\"Two Button Mouse\"
+H: Handlers=mouse6 event9
+B: EV=17
+B: KEY=30000 0 0 0 0
+B: REL=3
+";
+        assert!(parse_mouse_nodes(&blocks(&[absolute, two_buttons])).is_empty());
+    }
+
+    #[test]
+    fn a_pointer_of_another_program_is_not_grabbed() {
+        if usize::BITS != 64 {
+            return;
+        }
+        let ydotool = "\
+I: Bus=0003 Vendor=0000 Product=0000 Version=0000
+N: Name=\"ydotoold virtual device\"
+S: Sysfs=/devices/virtual/input/input40
+H: Handlers=mouse7 event14
+B: EV=17
+B: KEY=ffff0000 0 0 0 0
+B: REL=903
+";
+        assert!(parse_mouse_nodes(ydotool).is_empty());
     }
 }

@@ -56,6 +56,29 @@ pub fn touch_status() -> TouchStatus {
     touch::status()
 }
 
+/// Looks for trackpads now, whether or not the trackpad hold is on, and returns how many the system
+/// lists (the "Scan" of the Trackpad panel). Starts nothing and loads nothing private.
+pub fn touch_scan() -> usize {
+    touch::scan()
+}
+
+/// What the last [`touch_scan`] counted; `None` before the first one.
+pub fn touch_last_scan() -> Option<usize> {
+    touch::last_scan()
+}
+
+/// First start of a new user: switches the trackpad hold on when a trackpad is present. Call it
+/// before [`spawn`]. Returns whether it did. See `touch::probe`.
+pub fn enable_trackpad_on_first_start(first_start: bool) -> bool {
+    touch::auto_enable_on_first_start(first_start)
+}
+
+/// Writes `config.json` if [`enable_trackpad_on_first_start`] changed the config and nothing has
+/// saved it since. Call it when the welcome window ends.
+pub fn save_first_start_trackpad() {
+    touch::take_pending_save();
+}
+
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
@@ -73,6 +96,9 @@ use windows as native;
 mod linux;
 #[cfg(target_os = "linux")]
 use linux as native;
+// The Wayland layer of Linux: chosen instead of `linux` (the X11 layer) in a Wayland session.
+#[cfg(target_os = "linux")]
+mod wayland;
 
 #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 mod native {
@@ -206,6 +232,15 @@ pub fn touchpad_debug_from_args() -> bool {
 
 /// Starts the hook on its own thread (retrying while the OS refuses it).
 pub fn spawn(notifier: Notifier) {
+    // Linux decides once, from the session, which layer runs (docs/WAYLAND_SUPPORT.md): the X11
+    // layer is not touched, the Wayland one is added beside it.
+    #[cfg(target_os = "linux")]
+    {
+        if crate::platform::linux::wayland::active() {
+            wayland::spawn(notifier);
+            return;
+        }
+    }
     native::spawn(notifier);
 }
 
@@ -284,8 +319,9 @@ fn mouse_verdict(
 
 /// Resets everything after the OS disabled the hook (a timeout, or the user): no gesture is in
 /// progress any more and the pie is closed.
-// Only the macOS tap calls this (the OS can disable its hook); the tests call it everywhere.
-#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+// The macOS tap calls this when the OS disables its hook, the Windows tap when its watchdog finds
+// that Windows dropped the hooks; the tests call it everywhere.
+#[cfg_attr(not(any(target_os = "macos", windows, test)), allow(dead_code))]
 pub(crate) fn reset(state: &Arc<Mutex<Gesture>>, notifier: &Notifier) {
     *lock(state) = Gesture::Idle;
     touch::extra::clear();

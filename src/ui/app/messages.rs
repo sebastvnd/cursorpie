@@ -36,7 +36,7 @@ impl App {
                 );
                 self.show_pie(ctx, x, y, profile, path);
             }
-            Msg::PieBlocked { x, y } => self.pie_blocked(ctx, x, y),
+            Msg::PieBlocked { x, y, touch } => self.pie_blocked(ctx, x, y, touch),
             Msg::OpenSettings { x, y, about } => {
                 self.open_settings(ctx, egui::pos2(x as f32, y as f32), about);
             }

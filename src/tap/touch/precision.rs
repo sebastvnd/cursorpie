@@ -437,6 +437,12 @@ fn count_touchpads() -> usize {
         .count()
 }
 
+/// How many precision touchpads Windows lists, without registering for anything (see
+/// [`probe`](super::probe)).
+pub(super) fn probe() -> usize {
+    count_touchpads()
+}
+
 // ------------------------------------------------------------------ the window
 
 /// Starts or stops the delivery of touchpad reports to `hwnd`.

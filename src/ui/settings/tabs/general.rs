@@ -84,10 +84,15 @@ impl App {
                     "If it still says 'Not running' after granting access, quit and reopen CursorPie.",
                 );
             } else if platform::OS == platform::Os::Linux {
-                note(
-                    ui,
-                    "No permission is needed on X11. In a Wayland session CursorPie only sees X11 and XWayland windows: log in with an X11 session for full support.",
-                );
+                // X11 needs no permission; a Wayland session needs the udev rule (see
+                // `platform::linux::wayland::report`), and says exactly what is missing
+                let wayland = crate::platform::linux::session::Session::current().server
+                    == crate::platform::linux::session::DisplayServer::Wayland;
+                if wayland {
+                    note(ui, &crate::platform::linux::wayland::cached_report().text);
+                } else {
+                    note(ui, "No permission is needed on X11.");
+                }
             } else {
                 note(
                     ui,

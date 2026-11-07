@@ -41,7 +41,8 @@ CursorPie, the trigger button and the output of `cargo run --release` from a ter
   `input` group (Settings says so when not). No haptic ticks. The click of the extra finger is swallowed by grabbing
   the left and right buttons while a hold runs; a click that is not the extra one reaches the app a moment late, like
   a side-button click. Touchpads that report no finger count or no size (some virtual or very old ones) are skipped.
-  Wayland sessions are not covered. **Not yet verified on real hardware:** the parser, the recognizer and the X grab
+  On Wayland the touchpad's node is grabbed while a hold runs instead (the udev rule covers it).
+  **Not yet verified on real hardware:** the parser, the recognizer and the X grab
   logic are tested, the device thread and the permissions are not.
 - **Launch at login** points at the executable that was running when you enabled it. Toggle it off and on again
   if you move the app.
@@ -105,9 +106,14 @@ parts may turn out to be wrong, so a surprise here may be a bug rather than a li
 [LINUX_MIGRATION.md](LINUX_MIGRATION.md) for what is built and for the checklist being run; when you report
 something, say which distribution, desktop, session type and scaling you use.
 
-- **X11 sessions only.** In a Wayland session CursorPie sees only X11 and XWayland windows, so the gesture does
-  nothing over Wayland-native windows. Log in with an X11 session for full support. Wayland support is designed
-  but not built.
+- **Wayland: written, not yet run on real hardware.** In a Wayland session CursorPie captures the mouse through
+  evdev (it needs `70-cursorpie.rules`, see [INSTALL.md](INSTALL.md)) and, on KDE Plasma, asks KWin for the
+  pointer and the windows. Not done: a native pie window (the pie is still an XWayland window, so it may open
+  off-centre at a fractional scale), adapters for COSMIC and niri (capture and shortcuts work, per-app profiles do not;
+  the Hyprland, Sway and GNOME adapters are written but not run, and on Sway the pie may open away from the cursor
+  because Sway cannot say where the pointer is), and the app below the pie may see hover events while a mouse hold is
+  open. After a trackpad pie the first touch may move the pointer once. The screen lock gives the mouse back
+  within half a second. What exists and what does not is in [WAYLAND_SUPPORT.md](WAYLAND_SUPPORT.md#implementation-status).
 - No tray icon yet. Pause and Quit are in **Settings > General**, and Settings opens by holding the trigger in
   the middle of the pie.
 - App icons in the pie come from the `Icon=` of the app's desktop entry. A PNG is read directly; an icon that

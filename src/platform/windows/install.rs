@@ -257,6 +257,7 @@ pub fn handle_command_line() -> bool {
 /// `config.json` stay, so a later install picks them up again.
 fn uninstall() {
     let _ = set_launch_at_login(false);
+    crate::bridge::install::uninstall(); // the browser extension's host entries
     let _ = registry::delete_key(&uninstall_key());
     // Asked first: the cleanup below runs a few seconds after it is started, and by then this
     // process (which may be the installed copy) must be gone so the file can be deleted.

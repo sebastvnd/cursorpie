@@ -1,0 +1,26 @@
+# CursorPie, Wayland sessions (docs/WAYLAND_SUPPORT.md).
+#
+# CursorPie grabs the mouse you hold the trigger button on and writes everything it does not use to a
+# virtual mouse it makes itself, because a Wayland program cannot see or swallow the buttons of
+# other programs any other way. That needs two things for the user who is logged in at the seat:
+#
+#   * /dev/uinput, to make the virtual mouse and the virtual keyboard shortcuts are sent through;
+#   * the mouse's /dev/input/event* node, to read and grab it;
+#   * the touchpad's node (only used when "Trackpad hold" is on): read for the fingers, and grabbed
+#     while a hold runs so the extra click and the scrolling do not reach the app under the pie.
+#
+# Keyboards are never opened (a shortcut is recorded from the Settings window's own key events, so
+# no program is given a way to read what is typed). The rules below tag only mice (ID_INPUT_MOUSE),
+# touchpads (ID_INPUT_TOUCHPAD) and /dev/uinput for the "seat" the logind session owns
+# (TAG+="uaccess"), so no group membership is needed.
+#
+# Install:  sudo cp 70-cursorpie.rules /etc/udev/rules.d/
+#           sudo udevadm control --reload && sudo udevadm trigger
+# Then log out and in. Remove the file to take the permission away again.
+#
+# Whether a distribution already tags /dev/uinput, and whether this is enough on Kubuntu, Fedora KDE
+# and Arch, is spike SW10: not verified yet.
+
+KERNEL=="uinput", SUBSYSTEM=="misc", OPTIONS+="static_node=uinput", TAG+="uaccess"
+SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_MOUSE}=="1", TAG+="uaccess"
+SUBSYSTEM=="input", KERNEL=="event*", ENV{ID_INPUT_TOUCHPAD}=="1", TAG+="uaccess"
