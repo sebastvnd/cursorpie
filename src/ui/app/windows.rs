@@ -14,6 +14,22 @@ use std::time::{Duration, Instant};
 /// Longest the card waits for the window to take its size (see [`App::window_settling`]).
 const SETTLE_MAX: Duration = Duration::from_millis(300);
 
+/// Longest a window on Linux stays unmapped while it waits for its size and a clean first frame
+/// (see [`App::show_window`]).
+const SHOW_WAIT_MAX: Duration = Duration::from_millis(100);
+
+/// Frames drawn empty at the final size before the window is mapped.
+const SHOW_WAIT_FRAMES: u8 = 2;
+
+/// A window that was asked to appear on Linux and is still being prepared (see `App::show_window`).
+pub struct ShowWait {
+    /// The window size it was asked for.
+    want: Vec2,
+    since: Instant,
+    /// Frames seen so far with the window at that size.
+    frames: u8,
+}
+
 /// Whether a window of `size` (None = the system did not say) is the size `want`, give or take
 /// the rounding to whole pixels. An unknown size counts as arrived: there is nothing to wait for.
 fn has_size(size: Option<Vec2>, want: Vec2) -> bool {
@@ -70,6 +86,63 @@ impl App {
         ));
         self.hide_root(ctx);
         self.sleep_step(ctx); // the idle clock starts now
+    }
+
+    /// Makes the (hidden) window appear. On Linux not at once: the window is mapped only after it
+    /// has its final size and one transparent frame has been drawn into it.
+    ///
+    /// Why: a window that is mapped right after it was resized (or that shows what it held when it
+    /// was hidden) is on screen for a moment with a buffer nobody has drawn into at the new size, and
+    /// a transparent window then flashes **black**: the pie as a black square, Settings as a black
+    /// rectangle, before the first real frame. The size request is carried out by the X server a
+    /// moment after the frame that sent it, and the drawing surface is resized after that. So the
+    /// size and position are sent now, [`App::step_show_wait`] draws nothing for a few frames (the
+    /// buffer is cleared to transparent) and only then sends `Visible(true)`.
+    pub(super) fn show_window(&mut self, ctx: &egui::Context, want: Vec2) {
+        if platform::OS == platform::Os::Linux {
+            self.show_wait = Some(ShowWait {
+                want,
+                since: Instant::now(),
+                frames: 0,
+            });
+            ctx.request_repaint();
+        } else {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        }
+    }
+
+    /// Runs every frame: maps the window once [`App::show_window`]'s conditions are met.
+    pub(super) fn step_show_wait(&mut self, ctx: &egui::Context) {
+        let Some(wait) = self.show_wait.as_mut() else {
+            return;
+        };
+        if !self.visible {
+            // closed again before it was ever shown (a quick release): nothing to map
+            self.show_wait = None;
+            return;
+        }
+        let size = ctx.input(|i| i.viewport().inner_rect).map(|r| r.size());
+        let arrived = has_size(size, wait.want);
+        if arrived {
+            wait.frames = wait.frames.saturating_add(1);
+        }
+        let waited = wait.since.elapsed();
+        if (arrived && wait.frames >= SHOW_WAIT_FRAMES) || waited >= SHOW_WAIT_MAX {
+            diag::log!(
+                "ui",
+                "show_wait_done",
+                waited_ms = waited,
+                arrived = arrived
+            );
+            self.show_wait = None;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            if self.settings_open {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            }
+            ctx.request_repaint();
+        } else {
+            ctx.request_repaint_after(Duration::from_millis(4));
+        }
     }
 
     /// Brings the Settings (or welcome) window in front of everything: out of the minimized state,
@@ -144,6 +217,7 @@ impl App {
             }
             return;
         }
+        let was_visible = self.visible;
         self.pie_open = false;
         self.set_settings_open(true);
         self.visible = true;
@@ -160,7 +234,7 @@ impl App {
         self.history.reset(&self.edit); // undo starts from what Settings opened with
         self.opened = Some(self.edit.clone()); // what "unsaved" is measured against
 
-        let size = self.place_card_window(ctx, at, card_size_for);
+        let size = self.place_card_window(ctx, at, card_size_for, was_visible);
         self.card_size = size;
     }
 
@@ -172,6 +246,7 @@ impl App {
             self.raise_settings(ctx, "open_welcome");
             return;
         }
+        let was_visible = self.visible;
         self.pie_open = false;
         self.set_settings_open(true);
         self.visible = true;
@@ -180,12 +255,18 @@ impl App {
         self.ed.stop_recording();
         self.ed.scan = None;
         self.welcome = Some(Welcome::new(platform::launch_at_login_enabled()));
-        self.card_size = self.place_card_window(ctx, at, welcome_size_for);
+        self.card_size = self.place_card_window(ctx, at, welcome_size_for, was_visible);
     }
 
     /// Shows the window as a normal, centered card on the display that contains `at`, `fit`
     /// deciding the card size from the size of that display. Returns the card size.
-    fn place_card_window(&mut self, ctx: &egui::Context, at: Pos2, fit: fn(Vec2) -> Vec2) -> Vec2 {
+    fn place_card_window(
+        &mut self,
+        ctx: &egui::Context,
+        at: Pos2,
+        fit: fn(Vec2) -> Vec2,
+        was_visible: bool,
+    ) -> Vec2 {
         // centered on the display that contains the cursor
         let area = screen_rect_at(at)
             .unwrap_or_else(|| egui::Rect::from_center_size(at, egui::vec2(1600.0, 1000.0)));
@@ -207,6 +288,11 @@ impl App {
         crate::debug::expect_window(top_left.x, top_left.y);
         self.settings_wait = Some((win_sz, Instant::now()));
 
+        if was_visible && platform::OS == platform::Os::Linux {
+            // the pie window is on screen (a held trigger opened Settings): resizing it while it is
+            // mapped shows a black frame, so it goes away and comes back at the new size
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        }
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(win_sz));
         ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
         ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(false));
@@ -214,7 +300,7 @@ impl App {
             egui::WindowLevel::Normal,
         ));
         ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(top_left));
-        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        self.show_window(ctx, win_sz);
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         // on X11 the toolkit drops that request until the window is mapped, and a window manager
         // may map it without the focus: ask again once it is listed
@@ -377,7 +463,7 @@ impl App {
         ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(top_left));
         if !self.visible {
             self.visible = true;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            self.show_window(ctx, Vec2::splat(w));
         }
         if platform::window_manager_may_recenter() {
             // Once mapped, a move is a request from the client and the window manager honors

@@ -29,6 +29,7 @@ use crate::config::{cfg, lock};
 use crate::msg::Notifier;
 use crate::platform::linux::evdev_io::{self, POLLIN, PollFd, open_node, poll_fds, raw_fd};
 use crate::platform::linux::inputdev;
+use crate::platform::linux::uinput::{CloneSpec, EV_REL, InputEvent, REL_X, REL_Y, UinputDevice};
 use crate::tap::gesture::Gesture;
 use std::ffi::c_int;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -263,6 +264,127 @@ impl PadGrab {
     }
 }
 
+// ------------------------------------------------------------------ the pointer (Wayland)
+
+/// Pointer pixels per millimeter of finger travel while the pad is held. The compositor still
+/// applies its own pointer speed to the virtual pointer, so this is only the base; it can be tuned
+/// with the `CURSORPIE_PAD_GAIN` environment variable.
+const PAD_GAIN: f32 = 10.0;
+/// The pad size assumed when the kernel gives no axis resolution (mm).
+const PAD_FALLBACK_MM: (f32, f32) = (100.0, 70.0);
+
+fn pad_gain() -> f32 {
+    std::env::var("CURSORPIE_PAD_GAIN")
+        .ok()
+        .and_then(|v| v.trim().parse::<f32>().ok())
+        .filter(|g| g.is_finite() && *g > 0.0 && *g < 200.0)
+        .unwrap_or(PAD_GAIN)
+}
+
+/// Turns the movement of one finger into pointer motion while the Wayland layer holds the pad.
+///
+/// `EVIOCGRAB` takes the *whole* node from the compositor, the pointer motion included, so during a
+/// trackpad hold the cursor froze and no slice could be chosen. The reader still sees every finger,
+/// so it moves the pointer itself: the finger that is followed (the first one that is not a palm,
+/// kept until it lifts, so the extra finger's tap does not take over) gives a motion in
+/// millimeters, which is scaled and written to a virtual mouse.
+#[derive(Debug, Default)]
+pub(super) struct PadPointer {
+    id: Option<i32>,
+    /// Where that finger was in the last frame (mm).
+    last: (f32, f32),
+    /// The part of a pixel that was not sent yet.
+    rest: (f32, f32),
+}
+
+impl PadPointer {
+    /// Forget the finger (the pad was just taken or given back): the next frame is the new start,
+    /// so the pointer never jumps by the distance the finger moved before.
+    pub(super) fn reset(&mut self) {
+        *self = PadPointer::default();
+    }
+
+    /// The whole pixels to move for this frame.
+    pub(super) fn step(
+        &mut self,
+        fingers: &[Finger],
+        size_mm: (f32, f32),
+        gain: f32,
+    ) -> (i32, i32) {
+        let size = (
+            if size_mm.0 > 0.0 {
+                size_mm.0
+            } else {
+                PAD_FALLBACK_MM.0
+            },
+            if size_mm.1 > 0.0 {
+                size_mm.1
+            } else {
+                PAD_FALLBACK_MM.1
+            },
+        );
+        let followed = self
+            .id
+            .and_then(|id| fingers.iter().find(|f| f.id == id))
+            .or_else(|| fingers.iter().find(|f| f.size <= PALM_SIZE));
+        let Some(f) = followed else {
+            self.reset();
+            return (0, 0);
+        };
+        let at = (f.x * size.0, f.y * size.1);
+        if self.id != Some(f.id) {
+            self.id = Some(f.id);
+            self.last = at;
+            self.rest = (0.0, 0.0);
+            return (0, 0);
+        }
+        let dx = (at.0 - self.last.0) * gain + self.rest.0;
+        let dy = (at.1 - self.last.1) * gain + self.rest.1;
+        self.last = at;
+        let (mx, my) = (dx.trunc(), dy.trunc());
+        self.rest = (dx - mx, dy - my);
+        (mx as i32, my as i32)
+    }
+}
+
+/// The virtual mouse the held pad's finger moves, with its follower.
+struct PadMouse {
+    dev: UinputDevice,
+    motion: PadPointer,
+    gain: f32,
+}
+
+impl PadMouse {
+    /// `None` when `/dev/uinput` cannot be written (the user is not allowed to): the pad is then
+    /// never grabbed, so the pointer keeps working and only the swallowing of the extra finger's
+    /// click and of the scroll is lost.
+    fn create() -> Option<PadMouse> {
+        match UinputDevice::create(&CloneSpec::pointer()) {
+            Ok(dev) => Some(PadMouse {
+                dev,
+                motion: PadPointer::default(),
+                gain: pad_gain(),
+            }),
+            Err(e) => {
+                diag::log!("touch", "pad_pointer", ok = false, why = e.to_string());
+                None
+            }
+        }
+    }
+
+    fn forward(&mut self, fingers: &[Finger], size_mm: (f32, f32)) {
+        let (dx, dy) = self.motion.step(fingers, size_mm, self.gain);
+        if dx == 0 && dy == 0 {
+            return;
+        }
+        let _ = self.dev.emit(&[
+            InputEvent::new(EV_REL, REL_X, dx),
+            InputEvent::new(EV_REL, REL_Y, dy),
+            InputEvent::SYN,
+        ]);
+    }
+}
+
 // ------------------------------------------------------------------ the kernel
 
 /// The range of an absolute axis of an open evdev node (the OS side: `platform::linux::evdev_io`).
@@ -318,21 +440,32 @@ fn read_device(hub: &'static Hub, file: std::fs::File, id: u64, generation: u64)
     let mut reader = &file;
     let mut pad_grab = PadGrab::default();
     let wayland = crate::platform::linux::wayland::active();
+    // the pointer that moves while the pad is held (the grab takes the pad's own motion away)
+    let mut pad_mouse = if wayland { PadMouse::create() } else { None };
     let started = Instant::now();
     'run: while hub.generation.load(Ordering::SeqCst) == generation {
         if wayland {
-            let want = super::ACTIVE.load(Ordering::SeqCst) || super::scroll::wanted();
+            // without a virtual pointer a grab would freeze the cursor: do not grab at all
+            let want = pad_mouse.is_some()
+                && (super::ACTIVE.load(Ordering::SeqCst) || super::scroll::wanted());
             match pad_grab.step(want, started.elapsed().as_millis() as u64) {
                 Some(GrabChange::Take) => {
                     let ok = evdev_io::grab(fd, true);
                     diag::log!("touch", "pad_grab", on = true, ok = ok);
-                    if !ok {
+                    if ok {
+                        if let Some(m) = pad_mouse.as_mut() {
+                            m.motion.reset();
+                        }
+                    } else {
                         pad_grab = PadGrab::default();
                     }
                 }
                 Some(GrabChange::Give) => {
                     evdev_io::grab(fd, false);
                     diag::log!("touch", "pad_grab", on = false, ok = true);
+                    if let Some(m) = pad_mouse.as_mut() {
+                        m.motion.reset();
+                    }
                 }
                 None => {}
             }
@@ -356,6 +489,11 @@ fn read_device(hub: &'static Hub, file: std::fs::File, id: u64, generation: u64)
                         }
                         if frame_ended {
                             parser.fingers(&geo, &mut fingers);
+                            if pad_grab.held()
+                                && let Some(m) = pad_mouse.as_mut()
+                            {
+                                m.forward(&fingers, geo.size_mm());
+                            }
                             hub.sink.feed(id, geo.size_mm(), &fingers);
                         }
                     }
@@ -730,6 +868,70 @@ mod tests {
             Some(GrabChange::Take),
             "the next gesture grabs again"
         );
+    }
+
+    fn finger(id: i32, x: f32, y: f32) -> Finger {
+        Finger {
+            id,
+            x,
+            y,
+            size: 1.0,
+        }
+    }
+
+    #[test]
+    fn a_held_pad_moves_the_pointer_by_the_travel_of_the_first_finger() {
+        let mut p = PadPointer::default();
+        let size = (100.0, 50.0);
+        // the first frame only picks the finger
+        assert_eq!(p.step(&[finger(7, 0.5, 0.5)], size, 10.0), (0, 0));
+        // 10 mm to the right and 5 mm down, at 10 px per mm
+        assert_eq!(p.step(&[finger(7, 0.6, 0.6)], size, 10.0), (100, 50));
+        // a finger that rests does not move it
+        assert_eq!(p.step(&[finger(7, 0.6, 0.6)], size, 10.0), (0, 0));
+    }
+
+    #[test]
+    fn the_part_of_a_pixel_is_carried_over() {
+        let mut p = PadPointer::default();
+        // powers of two, so the float arithmetic is exact
+        let size = (64.0, 64.0);
+        p.step(&[finger(1, 0.0, 0.0)], size, 1.0);
+        let mut sum = 0;
+        for i in 1..=10 {
+            // 0.5 mm per frame is 0.5 px: never more than one pixel at once
+            let (dx, _) = p.step(&[finger(1, i as f32 / 128.0, 0.0)], size, 1.0);
+            assert!(dx <= 1);
+            sum += dx;
+        }
+        assert_eq!(sum, 5, "ten times 0.5 px");
+    }
+
+    #[test]
+    fn the_extra_finger_does_not_take_over_and_a_lifted_one_starts_afresh() {
+        let mut p = PadPointer::default();
+        let size = (100.0, 100.0);
+        p.step(&[finger(1, 0.2, 0.2)], size, 10.0);
+        let two = [finger(1, 0.3, 0.2), finger(2, 0.9, 0.9)];
+        assert_eq!(p.step(&two, size, 10.0), (100, 0), "still the first finger");
+        // the first lifts: the second becomes the start, no jump
+        assert_eq!(p.step(&[finger(2, 0.9, 0.9)], size, 10.0), (0, 0));
+        assert_eq!(p.step(&[], size, 10.0), (0, 0));
+        assert_eq!(p.step(&[finger(3, 0.1, 0.1)], size, 10.0), (0, 0));
+    }
+
+    #[test]
+    fn a_palm_does_not_move_the_pointer_and_a_reset_forgets_the_finger() {
+        let mut p = PadPointer::default();
+        let palm = Finger {
+            size: PALM_SIZE + 1.0,
+            ..finger(1, 0.5, 0.5)
+        };
+        assert_eq!(p.step(&[palm], (100.0, 50.0), 10.0), (0, 0));
+        assert_eq!(p.id, None);
+        p.step(&[finger(2, 0.1, 0.1)], (0.0, 0.0), 10.0);
+        p.reset();
+        assert_eq!(p.step(&[finger(2, 0.9, 0.9)], (0.0, 0.0), 10.0), (0, 0));
     }
 
     #[test]

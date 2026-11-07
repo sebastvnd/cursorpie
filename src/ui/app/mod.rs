@@ -31,6 +31,7 @@ mod vtrackpad {
     }
 }
 mod windows;
+pub use windows::ShowWait;
 
 use crate::config::{Config, MAX_ITEMS, cfg};
 use crate::history::History;
@@ -140,6 +141,9 @@ pub struct App {
     /// was asked for and since when. Until the window really has that size nothing is drawn, see
     /// [`App::window_settling`].
     pub settings_wait: Option<(Vec2, Instant)>,
+    /// Linux: the window was asked to appear and is kept unmapped until it has its size and an empty
+    /// frame was drawn, see `App::show_window`. While set, nothing is drawn.
+    pub show_wait: Option<ShowWait>,
     /// Some(true) = closing and saving, Some(false) = closing without saving
     pub closing: Option<bool>,
     pub card_size: Vec2,
@@ -198,6 +202,7 @@ impl App {
             ed: Ed::new(),
             settings_anim: 0.0,
             settings_wait: None,
+            show_wait: None,
             closing: None,
             card_size: egui::vec2(CARD_SIZE[0], CARD_SIZE[1]),
             toast: None,
@@ -247,6 +252,7 @@ impl eframe::App for App {
         while let Ok(msg) = self.rx.try_recv() {
             self.handle_msg(ctx, msg);
         }
+        self.step_show_wait(ctx);
 
         // end of a preview (see Msg::Preview)
         if let Some(until) = self.preview_until {
@@ -283,7 +289,9 @@ impl eframe::App for App {
             cfg().appearance
         };
         crate::ui::settings::theme::apply_appearance(ui.ctx(), appearance);
-        if self.settings_open && self.welcome.is_some() {
+        if self.show_wait.is_some() {
+            // waiting to be mapped: draw nothing, so the buffer shown first is fully transparent
+        } else if self.settings_open && self.welcome.is_some() {
             self.welcome_ui(ui);
         } else if self.settings_open {
             self.settings_ui(ui);

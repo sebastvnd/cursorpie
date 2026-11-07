@@ -9,7 +9,7 @@
 
 use super::evdev_io::{self, IOC_NONE, IOC_WRITE, InputId, ioc, ioctl_buf, ioctl_val};
 use std::collections::BTreeSet;
-use std::ffi::{c_int, c_long, c_ulong, c_void};
+use std::ffi::{c_int, c_ulong, c_void};
 use std::io::{self, Write};
 
 pub(crate) const EV_SYN: u16 = 0;
@@ -62,8 +62,9 @@ pub(crate) fn code_for_button(button: i64) -> Option<u16> {
 // --------------------------------------------------------------------------------------- events
 
 /// The time stamp of a `struct input_event`: a `timeval`, two longs. Written as zeros (the kernel
-/// stamps events itself) and skipped when reading.
-const STAMP: usize = 2 * std::mem::size_of::<c_long>();
+/// stamps events itself) and skipped when reading. A Linux `long` is as wide as a pointer; Rust's
+/// `c_long` is not (it is 32 bits on 64-bit Windows), so the size comes from `usize`.
+const STAMP: usize = 2 * std::mem::size_of::<usize>();
 /// Size of one `struct input_event`.
 pub(crate) const EVENT_SIZE: usize = STAMP + 8;
 
@@ -199,6 +200,25 @@ impl CloneSpec {
             },
             keys: (1..=248).collect(),
             rels: Vec::new(),
+            msc: Vec::new(),
+        }
+    }
+
+    /// A small virtual mouse: relative X and Y and the three main buttons (libinput only treats a
+    /// device as a pointer when it has a button). The Wayland touchpad layer moves the pointer
+    /// through it while it holds the touchpad's node (see `tap::touch::evdev::PadPointer`).
+    pub(crate) fn pointer() -> CloneSpec {
+        CloneSpec {
+            name: "CursorPie virtual pointer".to_string(),
+            // BUS_VIRTUAL
+            id: InputId {
+                bus: 0x06,
+                vendor: 0,
+                product: 0,
+                version: 1,
+            },
+            keys: vec![BTN_LEFT, BTN_LEFT + 1, BTN_MIDDLE],
+            rels: vec![REL_X, REL_Y],
             msc: Vec::new(),
         }
     }

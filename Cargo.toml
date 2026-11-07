@@ -1,6 +1,6 @@
 [package]
 name = "cursorpie"
-version = "0.8.5"
+version = "0.8.6"
 edition = "2024"
 rust-version = "1.88"
 description = "Hold-to-open pie menu for macOS, Windows and Linux (X11): per-app profiles, shortcuts, launchers and submenus."
@@ -111,10 +111,16 @@ windows-sys = { version = "0.61", optional = true, features = [
 eframe = "0.36"
 
 # Linux: the same `glow` renderer as Windows (per-pixel alpha, and it works without Vulkan). Only the
-# `x11` window system is enabled, on purpose: in a Wayland session the window then runs through
+# `x11` window system is asked for, on purpose: in a Wayland session the window then runs through
 # XWayland, where it can be placed under the pointer, and the X11 backend (see platform::linux)
 # sees the same windows. Build needs the development files of libx11, libxi, libxtst and
 # libxrandr (see CONTRIBUTING.md). Never add the `wgpu` feature here.
+#
+# NOTE: asking for `x11` alone does NOT keep winit's Wayland backend out of the build: eframe's
+# `accesskit` feature pulls in `accesskit_winit` with its default features, and those turn on
+# `winit/wayland`. winit prefers Wayland whenever `WAYLAND_DISPLAY` is set, so `run()` forces the X11
+# backend on the event loop (see `force_x11` in lib.rs). Without that, a Wayland session got a native
+# Wayland window and failed with `Glutin(... "provided native window is not supported")`.
 [target.'cfg(target_os = "linux")'.dependencies]
 eframe = { version = "0.36", default-features = false, features = [
     "accesskit",
@@ -122,6 +128,9 @@ eframe = { version = "0.36", default-features = false, features = [
     "glow",
     "x11",
 ] }
+# Same winit eframe uses (already in the tree, no new code): only for the trait that forces the X11
+# backend, see `force_x11` in lib.rs.
+winit = { version = "0.30", default-features = false, features = ["x11"] }
 # Wayland, KDE adapter and the session watcher (logind): D-Bus, the blocking API. Pure Rust, no
 # system library; the `tokio` runtime is not used (`default-features` off keeps the async-io one).
 zbus = { version = "5", default-features = false, features = ["blocking-api", "async-io"] }

@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+## 0.8.6
+
+- **Linux: no more black flash when the pie or Settings appears.** The window was shown right after it was resized
+  (and with whatever its buffer held), so for a frame or two a transparent window was on screen with nothing drawn
+  into it at its new size: a black square for the pie, a black rectangle for Settings. It now stays hidden until it
+  has its size and two empty frames were drawn at that size (at most 100 ms), and only then is mapped; a pie window
+  that is on screen when a held trigger opens Settings is hidden for the resize. New log line `ui.show_wait_done`.
+- **Wayland, trackpad: the pointer no longer freezes while the pie is open.** During a trackpad hold the Wayland layer
+  grabs the touchpad's whole node (`EVIOCGRAB`) to swallow the extra finger's click and the scroll, but that also took
+  the pad's pointer motion away from the compositor, so the pie opened and the cursor could not reach a slice. The
+  reader still sees every finger, so while it holds the pad it now moves the pointer itself: the first finger's travel
+  goes to a small virtual mouse (`CursorPie virtual pointer`, `/dev/uinput`), 10 px per mm before the compositor's own
+  pointer speed (`CURSORPIE_PAD_GAIN` changes it). Without write access to `/dev/uinput` the pad is not grabbed at all,
+  so the cursor keeps moving and only the swallowing of the extra click and scroll is lost.
+- **Linux, Wayland session: the app starts again instead of failing with `Glutin(NotSupported("provided native
+  window is not supported"))`.** The window was meant to run through XWayland (only eframe's `x11` feature is asked
+  for), but eframe's `accesskit` feature pulls in `accesskit_winit`, whose default features switch on `winit/wayland`;
+  winit prefers Wayland whenever `WAYLAND_DISPLAY` is set, so the pie got a native Wayland window that glutin could not
+  make an EGL surface for. `run()` now forces winit's X11 backend when `DISPLAY` is set (`force_x11`).
+
 ## 0.8.5
 
 - **Open URL slices: new window or the page that is open, with the browser extension that ships in the program.** An
