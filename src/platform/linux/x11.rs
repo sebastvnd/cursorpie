@@ -610,12 +610,9 @@ impl Conn {
         let main = known
             .iter()
             .filter(|w| self.is_main_window(**w))
-            .map(|w| u64::from(*w))
+            .copied()
             .collect();
-        Windows {
-            known: known.into_iter().map(u64::from).collect(),
-            main,
-        }
+        Windows { known, main }
     }
 
     /// Whether `w` is a main window of its app: `_NET_WM_WINDOW_TYPE_NORMAL` (the default when the

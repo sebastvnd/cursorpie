@@ -189,38 +189,6 @@ pub fn display_rects() -> Vec<ScreenRect> {
     out
 }
 
-unsafe extern "system" fn collect_scale(
-    mon: HMONITOR,
-    _dc: HDC,
-    _rect: *mut RECT,
-    data: LPARAM,
-) -> i32 {
-    // SAFETY: `data` is the `Vec` passed by `logical_to_physical`, alive for the whole enumeration.
-    let out = unsafe { &mut *(data as *mut Vec<(ScreenRect, f64)>) };
-    let mut info: MONITORINFO = unsafe { std::mem::zeroed() };
-    info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-    if unsafe { GetMonitorInfoW(mon, &mut info) } != 0 {
-        let (mut dx, mut dy) = (0u32, 0u32);
-        let dpi_ok = unsafe { GetDpiForMonitor(mon, MDT_EFFECTIVE_DPI, &mut dx, &mut dy) } == 0;
-        let s = if dpi_ok {
-            super::util::scale_from_dpi(dx)
-        } else {
-            1.0
-        };
-        let r = info.rcMonitor;
-        out.push((
-            ScreenRect {
-                x: px_to_logical(r.left as f64, s),
-                y: px_to_logical(r.top as f64, s),
-                w: px_to_logical((r.right - r.left) as f64, s),
-                h: px_to_logical((r.bottom - r.top) as f64, s),
-            },
-            s,
-        ));
-    }
-    1
-}
-
 // ---------------------------------------------------------------- activation
 
 struct Find {
