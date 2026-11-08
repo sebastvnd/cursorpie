@@ -119,7 +119,6 @@ package (standard library only, never part of the app) and behave the same on ma
 | `cargo tools clean-logs` | deletes old debug logs, keeping the newest 3 by default (`--keep N`, `--older-than DAYS`, `--all`, `--dir PATH`, `--dry-run`) |
 | `cargo tools zip` | packs the project into a `.zip` without `target/` and `.git/` (`-o FILE`, `--list`, `--no-git`) |
 | `cargo tools info` | prints the facts a bug report needs: OS, desktop session, tool versions |
-| `cargo tools trackpad` | starts the app with the virtual trackpad, to try trackpad gestures with a mouse (`--width POINTS`, `--silent`, `--release`; see `docs/DEBUGGING.md`) |
 
 ### The loop
 
@@ -251,8 +250,11 @@ Merges, reverts, `Release ...` commits and `fixup!` or `squash!` commits are not
   written with no OS or egui types on purpose, and take the clock or the directory as a parameter instead of
   reading them. The tools in `tools/` follow the same rules as the app: standard library only, decisions in pure
   functions, every function documented and tested.
-- **No new dependencies** without a good reason. The app is deliberately small and makes no network connections.
-  The `diag/` crate has none at all, and keeps it that way.
+- **No new dependencies** without a good reason. The app is deliberately small and its network use is the update
+  (`update`: the daily look for a newer release and, on request, the download of its package), made with the system's
+  `curl` through `platform::http`, so there is no HTTP library, and checked with the SHA-256 in `update::sha256`. Do
+  not add another connection without discussing it first; the privacy text in `about::PRIVACY` and the README must
+  change with it. The `diag/` crate has no dependencies at all, and keeps it that way.
 - **Config compatibility.** New settings need a `Default`; older `config.json` files must keep loading (see
   `guides::config_format`).
 - **Security.** `Command` actions run shell commands with the user's permissions. Never run or import one

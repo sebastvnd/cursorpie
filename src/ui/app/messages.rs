@@ -54,8 +54,6 @@ impl App {
             }
             Msg::Haptic(kind) => {
                 platform::haptic(kind);
-                #[cfg(feature = "vtrackpad")]
-                self.vt_cue(ctx, crate::ui::vtrackpad::Cue::Tick(kind));
             }
             Msg::NewProfileAppPicked(bundle) => self.ed.new_profile_app = bundle,
             Msg::InstalledApps(apps) => {
@@ -65,6 +63,8 @@ impl App {
             Msg::ProfileImportPicked(file) => self.import_profile(&file),
             Msg::FlowImportPicked(file) => self.import_flow(&file),
             Msg::Notice(text) => self.say(text),
+            Msg::UpdateChecked { manual, result } => self.update_checked(manual, result),
+            Msg::UpdateStaged(result) => self.update_staged(ctx, result),
             Msg::MouseChanged { new, name, extra } => {
                 let which = if new { "New mouse" } else { "Mouse back again" };
                 self.say(format!("{which}: {name} ({extra} extra buttons)"));

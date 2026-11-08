@@ -30,6 +30,7 @@ mod pie_clicks;
 mod resolve;
 mod right_click;
 mod side_buttons;
+mod timers;
 mod trigger;
 // The trackpad source runs on macOS, Windows and Linux; its portable core is built and tested everywhere.
 #[cfg_attr(
@@ -42,13 +43,8 @@ pub use touch::Status as TouchStatus;
 
 /// Whether a pie that a trackpad hold opened is wanted right now (a hold is armed or open). The
 /// pie window asks when it is shown: such a pie takes the pointer instead of letting it through.
-/// Never for the virtual trackpad's: its pie is nowhere near the real pointer, which is the finger
-/// on the trackpad's window and must stay there.
 pub(crate) fn touch_pie_active() -> bool {
-    let active = touch::ACTIVE.load(std::sync::atomic::Ordering::Relaxed);
-    #[cfg(feature = "vtrackpad")]
-    let active = active && !crate::platform::virtual_pointer_active();
-    active
+    touch::ACTIVE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// What the touch source is doing, for the Trackpad panel of Settings.
@@ -154,38 +150,6 @@ pub static FLOW_CANVAS_HOVER: AtomicBool = AtomicBool::new(false);
 #[cfg(test)]
 pub(crate) static TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// One finger on a trackpad, as the virtual trackpad reports it (see [`virtual_feed`]).
-#[cfg(feature = "vtrackpad")]
-pub use touch::recognizer::Finger as TouchFinger;
-/// A contact larger than this is a palm, not a finger.
-#[cfg(feature = "vtrackpad")]
-pub const TOUCH_PALM_SIZE: f32 = touch::recognizer::PALM_SIZE;
-
-/// Whether the virtual trackpad can be used: the tap, whose gesture it feeds, has started.
-#[cfg(feature = "vtrackpad")]
-pub fn virtual_ready() -> bool {
-    touch::virtual_ready()
-}
-
-/// One frame of the virtual trackpad: where its fingers are (`size_mm` is the surface it stands
-/// for). An empty slice lifts every finger. False when the tap has not started.
-#[cfg(feature = "vtrackpad")]
-pub fn virtual_feed(size_mm: (f32, f32), fingers: &[TouchFinger]) -> bool {
-    touch::virtual_feed(size_mm, fingers)
-}
-
-/// Lets time pass for the virtual trackpad (the hold time of a finger that keeps still).
-#[cfg(feature = "vtrackpad")]
-pub fn virtual_poll() {
-    touch::virtual_poll();
-}
-
-/// Cancels the gesture the virtual trackpad is running, if any.
-#[cfg(feature = "vtrackpad")]
-pub fn virtual_reset() {
-    touch::virtual_reset();
-}
-
 /// Whether Settings is open, i.e. whether the pie must stay off. See [`SETTINGS_OPEN`].
 pub(crate) fn settings_open() -> bool {
     SETTINGS_OPEN.load(Ordering::SeqCst)
@@ -232,6 +196,9 @@ pub fn touchpad_debug_from_args() -> bool {
 
 /// Starts the hook on its own thread (retrying while the OS refuses it).
 pub fn spawn(notifier: Notifier) {
+    // the thread of the delayed jobs is started here, not by the first press inside a hook
+    timers::start();
+    crate::config::start_saver();
     // Linux decides once, from the session, which layer runs (docs/WAYLAND_SUPPORT.md): the X11
     // layer is not touched, the Wayland one is added beside it.
     #[cfg(target_os = "linux")]

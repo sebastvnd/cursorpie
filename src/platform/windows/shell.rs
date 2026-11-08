@@ -2,6 +2,7 @@
 
 use super::util::{filter_for, from_wide, select_params, shell_params, wide};
 use crate::platform::FileKind;
+use crate::windowing::Asked;
 use std::path::Path;
 use windows_sys::Win32::System::Diagnostics::Debug::MessageBeep;
 use windows_sys::Win32::UI::Controls::Dialogs::{
@@ -42,11 +43,17 @@ pub fn open_app(app: &str) {
     shell_execute(app, None, SW_SHOWNORMAL);
 }
 
+/// Whether the app declares that it has a single main window. Windows has no such declaration that can be read without starting the app; `windowing` has the list.
+pub fn declares_single_window(_app: &str) -> bool {
+    false
+}
+
 /// Opens a new window of an app that already runs: the app is started again, which Explorer,
 /// browsers, terminals and editors answer with a new window (an app that keeps a single window
 /// shows the one it has).
-pub fn open_app_new_window(app: &str) {
+pub fn open_app_new_window(app: &str) -> Asked {
     open_app(app);
+    Asked::Sent(None)
 }
 
 /// Opens a URL or a file with its default handler.

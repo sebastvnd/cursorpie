@@ -403,6 +403,10 @@ pub struct Config {
     /// (see [`bridge`](crate::bridge)). Off by default: the person installs the extension and
     /// switches this on.
     pub browser_bridge: bool,
+    /// Look for a newer release once a day, when Settings opens, and offer it (see
+    /// [`update`](crate::update)). It is the only network connection CursorPie makes by itself; the package is only downloaded when the person presses *Install update*. On by default,
+    /// also for a file saved before this setting existed; *Check now* in the About tab works either way.
+    pub check_updates: bool,
     /// Which pie the side buttons follow in an app that has its own pie, until you choose another.
     pub side_default: SideTarget,
     /// Choosing a side-button mode in a pie makes the side buttons follow that pie.

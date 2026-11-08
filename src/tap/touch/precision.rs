@@ -300,7 +300,7 @@ static HUB: OnceLock<Hub> = OnceLock::new();
 static RESCAN_NOW: AtomicBool = AtomicBool::new(false);
 
 fn cursor() -> Option<Point> {
-    crate::platform::pointer_pos().map(|(x, y)| Point::new(x, y))
+    crate::platform::cursor_pos().map(|(x, y)| Point::new(x, y))
 }
 
 fn reset_bridge(hub: &Hub) {

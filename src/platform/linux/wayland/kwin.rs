@@ -33,6 +33,7 @@ use super::super::desktop_entry::{self, Index};
 use super::super::toplevels::{self, Toplevel};
 use crate::geometry::Point;
 use crate::platform::ScreenRect;
+use crate::windowing::Windows;
 use serde::Deserialize;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
@@ -84,6 +85,11 @@ function skipped(w) {
               w.popupMenu || w.comboBox || w.dndIcon || w.splash);
 }
 
+// a dialog or another window that belongs to a main window: a popup of the app, not a new window
+function secondary(w) {
+    return !!(w.dialog || w.utility || w.toolbar || w.menu || w.transient);
+}
+
 function desktopOf(w) {
     // 0 = on every desktop
     try {
@@ -108,6 +114,7 @@ function snapshot() {
             x: g.x, y: g.y, w: g.width, h: g.height,
             min: !!w.minimized,
             skip: skipped(w),
+            sec: secondary(w),
             desk: desktopOf(w)
         });
     }
@@ -222,6 +229,7 @@ struct RawWindow {
     h: f64,
     min: bool,
     skip: bool,
+    sec: bool,
     desk: i64,
 }
 
@@ -245,6 +253,9 @@ pub(crate) struct WinInfo {
     pub rect: ScreenRect,
     pub hidden: bool,
     pub skip: bool,
+    /// A dialog or another window that belongs to a main window (a popup of the app). Only KWin
+    /// says; the other compositors report `false`.
+    pub secondary: bool,
     /// The virtual desktop it is on; `None` = on all of them.
     pub desktop: Option<u32>,
 }
@@ -318,6 +329,7 @@ pub(crate) fn parse_snapshot(text: &str) -> Option<Snapshot> {
                 desktop_file: clip(&w.df),
                 hidden: w.min,
                 skip: w.skip,
+                secondary: w.sec,
                 desktop: desktop_number(w.desk),
             })
         })
@@ -412,6 +424,43 @@ impl Snapshot {
         let active = self.active.as_deref()?;
         let w = self.windows.iter().find(|w| w.id == active)?;
         app_id_of(w, index)
+    }
+
+    /// How many windows the app `app` goes by has, hidden or not, on any desktop.
+    pub(crate) fn window_count(&self, app: &str, index: Option<&Index>) -> usize {
+        let aliases = match index {
+            Some(idx) => idx.aliases(app),
+            None => vec![desktop_entry::name_key(app)],
+        };
+        self.windows
+            .iter()
+            .filter(|w| !w.skip && !w.secondary)
+            .filter(|w| toplevels::belongs_to(&names_of(w, index), &aliases))
+            .count()
+    }
+
+    /// The windows the app `app` goes by has, told apart (see [`Windows`]): KWin's own id of every
+    /// window, hidden or not, on any desktop, and among them the ones [`Snapshot::window_count`]
+    /// counts. The ids are made into numbers, the same for the same window.
+    pub(crate) fn window_ids(&self, app: &str, index: Option<&Index>) -> Windows {
+        let aliases = match index {
+            Some(idx) => idx.aliases(app),
+            None => vec![desktop_entry::name_key(app)],
+        };
+        let mine: Vec<&WinInfo> = self
+            .windows
+            .iter()
+            .filter(|w| !w.skip)
+            .filter(|w| toplevels::belongs_to(&names_of(w, index), &aliases))
+            .collect();
+        Windows {
+            known: mine.iter().map(|w| id_number(&w.id)).collect(),
+            main: mine
+                .iter()
+                .filter(|w| !w.secondary)
+                .map(|w| id_number(&w.id))
+                .collect(),
+        }
     }
 
     /// The top-most window of the app `app` goes by (what the user typed: an id, a class, a
@@ -601,6 +650,27 @@ pub(crate) fn running_among(ids: &[Option<String>]) -> Vec<bool> {
             _ => false,
         })
         .collect()
+}
+
+/// A number for the id KWin gave a window (a text), the same for the same id for as long as the
+/// program runs.
+fn id_number(id: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    id.hash(&mut h);
+    h.finish()
+}
+
+/// The windows `app` has, told apart; `None` when KWin has not reported.
+#[cfg(target_os = "linux")]
+pub(crate) fn window_ids(app: &str) -> Option<Windows> {
+    Some(snapshot()?.window_ids(app, index().as_deref()))
+}
+
+/// How many windows `app` has (hidden ones count); `None` when KWin has not reported.
+#[cfg(target_os = "linux")]
+pub(crate) fn window_count(app: &str) -> Option<usize> {
+    Some(snapshot()?.window_count(app, index().as_deref()))
 }
 
 /// The outputs, in logical points.

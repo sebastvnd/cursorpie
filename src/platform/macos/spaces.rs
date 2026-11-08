@@ -59,6 +59,7 @@ use crate::platform::desktops::{
     window_for_screen,
 };
 use crate::platform::{ScreenRect, spawn_reaped};
+use crate::windowing::{Asked, Windows};
 use core_foundation::array::{CFArray, CFArrayRef};
 use core_foundation::base::{CFType, CFTypeRef, TCFType};
 use core_foundation::boolean::CFBoolean;
@@ -94,12 +95,22 @@ const STEP_PAUSE: Duration = Duration::from_millis(350);
 const POINTER_SETTLE: Duration = Duration::from_millis(150);
 /// How often the screen is looked at while waiting.
 const POLL: Duration = Duration::from_millis(50);
+/// How long to wait between two counts of an app's windows while they settle after the app was
+/// brought forward (see [`settled_window_count`]), and how many more looks are made at most.
+const COUNT_SETTLE: Duration = Duration::from_millis(40);
+const COUNT_SETTLE_LOOKS: usize = 4;
 /// How long a window that was moved to another display gets to show up there.
 const MOVE_WAIT: Duration = Duration::from_millis(600);
 /// Space kept free at the top of a display for the menu bar when a window is moved onto it.
 const MENU_BAR: f64 = 40.0;
 /// How far (summed over x and y) the position a window reports may be from the one it was given.
 const SAME_PLACE: f64 = 6.0;
+
+/// Smallest a window is to count as a main window of an app (see [`window_count`]): the alerts,
+/// sheets and small dialogs an app shows are smaller than this, and macOS does not say which
+/// windows are dialogs without the Accessibility API.
+const MAIN_MIN_W: f64 = 200.0;
+const MAIN_MIN_H: f64 = 140.0;
 
 /// Prints what the Space code saw when `CURSORPIE_DEBUG` is set, to find out why an app was not
 /// reached. `message` is only built then.
@@ -235,6 +246,61 @@ fn running_pid(app: &str) -> Option<i32> {
     })
 }
 
+/// How many main windows the app `app` names has right now, on any Space, minimized or not: the
+/// normal windows (layer 0) that are not transparent and not small (the invisible helper windows
+/// many apps keep, and their alerts and small dialogs; this is a size guess, not a type: macOS only
+/// says what a window is through the Accessibility API). It is used by comparing two counts, so a constant extra window does not matter. `None`
+/// when the app does not run or the window list cannot be read. Meant for a worker thread.
+pub fn window_count(app: &str) -> Option<usize> {
+    let pid = i64::from(running_pid(app)?);
+    // every window of every Space, front to back
+    let windows = copy_window_info(
+        kCGWindowListOptionAll | kCGWindowListExcludeDesktopElements,
+        kCGNullWindowID,
+    )?;
+    let (k_layer, k_alpha, k_pid, k_bounds) = unsafe {
+        (
+            CFString::wrap_under_get_rule(kCGWindowLayer),
+            CFString::wrap_under_get_rule(kCGWindowAlpha),
+            CFString::wrap_under_get_rule(kCGWindowOwnerPID),
+            CFString::wrap_under_get_rule(kCGWindowBounds),
+        )
+    };
+    let mut count = 0;
+    for w in windows.iter() {
+        let d: CFDictionary<CFString, CFType> =
+            unsafe { CFDictionary::wrap_under_get_rule(*w as CFDictionaryRef) };
+        let number = |k: &CFString| d.find(k).and_then(|v| v.downcast::<CFNumber>());
+        if number(&k_pid).and_then(|n| n.to_i64()) != Some(pid) {
+            continue;
+        }
+        if number(&k_layer).and_then(|n| n.to_i64()) != Some(0) {
+            continue;
+        }
+        if number(&k_alpha)
+            .and_then(|n| n.to_f64())
+            .is_some_and(|a| a < 0.01)
+        {
+            continue;
+        }
+        let big = d
+            .find(&k_bounds)
+            .and_then(|v| v.downcast::<CFDictionary>())
+            .and_then(|b| CGRect::from_dict_representation(&b))
+            .is_some_and(|r| r.size.width >= MAIN_MIN_W && r.size.height >= MAIN_MIN_H);
+        if big {
+            count += 1;
+        }
+    }
+    Some(count)
+}
+
+/// The windows of an app told apart: not on macOS, where the new window is told by the count taken
+/// right before the key (see [`open_app_new_window`]).
+pub fn window_ids(_app: &str) -> Option<Windows> {
+    None
+}
+
 /// Process id of the app in front, whether or not it has a window.
 fn frontmost_pid() -> Option<i32> {
     use objc2::rc::autoreleasepool;
@@ -247,17 +313,28 @@ fn frontmost_pid() -> Option<i32> {
     })
 }
 
+/// Whether the app declares that it has a single main window. macOS has no such declaration that can be read without asking the app; `windowing` has the list.
+pub fn declares_single_window(_app: &str) -> bool {
+    false
+}
+
 /// Opens a new window of an app that already runs: the app is brought forward (`open -a`, which also
 /// goes to its Space), then Cmd+N is pressed, the shortcut for "new window" (or "new document") in
 /// Finder, Safari, Chrome, Terminal, Notes and most other apps. There is no call that asks an app
 /// for a window, so an app that uses another shortcut, or none, only comes forward.
 ///
 /// An app that does not run (the answer that offered the choice was out of date) is just opened.
-pub fn open_app_new_window(app: &str) {
+///
+/// Returns what `windowing` learns from: the windows the app had **right before the key**, with the
+/// app in front and its windows settled. Bringing an app forward can change its windows by itself
+/// (a window that was hidden or closed to the menu bar comes back, one is made on activation), and
+/// counted before that it looks like the new window the key was meant to make. [`Asked::NotSent`]
+/// when no key was sent: the app does not run, or never came to the front.
+pub fn open_app_new_window(app: &str) -> Asked {
     let Some(pid) = running_pid(app) else {
         trace(|| format!("new window of {app:?}: not running, plain open -a"));
         open_app(app);
-        return;
+        return Asked::NotSent;
     };
     open_app(app);
     // `open` returns before the switch is done, and the key would reach the app that was in front
@@ -267,10 +344,28 @@ pub fn open_app_new_window(app: &str) {
     }
     let front = frontmost_pid() == Some(pid);
     trace(|| format!("new window of {app:?}: pid {pid}, frontmost {front}"));
-    if front {
-        std::thread::sleep(Duration::from_millis(60)); // let its window become the key window
-        press_shortcut(Shortcut::ch('n', MOD_CMD));
+    if !front {
+        return Asked::NotSent;
     }
+    std::thread::sleep(Duration::from_millis(60)); // let its window become the key window
+    let settled = settled_window_count(app);
+    press_shortcut(Shortcut::ch('n', MOD_CMD));
+    Asked::Sent(settled)
+}
+
+/// How many windows the app has once what bringing it forward shows has happened: counted again
+/// every [`COUNT_SETTLE`] until two looks in a row agree (at most [`COUNT_SETTLE_LOOKS`] more).
+fn settled_window_count(app: &str) -> Option<usize> {
+    let mut count = window_count(app)?;
+    for _ in 0..COUNT_SETTLE_LOOKS {
+        std::thread::sleep(COUNT_SETTLE);
+        match window_count(app) {
+            Some(n) if n == count => break,
+            Some(n) => count = n,
+            None => return None,
+        }
+    }
+    Some(count)
 }
 
 /// The windows of every app, front to back, as [`WindowInfo`]. With `on_screen_only` just the ones

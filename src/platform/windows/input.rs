@@ -204,69 +204,9 @@ pub fn post_mouse(_pos: Point, kind: Kind, button: i64) {
     unsafe { SendInput(1, &input, std::mem::size_of::<INPUT>() as i32) };
 }
 
-/// Sends one mouse event with the given `MOUSEINPUT` flags, tagged with [`SYNTH_TAG`].
-fn send_mouse_flags(flags: u32) {
-    let input = INPUT {
-        r#type: INPUT_MOUSE,
-        Anonymous: INPUT_0 {
-            mi: MOUSEINPUT {
-                dx: 0,
-                dy: 0,
-                mouseData: 0,
-                dwFlags: flags,
-                time: 0,
-                dwExtraInfo: SYNTH_TAG as usize,
-            },
-        },
-    };
-    // SAFETY: one fully initialised INPUT and its exact size.
-    unsafe { SendInput(1, &input, std::mem::size_of::<INPUT>() as i32) };
-}
-
-/// The `MOUSEINPUT` flags that press and release `button` (0 = left, 1 = right).
-pub(super) fn click_flags(button: i64) -> Option<(u32, u32)> {
-    match button {
-        0 => Some((MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP)),
-        1 => Some((MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP)),
-        _ => None,
-    }
-}
-
-/// Clicks `button` (0 = left, 1 = right) at `pos` (logical points) and leaves the pointer where it
-/// was: the system has one pointer, so it is moved there, clicks, and comes back at once. The
-/// number of clicks is not needed: Windows tells a double click from the time and place of two.
-pub fn click_at(pos: (f64, f64), button: i64, _clicks: u32) {
-    let Some((down, up)) = click_flags(button) else {
-        return;
-    };
-    let Some((x, y)) = super::apps::logical_to_physical(pos) else {
-        return;
-    };
-    let mut back = POINT { x: 0, y: 0 };
-    // SAFETY: `back` is a valid out-pointer.
-    let have_back = unsafe { GetCursorPos(&mut back) } != 0;
-    // SAFETY: plain call.
-    unsafe { SetCursorPos(x, y) };
-    send_mouse_flags(down);
-    std::thread::sleep(Duration::from_millis(12));
-    send_mouse_flags(up);
-    if have_back {
-        // SAFETY: plain call.
-        unsafe { SetCursorPos(back.x, back.y) };
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_click_has_a_press_and_a_release_for_left_and_right_only() {
-        let (ld, lu) = click_flags(0).unwrap();
-        let (rd, ru) = click_flags(1).unwrap();
-        assert!(ld != lu && rd != ru && ld != rd);
-        assert!(click_flags(2).is_none() && click_flags(-1).is_none());
-    }
 
     #[test]
     fn the_mouse_buttons_windows_reports_become_extra_buttons() {

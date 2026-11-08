@@ -56,6 +56,7 @@ impl App {
         self.opened = None;
         self.history.reset(&self.edit);
         self.ed.reset_nav();
+        self.ed.update_offer = None;
         self.ed.user_icons = Vec::new();
         self.ed.icons_not_listed = 0;
         self.ed.backups = Vec::new();

@@ -88,6 +88,11 @@ impl App {
         self.sleep_step(ctx); // the idle clock starts now
     }
 
+    /// Puts the window away: hides it.
+    pub(crate) fn hide_root(&mut self, ctx: &egui::Context) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+    }
+
     /// Makes the (hidden) window appear. On Linux not at once: the window is mapped only after it
     /// has its final size and one transparent frame has been drawn into it.
     ///
@@ -161,7 +166,7 @@ impl App {
             welcome = self.welcome.is_some()
         );
         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        request_focus(ctx);
         platform::raise_own_window();
     }
 
@@ -236,6 +241,7 @@ impl App {
 
         let size = self.place_card_window(ctx, at, card_size_for, was_visible);
         self.card_size = size;
+        self.update_on_settings_open(ctx);
     }
 
     /// Turns the window into the welcome window, centered on the display that contains `at`.
@@ -301,7 +307,7 @@ impl App {
         ));
         ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(top_left));
         self.show_window(ctx, win_sz);
-        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        request_focus(ctx);
         // on X11 the toolkit drops that request until the window is mapped, and a window manager
         // may map it without the focus: ask again once it is listed
         platform::raise_own_window();
@@ -525,7 +531,7 @@ impl App {
 
     /// Current cursor position, or a fixed fallback if the OS cannot tell.
     pub(super) fn cursor_or_default(&self) -> Pos2 {
-        let raw = platform::pointer_pos();
+        let raw = platform::cursor_pos();
         diag::log!(
             "ui",
             "cursor_or_default",
@@ -579,6 +585,18 @@ impl App {
             "quit" => self.request_quit(ctx),
             _ => {}
         }
+    }
+}
+
+/// Asks the toolkit to give the window the keyboard focus.
+///
+/// Not on Windows: there winit takes the foreground by injecting an Alt key press, and the next
+/// click is then eaten as the end of a menu activation (the first click, and so the first hold of
+/// the pie, did nothing after Settings had been opened). `platform::raise_own_window` brings the
+/// window forward there without any injected key, so the request is left to it.
+fn request_focus(ctx: &egui::Context) {
+    if platform::OS != platform::Os::Windows {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
     }
 }
 

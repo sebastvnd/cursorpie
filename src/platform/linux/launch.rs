@@ -110,6 +110,7 @@ mod tests {
             path: "/usr/share/applications/firefox.desktop".into(),
             icon: None,
             no_display: false,
+            single_window: false,
         }])
     }
 

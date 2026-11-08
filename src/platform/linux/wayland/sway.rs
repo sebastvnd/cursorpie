@@ -138,6 +138,7 @@ fn read_window(node: &Value) -> Option<WinInfo> {
         rect: rect_at(node, "rect")?,
         hidden: !bool_of(node, "visible").unwrap_or(true),
         skip: false,
+        secondary: false,
         desktop: None,
     })
 }

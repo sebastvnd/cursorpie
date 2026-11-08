@@ -85,6 +85,7 @@ hand or with an AI agent (key codes, rules, recipe, examples, a JSON Schema) is 
   "focus_target": true,
   "desktop_mode": "SwitchToApp",
   "open_app_choice": true,
+  "check_updates": true,
   "side_default": "App",
   "side_adopt": true,
   "side_forget": false,
@@ -184,6 +185,7 @@ hand or with an AI agent (key codes, rules, recipe, examples, a JSON Schema) is 
 | `touch_typing_guard_ms` | 0 to 2000 (default `400`, `0` = off): no hold is armed this soon after a key press |
 | `haptics`, `haptic_hover` | macOS only (ignored on Windows and Linux): trackpad ticks when the pie opens and the mode switches (default on), and when the hovered slice changes (default on, needs `haptics`) |
 | `sleep_after_s` | Seconds without a pie or Settings before cached icons (except those of the general pie) and the Settings copy are freed (10 to 3600, `0` = never) |
+| `check_updates` | `true` (default, also for a file that lacks the field) or `false`. When Settings opens, CursorPie looks at most once a day for a newer stable release on GitHub and offers it once that day; the About tab always shows the result. It runs the system's `curl` (or `wget`), sends only your IP address and the CursorPie version. Together with the download that *Install update* starts, it is the only network use of the app. `false`: no automatic look; **Check now** in the About tab still works. What is remembered between runs (the day of the last check, the newest version found, the day of the last offer) is not in `config.json` but in `update_state.json` next to it; deleting that file only makes the next opening look again |
 | `apps` | App ids: bundle identifiers on macOS, executable names on Windows, desktop-entry ids on Linux. An empty list marks the general profile; only the first such profile is kept, all others need at least one app |
 | `active` | Path of the active side-button mode, as indices (`[3, 1]` = slice 1 inside slice 3) |
 | `Key` | `key` is a macOS virtual key code (a physical key; Windows and Linux map it to the key in the same position). `mods` is a bitmask: Shift = 1, Ctrl = 2, Opt/Alt = 4, Cmd/Win/Super = 8 |

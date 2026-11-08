@@ -2,6 +2,102 @@
 
 ## Unreleased
 
+## 0.8.7
+
+- **Updates: CursorPie tells you when a newer release is out and can install it, the same on macOS, Windows and
+  Linux.** When Settings opens, it looks at most once a day for a newer stable release on GitHub and offers it once that
+  day in a sheet. **Install update** downloads the package for your system (the universal `.dmg` on macOS, the Setup
+  program on Windows, the Ubuntu or Fedora `.tar.gz` on Linux x86_64), checks its size and SHA-256 against what GitHub
+  publishes (nothing is installed without a checksum), replaces the installed copy and starts the new version. The
+  downloaded program is started once with the new `--selftest` switch before it replaces the working one (macOS and
+  Linux), and the old copy is put back if the swap fails. A copy that is not an ordinary install (a build folder, an
+  unzipped Windows download, a folder you cannot write to) gets a **Download page** button instead. The About tab has
+  a new **Updates** panel with the status, **Check now**, the install button and a **Check for updates automatically**
+  switch (new setting `check_updates`, on by default, also for an existing `config.json`). Everything runs the system's
+  `curl` (or `wget` where there is no `curl`), so there is no new dependency. This is the first network use of the app,
+  so the privacy text in About and the README now say so. What is remembered between runs lives in
+  `update_state.json` next to `config.json`. The Setup wizard script now starts the new version after a silent run with
+  `/RESTARTAPP=1`. On macOS the update may ask you to allow Accessibility again, because the app is signed ad hoc.
+  New log lines `ui.update_checked`, `ui.update_offered`, `ui.update_install`, `ui.update_staged`, `ui.update_apply`
+  and `ui.update_download`.
+- **"Open app" badges on Windows and Linux: a window that was hidden and is shown again is no longer learned as a new
+  window.** There the request for a new window is the app started again, and an app that keeps one instance (a
+  launcher closed to the tray) answers by showing the window it had hidden, which a count taken before says is one more
+  window. The windows are now told apart by number (new `platform::window_ids`, `windowing::Windows` and
+  `Baseline`): Windows takes every top-level window handle of the program, visible or not, before the request; X11 and
+  KWin take the ids of the window manager's list (KWin lists hidden windows too). Only a window whose number was not
+  known counts as new, and the log line `run.watched` says with `by_number` which way was used. macOS keeps the count
+  taken right before Cmd+N. Limits: a program that destroys its window when it hides and makes another when it
+  shows still looks new, and on X11 a window unmapped before CursorPie first listed it is not known. Written without
+  a Windows machine and not compiled; the Linux part follows the same functions as the count.
+- **"Open app" badges: a window shown by bringing the app forward is no longer learned as a new window.** An app that
+  never opened a window (Artcraft Launcher: Cmd+N does nothing) was learned as one that does, four times in a row, and
+  kept its two badges. The windows were counted before the app was brought forward (`open -a`) and again after the
+  key, so a window that coming forward showed by itself (one closed to the menu bar, one made on activation) looked
+  like the answer to the key. On macOS the count is now taken right before Cmd+N, with the app in front and its
+  windows settled (`platform::open_app_new_window` returns `windowing::Asked`, the other systems say
+  `Sent(None)` and keep the old count), and when the app never came to the front, so no key went out, nothing is
+  learned (new log line `run.ask_not_sent`). `window-habits.json` has a generation: a file written by the old count
+  loses its successes once, when it is read (the failures stand), so a wrong "takes new windows" goes back to doubt
+  and two failures condemn it. Found by reading the code and the habit file, not reproduced with the app itself; the
+  tests cover the model, not a session.
+- **"Open app" badges: an app that failed twice in a row stops showing the green badge, even with older slips in its
+  record.** The memory of `window-habits.json` only decided at a chance below 0.26 or from 0.7, and a record that mixed
+  a few false successes with the failures (Zed: worked 2.0, failed 2.5, a chance of 0.46) stayed in between for ever,
+  so the pie kept offering a badge that had just failed. Each record now also keeps its **streak** (the latest outcomes
+  of one kind in a row; older files read as 0): two failures in a row make an app a one-window app whatever came
+  before, for as long as the evidence has not faded (60 days), then the counts decide again; a success ends the run.
+  Zed is also in the built-in list (Cmd+N there makes a file, not a window). Learning something now also makes the
+  next press ask again instead of reusing the answer of the last 2 s (`running::invalidate`), and the log lines say
+  more: `run.watched` has `peak` (the most windows counted), `run.learned` has `streak`. Found by reading the code and
+  the habit file of a user, not reproduced with Zed itself; the tests cover the model, not a session.
+- **Windows (and the other systems): fewer ways for the input hook to stall or lose a press.** Found by reading the
+  code, not reproduced on a machine; the tests cover the timer logic, not a Windows session. Every press of the
+  trigger button used to start a new OS thread (2 MiB of stack) from inside the low-level hook, for the hold timer
+  and again for the double-click timer. Starting a thread runs the attach routine of every loaded DLL, which
+  antivirus and overlay programs hook, and a hook that answers too slowly is dropped by Windows; when memory was
+  short `thread::spawn` panicked, the hook failed open, but the press was left in `Pending` with its button already
+  swallowed, so the click seemed to hang. Now one small thread, `cursorpie-timers`, started with the tap, runs both
+  timers (a push into a channel is all the hook does), and if no timer can be started the press goes to the app
+  at once and the gesture ends. The same was done for `set_active` (remembering the mode of a profile, called from
+  the hook): a thread per switch became one `cursorpie-config-saver` thread that writes the newest state, which also
+  means an older write can no longer land after a newer one. And the icon reader (`bitmap_bgra`) no longer leaks a
+  screen DC when the bitmap is missing: a process that runs out of GDI handles (10 000) cannot draw any more.
+- **Removed: the virtual trackpad developer tool.** It did not work well and was of no use. Gone are
+  `cargo tools trackpad`, the Cargo feature `vtrackpad` (and its `CURSORPIE_VTRACKPAD*` variables), the floating
+  trackpad windows (`ui::vtrackpad`), the virtual pointer and `platform::click_at` on every OS, the feed into the
+  recognizer (`tap::virtual_*`), the two extra steps of `cargo tools ci` that checked it, and its sections in the
+  documentation. Real trackpads are not affected. The older changelog entries about it stay as history.
+- **Learning which apps keep one window: a popup is no longer taken for a new window.** The window count now leaves
+  out what is not a main window of the app: Windows skips windows owned by another window and modal dialogs, X11
+  keeps only `_NET_WM_WINDOW_TYPE_NORMAL` windows that are not transients (`WM_TRANSIENT_FOR`), KWin skips dialogs,
+  utility windows, toolbars, menus and transients (the script reports a new `sec` field), and macOS skips windows
+  smaller than 200 x 140 pt (alerts, sheets and small dialogs; a size guess, since only the Accessibility API says
+  what a window is). A new window must also still be there on two looks in a row (about 400 ms), so a splash screen or
+  notice that comes and goes does not count. And it takes two successes to vouch for an app (it still takes two
+  failures to condemn one), so one popup that slipped through cannot override the built-in list.
+- **"Open app" badges learn which apps cannot open another window.** Every time the green badge (new window) is used
+  on an app that has windows, CursorPie counts the app's windows before and for up to 5 s after (new
+  `platform::window_count`: Windows top-level windows of the program, X11 and KWin window list, macOS layer-0 windows
+  of the process) and remembers whether one appeared (`learn`, `window-habits.json` next to `config.json`: app names
+  and two decaying counts, nothing else). Two failures make an app a one-window app (no badges), one success makes it a
+  multi-window app, whatever the built-in list says; evidence halves every 60 days and a success halves old failures,
+  so a wrong verdict heals itself. An unknown count or an app that quit is not counted as a failure. New log lines
+  `run.watched` and `run.learned`. The macOS counter has only been compiled by reading the code, not run.
+- **"Open app" badges: not offered for an app that cannot open another window (all OSes).** The green + / yellow
+  square pair appeared for every running app, also for a music player, a chat client or a calculator, where a new
+  window can only fail. New module `windowing` decides it the same way everywhere: an app is "one window" when it
+  says so (Linux: `SingleMainWindow=true` in its `.desktop` file, new `platform::declares_single_window`, a no-op on
+  Windows and macOS, which have no such declaration) or when a built-in list of well-known one-window apps names it
+  (matched by name, so `Spotify.exe`, `com.spotify.client`, `Spotify.app` and `Spotify` are the same app). Such a slice
+  just brings the app forward, as before; every other app keeps the two badges. The question is asked on the worker
+  thread with the "is it running" answer, so hovering is still a cache lookup (`running::offers_choice`).
+- **Windows: the first click after Settings opens is no longer lost.** Settings (and a Settings window raised by a press
+  of the trigger) took the focus through winit's `focus_window`, which injects an Alt key press and release; Windows
+  then read the next click as the end of a menu activation and swallowed it, so the pie needed two clicks before one
+  hold worked. The UI no longer sends `ViewportCommand::Focus` on Windows: `platform::raise_own_window` now brings the
+  window forward with `SetForegroundWindow` (thread input attached for the call), from the next frame once the window
+  is on screen, with no injected key.
 - **Docs: Linux is described as X11 and Wayland everywhere.** The README, install guide, user guide, configuration
   reference, known issues, contributing guide, trackpad plan, the website and the package description still said that
   Linux means X11 (and that Wayland only works with XWayland windows). They now say that both session types work, what

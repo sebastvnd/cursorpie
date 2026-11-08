@@ -85,10 +85,7 @@ pub(crate) fn handle(
             if !ACTIVE.load(Ordering::SeqCst) {
                 return None;
             }
-            // the virtual trackpad has one finger, the mouse, and its click is the extra click:
-            // the finger count of a real trackpad is not there to say so
-            let physical =
-                FINGERS.load(Ordering::SeqCst) == EXTRA_CLICK_FINGERS || virtual_pointer();
+            let physical = FINGERS.load(Ordering::SeqCst) == EXTRA_CLICK_FINGERS;
             let t = now_ms();
             let from_tap = {
                 let until = SWALLOW_UNTIL.load(Ordering::SeqCst);
@@ -183,18 +180,5 @@ fn fire(state: &Arc<Mutex<Gesture>>, notifier: &Notifier) {
     );
     if did {
         haptic::emit(notifier, Tick::Mode);
-    }
-}
-
-/// Whether the virtual trackpad's pointer is in use (always false without the `vtrackpad` feature,
-/// which a release build does not have).
-fn virtual_pointer() -> bool {
-    #[cfg(feature = "vtrackpad")]
-    {
-        crate::platform::virtual_pointer_active()
-    }
-    #[cfg(not(feature = "vtrackpad"))]
-    {
-        false
     }
 }

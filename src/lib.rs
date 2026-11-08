@@ -38,6 +38,7 @@
 //! | [`platform`] | any thread (some main only) | OS glue: permissions, apps, login item, keyboard layout (macOS, Windows, Linux, stub) |
 //! | [`ui`] | main thread | eframe app, pie renderer, Settings window, first-launch welcome window, menu bar icon |
 //! | [`about`] | - | name, version, links shown in the About tab |
+//! | [`update`] | UI thread, one short-lived worker | the daily look for a newer release, the offer (About tab, sheet when Settings opens) and the install (download, checksum, swap) |
 //!
 //! ## Platform
 //!
@@ -66,6 +67,7 @@ pub mod geometry;
 pub mod guides;
 pub mod history;
 pub mod keys;
+pub mod learn;
 pub mod mouse;
 pub mod msg;
 pub mod platform;
@@ -73,6 +75,8 @@ pub mod running;
 pub mod side;
 pub mod tap;
 pub mod ui;
+pub mod update;
+pub mod windowing;
 
 use eframe::egui;
 use msg::Notifier;
@@ -95,6 +99,10 @@ pub fn run() -> eframe::Result<()> {
     // A browser starting the native messaging host, or a switch of the browser bridge: neither
     // shows a window nor claims the single-instance lock, so this comes before everything else.
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == about::SELFTEST_ARG) {
+        println!("{} {}", about::APP_NAME, about::VERSION);
+        return Ok(());
+    }
     if bridge::host::wants_host(&args) {
         std::process::exit(bridge::host::run());
     }
@@ -118,16 +126,6 @@ pub fn run() -> eframe::Result<()> {
         }
     }
     if !platform::single_instance() {
-        #[cfg(feature = "vtrackpad")]
-        if ui::vtrackpad::options().is_some() {
-            // the trackpad is a window of the *running* app: a second copy cannot show it, and
-            // exiting without a word looks like the tool did nothing
-            eprintln!(
-                "CursorPie is already running, so the virtual trackpad cannot start. Quit that copy first \
-                 (its menu bar icon, or Ctrl-C in the terminal where it runs), then run the tool again."
-            );
-            std::process::exit(1);
-        }
         return Ok(());
     }
     // Started by the login entry: let the desktop come up first (tray, taskbar, antivirus scan of

@@ -707,8 +707,6 @@ pub fn spawn(notifier: Notifier) {
     x11::warm_index();
     let state = Arc::new(Mutex::new(Gesture::Idle));
     touch::start(state.clone(), notifier.clone());
-    #[cfg(feature = "vtrackpad")]
-    touch::register_virtual(state.clone(), notifier.clone());
     beat();
     let started = std::thread::Builder::new()
         .name("cursorpie-wayland-tap".into())

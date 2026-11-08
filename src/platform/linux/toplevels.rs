@@ -108,9 +108,34 @@ pub fn is_skipped_type(type_names: &[&str]) -> bool {
     })
 }
 
+/// Whether a window is a main window of its app rather than one of its popups: its type is
+/// `_NET_WM_WINDOW_TYPE_NORMAL` (or it has none, which means normal), and it is not a transient of
+/// another window (`transient`: it has `WM_TRANSIENT_FOR`, which toolkits set on dialogs that did
+/// not say so with a type). Dialogs, splash screens, utility windows and the like are not.
+pub fn is_main_window(type_names: &[&str], transient: bool) -> bool {
+    if transient {
+        return false;
+    }
+    type_names.is_empty() || type_names.contains(&"_NET_WM_WINDOW_TYPE_NORMAL")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_dialog_or_a_splash_is_not_a_main_window() {
+        assert!(is_main_window(&[], false), "no type means normal");
+        assert!(is_main_window(&["_NET_WM_WINDOW_TYPE_NORMAL"], false));
+        assert!(!is_main_window(&["_NET_WM_WINDOW_TYPE_DIALOG"], false));
+        assert!(!is_main_window(&["_NET_WM_WINDOW_TYPE_SPLASH"], false));
+        assert!(!is_main_window(&["_NET_WM_WINDOW_TYPE_UTILITY"], false));
+        assert!(
+            !is_main_window(&["_NET_WM_WINDOW_TYPE_NORMAL"], true),
+            "a transient is a popup of another window"
+        );
+        assert!(!is_main_window(&[], true));
+    }
 
     #[test]
     fn a_window_is_activated_as_a_pager_would_not_as_an_application() {

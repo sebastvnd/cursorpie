@@ -85,7 +85,7 @@ impl App {
                     .open_apps
                     .get(i)
                     .and_then(|a| a.as_deref())
-                    .is_some_and(|a| running::is_running(a) == Some(true));
+                    .is_some_and(running::offers_choice);
             let (b, mv) = step_linear(
                 self.badge_in[i],
                 offers as u8 as f32,

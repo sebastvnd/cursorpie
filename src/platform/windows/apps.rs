@@ -9,6 +9,7 @@ use super::util::{
 };
 use crate::geometry::Point;
 use crate::platform::{NativeIcon, ScreenRect};
+use crate::windowing::Windows;
 use std::collections::HashSet;
 use std::time::Duration;
 use windows_sys::Win32::Foundation::{CloseHandle, HWND, LPARAM, POINT, RECT, S_FALSE, S_OK};
@@ -29,10 +30,11 @@ use windows_sys::Win32::System::Threading::{
 use windows_sys::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows_sys::Win32::UI::Shell::{SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON, SHGetFileInfoW};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, DestroyIcon, EnumWindows, GA_ROOT, GWL_EXSTYLE, GetAncestor, GetClassNameW,
-    GetCursorPos, GetForegroundWindow, GetIconInfo, GetWindowLongW, GetWindowTextLengthW,
-    GetWindowThreadProcessId, HICON, ICONINFO, IsIconic, IsWindowVisible, PrivateExtractIconsW,
-    SW_RESTORE, SetForegroundWindow, ShowWindow, WS_EX_TOOLWINDOW, WindowFromPoint,
+    BringWindowToTop, DestroyIcon, EnumWindows, GA_ROOT, GW_OWNER, GWL_EXSTYLE, GetAncestor,
+    GetClassNameW, GetCursorPos, GetForegroundWindow, GetIconInfo, GetWindow, GetWindowLongW,
+    GetWindowTextLengthW, GetWindowThreadProcessId, HICON, ICONINFO, IsIconic, IsWindowVisible,
+    PrivateExtractIconsW, SW_RESTORE, SetForegroundWindow, ShowWindow, WS_EX_DLGMODALFRAME,
+    WS_EX_TOOLWINDOW, WindowFromPoint,
 };
 
 /// Process id of the window `hwnd`.
@@ -219,33 +221,15 @@ unsafe extern "system" fn collect_scale(
     1
 }
 
-/// A point in logical points as physical pixels, with the scale of the monitor that holds it (the
-/// first monitor when none does). `None` when Windows lists no monitor.
-pub(super) fn logical_to_physical(p: (f64, f64)) -> Option<(i32, i32)> {
-    let mut rows: Vec<(ScreenRect, f64)> = Vec::new();
-    // SAFETY: the callback only runs during this call and `rows` outlives it.
-    unsafe {
-        EnumDisplayMonitors(
-            std::ptr::null_mut(),
-            std::ptr::null(),
-            Some(collect_scale),
-            &mut rows as *mut Vec<(ScreenRect, f64)> as LPARAM,
-        );
-    }
-    let s = rows
-        .iter()
-        .find(|(r, _)| p.0 >= r.x && p.0 < r.x + r.w && p.1 >= r.y && p.1 < r.y + r.h)
-        .or_else(|| rows.first())
-        .map(|(_, s)| *s)?;
-    Some((
-        logical_to_px(p.0, s).round() as i32,
-        logical_to_px(p.1, s).round() as i32,
-    ))
-}
-
 // ---------------------------------------------------------------- activation
 
 struct Find {
+    /// Only main windows: not owned by another window and not a modal dialog. Counting a new
+    /// window must not take a dialog of the app for one.
+    main_only: bool,
+    /// Every top-level window of the processes, visible or not, titled or not: only to tell a
+    /// window that was hidden from a new one (see [`window_ids`]), never to offer one to the user.
+    every: bool,
     pid_matches: Vec<u32>,
     /// Matching windows, top-most first.
     found: Vec<HWND>,
@@ -255,10 +239,18 @@ unsafe extern "system" fn pick_window(hwnd: HWND, data: LPARAM) -> i32 {
     // SAFETY: `data` is the `Find` passed by `windows_of`, alive during the enumeration.
     let find = unsafe { &mut *(data as *mut Find) };
     unsafe {
-        if IsWindowVisible(hwnd) == 0 || GetWindowTextLengthW(hwnd) == 0 {
-            return 1;
+        if !find.every {
+            if IsWindowVisible(hwnd) == 0 || GetWindowTextLengthW(hwnd) == 0 {
+                return 1;
+            }
+            if GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 & WS_EX_TOOLWINDOW != 0 {
+                return 1;
+            }
         }
-        if GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 & WS_EX_TOOLWINDOW != 0 {
+        if find.main_only
+            && (!GetWindow(hwnd, GW_OWNER).is_null()
+                || GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 & WS_EX_DLGMODALFRAME != 0)
+        {
             return 1;
         }
         if find.pid_matches.contains(&pid_of(hwnd)) {
@@ -295,7 +287,20 @@ fn pids_of_exe(exe: &str) -> Vec<u32> {
 /// first: visible, with a title, and not a tool window. Windows on other virtual desktops are
 /// included.
 pub(super) fn windows_of(exe: &str) -> Vec<HWND> {
+    find_windows(exe, false)
+}
+
+/// Like [`windows_of`], or only the main windows (`main_only`: not owned by another window and not
+/// a modal dialog).
+fn find_windows(exe: &str, main_only: bool) -> Vec<HWND> {
+    enumerate_windows(exe, main_only, false)
+}
+
+/// The windows of `exe` as [`find_windows`] lists them, or (`every`) all of its top-level windows.
+fn enumerate_windows(exe: &str, main_only: bool, every: bool) -> Vec<HWND> {
     let mut find = Find {
+        main_only,
+        every,
         pid_matches: pids_of_exe(exe),
         found: Vec::new(),
     };
@@ -369,6 +374,30 @@ pub fn running_among(apps: &[String]) -> Vec<bool> {
     ids.iter()
         .map(|id| id.as_ref().is_some_and(|id| exes.contains(id)))
         .collect()
+}
+
+/// How many main windows the app has right now, on any desktop, minimized or not: the windows that
+/// [`running_among`] looks at and [`activate_app`] would bring forward, without the dialogs and
+/// other windows that belong to another window of the app. `None` when `app` names no
+/// program. Meant for a worker thread.
+pub fn window_count(app: &str) -> Option<usize> {
+    let exe = app_id_for_open(app)?;
+    Some(find_windows(&exe, true).len())
+}
+
+/// The windows of `app` told apart (see [`Windows`]): the numbers of its main windows
+/// ([`window_count`]) and of all its top-level windows, the invisible ones too. A window a program
+/// keeps hidden (closed to the tray) has the same handle when starting the program again shows it,
+/// so a handle that was on the list before is not a new window. `None` when `app` names no program.
+/// Meant for a worker thread.
+pub fn window_ids(app: &str) -> Option<Windows> {
+    let exe = app_id_for_open(app)?;
+    let numbers =
+        |list: Vec<HWND>| -> Vec<u64> { list.into_iter().map(|h| h as usize as u64).collect() };
+    Some(Windows {
+        known: numbers(enumerate_windows(&exe, false, true)),
+        main: numbers(enumerate_windows(&exe, true, false)),
+    })
 }
 
 /// Brings the top-most window of the app `exe` to the front and waits (briefly) until Windows
@@ -492,9 +521,14 @@ pub(super) unsafe fn bitmap_bgra(
         biClrUsed: 0,
         biClrImportant: 0,
     };
+    // checked before the DC is taken: returning with a DC in hand leaks a GDI handle, and a process
+    // that runs out of them (10 000) can no longer draw
+    if bmp.is_null() || w <= 0 || h <= 0 {
+        return None;
+    }
     let mut px = vec![0u8; (w * h * 4) as usize];
     let dc = unsafe { GetDC(std::ptr::null_mut()) };
-    if dc.is_null() || bmp.is_null() {
+    if dc.is_null() {
         return None;
     }
     let lines = unsafe {

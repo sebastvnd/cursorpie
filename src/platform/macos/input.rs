@@ -96,38 +96,3 @@ pub fn post_mouse(pos: Point, kind: Kind, button: i64) {
         ev.post(CGEventTapLocation::HID);
     }
 }
-
-/// Clicks `button` (0 = left, 1 = right) at `pos` (logical points) and leaves the pointer where it
-/// was: the events carry their own position, so the system's pointer is not moved. `clicks` is the
-/// click count of a double click (1, 2, 3), which macOS wants in the event. Used by the virtual
-/// trackpad, whose pointer is not the system's.
-pub fn click_at(pos: (f64, f64), button: i64, clicks: u32) {
-    let (down, up, which) = match button {
-        0 => (
-            CGEventType::LeftMouseDown,
-            CGEventType::LeftMouseUp,
-            CGMouseButton::Left,
-        ),
-        1 => (
-            CGEventType::RightMouseDown,
-            CGEventType::RightMouseUp,
-            CGMouseButton::Right,
-        ),
-        _ => return,
-    };
-    let at = CGPoint::new(pos.0, pos.1);
-    let Ok(src) = CGEventSource::new(CGEventSourceStateID::HIDSystemState) else {
-        return;
-    };
-    for ty in [down, up] {
-        if let Ok(ev) = CGEvent::new_mouse_event(src.clone(), ty, at, which) {
-            ev.set_integer_value_field(
-                EventField::MOUSE_EVENT_CLICK_STATE,
-                i64::from(clicks.max(1)),
-            );
-            ev.set_integer_value_field(EventField::EVENT_SOURCE_USER_DATA, SYNTH_TAG);
-            ev.post(CGEventTapLocation::HID);
-        }
-        std::thread::sleep(Duration::from_millis(8));
-    }
-}

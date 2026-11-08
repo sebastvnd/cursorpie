@@ -7,7 +7,10 @@
 //! the app that is *already open*, which is what the slice always did). The slice keeps its icon and
 //! name. The green badge is on the side where the slice starts (counter-clockwise), the yellow one
 //! on the side where it ends; the pointer chooses by which half of the slice it is in, so moving
-//! toward a badge picks it. An app that does not run is simply opened, with no badges.
+//! toward a badge picks it. An app that does not run is simply opened, with no badges, and neither
+//! is an app that cannot open another window (a music player, a chat client, a calculator): there
+//! the green badge could only fail, so the slice just brings the app forward. Which apps those are
+//! is decided the same way on every OS by [`windowing`](crate::windowing).
 //! The setting is [`Config::open_app_choice`](crate::config::Config::open_app_choice)
 //! (Settings > Behavior).
 //!
@@ -54,7 +57,7 @@ use crate::config::{URL_KEY_PREFIX, cfg, open_apps_of};
 use crate::geometry::{Point, pie_outer, slice_start, window_size};
 use crate::msg::Notifier;
 use crate::platform;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Mutex, OnceLock, TryLockError, mpsc};
 use std::time::{Duration, Instant};
@@ -141,7 +144,8 @@ pub fn choice_in_slice(center: Point, p: Point, index: usize, total: usize) -> C
 }
 
 /// What a pointer at `p` chooses over slice `index` of `total`, which opens `app`: `None` when the
-/// setting is off, the slice opens no app, or the app does not run (as far as is known).
+/// setting is off, the slice opens no app, the app does not run (as far as is known) or it cannot
+/// open another window ([`offers_choice`]).
 pub fn choose(
     enabled: bool,
     app: Option<&str>,
@@ -154,7 +158,7 @@ pub fn choose(
         return None;
     }
     let app = app?;
-    (is_running(app) == Some(true)).then(|| choice_in_slice(center, p, index, total))
+    offers_choice(app).then(|| choice_in_slice(center, p, index, total))
 }
 
 // ------------------------------------------------------------------ the choice on show
@@ -187,6 +191,8 @@ struct Cache {
     at: Option<Instant>,
     /// App (as typed in the slice, trimmed) to whether it runs.
     running: HashMap<String, bool>,
+    /// Apps of the latest request that cannot open another window (see [`crate::windowing`]).
+    single: HashSet<String>,
 }
 
 impl Cache {
@@ -206,6 +212,11 @@ impl Cache {
         self.ready = false;
         self.generation += 1;
         Some(self.generation)
+    }
+
+    /// Makes the latest answer count as old, so the next press asks again (see [`invalidate`]).
+    fn expire(&mut self) {
+        self.at = None;
     }
 
     /// The platform answered request `generation` about `apps` (`flags[i]` is for `apps[i]`).
@@ -230,6 +241,11 @@ impl Cache {
             return None;
         }
         self.running.get(app.trim()).copied()
+    }
+
+    /// Whether the two badges are offered for `app`: it runs and it can open another window.
+    fn offers_choice(&self, app: &str) -> bool {
+        self.get(app) == Some(true) && !self.single.contains(app.trim())
     }
 
     /// Remembers that `app` has been started by CursorPie.
@@ -265,6 +281,17 @@ fn split_keys(keys: &[String]) -> (Indexed, Indexed) {
         }
     }
     (apps, urls)
+}
+
+/// The apps among `keys` that run and cannot open another window (web links are left out: a
+/// browser can). May read a desktop entry, so like [`ask_platform`] it belongs on the worker.
+fn single_window_among(keys: &[String], flags: &[bool]) -> HashSet<String> {
+    keys.iter()
+        .zip(flags)
+        .filter(|(key, running)| **running && !key.starts_with(URL_KEY_PREFIX))
+        .filter(|(key, _)| crate::windowing::single_window(key))
+        .map(|(key, _)| key.trim().to_string())
+        .collect()
 }
 
 /// Asks the platform about each of `keys`: whether the app runs, or whether the web page is open.
@@ -326,8 +353,15 @@ pub fn init(notifier: Notifier) {
                 let t = diag::timed!("run", "scan", apps = req.apps.len());
                 let flags = ask_platform(&req.apps);
                 drop(t);
-                let stored =
-                    with_cache(|c| c.finish(req.generation, &req.apps, &flags, Instant::now()));
+                // asked before the cache is locked: it may read files
+                let single = single_window_among(&req.apps, &flags);
+                let stored = with_cache(|c| {
+                    let stored = c.finish(req.generation, &req.apps, &flags, Instant::now());
+                    if stored {
+                        c.single = single;
+                    }
+                    stored
+                });
                 diag::log!(
                     "run",
                     "answer",
@@ -369,6 +403,22 @@ pub fn is_running(app: &str) -> Option<bool> {
     try_with_cache(|c| c.get(app)).flatten()
 }
 
+/// Whether the pointer on the slice of `app` is offered the two badges: the app runs (as far as is
+/// known) **and** can open another window. An app that runs but keeps a single window gets no badges
+/// and is brought forward as it always was. `false` when the answer is not known yet. Never waits.
+pub fn offers_choice(app: &str) -> bool {
+    try_with_cache(|c| c.offers_choice(app)).unwrap_or(false)
+}
+
+/// Forgets how old the latest answer is, so the next press asks again instead of reusing it for
+/// [`TTL`]. Called when something the answer was worked out from has changed: the pie has just
+/// learned that an app cannot open another window (see [`crate::learn`]), and the badge that
+/// failed must not be offered again by a press that comes within [`TTL`]. The answer being asked
+/// for right now, if any, is not touched.
+pub fn invalidate() {
+    with_cache(Cache::expire);
+}
+
 /// CursorPie has just started `app` (or brought it forward), or opened a web link (`app` is then
 /// its key, `url:<link>`): it runs, or is open, from now on, whatever the answer of the press said.
 pub fn note_launched(app: &str) {
@@ -381,6 +431,28 @@ mod tests {
 
     fn apps(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn an_app_that_runs_but_keeps_one_window_gets_no_badges() {
+        let now = Instant::now();
+        let list = apps(&["Safari", "Spotify"]);
+        let mut c = Cache::default();
+        let g = c.begin(&list, now).unwrap();
+        assert!(c.finish(g, &list, &[true, true], now));
+        c.single = HashSet::from(["Spotify".to_string()]);
+        assert!(c.offers_choice("Safari"), "runs and takes windows");
+        assert!(c.offers_choice(" Safari "), "as typed, trimmed");
+        assert!(!c.offers_choice("Spotify"), "runs, but one window");
+        assert_eq!(c.get("Spotify"), Some(true), "it still counts as running");
+        assert!(!c.offers_choice("Notes"), "not asked about");
+    }
+
+    #[test]
+    fn only_running_apps_are_asked_whether_they_keep_one_window() {
+        let keys = apps(&["Spotify", "Discord", "url:https://example.com", "Safari"]);
+        let single = single_window_among(&keys, &[true, false, true, true]);
+        assert_eq!(single, HashSet::from(["Spotify".to_string()]));
     }
 
     #[test]
@@ -497,6 +569,21 @@ mod tests {
         assert_eq!(c.get("Safari"), Some(true));
         assert_eq!(c.get(" Notes "), Some(false), "the name is trimmed");
         assert_eq!(c.get("Mail"), None, "never asked about");
+    }
+
+    #[test]
+    fn an_expired_answer_is_asked_for_again_at_once() {
+        let mut c = Cache::default();
+        let a = apps(&["Zed"]);
+        let t0 = Instant::now();
+        let g = c.begin(&a, t0).unwrap();
+        assert!(c.finish(g, &a, &[true], t0));
+        assert_eq!(c.begin(&a, t0), None, "fresh, so reused");
+        c.expire();
+        assert!(
+            c.begin(&a, t0).is_some(),
+            "what it was worked out from changed"
+        );
     }
 
     #[test]

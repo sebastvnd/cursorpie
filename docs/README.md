@@ -5,6 +5,7 @@
 | Document | What it covers |
 |---|---|
 | [INSTALL.md](INSTALL.md) | Installing or building CursorPie on macOS, Windows and Linux, and the permissions it needs |
+| [UPDATES.md](UPDATES.md) | The daily update check and the one-click install on each system, and how to test it |
 | [USER_GUIDE.md](USER_GUIDE.md) | The gesture, slices and actions, profiles, side buttons, Settings, undo and backups, sharing |
 | [CONFIGURATION.md](CONFIGURATION.md) | Where `config.json` lives, its structure and every field |
 | [FLOWS_FOR_AI.md](FLOWS_FOR_AI.md) | How to write a flow as JSON: the format, the rules, a recipe and checked examples. Written for AI agents; a JSON Schema is in `flow.schema.json` |

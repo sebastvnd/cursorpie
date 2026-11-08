@@ -284,8 +284,18 @@ from behind other windows or minimized) and its footer says to Save or Cancel to
 **Reveal in Finder** (Explorer, or the file manager on Linux), **Export...**, **Import...** (a file over
 4 MiB is refused), **Reset to defaults** and **Backups**. On Linux it also has Pause and Quit.
 
-**About** shows the version, author, privacy note and credits. Website, GitHub, Report an issue and Downloads
-are the four round icon buttons in the corner of the top card.
+**About** shows the version, an **Updates** panel, the author, privacy note and credits. Website, GitHub, Report an
+issue and Downloads are the four round icon buttons in the corner of the top card. The same on macOS, Windows and
+Linux: when Settings opens, CursorPie looks at most once a day for a newer release and, if there is one, offers it in a
+sheet. **Install update** downloads the package for your system from the release on GitHub, checks it against the
+release's checksum, replaces the installed copy and starts the new version; **Release page** opens the page in your
+browser and **Not now** closes the sheet. The Updates panel always shows what the last look found, has **Check now**,
+**Install update** (or **Restart to update** once the download is ready; unsaved changes in Settings are never thrown
+away, save or cancel them first) and a switch (**Check for updates automatically**, on by default; save with the rest
+of Settings) that turns the daily look off. A copy that was not installed in the usual place (run from a build
+folder, from an unzipped Windows download, or from a folder you cannot write to) cannot update itself and gets
+**Download page** instead. Everything needs `curl` (macOS, Windows 10 and later and most Linux systems have it) or
+`wget`; see [UPDATES.md](UPDATES.md) for what each system does.
 
 ## Undo, redo and backups
 

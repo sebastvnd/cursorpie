@@ -337,6 +337,7 @@ impl Config {
             desktop_mode: DesktopMode::SwitchToApp,
             open_app_choice: true,
             browser_bridge: false,
+            check_updates: true,
             side_default: SideTarget::App,
             side_adopt: true,
             side_forget: false,

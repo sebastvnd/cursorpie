@@ -9,6 +9,7 @@ use crate::config::{Config, Item, blank_items, items_at, presets, quick_actions}
 use crate::mouse::Scan;
 use crate::tap::RECORDING;
 use crate::ui::icons::{IconCache, IconState};
+use crate::update::{Status, Version, install};
 use eframe::egui;
 use std::sync::atomic::Ordering;
 
@@ -172,6 +173,17 @@ pub struct Ed {
     pub flow_sel: Option<u32>,
     /// Flow tab: the block whose output a wire is being dragged from
     pub flow_wire: Option<u32>,
+    /// What the About tab says about updates. Kept across Settings sessions: a check that is still
+    /// running when Settings closes reports into it, and the next opening starts from what the last
+    /// check found (see `App::update_on_settings_open`).
+    pub update: Status,
+    /// The newer release the "update available" sheet is offering, while that sheet is open
+    pub update_offer: Option<Version>,
+    /// Whether this copy is updated in place (see `update::install::installable_here`), found when
+    /// Settings opens: decides between *Install update* and *Download page*
+    pub update_can_install: bool,
+    /// The downloaded and checked update that waits for the restart
+    pub update_staged: Option<install::Staged>,
 }
 
 impl Default for Ed {
@@ -218,6 +230,10 @@ impl Ed {
             flow_target: None,
             flow_sel: None,
             flow_wire: None,
+            update: Status::default(),
+            update_offer: None,
+            update_can_install: false,
+            update_staged: None,
         }
     }
 
@@ -228,10 +244,13 @@ impl Ed {
         self.icons_not_listed = found.not_listed;
     }
 
-    /// Whether a sheet (the "Add a slice" panel, the icon picker or a profile dialog) is open over
-    /// the window.
+    /// Whether a sheet (the "Add a slice" panel, the icon picker, a profile dialog or the update
+    /// offer) is open over the window.
     pub fn sheet_open(&self) -> bool {
-        self.adding || self.picking_icon || self.profile_sheet.is_some()
+        self.adding
+            || self.picking_icon
+            || self.profile_sheet.is_some()
+            || self.update_offer.is_some()
     }
 
     /// Closes the open sheet. Returns whether there was one.
@@ -243,6 +262,7 @@ impl Ed {
         self.adding = false;
         self.add_catalog = None;
         self.picking_icon = false;
+        self.update_offer = None;
         was
     }
 
@@ -336,6 +356,16 @@ mod tests {
         ed.picking_icon = true;
         assert!(ed.sheet_open());
         assert!(ed.close_sheet() && !ed.sheet_open());
+    }
+
+    #[test]
+    fn the_update_offer_is_a_sheet_that_esc_closes() {
+        let mut ed = Ed::new();
+        assert_eq!(ed.update, Status::Idle);
+        ed.update_offer = Version::parse("0.9.0");
+        assert!(ed.sheet_open());
+        assert!(ed.close_sheet() && !ed.sheet_open());
+        assert!(ed.update_offer.is_none());
     }
 
     #[test]

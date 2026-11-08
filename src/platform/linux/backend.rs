@@ -17,6 +17,7 @@ use crate::geometry::Point;
 use crate::keys::Shortcut;
 use crate::platform::{FileKind, NativeIcon, ScreenRect, chooser, spawn_reaped};
 use crate::tap::Kind;
+use crate::windowing::{Asked, Windows};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -301,20 +302,6 @@ pub fn post_mouse(_pos: Point, kind: Kind, button: i64) {
     }
 }
 
-/// Clicks `button` (0 = left, 1 = right) at `pos` (logical points) and leaves the pointer where it
-/// was. Used by the virtual trackpad, whose pointer is not the system's.
-pub fn click_at(pos: (f64, f64), button: i64, _clicks: u32) {
-    if !matches!(button, 0 | 1) {
-        return;
-    }
-    let Some(xb) = x_button_for(button) else {
-        return;
-    };
-    if let Some(c) = x11::conn() {
-        c.click_at(xb, pos);
-    }
-}
-
 /// Brings the top-most window of `bundle` to the front.
 pub fn activate_app(bundle: &str) {
     if wayland::active() && wayland::kwin::raise(bundle) {
@@ -532,8 +519,22 @@ pub fn reveal_app(app: &str, _mode: DesktopMode) {
 /// Opens a new window of an app that already runs: the app is started again, which is what a
 /// launcher does too. An app that keeps one process (Firefox, Chromium, the terminals) answers with
 /// a new window; one that cannot have two copies shows the one it has.
-pub fn open_app_new_window(app: &str) {
+pub fn open_app_new_window(app: &str) -> Asked {
     open_app(app);
+    Asked::Sent(None)
+}
+
+/// Whether the desktop entry of `app` says it has a single main window (`SingleMainWindow=true`),
+/// so that starting it again cannot open a second one. False for an app with no entry, and for a
+/// role such as `@browser` (browsers and terminals take new windows).
+pub fn declares_single_window(app: &str) -> bool {
+    let a = app.trim();
+    if a.is_empty() || Role::parse(a).is_some() {
+        return false;
+    }
+    x11::index()
+        .and_then(|index| index.entry_for(a).map(|e| e.single_window))
+        .unwrap_or(false)
 }
 
 /// For each of `apps` (as typed in "Open app" slices), whether it has a window right now, on any
@@ -571,6 +572,45 @@ pub fn running_among(apps: &[String]) -> Vec<bool> {
         })
         .collect();
     conn.running_among(&ids)
+}
+
+/// How many windows `app` has right now, on any workspace, minimized or not (the windows
+/// [`running_among`] looks at). `None` when the window manager cannot be asked. A role (`@browser`)
+/// is first turned into the app that fills it. Meant for a worker thread.
+pub fn window_count(app: &str) -> Option<usize> {
+    let a = app.trim();
+    if a.is_empty() {
+        return None;
+    }
+    let index = x11::index().unwrap_or_else(|| std::sync::Arc::new(Index::default()));
+    let id = match Role::parse(a) {
+        Some(role) => role_app(role, &index)?,
+        None => a.to_string(),
+    };
+    if wayland::active() && wayland::kwin::snapshot().is_some() {
+        return wayland::kwin::window_count(&id);
+    }
+    x11::conn().map(|conn| conn.window_count(&id))
+}
+
+/// The windows of `app` told apart, for what [`window_count`] counts: where windows keep a number
+/// for as long as they live, a window that was hidden and is shown again is not taken for a new
+/// one (see [`crate::windowing::Baseline`]). `None` when the window manager cannot be asked. A
+/// role (`@browser`) is first turned into the app that fills it. Meant for a worker thread.
+pub fn window_ids(app: &str) -> Option<Windows> {
+    let a = app.trim();
+    if a.is_empty() {
+        return None;
+    }
+    let index = x11::index().unwrap_or_else(|| std::sync::Arc::new(Index::default()));
+    let id = match Role::parse(a) {
+        Some(role) => role_app(role, &index)?,
+        None => a.to_string(),
+    };
+    if wayland::active() && wayland::kwin::snapshot().is_some() {
+        return wayland::kwin::window_ids(&id);
+    }
+    x11::conn().map(|conn| conn.window_ids(&id))
 }
 
 /// Raises the window of the app `a` if it has one, otherwise starts it.

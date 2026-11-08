@@ -160,6 +160,7 @@ mod tests {
             path: format!("/usr/share/applications/{id}.desktop"),
             icon: None,
             no_display: false,
+            single_window: false,
         }
     }
 

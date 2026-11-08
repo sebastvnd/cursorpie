@@ -27,6 +27,11 @@ pub const AUTOSTART_ARG: &str = "--autostart";
 /// file but are written differently (short 8.3 names, a junction, upper/lower case of a non-ASCII
 /// user name) make the installed copy believe it is somewhere else and start itself again, forever.
 pub const HANDOVER_ARG: &str = "--handover";
+
+/// Command-line switch that makes the program print its name and version and exit at once, before
+/// anything else starts. The update runs the downloaded program with it, so a build that cannot start
+/// on this system (a C library that is too old, say) is found out before it replaces the working one.
+pub const SELFTEST_ARG: &str = "--selftest";
 /// GitHub user name of the author (without `@`).
 pub const AUTHOR_GITHUB_USER: &str = "sebastvnd";
 /// GitHub profile of the author.
@@ -42,6 +47,14 @@ pub const REPO_URL: &str = "https://github.com/sebastvnd/cursorpie";
 pub const ISSUES_URL: &str = "https://github.com/sebastvnd/cursorpie/issues";
 /// Where to download builds.
 pub const RELEASES_URL: &str = "https://github.com/sebastvnd/cursorpie/releases";
+/// The page of the newest stable release. GitHub redirects it, so it never goes out of date; the
+/// update offer opens this page and never an address that came from the network.
+pub const LATEST_RELEASE_URL: &str = "https://github.com/sebastvnd/cursorpie/releases/latest";
+/// What the daily update check asks (see [`crate::update`]): the newest stable release, as JSON.
+/// It is the one address CursorPie connects to by itself; a package is only downloaded from
+/// [`RELEASES_URL`] when the person asks for the install.
+pub const LATEST_RELEASE_API_URL: &str =
+    "https://api.github.com/repos/sebastvnd/cursorpie/releases/latest";
 
 /// Name of the license.
 pub const LICENSE_NAME: &str = "MIT License";
@@ -102,5 +115,5 @@ pub const CREDITS: &[(&str, &str, &str)] = &[
 ];
 
 /// Privacy statement shown in About.
-pub const PRIVACY: &str = "CursorPie works entirely on your computer. It makes no network connections and collects no data. \
+pub const PRIVACY: &str = "CursorPie works on your computer and collects no data. Once a day, when you open Settings, it asks GitHub for the newest release so it can offer an update. Only if you press Install update does it download that release's package from GitHub. These are the only network connections it makes. GitHub sees your IP address and the CursorPie version, like any web request, and nothing else is sent. You can switch the daily check off under Updates. \
 Keyboard events are only inspected while you are recording a shortcut in Settings, and are never stored or logged.";

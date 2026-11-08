@@ -5,7 +5,7 @@
 //! | `messages` | `App::handle_msg`: applies each [`Msg`] |
 //! | `windows` | showing the pie, opening/closing Settings, quitting, menu bar actions |
 //! | `lifecycle` | idle sleep, freeing the Settings copy, warming up icons before the pie opens |
-//! | `vtrackpad` | the virtual trackpad developer tool's windows, and parking the main window while it is open |
+//! | `updates` | the daily look for a newer release: what Settings does when it opens, and with the answer |
 //!
 //! The same native window shows the pie and Settings (see
 //! [`guides::architecture`](crate::guides::architecture#one-window-for-everything)). `App::logic`
@@ -14,22 +14,7 @@
 
 mod lifecycle;
 mod messages;
-#[cfg(feature = "vtrackpad")]
-mod vtrackpad;
-#[cfg(not(feature = "vtrackpad"))]
-mod vtrackpad {
-    //! Without the `vtrackpad` feature the main window is simply hidden.
-    use super::App;
-    use eframe::egui;
-
-    impl App {
-        pub(super) fn vt_logic(&mut self, _ctx: &egui::Context) {}
-        pub(super) fn vt_ui(&mut self, _ctx: &egui::Context) {}
-        pub(crate) fn hide_root(&mut self, ctx: &egui::Context) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-        }
-    }
-}
+mod updates;
 mod windows;
 pub use windows::ShowWait;
 
@@ -156,10 +141,6 @@ pub struct App {
     pub sleeper: Sleeper,
 
     pub tray: Option<TrayHandles>,
-
-    /// The virtual trackpad developer tool (see `vtrackpad`).
-    #[cfg(feature = "vtrackpad")]
-    pub vt: vtrackpad::VtState,
 }
 
 impl App {
@@ -209,8 +190,6 @@ impl App {
             welcome: None,
             sleeper: Sleeper::new(Instant::now()),
             tray,
-            #[cfg(feature = "vtrackpad")]
-            vt: vtrackpad::VtState::from_env(),
         }
     }
 
@@ -277,7 +256,6 @@ impl eframe::App for App {
             self.request_cancel();
         }
 
-        self.vt_logic(ctx);
         self.sleep_step(ctx);
     }
 
@@ -298,8 +276,6 @@ impl eframe::App for App {
         } else {
             self.pie_ui(ui);
         }
-        // the virtual trackpad's window is declared by the frames of this one
-        self.vt_ui(&ui.ctx().clone());
         // the pie may just have hidden the window: start the idle clock
         self.sleep_step(&ui.ctx().clone());
     }

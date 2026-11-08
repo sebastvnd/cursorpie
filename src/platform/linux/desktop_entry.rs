@@ -23,6 +23,9 @@ pub struct Entry {
     /// `NoDisplay=true`: the app is not meant to be listed in menus (URL handlers, helpers). It
     /// still has windows, so the index keeps it; a list of apps to pick from leaves it out.
     pub no_display: bool,
+    /// `SingleMainWindow=true` (desktop entry spec 1.5): the app says it has one main window, so
+    /// starting it again cannot give a new one.
+    pub single_window: bool,
 }
 
 /// An app id in canonical form: trimmed, lower case, without a `.desktop` suffix.
@@ -89,6 +92,7 @@ pub fn parse(file_name: &str, path: &str, text: &str) -> Option<Entry> {
     let mut icon: Option<String> = None;
     let mut hidden = false;
     let mut no_display = false;
+    let mut single_window = false;
     for line in text.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -113,6 +117,7 @@ pub fn parse(file_name: &str, path: &str, text: &str) -> Option<Entry> {
             "Icon" if !value.is_empty() => icon = Some(value.to_string()),
             "Hidden" => hidden = value.eq_ignore_ascii_case("true"),
             "NoDisplay" => no_display = value.eq_ignore_ascii_case("true"),
+            "SingleMainWindow" => single_window = value.eq_ignore_ascii_case("true"),
             _ => {}
         }
     }
@@ -131,6 +136,7 @@ pub fn parse(file_name: &str, path: &str, text: &str) -> Option<Entry> {
         path: path.to_string(),
         icon,
         no_display,
+        single_window,
     })
 }
 
@@ -285,10 +291,27 @@ mod tests {
             path: format!("/usr/share/applications/{id}.desktop"),
             icon: None,
             no_display: false,
+            single_window: false,
         }
     }
 
     const FIREFOX: &str = "# comment\n[Desktop Entry]\nName=Firefox\nName[de]=Feuerfuchs\nType=Application\nExec=firefox %u\nStartupWMClass=firefox\n\n[Desktop Action new-window]\nName=New Window\nType=Hidden\n";
+
+    #[test]
+    fn an_entry_can_say_it_has_one_main_window() {
+        let one =
+            "[Desktop Entry]\nType=Application\nName=Calc\nExec=calc\nSingleMainWindow=true\n";
+        assert!(
+            parse("calc.desktop", "/x/calc.desktop", one)
+                .unwrap()
+                .single_window
+        );
+        assert!(
+            !parse("firefox.desktop", "/x/firefox.desktop", FIREFOX)
+                .unwrap()
+                .single_window
+        );
+    }
 
     #[test]
     fn ids_are_lower_case_without_the_suffix() {

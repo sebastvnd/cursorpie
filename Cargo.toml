@@ -1,6 +1,6 @@
 [package]
 name = "cursorpie"
-version = "0.8.6"
+version = "0.8.7"
 edition = "2024"
 rust-version = "1.88"
 description = "Hold-to-open pie menu for macOS, Windows and Linux (X11 and Wayland): per-app profiles, shortcuts, launchers and submenus."
@@ -55,9 +55,6 @@ check-windows = ["dep:windows-sys"]
 # Keeps the diagnostic log (`CURSORPIE_DEBUG=1`, docs/DEBUGGING.md) in a release build. A debug
 # build always has it; an ordinary release build has none of its code.
 debug-log = ["diag/force"]
-# The virtual trackpad developer tool (`cargo tools trackpad`, docs/DEBUGGING.md): a floating trackpad
-# that a mouse uses as a finger. An ordinary build, debug or release, has none of its code.
-vtrackpad = []
 
 [dependencies]
 # UI (egui 0.36 uses `App::ui` + `App::logic`, same as the original code).

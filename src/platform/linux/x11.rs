@@ -11,6 +11,7 @@ use super::{scale, toplevels, xdg};
 use crate::geometry::Point;
 use crate::keys::Shortcut;
 use crate::platform::{ScreenRect, keymap};
+use crate::windowing::Windows;
 use std::ffi::CString;
 use std::os::raw::{c_int, c_long, c_uchar, c_uint, c_ulong, c_void};
 use std::ptr;
@@ -578,6 +579,57 @@ impl Conn {
             .collect()
     }
 
+    /// How many windows `app` has, counted the way [`Conn::running_among`] finds them: the
+    /// window manager's list, on any workspace.
+    ///
+    /// Only main windows: a dialog, a splash screen, a utility window or anything that is a
+    /// transient of another window is a *popup* of the app, not a new window of it (see
+    /// [`Conn::is_main_window`]).
+    pub fn window_count(&self, app: &str) -> usize {
+        let aliases = index().unwrap_or_default().aliases(app);
+        self.stacking()
+            .into_iter()
+            .filter(|w| toplevels::belongs_to(&self.window_names(*w), &aliases))
+            .filter(|w| self.is_main_window(*w))
+            .count()
+    }
+
+    /// The windows of `app` told apart (see [`Windows`]): every window of the window manager's list
+    /// that belongs to it, and among them the main windows [`Conn::window_count`] counts. The X
+    /// window ids stay the same for as long as a window lives, so a window that the window manager
+    /// lists again after it was hidden is known by its id. (A window that was unmapped before
+    /// CursorPie ever listed it is not on the list, and shows as new when it comes back: the list
+    /// of the window manager is all there is to look at.)
+    pub fn window_ids(&self, app: &str) -> Windows {
+        let aliases = index().unwrap_or_default().aliases(app);
+        let known: Vec<Window> = self
+            .stacking()
+            .into_iter()
+            .filter(|w| toplevels::belongs_to(&self.window_names(*w), &aliases))
+            .collect();
+        let main = known
+            .iter()
+            .filter(|w| self.is_main_window(**w))
+            .map(|w| u64::from(*w))
+            .collect();
+        Windows {
+            known: known.into_iter().map(u64::from).collect(),
+            main,
+        }
+    }
+
+    /// Whether `w` is a main window of its app: `_NET_WM_WINDOW_TYPE_NORMAL` (the default when the
+    /// property is missing) and not a transient of another window (`WM_TRANSIENT_FOR`, which is how
+    /// a toolkit marks a dialog that did not set its type).
+    fn is_main_window(&self, w: Window) -> bool {
+        let types = self.type_names(w);
+        let transient = !self.prop32(w, XA_WM_TRANSIENT_FOR, XA_WINDOW).is_empty();
+        toplevels::is_main_window(
+            &types.iter().map(String::as_str).collect::<Vec<_>>(),
+            transient,
+        )
+    }
+
     /// Sends a client message to the window manager (through the root window), the way a pager does.
     fn send_to_wm(&self, window: Window, message_type: Atom, data: [c_long; 5]) {
         let mut ev = XEvent::zeroed();
@@ -720,29 +772,6 @@ impl Conn {
                     self.grab_button(*b);
                 }
             });
-        }
-    }
-
-    /// Clicks the X button `xb` at `to` (logical points) and puts the pointer back where it was:
-    /// the system has one pointer, so it is moved there, clicks, and comes back at once.
-    pub fn click_at(&self, xb: c_int, to: (f64, f64)) {
-        let back = self.pointer_px();
-        let x = (to.0 * self.scale).round() as c_int;
-        let y = (to.1 * self.scale).round() as c_int;
-        // SAFETY: plain requests.
-        unsafe {
-            XTestFakeMotionEvent(self.dpy, -1, x, y, 0);
-            XSync(self.dpy, FALSE);
-        }
-        self.inject_button(xb, true);
-        std::thread::sleep(Duration::from_millis(12));
-        self.inject_button(xb, false);
-        if let Some((bx, by)) = back {
-            // SAFETY: plain requests.
-            unsafe {
-                XTestFakeMotionEvent(self.dpy, -1, bx, by, 0);
-                XSync(self.dpy, FALSE);
-            }
         }
     }
 

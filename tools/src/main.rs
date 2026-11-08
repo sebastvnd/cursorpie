@@ -18,7 +18,6 @@
 //! | `clean-logs` | `clean.rs` | deletes old debug logs |
 //! | `zip` | `zip.rs` | packs the project into a `.zip` file without `target/` and `.git/` |
 //! | `info` | `info.rs` | prints the facts a bug report needs (OS, session, tool versions) |
-//! | `trackpad` | `trackpad.rs` | starts the app with the virtual trackpad, to try trackpad gestures with a mouse |
 //!
 //! The tools use only the standard library, so they build in seconds and work on every OS the
 //! project supports. Each one keeps its decisions in pure functions with unit tests; this file
@@ -35,7 +34,6 @@ mod hooks;
 mod info;
 mod lint;
 mod logview;
-mod trackpad;
 mod zip;
 
 use std::ffi::OsString;
@@ -84,10 +82,6 @@ Commands:
                                pack the project into a .zip file without target/ and .git/
                                (default file: NAME-VERSION.zip next to the project folder)
   info                         print the facts a bug report needs: OS, session, tool versions
-  trackpad [--width POINTS] [--silent] [--release]
-                               start the app with the virtual trackpad: a floating trackpad in the
-                               middle of the screen whose finger is your mouse and whose pointer is
-                               drawn on the screen, to try trackpad gestures without a trackpad
   help                         show this text
 
 Rules and workflow: CONTRIBUTING.md, sections "Development workflow" and "Releasing"."#;
@@ -119,8 +113,6 @@ enum Task {
     Zip(zip::Options),
     /// Print the facts a bug report needs.
     Info,
-    /// Start the app with the virtual trackpad.
-    Trackpad(trackpad::Options),
 }
 
 /// Reads the arguments after the program name. `-h` or `--help` anywhere asks for the usage.
@@ -155,7 +147,6 @@ fn parse_command<I: IntoIterator<Item = String>>(args: I) -> Result<Task, String
         "zip" => zip::parse_args(rest).map(Task::Zip),
         "info" if rest.is_empty() => Ok(Task::Info),
         "info" => Err("info takes no arguments".into()),
-        "trackpad" => trackpad::parse_args(rest).map(Task::Trackpad),
         other => Err(format!("unknown command '{other}'")),
     }
 }
@@ -241,7 +232,6 @@ fn run(root: &Path, task: Task) -> Result<ExitCode, String> {
         Task::CleanLogs(options) => clean::run(&options),
         Task::Zip(options) => zip::run(root, &options),
         Task::Info => Ok(info::run(root)),
-        Task::Trackpad(options) => trackpad::run(root, &options),
     }
 }
 

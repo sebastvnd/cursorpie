@@ -9,6 +9,7 @@ use crate::geometry::Point;
 use crate::keys::Shortcut;
 use crate::platform::{FileKind, NativeIcon, ScreenRect};
 use crate::tap::Kind;
+use crate::windowing::{Asked, Windows};
 use std::path::Path;
 
 /// No app lookup.
@@ -73,8 +74,6 @@ pub fn press_shortcut(_sc: Shortcut) {}
 /// Ignored.
 pub fn post_mouse(_pos: Point, _kind: Kind, _button: i64) {}
 /// Ignored.
-pub fn click_at(_pos: (f64, f64), _button: i64, _clicks: u32) {}
-/// Ignored.
 pub fn activate_app(_bundle: &str) {}
 
 /// Ignored.
@@ -82,7 +81,21 @@ pub fn open_app(_app: &str) {}
 /// Ignored.
 pub fn reveal_app(_app: &str, _mode: DesktopMode) {}
 /// Ignored.
-pub fn open_app_new_window(_app: &str) {}
+pub fn open_app_new_window(_app: &str) -> Asked {
+    Asked::NotSent
+}
+/// Windows cannot be counted.
+pub fn window_count(_app: &str) -> Option<usize> {
+    None
+}
+/// Windows cannot be told apart.
+pub fn window_ids(_app: &str) -> Option<Windows> {
+    None
+}
+/// No app is known to have a single window.
+pub fn declares_single_window(_app: &str) -> bool {
+    false
+}
 /// Nothing runs: no app lookup.
 pub fn running_among(apps: &[String]) -> Vec<bool> {
     vec![false; apps.len()]

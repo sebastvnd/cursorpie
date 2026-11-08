@@ -214,7 +214,15 @@ fn on_press<'a>(
         source,
     };
     drop(g);
-    spawn_hold_timer(state.clone(), notifier.clone(), id, press.already);
+    if !spawn_hold_timer(state.clone(), notifier.clone(), id, press.already) {
+        // no timer can run (the system would not start its thread): the press must not wait for
+        // a pie that can never open, so it goes to the app and the gesture ends here
+        let mut g = lock(state);
+        if matches!(&*g, Gesture::Pending { id: cur, .. } if *cur == id) {
+            *g = Gesture::Idle;
+        }
+        return Verdict::Keep;
+    }
     Verdict::Drop
 }
 
@@ -225,115 +233,145 @@ fn profile_list(hold: usize, app: Option<usize>) -> Vec<usize> {
     v
 }
 
-/// Timer thread for one press: opens the pie after `pie_hold_ms`, and Settings after
-/// `settings_hold_ms` if the cursor is still in the center. It gives up silently as soon as the
-/// gesture is no longer the one it started with (`id` differs or the state moved on). `already` is
-/// the time the hold has lasted before the timer starts (zero for a mouse).
-fn spawn_hold_timer(st: Arc<Mutex<Gesture>>, n: Notifier, id: u64, already: Duration) {
-    std::thread::spawn(move || {
-        let (pie_ms, settings_ms) = {
-            let c = cfg();
-            (c.pie_hold_ms, c.settings_hold_ms)
-        };
+/// Timer for one press: opens the pie after `pie_hold_ms`, and Settings after `settings_hold_ms`
+/// if the cursor is still in the center. Each step runs on the shared timer thread (see
+/// [`super::timers`]) and gives up silently as soon as the gesture is no longer the one it started
+/// with (`id` differs or the state moved on). `already` is the time the hold has lasted before the
+/// timer starts (zero for a mouse). `false` = no timer could be started.
+fn spawn_hold_timer(st: Arc<Mutex<Gesture>>, n: Notifier, id: u64, already: Duration) -> bool {
+    let (pie_ms, settings_ms) = {
+        let c = cfg();
+        (c.pie_hold_ms, c.settings_hold_ms)
+    };
+    let wait = Duration::from_millis(pie_ms).saturating_sub(already);
+    super::timers::after(wait, move || {
+        hold_open_pie(&st, &n, id, pie_ms, settings_ms)
+    })
+}
 
-        std::thread::sleep(Duration::from_millis(pie_ms).saturating_sub(already));
-        // one lock per step (locking twice in one expression would deadlock)
-        let opened = {
-            let mut gg = lock(&st);
-            let found = match &*gg {
-                Gesture::Pending {
-                    id: cur,
-                    pos,
-                    profile,
-                    source,
-                    ..
-                } if *cur == id => Some((*pos, *profile, *source)),
-                _ => None,
-            };
-            if let Some((_, _, source)) = found
-                && settings_open()
-            {
-                // Settings opened (menu bar) while the button was held: the pie never opens
-                *gg = Gesture::InSettings(source);
-                return;
-            }
-            if let Some((pos, profile, source)) = found {
-                *gg = Gesture::ActivePie {
-                    id,
-                    center: pos,
-                    profile,
-                    path: Vec::new(),
-                    hover: None,
-                    source,
-                };
-            }
-            found
+/// First step of the hold timer: the hold lasted `pie_hold_ms`, so the pie opens, then the second
+/// step is set for `settings_hold_ms`.
+fn hold_open_pie(st: &Arc<Mutex<Gesture>>, n: &Notifier, id: u64, pie_ms: u64, settings_ms: u64) {
+    // one lock per step (locking twice in one expression would deadlock)
+    let opened = {
+        let mut gg = lock(st);
+        let found = match &*gg {
+            Gesture::Pending {
+                id: cur,
+                pos,
+                profile,
+                source,
+                ..
+            } if *cur == id => Some((*pos, *profile, *source)),
+            _ => None,
         };
-        let Some((pos, profile, source)) = opened else {
-            // released, dragged away or replaced by a newer press before the timer ran out
-            diag::log!("tap", "hold_cancelled", id = id, after_ms = pie_ms);
+        if let Some((_, _, source)) = found
+            && settings_open()
+        {
+            // Settings opened (menu bar) while the button was held: the pie never opens
+            *gg = Gesture::InSettings(source);
             return;
-        };
-        diag::log!("tap", "hold_open", x = pos.x, y = pos.y, profile = profile);
-        n.send(Msg::ShowPie {
+        }
+        if let Some((pos, profile, source)) = found {
+            *gg = Gesture::ActivePie {
+                id,
+                center: pos,
+                profile,
+                path: Vec::new(),
+                hover: None,
+                source,
+            };
+        }
+        found
+    };
+    let Some((pos, profile, source)) = opened else {
+        // released, dragged away or replaced by a newer press before the timer ran out
+        diag::log!("tap", "hold_cancelled", id = id, after_ms = pie_ms);
+        return;
+    };
+    diag::log!("tap", "hold_open", x = pos.x, y = pos.y, profile = profile);
+    n.send(Msg::ShowPie {
+        x: pos.x,
+        y: pos.y,
+        profile,
+        path: Vec::new(),
+    });
+    if source == Source::Touch {
+        haptic::emit(n, Tick::Open);
+    }
+    let (st, n) = (Arc::clone(st), n.clone());
+    // if the second step cannot be scheduled the pie simply never turns into Settings
+    let _ = super::timers::after(
+        Duration::from_millis(settings_ms.saturating_sub(pie_ms)),
+        move || hold_open_settings(&st, &n, id, pos, source),
+    );
+}
+
+/// Second step of the hold timer: the pie is still untouched after `settings_hold_ms`, so
+/// Settings opens in its place.
+fn hold_open_settings(st: &Arc<Mutex<Gesture>>, n: &Notifier, id: u64, pos: Point, source: Source) {
+    let open_settings = {
+        let mut gg = lock(st);
+        let go = matches!(
+            &*gg,
+            Gesture::ActivePie { id: cur, hover: None, path, .. } if *cur == id && path.is_empty()
+        );
+        if go {
+            *gg = Gesture::InSettings(source);
+        }
+        go
+    };
+    diag::log!("tap", "hold_settings", id = id, opened = open_settings);
+    if open_settings {
+        if source == Source::Touch {
+            haptic::emit(n, Tick::Open);
+        }
+        n.send(Msg::OpenSettings {
             x: pos.x,
             y: pos.y,
-            profile,
-            path: Vec::new(),
+            about: false,
         });
-        if source == Source::Touch {
-            haptic::emit(&n, Tick::Open);
-        }
-
-        std::thread::sleep(Duration::from_millis(settings_ms.saturating_sub(pie_ms)));
-        let open_settings = {
-            let mut gg = lock(&st);
-            let go = matches!(
-                &*gg,
-                Gesture::ActivePie { id: cur, hover: None, path, .. } if *cur == id && path.is_empty()
-            );
-            if go {
-                *gg = Gesture::InSettings(source);
-            }
-            go
-        };
-        diag::log!("tap", "hold_settings", id = id, opened = open_settings);
-        if open_settings {
-            if source == Source::Touch {
-                haptic::emit(&n, Tick::Open);
-            }
-            n.send(Msg::OpenSettings {
-                x: pos.x,
-                y: pos.y,
-                about: false,
-            });
-        }
-    });
+    }
 }
 
 /// After a quick click on an app with its own pie: if no second press arrives within `ms`, the
-/// first click is replayed to the app.
-fn spawn_double_timer(st: Arc<Mutex<Gesture>>, id: u64, button: i64, ms: u64) {
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(ms));
-        let replay = {
-            let mut g = lock(&st);
-            let found = match &*g {
-                Gesture::WaitSecond { id: cur, pos, .. } if *cur == id => Some(*pos),
-                _ => None,
-            };
-            if found.is_some() {
-                *g = Gesture::Idle;
-            }
-            found
-        };
-        if let Some(p) = replay {
-            // no second click came: the first one goes to the app after all
-            diag::log!("tap", "click_replay", x = p.x, y = p.y, waited_ms = ms);
-            post_mouse(p, Kind::Down, button);
-            post_mouse(p, Kind::Up, button);
-        }
+/// first click is replayed to the app. If no timer can be started the click is replayed at once.
+fn spawn_double_timer(st: &Arc<Mutex<Gesture>>, id: u64, button: i64, ms: u64) {
+    let later = Arc::clone(st);
+    let started = super::timers::after(Duration::from_millis(ms), move || {
+        replay_first_click(&later, id, button, ms);
     });
+    if !started {
+        replay_first_click(st, id, button, 0);
+    }
+}
+
+/// The double-click window ended (or no timer could wait for it): when the gesture is still the
+/// one that waits for a second click, it ends and the first click goes to the app after all.
+fn replay_first_click(st: &Arc<Mutex<Gesture>>, id: u64, button: i64, waited_ms: u64) {
+    let replay = {
+        let mut g = lock(st);
+        let found = match &*g {
+            Gesture::WaitSecond { id: cur, pos, .. } if *cur == id => Some(*pos),
+            _ => None,
+        };
+        if found.is_some() {
+            *g = Gesture::Idle;
+        }
+        found
+    };
+    if let Some(p) = replay {
+        // no second click came: the first one goes to the app after all
+        diag::log!(
+            "tap",
+            "click_replay",
+            x = p.x,
+            y = p.y,
+            waited_ms = waited_ms
+        );
+        post_mouse(p, Kind::Down, button);
+        post_mouse(p, Kind::Up, button);
+    }
 }
 
 /// Moved while pressed, before the pie opened: either a real drag (hand it back to the app) or,
@@ -484,7 +522,7 @@ fn on_release_pending(
                 at: Instant::now(),
             };
             drop(g);
-            spawn_double_timer(state.clone(), id, button, cfg().double_click_ms);
+            spawn_double_timer(state, id, button, cfg().double_click_ms);
         }
         None => {
             *g = Gesture::Idle;

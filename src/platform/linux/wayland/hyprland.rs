@@ -229,6 +229,7 @@ pub(crate) fn build_snapshot(
             desktop_file: String::new(),
             rect: c.rect,
             skip: false,
+            secondary: false,
             desktop: None,
         })
         .collect();

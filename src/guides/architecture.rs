@@ -23,7 +23,9 @@
 //! | **`cursorpie-tap`** | [`tap::spawn`](crate::tap::spawn) | the OS hook (`CGEventTap` + `CFRunLoop`, the Windows low-level hooks + message loop, or on Linux the XInput2 grabs on the shared X connection), the gesture state | sends `Msg` (`Warm`, `ShowPie`, ...) through a [`Notifier`](crate::msg::Notifier); enqueues actions |
 //! | **`cursorpie-mouse`** | [`mouse::spawn_watcher`](crate::mouse::spawn_watcher) | the book of known mice (`mice.json`) | looks at the connected mice every few seconds; sends `Msg::MouseChanged` when one arrives that is new or comes back |
 //! | **`cursorpie-actions`** | [`actions::init`](crate::actions::init) | the queue of [`Action`](crate::config::Action)s to execute | receives jobs from [`actions::run_in`](crate::actions::run_in) |
-//! | short-lived | on demand | hold timer, double-click timer, file chooser, config save | send `Msg` or touch shared state |
+//! | **`cursorpie-timers`** | [`tap::spawn`](crate::tap::spawn) | the queue of delayed jobs of the tap: the hold timer and the double-click timer, each a short job that runs when it is due | jobs lock the gesture state, send `Msg`, post a click; started with the tap so a press inside the hook never has to start a thread |
+//! | **`cursorpie-config-saver`** | [`tap::spawn`](crate::tap::spawn) | the writes of the config that `set_active` asks for; several in a row become one write of the newest state | receives the config to write through a channel |
+//! | short-lived | on demand | file chooser, icon scans, launched programs, update check | send `Msg` or touch shared state |
 //!
 //! Why separate threads?
 //!
@@ -81,7 +83,7 @@
 //! ## The gesture state machine
 //!
 //! The trigger button (middle button by default) drives a small state machine,
-//! `tap::gesture::Gesture`, held behind a mutex that the tap callback and the timer threads share.
+//! `tap::gesture::Gesture`, held behind a mutex that the tap callback and the timer thread share.
 //! Each timer carries the `id` of the press that created it and does nothing if the state moved on.
 //!
 //! ```text
@@ -127,7 +129,7 @@
 //! | State | Type | Readers / writers |
 //! |---|---|---|
 //! | the live config | [`config::cfg()`](crate::config::cfg) (`Mutex<Config>`) | everyone reads; Settings *Save* and `set_active` write |
-//! | gesture state | `Arc<Mutex<Gesture>>` | tap callback and its timer threads |
+//! | gesture state | `Arc<Mutex<Gesture>>` | tap callback and its timer thread |
 //! | side-button choices | private `Mutex` in [`side`](crate::side) | tap, UI |
 //! | flags | [`RECORDING`](crate::tap::RECORDING), [`SWALLOW_KEY`](crate::tap::SWALLOW_KEY), [`PAUSED`](crate::tap::PAUSED), [`TAP_ACTIVE`](crate::tap::TAP_ACTIVE) | atomics |
 //!

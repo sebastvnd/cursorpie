@@ -95,10 +95,10 @@ fn watch_pointer(state: &Arc<Mutex<Gesture>>, notifier: &Notifier) {
         let spawned = std::thread::Builder::new()
             .name("touch-pointer".into())
             .spawn(move || {
-                let mut last = crate::platform::pointer_pos();
+                let mut last = crate::platform::cursor_pos();
                 while ACTIVE.load(Ordering::SeqCst) && WATCH_GEN.load(Ordering::SeqCst) == id {
                     std::thread::sleep(WATCH_EVERY);
-                    let now = crate::platform::pointer_pos();
+                    let now = crate::platform::cursor_pos();
                     if let Some((x, y)) = now
                         && now != last
                     {
@@ -363,7 +363,7 @@ pub(crate) struct Sink {
 
 /// Where the system's pointer is.
 fn system_cursor() -> Option<Point> {
-    crate::platform::pointer_pos().map(|(x, y)| Point::new(x, y))
+    crate::platform::cursor_pos().map(|(x, y)| Point::new(x, y))
 }
 
 #[cfg_attr(
@@ -419,55 +419,6 @@ impl Sink {
     /// The source stops.
     pub(crate) fn reset(&self) {
         self.with(|b, env| b.reset(env));
-    }
-}
-
-/// The sink of the virtual trackpad (the floating one of the Tools tab): a source of frames like
-/// the native ones, fed by the UI instead of by a device. It shares the gesture of the tap, so a
-/// hold on it opens the pie, a drag aims it and a release runs the slice, exactly as on a real
-/// trackpad. Set once, when the tap starts.
-#[cfg(feature = "vtrackpad")]
-static VIRTUAL: OnceLock<Sink> = OnceLock::new();
-
-/// The device id of the virtual trackpad on the recognizer's frames ("VIRT").
-#[cfg(feature = "vtrackpad")]
-const VIRTUAL_DEVICE: u64 = 0x5649_5254;
-
-/// Called by the native tap right after it creates the gesture, so the UI can feed it.
-#[cfg(feature = "vtrackpad")]
-pub(crate) fn register_virtual(state: Arc<Mutex<Gesture>>, notifier: Notifier) {
-    let _ = VIRTUAL.set(Sink::new(state, notifier));
-}
-
-/// Whether the tap has started, i.e. whether the virtual trackpad has a gesture to feed.
-#[cfg(feature = "vtrackpad")]
-pub(crate) fn virtual_ready() -> bool {
-    VIRTUAL.get().is_some()
-}
-
-/// One frame of the virtual trackpad. No fingers = all lifted. False when the tap has not started.
-#[cfg(feature = "vtrackpad")]
-pub(crate) fn virtual_feed(size_mm: (f32, f32), fingers: &[recognizer::Finger]) -> bool {
-    VIRTUAL.get().is_some_and(|s| {
-        s.feed(VIRTUAL_DEVICE, size_mm, fingers);
-        true
-    })
-}
-
-/// Time passes while a finger rests on the virtual trackpad (a resting finger sends no frames, and
-/// the hold time is counted here).
-#[cfg(feature = "vtrackpad")]
-pub(crate) fn virtual_poll() {
-    if let Some(s) = VIRTUAL.get() {
-        s.poll();
-    }
-}
-
-/// The virtual trackpad went away (closed, or Settings opened): a running gesture is cancelled.
-#[cfg(feature = "vtrackpad")]
-pub(crate) fn virtual_reset() {
-    if let Some(s) = VIRTUAL.get() {
-        s.reset();
     }
 }
 
@@ -709,26 +660,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "vtrackpad")]
-    /// A sink whose pointer stays put (there is no display to ask in a test).
-    fn test_sink(state: &Arc<Mutex<Gesture>>, n: Notifier) -> Sink {
-        let mut sink = Sink::new(Arc::clone(state), n);
-        sink.cursor = || Some(Point::new(500.0, 500.0));
-        sink
-    }
-
-    #[cfg(feature = "vtrackpad")]
-    /// Holds one finger still on a virtual trackpad sink for `ms`, in real time (the sink stamps
-    /// its frames with the clock, like the window does).
-    fn hold_virtual(sink: &Sink, ms: u64) {
-        let f = [finger(0.5)];
-        for _ in 0..ms / 10 {
-            sink.feed(VIRTUAL_DEVICE, (160.0, 100.0), &f);
-            std::thread::sleep(Duration::from_millis(10));
-            sink.poll();
-        }
-    }
-
     #[test]
     fn the_scroll_of_the_fingers_is_swallowed_to_its_end_after_the_pie_closes() {
         let _c = Cfg::set(fast);
@@ -782,60 +713,6 @@ mod tests {
         rig.frames(120, &[finger(0.5)]);
         rig.frames(20, &[finger(0.5), second(0.7)]);
         assert!(!swallows_scroll());
-    }
-
-    #[test]
-    #[cfg(feature = "vtrackpad")]
-    fn a_virtual_trackpad_hold_opens_the_pie_like_a_real_one() {
-        let _c = Cfg::set(fast);
-        let (n, rx) = notifier();
-        let state = Arc::new(Mutex::new(Gesture::Idle));
-        let sink = test_sink(&state, n);
-
-        hold_virtual(&sink, 450);
-        let opened = drain(&rx, Duration::from_millis(60));
-        assert!(opened.iter().any(|s| s.starts_with("show")), "{opened:?}");
-        assert!(
-            opened.iter().any(|s| s == "haptic LevelChange"),
-            "{opened:?}"
-        );
-        assert!(matches!(
-            *crate::config::lock(&state),
-            Gesture::ActivePie { .. }
-        ));
-
-        // lifting the finger closes it
-        sink.feed(VIRTUAL_DEVICE, (160.0, 100.0), &[]);
-        let closed = drain(&rx, Duration::from_millis(60));
-        assert!(closed.iter().any(|s| s == "hide"), "{closed:?}");
-        assert!(matches!(*crate::config::lock(&state), Gesture::Idle));
-    }
-
-    #[test]
-    #[cfg(feature = "vtrackpad")]
-    fn a_virtual_trackpad_hold_opens_nothing_while_settings_is_open() {
-        let _c = Cfg::set(fast);
-        crate::tap::SETTINGS_OPEN.store(true, Ordering::SeqCst);
-        let (n, rx) = notifier();
-        let state = Arc::new(Mutex::new(Gesture::Idle));
-        let sink = test_sink(&state, n);
-
-        hold_virtual(&sink, 450);
-        sink.feed(VIRTUAL_DEVICE, (160.0, 100.0), &[]);
-        let seen = drain(&rx, Duration::from_millis(60));
-        crate::tap::SETTINGS_OPEN.store(false, Ordering::SeqCst);
-        // Settings is brought forward (a `PieBlocked`), but no pie shows, hovers or runs
-        assert!(!seen.iter().any(|s| s.starts_with("show")), "{seen:?}");
-        // the same hold, with Settings closed, does open the pie: the absence above is the guard's
-        let (n, rx) = notifier();
-        let state = Arc::new(Mutex::new(Gesture::Idle));
-        let sink = test_sink(&state, n);
-        hold_virtual(&sink, 450);
-        sink.feed(VIRTUAL_DEVICE, (160.0, 100.0), &[]);
-        let open = drain(&rx, Duration::from_millis(60));
-        assert!(open.iter().any(|s| s.starts_with("show")), "{open:?}");
-        let _ = &rx;
-        assert!(matches!(*crate::config::lock(&state), Gesture::Idle));
     }
 
     #[test]

@@ -113,7 +113,6 @@ not changed (D1).
 | W2 | The pie taking the pointer during a mouse hold so the app below hears no hover (SW5) | the app below sees hover and enter/leave events while the pie is open |
 | W2 | Exact hover position during a hold | between two answers of KWin the position is the answer plus the raw motion since (D6 allows this only briefly); how far it drifts is not measured |
 | W2 | Open-animation, focus and stacking of the XWayland pie above native windows (SW1) | unverified |
-| W2 | Virtual trackpad (`click_at`, the developer tool behind the `vtrackpad` feature) | still X11 (it is not part of a release) |
 | W3 | Native layer-shell pie window | not started (optional) |
 | W4 | Trackpad on Wayland, still open: the compositor is not told that the fingers lifted while the pad was held, so the first touch after a trackpad pie may move the pointer once (a kernel grab has no "release" to forward); measure it (SW4) | the pad is swallowed correctly, with one possible pointer jump afterwards |
 | W5 | COSMIC, niri and other compositors: no adapter | capture and shortcuts work, per-app features are off, and the report says so (see [Other compositors](#other-compositors-w5) for why each is missing) |

@@ -23,15 +23,18 @@
 //! | `clear_window_frame` | strip the OS frame of the native window handle (Windows only, no-op elsewhere) |
 //! | `window_manager_may_recenter` | whether the window manager may ignore the position of a hidden window when it is shown again (X11 only) |
 //! | `window_point` | where to ask the toolkit to put a window centered on a point of the pointer's space (identity except on Linux in a Wayland session, where KWin's points and XWayland's differ) |
-//! | `raise_own_window` | bring CursorPie's own window (Settings) to the front, on whichever workspace it is (X11 only: the toolkit's own request is refused there, elsewhere it is enough) |
+//! | `raise_own_window` | bring CursorPie's own window (Settings) to the front, on whichever workspace it is (X11: the toolkit's own request is refused there; Windows: the toolkit's request injects an Alt key press that eats the next click, so this is the only request sent; macOS: the toolkit's is enough) |
 //! | `cursor_pos`, `display_rects` | pointer position and display bounds, in logical points |
 //! | `is_trusted_cached`, `open_accessibility_settings`, `open_input_monitoring_settings` | input permission |
 //! | `mouse_devices` | the mice the OS lists and their extra buttons, see [`mouse`](crate::mouse) |
 //! | `press_shortcut`, `post_mouse`, `activate_app` | input injection (used by [`actions`](crate::actions)) |
-//! | `click_at` | a left or right click at a given point, the pointer left where it was (the virtual trackpad's clicks) |
 //! | `open_app`, `reveal_app`, `open_url`, `run_shell`, `open_path`, `reveal_in_file_manager` | launching things; `reveal_app` is `open_app` that also goes to, or fetches, the app's desktop (see [`desktops`]) |
+//! | `window_ids` | the windows of an app told apart by a number that stays the same for as long as a window lives (Windows: window handles, hidden ones included; X11 and KWin: the window manager's ids; macOS and the stub: `None`, the count is used); with it a window that was hidden and is shown again is not taken for a new one |
+//! | `window_count` | how many windows an app has (Windows: its top-level windows, X11 and KWin: the window list, macOS: the layer-0 windows of its process); compared before and after a new window was asked for, it teaches [`learn`](crate::learn) which apps cannot open another one |
+//! | `declares_single_window` | whether an app says it has a single main window, so the "Open app" choice leaves out the new-window badge (Linux: `SingleMainWindow` in the `.desktop` file; elsewhere false, and [`windowing`](crate::windowing) has a list of well-known one-window apps that applies on every OS) |
 //! | `running_among`, `open_app_new_window` | for the choice an "Open app" slice offers when its app already runs (see [`running`](crate::running)): which of some apps run (one look at the system for all of them, called off the tap thread), and a new window of an app (macOS: `open -a`, then Cmd+N; Windows and Linux: start it again) |
 //! | [`web`] | the same choice for an "Open URL" slice with a web link: which pages CursorPie opened and are still open, a new browser window, and going to the browser that has the page (not a backend function: it is built from `open_url`, `reveal_app` and `running_among`) |
+//! | [`http`] | a plain HTTPS `GET` for the update check (see [`update`](crate::update)): not a backend function, it is the same code on every OS and runs the system's `curl` (or `wget`) |
 //! | `choose_file`, `tick` | file chooser and hover sound |
 //! | `haptic` | one haptic tick on a trackpad (macOS only, no-op elsewhere), see [`HapticKind`] |
 //! | `launch_at_login_enabled`, `set_launch_at_login` | start with the user session |
@@ -45,43 +48,10 @@
 //! (`com.apple.Safari`), the lower-case executable name on Windows (`chrome.exe`) and the lower-case
 //! desktop-entry id on Linux (`firefox`, `org.mozilla.firefox`).
 
-/// The pointer a developer tool stands in for the real one (the virtual trackpad's), in logical
-/// points. `None` almost always.
-#[cfg(feature = "vtrackpad")]
-static VIRTUAL_POINTER: std::sync::Mutex<Option<(f64, f64)>> = std::sync::Mutex::new(None);
-
-/// Puts a virtual pointer in place of the system's (`Some`) or takes it away (`None`). See
-/// [`pointer_pos`].
-#[cfg(feature = "vtrackpad")]
-pub fn set_virtual_pointer(p: Option<(f64, f64)>) {
-    *VIRTUAL_POINTER.lock().unwrap_or_else(|e| e.into_inner()) = p;
-}
-
-/// Whether a virtual pointer is standing in for the system's.
-#[cfg(feature = "vtrackpad")]
-pub fn virtual_pointer_active() -> bool {
-    VIRTUAL_POINTER
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .is_some()
-}
-
-/// Where the pointer *the pie follows* is: the virtual one while the virtual trackpad is open (the
-/// real pointer is then the finger on it), the system's otherwise. The pie, the trackpad source and
-/// the lookup of the app under the pointer all ask this, never [`cursor_pos`] directly.
-#[cfg(not(feature = "vtrackpad"))]
-pub fn pointer_pos() -> Option<(f64, f64)> {
-    cursor_pos()
-}
-
-/// See above: with the virtual trackpad built in, its pointer comes first.
-#[cfg(feature = "vtrackpad")]
-pub fn pointer_pos() -> Option<(f64, f64)> {
-    let v = *VIRTUAL_POINTER.lock().unwrap_or_else(|e| e.into_inner());
-    v.or_else(cursor_pos)
-}
-
 pub mod desktops;
+// The one HTTPS request of the update check, made with the system's `curl` (or `wget`): the same
+// code on every OS, so no backend has to provide it.
+pub mod http;
 pub mod installed;
 pub mod keymap;
 // Which web pages are open, a new browser window, going to the page that is open: built from the

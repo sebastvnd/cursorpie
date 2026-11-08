@@ -68,6 +68,14 @@ jobs:
           version=$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -n1)
           cp "target/bundle/CursorPie-$version-universal.dmg" target/bundle/CursorPie-macos-universal.dmg
           (cd target/bundle && shasum -a 256 CursorPie-macos-universal.dmg > CursorPie-macos-universal.dmg.sha256)
+      # The update (src/update/install.rs) opens this image, copies CursorPie.app out of it and runs the
+      # program with --selftest before it replaces the installed app: do exactly that here.
+      - name: Packaged app starts
+        run: |
+          mnt="$(mktemp -d)"
+          hdiutil attach -nobrowse -readonly -noverify -quiet -mountpoint "$mnt" target/bundle/CursorPie-macos-universal.dmg
+          "$mnt/CursorPie.app/Contents/MacOS/CursorPie" --selftest
+          hdiutil detach "$mnt" -quiet
       - uses: actions/upload-artifact@v4
         with:
           name: CursorPie-macos-universal
@@ -94,6 +102,17 @@ jobs:
         run: |
           $version = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"(.*)"' | Select-Object -First 1).Matches.Groups[1].Value
           Copy-Item "target\bundle\CursorPie-$version-setup.exe" "target\bundle\CursorPie-windows-setup.exe"
+      # The update runs this Setup silently with these switches (src/update/install.rs): do the same
+      # here, so a change to installer/cursorpie.iss that breaks it fails before a release.
+      - name: Setup installs silently
+        shell: pwsh
+        run: |
+          $setup = Start-Process -FilePath "target\bundle\CursorPie-windows-setup.exe" -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/MERGETASKS=!startup" -Wait -PassThru
+          if ($setup.ExitCode -ne 0) { throw "Setup ended with $($setup.ExitCode)" }
+          $exe = Join-Path $env:LOCALAPPDATA "Programs\CursorPie\cursorpie.exe"
+          if (-not (Test-Path $exe)) { throw "Setup did not install $exe" }
+          $run = Start-Process -FilePath $exe -ArgumentList "--selftest" -Wait -PassThru
+          if ($run.ExitCode -ne 0) { throw "The installed program does not start" }
       - uses: actions/upload-artifact@v4
         with:
           name: CursorPie-windows-x86_64
@@ -120,6 +139,12 @@ jobs:
         run: |
           version=$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -n1)
           cp "target/bundle/cursorpie-$version-linux-x86_64.tar.gz" target/bundle/CursorPie-ubuntu-24.04-x86_64.tar.gz
+      # The update unpacks the archive, takes <folder>/cursorpie and runs it with --selftest.
+      - name: Packaged program starts
+        run: |
+          dir="$(mktemp -d)"
+          tar -xzf target/bundle/CursorPie-ubuntu-24.04-x86_64.tar.gz -C "$dir"
+          "$dir"/*/cursorpie --selftest
       - uses: actions/upload-artifact@v4
         with:
           name: CursorPie-linux-ubuntu-x86_64
@@ -160,6 +185,9 @@ jobs:
               scripts/package-linux.sh
               version=$(grep -m1 "^version" Cargo.toml | cut -d \" -f2)
               cp "target/bundle/cursorpie-$version-linux-x86_64.tar.gz" target/bundle/CursorPie-fedora-44-x86_64.tar.gz
+              dir=$(mktemp -d)
+              tar -xzf target/bundle/CursorPie-fedora-44-x86_64.tar.gz -C "$dir"
+              "$dir"/*/cursorpie --selftest
               chown -R "$HOST_UID:$HOST_GID" target
             '
       - uses: actions/upload-artifact@v4
@@ -190,6 +218,14 @@ jobs:
           merge-multiple: true
       - name: List release assets
         run: ls -lah release-assets
+      # The update looks for these files by name (asset_name in src/update/install.rs).
+      - name: The files the update looks for are there
+        run: |
+          for name in CursorPie-macos-universal.dmg CursorPie-macos-universal.dmg.sha256 \
+                      CursorPie-windows-setup.exe CursorPie-windows.zip \
+                      CursorPie-ubuntu-24.04-x86_64.tar.gz CursorPie-fedora-44-x86_64.tar.gz; do
+            test -f "release-assets/$name" || { echo "missing $name"; exit 1; }
+          done
       - name: Publish release assets
         uses: softprops/action-gh-release@v2
         with:

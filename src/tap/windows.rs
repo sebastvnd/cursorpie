@@ -325,8 +325,6 @@ pub fn spawn(notifier: Notifier) {
         notifier: notifier.clone(),
     });
     // the precision touchpad is a second source of the same gesture (idle until `touch_trigger` is on)
-    #[cfg(feature = "vtrackpad")]
-    super::touch::register_virtual(state.clone(), notifier.clone());
     super::touch::start(state, notifier.clone());
     std::thread::Builder::new()
         .name("cursorpie-tap".into())

@@ -9,6 +9,7 @@ use crate::geometry::Point;
 use crate::platform;
 use crate::running::{self, Choice};
 use crate::tap::Kind;
+use crate::windowing::{Asked, Baseline};
 use std::sync::{OnceLock, mpsc};
 use std::time::{Duration, Instant};
 
@@ -176,7 +177,18 @@ fn execute_step(action: &Action, choice: &mut Option<Choice>) {
 /// Opens `app` the way `choice` says (see [`execute`]).
 fn open_app(app: &str, choice: Option<Choice>) {
     if choice == Some(Choice::NewWindow) {
-        platform::open_app_new_window(app);
+        // counted before and watched after: whether a window appeared teaches the pie which apps
+        // cannot open another one (see `windowing`)
+        let before = Baseline::take(app);
+        match platform::open_app_new_window(app) {
+            // the count of the platform, taken right before the request, wins where windows are
+            // only counted: bringing an app forward can show windows by itself (one that was
+            // hidden, one made on activation)
+            Asked::Sent(settled) => {
+                crate::windowing::watch_new_window(app, before.map(|b| b.settled(settled)));
+            }
+            Asked::NotSent => diag::log!("run", "ask_not_sent"),
+        }
     } else {
         // read first: the config lock must not be held while the app is looked for
         let mode = crate::config::cfg().desktop_mode.effective(platform::OS);

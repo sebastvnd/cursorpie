@@ -74,6 +74,10 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Explorer\StartupA
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "Start {#AppName} now"; Flags: nowait postinstall skipifsilent
+; The update that CursorPie installs by itself (src/update/install.rs) runs this Setup silently with
+; /RESTARTAPP=1 and expects the new version to start when it is done. A silent run without that
+; switch (a script, a deployment tool) starts nothing, as before.
+Filename: "{app}\{#AppExe}"; Flags: nowait runasoriginaluser skipifnotsilent; Check: RestartAfterUpdate
 
 [Code]
 // Ends every running copy of the program. It is a tray app without a window, so Setup cannot
@@ -83,6 +87,11 @@ var
   ResultCode: Integer;
 begin
   Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM {#AppExe}', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
+function RestartAfterUpdate: Boolean;
+begin
+  Result := ExpandConstant('{param:RESTARTAPP|0}') = '1';
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;

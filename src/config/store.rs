@@ -4,7 +4,7 @@ use super::{Config, backup};
 use crate::platform::Os;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock, mpsc};
 
 /// Parses a config file. None = not valid JSON or not a CursorPie config.
 pub fn parse_config(text: &str) -> Option<Config> {
@@ -265,7 +265,47 @@ pub fn set_active(profile: usize, path: Vec<usize>) {
         }
     };
     if let Some(c) = snapshot {
-        std::thread::spawn(move || save_config(&c));
+        save_later(c);
+    }
+}
+
+/// The queue of the thread that saves what [`set_active`] changed, or `None` when the system
+/// would not start it.
+static SAVER: OnceLock<Option<mpsc::Sender<Config>>> = OnceLock::new();
+
+fn saver() -> Option<&'static mpsc::Sender<Config>> {
+    SAVER
+        .get_or_init(|| {
+            let (tx, rx) = mpsc::channel::<Config>();
+            std::thread::Builder::new()
+                .name("cursorpie-config-saver".into())
+                .spawn(move || {
+                    while let Ok(mut latest) = rx.recv() {
+                        // several changes in a row (a mode switched a few times) are one write of
+                        // the newest state, never an older one landing after a newer one
+                        while let Ok(newer) = rx.try_recv() {
+                            latest = newer;
+                        }
+                        save_config(&latest);
+                    }
+                })
+                .ok()
+                .map(|_| tx)
+        })
+        .as_ref()
+}
+
+/// Starts the thread of [`set_active`]'s saves now, so the first mode switch, which happens inside
+/// an input hook, does not have to start a thread there (the tap calls this when it starts).
+pub fn start_saver() {
+    let _ = saver();
+}
+
+/// Hands `c` to the saving thread and returns at once. The save is skipped when that thread could
+/// not be started: a mode that is not remembered is better than a stalled hook.
+fn save_later(c: Config) {
+    if let Some(tx) = saver() {
+        let _ = tx.send(c);
     }
 }
 

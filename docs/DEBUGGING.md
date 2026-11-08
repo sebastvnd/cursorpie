@@ -51,7 +51,7 @@ A set variable wins over the file, so `CURSORPIE_DEBUG=0` silences a `debug` fil
 | `wayland` | the Wayland backend (Linux): `keyboard_failed` (the virtual keyboard could not be made: error kind), `session_away` (the login session is locked or in the background, so the grabs are lifted: `away`), and the KWin adapter: `bus_failed` (no session bus: error), `script_loaded` (`id`, `started`), `script_load_failed` and `sync_failed`, and the other adapters: `adapter_unreachable` (`adapter`: `hyprland` or `sway`; the compositor's socket did not answer, written once per outage). Counts and error kinds only: never a window title or an app name |
 | `tap` | the session type, the button grabs, every press and release, `pie_click_swallowed` (a click while a pie is open that no path took, swallowed: `button`) (position from the event **and** from the X server), the verdict, the hold timer (`hold_open`, or `hold_cancelled` when it gave up), the double-click window, which profile a press resolved to (`resolve`: whether a target app was found, never which), the slice that was selected, the side buttons, the mice (`mouse_look`: how many are connected and whether it was a new one, a returning one or the same; `mouse_scan`: how many buttons a scan found; never a name), and whether the input hook runs (`hook`: `running`, or why not: `blocked` on macOS, `refused` on Windows, `no_x_server` or `grab_failed` on Linux; `restarting` on Windows is the watchdog installing the hooks again after the system stopped calling them, `re_enabled` on macOS is the tap turned back on after the system switched it off, with `ok` telling whether that worked) |
 | `touch` | the trackpad source (macOS, Windows and Linux, off unless `touch_trigger` is on): `framework` (macOS: whether the system's touch library loaded), `source` (`running`, `stopped`; Windows also `refused`, `no_window`), `layout` (Windows: finger slots and the size in mm of a touchpad whose descriptor was read), `devices` (on Linux also `denied`: touchpads found but not readable, so the `input` group is missing; how many trackpads were seen and started), `device_open` and `device_closed` (Linux: one touchpad's reader and its size in mm), `x_grabs` (Linux: the left and right buttons, and the wheel (`wheel`), are grabbed for a hold or the tail of its scroll, or let go), `device_skipped` (a device that is not trackpad-sized: its size in mm; on Windows a touchpad whose descriptor is not understood: `why`), `arm` (a hold was armed: `elapsed_ms`, `double`, `started`), `open`, `release`, `cancel` (`why`: `slid`, `too_many_fingers`, `stale`, `device_lost`), `scroll_tail` (a pie that opened closed while its scrolling may still be coming: `fingers` still down, `dropped` wheel events swallowed so far), `scroll_tail_end` (`why`: `quiet`, `capped`, `new_touch`, `next_gesture`, `stopped`; `dropped` in all, `in_tail` after the pie closed), `pad_grab` (Wayland: the touchpad was taken from the desktop for a hold, or given back: `on`, `ok`), `scroll_swallowed` (a hold that never opened swallowed `dropped` wheel events), `scroll_drop` (`trace` only: one line per swallowed wheel event, `tail`), `extra_click` (`via`: `press`, `tap`, `tap_click`), `extra_action` (the action and whether it did something) and `haptic` (which tick, whether it played). Counts and decisions only: never a finger position |
-| `ui` | the message that opens the pie, the position the pie asks for, the monitor it picked, the cursor fallback; `pie_input` (whether the pie window takes the pointer: a trackpad hold does), closing the pie, opening and closing Settings (`close_settings` is timed: saving; `raise_settings` says why Settings was brought forward; `chooser_open`, `chooser_busy`, `chooser_closed` (with `waited_ms`) and `chooser_abandoned` (the user pressed Stop waiting) follow the native file chooser), importing a config, and the timed `warm` (icon loading) and `sleep` (freeing memory) |
+| `ui` | the message that opens the pie, the position the pie asks for, the monitor it picked, the cursor fallback; `pie_input` (whether the pie window takes the pointer: a trackpad hold does), closing the pie, opening and closing Settings (`close_settings` is timed: saving; `raise_settings` says why Settings was brought forward; `chooser_open`, `chooser_busy`, `chooser_closed` (with `waited_ms`) and `chooser_abandoned` (the user pressed Stop waiting) follow the native file chooser), importing a config, the daily update check (`update_checked` with `manual` and `ok`, `update_offered`, `update_install`, `update_staged` with `ok`, `update_apply`, `update_download`), and the timed `warm` (icon loading) and `sleep` (freeing memory) |
 | `win` | where the toolkit says the window really is, for two seconds after a window was placed |
 | `cfg` | loading `config.json` (outcome, size, time) and every save of it (`ok`, and the error kind when it failed: a failed save is otherwise silent) |
 | `act` | every action the worker runs: its kind (never its content), how long it waited in the queue (`wait_ms`) and how long it ran (`ms`); every program it starts (`exited` with its exit code, `spawn_failed` with the error kind, on Windows `shell_execute` with the code), by program name only, never its arguments |
@@ -204,32 +204,3 @@ the gesture was made two or three times at different places on the screen:
 CURSORPIE_DEBUG=1 cursorpie 2> stderr.txt
 cargo tools diag
 ```
-
-## Trying the trackpad gestures without a trackpad
-
-`cargo tools trackpad` builds the app with the `vtrackpad` feature and starts it with a *virtual trackpad*: a trackpad that floats exactly in the middle of the
-screen. Your real pointer is the finger on it (over the glass it touches, off the glass it is lifted), and a virtual
-pointer, an arrow drawn on the screen outside the trackpad, is what the finger moves, relatively and with acceleration
-like a real trackpad does. The pie opens at the virtual pointer, aims with it and acts on the app under it.
-
-It feeds the same recognizer as a real trackpad, so the whole chain (hold, aim, lift, extra click, the palm and edge
-rules) is the real one, and `CURSORPIE_DEBUG=touch` logs it as it logs a real trackpad (the device id is `0x56495254`).
-The left and right buttons of the mouse are the primary and the secondary click of the trackpad: the click is made at
-the virtual pointer when the button comes up, so the app under the arrow gets it (a double click too). While the pie is
-open, a click is the pie's extra click and goes nowhere else. Holding a button and dragging is not made yet.
-Nothing is written to the settings; the red dot closes the trackpad, and the app keeps running. The app allows one
-copy at a time: if another CursorPie is running (the installed one, or another `cargo run`), quit it first, or the
-tool says so and stops.
-
-| Option | Meaning |
-|---|---|
-| `--width POINTS` | width of the trackpad, 240 to 640 (default 360); the slider in its lower frame changes it too |
-| `--silent` | no click sound (the switch in the lower frame does the same) |
-| `--release` | build the app with optimizations |
-
-The tool is behind the Cargo feature `vtrackpad`: an ordinary build, debug or release, has none of its code (and
-ignores `CURSORPIE_VTRACKPAD`). `cargo tools ci` checks it with the feature on. Behind the command is the environment
-the app reads (in a build that has the feature): `CURSORPIE_VTRACKPAD=1` (turns the tool on),
-`CURSORPIE_VTRACKPAD_WIDTH` and `CURSORPIE_VTRACKPAD_SOUND=0`. The haptic click of a real trackpad cannot be given by a
-mouse; the tool shows it (the surface sinks, a ring, a glow) and plays a click, and the tick is also sent to the
-system's haptic engine, which only a finger on a real trackpad feels.

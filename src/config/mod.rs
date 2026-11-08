@@ -111,6 +111,17 @@ mod tests {
     }
 
     #[test]
+    fn the_update_check_is_on_by_default_and_old_files_get_it() {
+        assert!(Config::default().check_updates);
+        let old = parse_config(r#"{"version": 2}"#).expect("parses");
+        assert!(old.check_updates);
+        let off = parse_config(r#"{"version": 2, "check_updates": false}"#).expect("parses");
+        assert!(!off.check_updates);
+        let json = serde_json::to_string(&off).expect("serializes");
+        assert!(json.contains(r#""check_updates":false"#));
+    }
+
+    #[test]
     fn the_open_app_choice_is_on_by_default_and_can_be_switched_off() {
         assert!(Config::default().open_app_choice);
         // a file from before the setting existed gets the new behavior

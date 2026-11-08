@@ -11,7 +11,9 @@
 //! idempotent and is called on every frame (see `docs/UI_DESIGN.md`, "Transparent window on Windows").
 
 use super::util::{frameless_ex_style, frameless_style, frameless_styles};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicIsize, Ordering};
+use std::time::{Duration, Instant};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::Graphics::Dwm::{
     DWM_BB_BLURREGION, DWM_BB_ENABLE, DWM_BLURBEHIND, DWMWA_BORDER_COLOR, DWMWA_COLOR_NONE,
@@ -19,11 +21,14 @@ use windows_sys::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute,
 };
 use windows_sys::Win32::Graphics::Gdi::{CreateRectRgn, DeleteObject};
+use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GWL_EXSTYLE, GWL_STYLE, GetWindowLongW, IsWindow, STYLESTRUCT, SWP_FRAMECHANGED,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetWindowLongW, SetWindowPos,
-    WM_NCCALCSIZE, WM_NCDESTROY, WM_NCPAINT, WM_STYLECHANGING,
+    BringWindowToTop, GWL_EXSTYLE, GWL_STYLE, GetForegroundWindow, GetWindowLongW,
+    GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, STYLESTRUCT, SW_RESTORE,
+    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetForegroundWindow,
+    SetWindowLongW, SetWindowPos, ShowWindow, WM_NCCALCSIZE, WM_NCDESTROY, WM_NCPAINT,
+    WM_STYLECHANGING,
 };
 
 /// Id of our subclass (any value; it only has to be the same for install and removal).
@@ -112,6 +117,7 @@ pub fn clear_window_frame(handle: isize) {
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
             );
         }
+        take_pending_raise(hwnd);
         if DWM_DONE.swap(handle, Ordering::Relaxed) != handle {
             // keeps the frame away for good (see `frameless_proc`); the window belongs to the UI
             // thread, which is the thread that calls this
@@ -155,5 +161,70 @@ pub fn window_point(x: f64, y: f64) -> (f64, f64) {
     (x, y)
 }
 
-/// The toolkit's focus request is all there is to ask on Windows.
-pub fn raise_own_window() {}
+/// How long a request to raise the window stays valid. A request made while the window is still
+/// hidden (Settings is being shown) waits for it to appear; one that never gets the chance is
+/// dropped, so it cannot bring Settings forward long after the person asked for something else.
+const RAISE_WAIT: Duration = Duration::from_millis(600);
+
+/// When the pending request to bring the window forward runs out (`None` = nothing pending).
+static RAISE_UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
+
+/// Asks for the window to be brought in front of everything, without the toolkit's focus request.
+///
+/// winit's `focus_window` takes the foreground by injecting an Alt key press and release (the
+/// classic trick to get past `SetForegroundWindow`'s restrictions). The target of that Alt tap is
+/// the window that is in front when the next click arrives, and Windows treats the click as the end
+/// of a menu activation: it is eaten. After Settings had been opened (or raised by a press of the
+/// trigger while it was behind another window), the first click, and with it the first hold of the
+/// pie, did nothing, and only the second one worked.
+///
+/// So on Windows the UI does not send `ViewportCommand::Focus`; it calls this instead. The request
+/// is carried out by the next frame (`clear_window_frame`, which runs even while the window is
+/// hidden), once the window is on screen, with `SetForegroundWindow` and no injected key.
+pub fn raise_own_window() {
+    if let Ok(mut until) = RAISE_UNTIL.lock() {
+        *until = Some(Instant::now() + RAISE_WAIT);
+    }
+}
+
+/// Carries out a pending [`raise_own_window`] as soon as the window is visible.
+fn take_pending_raise(hwnd: HWND) {
+    let Ok(mut until) = RAISE_UNTIL.lock() else {
+        return;
+    };
+    let Some(deadline) = *until else {
+        return;
+    };
+    // SAFETY: `hwnd` was checked with IsWindow by the caller; the calls only change window state.
+    unsafe {
+        if IsWindowVisible(hwnd) == 0 {
+            if Instant::now() >= deadline {
+                *until = None;
+            }
+            return; // not on screen yet: ask again next frame
+        }
+        *until = None;
+        if IsIconic(hwnd) != 0 {
+            ShowWindow(hwnd, SW_RESTORE);
+        }
+        let fg = GetForegroundWindow();
+        if fg == hwnd {
+            return;
+        }
+        // a process may only take the foreground while it shares input state with the window in
+        // front: attach to its thread for the duration of the call (no synthetic key needed)
+        let fg_thread = if fg.is_null() {
+            0
+        } else {
+            GetWindowThreadProcessId(fg, std::ptr::null_mut())
+        };
+        let me = GetCurrentThreadId();
+        let attached =
+            fg_thread != 0 && fg_thread != me && AttachThreadInput(me, fg_thread, 1) != 0;
+        BringWindowToTop(hwnd);
+        SetForegroundWindow(hwnd);
+        if attached {
+            AttachThreadInput(me, fg_thread, 0);
+        }
+    }
+}

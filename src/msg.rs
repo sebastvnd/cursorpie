@@ -87,6 +87,15 @@ pub enum Msg {
     },
     /// An app was chosen for the "App" block `node` of the flow at index `flow`.
     FlowAppPicked { flow: usize, node: u32, app: String },
+    /// The look for a newer release ended (see [`update`](crate::update)). `manual` is true when the
+    /// person pressed *Check now* in the About tab: the answer is shown there and nothing is offered.
+    UpdateChecked {
+        manual: bool,
+        result: Result<crate::update::Version, crate::update::Failure>,
+    },
+    /// The package of a newer release was downloaded, checked and made ready (or could not be): see
+    /// [`update::install`](crate::update::install).
+    UpdateStaged(Result<crate::update::install::Staged, crate::update::install::InstallError>),
 }
 
 /// A channel sender plus the egui context needed to wake the UI. Cheap to clone.
@@ -100,9 +109,8 @@ impl Notifier {
     /// Queues `m` and requests a repaint so the UI picks it up promptly. Never blocks.
     ///
     /// The repaint is asked of the *root* window, which is where `App::logic` reads the messages.
-    /// A plain `request_repaint` means "the window that was drawn last", and once the virtual
-    /// trackpad has a window of its own that may be the trackpad's: the message would wait there
-    /// until the root window happened to draw again.
+    /// A plain `request_repaint` means "the window that was drawn last", which is not necessarily
+    /// the root window.
     pub fn send(&self, m: Msg) {
         let _ = self.tx.send(m);
         self.wake();

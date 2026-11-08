@@ -4,10 +4,12 @@
 
 use crate::about::*;
 use crate::platform;
+use crate::ui::app::App;
 use crate::ui::fonts;
 use crate::ui::settings::theme::*;
 use crate::ui::settings::widgets::*;
 use crate::ui::symbols;
+use crate::update::Status;
 use eframe::egui::{self, Color32, Pos2, Rect, Vec2};
 
 /// Opens `url` (or a `mailto:` address) with the system's default handler.
@@ -56,8 +58,124 @@ fn link_button(ui: &mut egui::Ui, icon: char, text: &str, url: &str) {
     }
 }
 
-/// Draws the About tab from the constants in [`crate::about`]. `accent` colors the version badge.
-pub(in crate::ui::settings) fn about_tab(ui: &mut egui::Ui, accent: Color32) {
+impl App {
+    /// Draws the About tab: the hero card, the updates panel, then the panels made from the
+    /// constants in [`crate::about`]. `accent` colors the version badge and the primary button.
+    pub(in crate::ui::settings) fn about_tab(&mut self, ui: &mut egui::Ui, accent: Color32) {
+        hero_card(ui, accent);
+        self.updates_panel(ui, accent);
+        details_panels(ui);
+    }
+
+    /// The "Updates" panel: what the last look for a newer release found, the switch for the daily
+    /// look, and the buttons to look now and to download. The same on every OS.
+    fn updates_panel(&mut self, ui: &mut egui::Ui, accent: Color32) {
+        let ctx = ui.ctx().clone();
+        let state = self.ed.update;
+        let can_install = self.ed.update_can_install;
+        panel(ui, "Updates", |ui| {
+            let hint = match state {
+                Status::Available(_) => format!("You are using {VERSION}."),
+                Status::Failed(why) => why.explain().to_string(),
+                Status::Downloading(_) => "Downloading the package and checking it.".to_string(),
+                Status::Ready(_) => "CursorPie restarts to finish the update.".to_string(),
+                Status::InstallFailed(_, why) => why.explain().to_string(),
+                _ => String::new(),
+            };
+            row_wide(ui, "Status", &hint, 300.0, |ui| match state {
+                Status::Idle => muted(ui, "Not checked yet"),
+                Status::Checking => muted(ui, "Checking\u{2026}"),
+                Status::UpToDate => status(ui, true, "Up to date"),
+                Status::Available(found) => {
+                    status(ui, true, &format!("Version {found} is available"))
+                }
+                Status::Failed(_) => status(ui, false, "Could not check"),
+                Status::Downloading(found) => muted(ui, &format!("Downloading {found}\u{2026}")),
+                Status::Ready(found) => status(ui, true, &format!("Version {found} is ready")),
+                Status::InstallFailed(..) => status(ui, false, "Could not install"),
+            });
+            toggle_row(
+                ui,
+                &mut self.edit.check_updates,
+                "Check for updates automatically",
+                "Once a day, when Settings opens. Off: only Check now looks.",
+                accent,
+            );
+            actions(ui, |ui| {
+                let idle = !matches!(
+                    state,
+                    Status::Checking | Status::Downloading(_) | Status::Ready(_)
+                );
+                let check = button_if(
+                    ui,
+                    idle,
+                    Look::Soft,
+                    Some(symbols::ARROWS_CLOCKWISE),
+                    "Check now",
+                );
+                if check.clicked() {
+                    self.start_update_check(&ctx, true);
+                }
+                match state {
+                    Status::Available(_) | Status::InstallFailed(..) if can_install => {
+                        let retry = matches!(state, Status::InstallFailed(..));
+                        let label = if retry { "Try again" } else { "Install update" };
+                        let install = button(
+                            ui,
+                            Look::Primary(accent),
+                            Some(symbols::DOWNLOAD_SIMPLE),
+                            label,
+                        );
+                        if install.clicked() {
+                            self.start_update_install(&ctx);
+                        }
+                        if button(ui, Look::Soft, None, "Release page").clicked() {
+                            open_link(LATEST_RELEASE_URL);
+                        }
+                    }
+                    Status::Available(_) | Status::InstallFailed(..) => {
+                        let page = button(
+                            ui,
+                            Look::Primary(accent),
+                            Some(symbols::DOWNLOAD_SIMPLE),
+                            "Download page",
+                        );
+                        if page.clicked() {
+                            open_link(LATEST_RELEASE_URL);
+                        }
+                    }
+                    Status::Ready(_) => {
+                        let restart = button(
+                            ui,
+                            Look::Primary(accent),
+                            Some(symbols::ARROWS_CLOCKWISE),
+                            "Restart to update",
+                        );
+                        if restart.clicked() {
+                            self.apply_staged_update(&ctx);
+                        }
+                    }
+                    _ => {}
+                }
+            });
+            let how = if can_install {
+                "Install update downloads the release from GitHub, checks its checksum, replaces this copy and restarts CursorPie. Your settings are kept."
+            } else {
+                "This copy was not installed in the usual place, so it cannot update itself: Download page opens the release page in your browser."
+            };
+            note(ui, how);
+            if crate::platform::OS == crate::platform::Os::Mac {
+                note(
+                    ui,
+                    "macOS may ask you to allow Accessibility for CursorPie again after an update.",
+                );
+            }
+        });
+    }
+}
+
+/// The hero card: logo, name, version and the four round link buttons.
+fn hero_card(ui: &mut egui::Ui, accent: Color32) {
     // ------------------------------------------------------------ hero
     card().show(ui, |ui| {
         ui.set_width(ui.available_width());
@@ -103,7 +221,10 @@ pub(in crate::ui::settings) fn about_tab(ui: &mut egui::Ui, accent: Color32) {
         ui.add_space(GAP);
     });
     ui.add_space(SECTION_GAP);
+}
 
+/// The panels below the updates: author, project, privacy and credits.
+fn details_panels(ui: &mut egui::Ui) {
     panel(ui, "Created by", |ui| {
         info_row(ui, AUTHOR_NAME, |_| {});
         link_row(

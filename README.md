@@ -42,7 +42,7 @@ Built with **Rust** and [egui](https://github.com/emilk/egui), CursorPie is insp
 - **Nested menus.** Organize up to 8 slices per ring and 5 levels of submenus.
 - **Room to experiment.** Undo and redo edits in Settings, with automatic backups of previous saves.
 - **Easy to share.** Export a profile, including its icons, as a single JSON file.
-- **Private and lightweight.** No account, network connection or telemetry. The menu stays out of the way while idle.
+- **Private and lightweight.** No account or telemetry. Its only network use is a daily look for a newer release when you open Settings (which you can switch off) and, when you press **Install update**, the download of that release. The menu stays out of the way while idle.
 
 A clickable mouse wheel, or a trackpad, is enough to get started. Some features and button options vary by operating system; see [Platform support](#platform-support).
 
@@ -130,7 +130,7 @@ Found a bug? [Open an issue](https://github.com/sebastvnd/cursorpie/issues) and 
 
 ## Privacy
 
-CursorPie runs locally and makes no network connections. It has no account system or telemetry. Optional diagnostic logging is off by default, and ordinary release builds omit the diagnostic logger; see [Debugging](docs/DEBUGGING.md) for details. Actions you configure yourself — such as opening a URL or running a command — naturally perform the work you ask them to do.
+CursorPie runs locally. It has no account system or telemetry. Its only network connections are the update check (when you open Settings it asks GitHub, at most once a day, for the newest release) and, only when you press **Install update**, the download of that release; GitHub sees your IP address and the CursorPie version. Switch the check off with **About > Updates > Check for updates automatically**.
 
 ## License
 

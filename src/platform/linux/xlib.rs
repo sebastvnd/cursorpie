@@ -26,6 +26,7 @@ pub const XA_CARDINAL: Atom = 6;
 pub const XA_STRING: Atom = 31;
 pub const XA_WINDOW: Atom = 33;
 pub const XA_WM_CLASS: Atom = 67;
+pub const XA_WM_TRANSIENT_FOR: Atom = 68;
 
 // event types
 pub const KEY_PRESS: c_int = 2;

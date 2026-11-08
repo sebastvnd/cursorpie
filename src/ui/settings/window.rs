@@ -19,7 +19,6 @@
 //! buttons never move. The four areas come from [`regions`], a pure function with its own tests.
 
 use super::state::Tab;
-use super::tabs::about::about_tab;
 use crate::about::*;
 use crate::config::backups;
 use crate::platform;
@@ -454,7 +453,7 @@ impl App {
                             match self.ed.tab {
                                 Tab::Behavior => self.behavior_tab(ui),
                                 Tab::General => self.general_tab(ui),
-                                Tab::About => about_tab(ui, accent),
+                                Tab::About => self.about_tab(ui, accent),
                                 Tab::Menu | Tab::Flow => {}
                             }
                         });
@@ -505,6 +504,8 @@ impl App {
         self.quit_dialog(&ctx, accent);
         // the sheet that asks before Cancel / Esc throws unsaved changes away
         self.discard_dialog(&ctx);
+        // the sheet that offers a newer release, once a day
+        self.update_dialog(&ctx, accent);
 
         match action {
             UiAction::Save => {
