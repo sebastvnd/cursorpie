@@ -10,15 +10,18 @@ If you only read one section, read [The recipe](#the-recipe) and [The rules that
 
 ## What a flow is
 
-A **flow** is a *chain* of steps that a pie slice runs one after the other: press a shortcut, open an app, open a
-URL or file, run a shell command, wait. It is drawn in the **Flow** tab of Settings as blocks joined by wires.
+A **flow** is a small program that a pie slice runs: press a shortcut, open an app, open a URL or file, run a shell
+command, wait, and also keep **variables**, **decide** (if / else), **loop** (repeat, while), **ask the person** for a
+text or a yes / no, **call another flow**, and use the **system** (clipboard, notifications, files, the app in
+front). It is drawn in the **Flow** tab of Settings as blocks joined by wires.
 
-- It is a **single straight chain**: `Start -> step -> step -> ... -> End`. Each block has at most one wire going
-  out (`next`) and at most one coming in.
-- There is **no branching, no condition, no loop, no variable, no nested flow, no "type this text" step.** Do not
-  invent block kinds; the app refuses a file with an unknown kind. To type text or do anything else, use a
-  `Command` block (see [Command blocks](#command-blocks-and-safety)).
-- The app runs the chain from `Start` along the `next` wires. A block that is not on that chain is **ignored**.
+- It is a **graph**: `Start -> ... -> End`. A block has one input (any number of wires may lead into it, so two
+  paths can join) and one output `next`; the blocks that decide have a second output `alt`.
+- A wire may lead **back** to an earlier block. That is a loop. A run is limited (see
+  [How a flow runs](#how-a-flow-runs)), so a loop that never ends is stopped.
+- There is **no nested block and no expression language**: a condition compares two values, a calculation does one
+  operation. Do not invent block kinds; the app refuses a file with an unknown kind.
+- The app runs the graph from `Start` along the wires. A block that no path from `Start` reaches is **ignored**.
 
 ## Two places a flow can live
 
@@ -33,11 +36,11 @@ The `flow` object is the same in both places.
 
 ```jsonc
 {
-  "cursorpie_flow": 1,                 // file format version: always 1 (a file with a higher number is refused)
+  "cursorpie_flow": 1,                 // file format version: 1, or 2 when the flow uses the blocks of "The logic blocks" and below
   "flow": {
     "id": "copy-switch-paste",         // string, not empty, unique among flows; replaced with a fresh id on import
     "name": "Copy, switch, paste",     // string; trimmed, cut to 60 characters; made unique ("Name (2)") on import
-    "nodes": [                         // 2 to 64 blocks
+    "nodes": [                         // 2 to 128 blocks
       { "id": 1, "x": 40.0, "y": 60.0, "kind": "Start", "next": 2 },
       { "id": 2, "x": 240.0, "y": 60.0, "kind": { "Key": { "key": 8, "mods": 8 } }, "next": 3 },
       { "id": 3, "x": 540.0, "y": 60.0, "kind": "End", "next": null }
@@ -52,25 +55,103 @@ The `flow` object is the same in both places.
 |---|---|---|
 | `id` | integer, 0 to 4294967295 | Unique **inside the flow**. Use 1, 2, 3, ... |
 | `x`, `y` | number | Where the block sits in the editor (top-left corner). **Cosmetic**: they decide nothing about what runs. Any finite value within +-20000 is kept; outside that it is clamped. See [Placing blocks](#placing-blocks). |
-| `kind` | string or object | What the block does. See the next table. |
-| `next` | integer or `null` | The `id` of the block the wire from this block's output leads to. `null` or absent = no wire. |
+| `kind` | string or object | What the block does. See the next sections. |
+| `next` | integer or `null` | The `id` of the block the first output leads to. `null` or absent = no wire: **the run ends there**. |
+| `alt` | integer or `null` | The second output. Only `Branch`, `Repeat` and `While` have one; on any other block it is removed. Absent = no wire. |
 
 Serde's default external tagging is used: a block without data is a **bare string** (`"Start"`), a block with data is
-an **object with one key** (`{ "Wait": 500 }`).
+an **object with one key** (`{ "Wait": 500 }`, `{ "Set": { "name": "n", "value": "1" } }`). A field of a block
+that is written as an object may be left out; it then has its default (empty text, the first operation).
 
-### The seven kinds
+The file number `cursorpie_flow` is **1** when a flow only uses the first seven kinds and no `alt` (an older CursorPie
+opens it too) and **2** otherwise. Write 2 for any flow with the blocks below; 3 or more is refused.
+
+### The first seven kinds
 
 | `kind` | JSON | What it does when it runs | Notes |
 |---|---|---|---|
-| Start | `"Start"` | nothing; the chain begins here | exactly **one**; nothing may be wired into it |
-| End | `"End"` | nothing; the chain ends here | exactly **one**; its `next` is `null`; it needs an input wire |
+| Start | `"Start"` | nothing; the run begins here | exactly **one**; nothing may be wired into it |
+| End | `"End"` | nothing; the run (or the called flow) ends here | exactly **one**; no outputs; it needs an input wire |
 | Key | `{ "Key": { "key": 8, "mods": 8 } }` | presses the shortcut | see [Shortcuts](#shortcuts) |
 | OpenApp | `{ "OpenApp": "Notes" }` | opens or raises an app | name or path, see [Apps, URLs, files](#apps-urls-and-files) |
 | OpenUrl | `{ "OpenUrl": "https://example.com" }` | opens a URL or a file with the system default | |
-| Command | `{ "Command": "echo hi" }` | runs a shell command line | read [Command blocks](#command-blocks-and-safety) |
+| Command | `{ "Command": "echo hi" }` | runs a shell command line **without waiting** | read [Command blocks](#command-blocks-and-safety) |
 | Wait | `{ "Wait": 500 }` | pauses, in **milliseconds** | 0 to 10000; more is cut to 10000 |
 
-Empty `OpenApp`, `OpenUrl` and `Command` strings (or only spaces) do nothing. `OpenApp` and `OpenUrl` text is trimmed before it is used.
+Empty `OpenApp`, `OpenUrl` and `Command` strings (or only spaces) do nothing.
+
+### Variables
+
+A run has variables: a **name** (letters, digits and `_`, at most 32, not starting with a digit) with a **text** as
+value (at most 16384 characters; at most 128 variables). They start empty and are gone when the run ends.
+
+- In **any text field** (`OpenApp`, `OpenUrl`, `Command`, `Set.value`, `Ask.message`, `Run.command`, the texts of
+  `Native`...) `{{name}}` is replaced by the value. `{{name|sh}}` is replaced by the value **quoted for the shell**
+  (single quotes on macOS and Linux; on Windows double quotes with `"`, `%` and line breaks dropped): use it inside a
+  `Command` or `Run`. Only a **defined** variable is replaced, so a command that contains `{{x}}` for another reason
+  is left as it is.
+- The **operands** of `Calc`, `Logic`, `Branch` and `While` are a value (`3`, `yes`, `{{x}}`) or the bare **name of a
+  variable** (`n`). A bare name that is defined means its value.
+- A field that **receives** a result (`out`, `name`, and the `variable` fields of `Native`) takes a bare variable name,
+  without braces.
+- **Truth:** a text is false when it is empty, `0`, `false`, `no` or `off` (any case, spaces ignored), and true
+  otherwise. Gates and `Calc` write `1` and `0`.
+- **Numbers:** a text is a number when it parses as one (`3`, `-2.5`); whole results are written without a decimal point.
+- Set by the blocks themselves: `ok` (`1` when the last block that can fail worked: `Calc`, `Ask`, `Run`, `Native`), `code` (the
+  exit code of the last `Run`; `-1` when it could not start, was ended by the time limit or a signal) and `index` (the
+  round of the innermost `Repeat` or `While`, counting from 1).
+
+### The logic blocks
+
+| `kind` | JSON | Behaviour |
+|---|---|---|
+| Set | `{ "Set": { "name": "n", "value": "{{n}}!" } }` | puts the value (variables filled in) in `n` |
+| Calc | `{ "Calc": { "out": "i", "a": "i", "op": "Add", "b": "1" } }` | `out = a op b` as numbers. `op`: `Add`, `Sub`, `Mul`, `Div`, `Rem`, `Min`, `Max`. A text that is not a number, or a division by zero, leaves `out` empty and `ok` at `0` |
+| Logic | `{ "Logic": { "out": "g", "a": "x", "op": "And", "b": "y" } }` | `out = a gate b` as `1` or `0`. `op`: `And`, `Or`, `Xor`, `Nand`, `Nor`, `Not` (`Not` ignores `b`) |
+| Branch | `{ "Branch": { "a": "n", "op": "Gt", "b": "3" } }` | follows **`next` when the condition holds, `alt` when it does not** |
+| Repeat | `{ "Repeat": 3 }` | goes through **`next` (the body)** 3 times (0 to 1000), then follows **`alt` (done)** |
+| While | `{ "While": { "a": "i", "op": "Lt", "b": "n" } }` | goes through `next` (the body) while the condition holds (at most 1000 rounds), then follows `alt` |
+| Call | `{ "Call": "other-flow-id" }` | runs the flow with that id (same variables), then goes on. Depth at most 8; a missing flow is skipped |
+| Stop | `"Stop"` | ends the **whole run**, also inside a called flow. No outputs |
+
+`op` of a condition (`Branch`, `While`): `Eq`, `Ne`, `Lt`, `Le`, `Gt`, `Ge` (two numbers are compared as numbers,
+anything else as text), `Contains`, `StartsWith`, `EndsWith`, `IsTrue` (only `a`), `IsEmpty` (only `a`).
+
+**A loop is a wire back.** The body of a `Repeat` or `While` is the chain that starts at `next`; its last block must be
+wired **back to the loop block itself**. `alt` leads on. See `examples/flows/ask-and-loop.cursorpie-flow.json`.
+
+### The blocks that ask and the blocks that use the system
+
+| `kind` | JSON | Behaviour |
+|---|---|---|
+| Ask | `{ "Ask": { "mode": "Text", "message": "Name?", "preset": "Bob", "out": "name" } }` | shows a window of the system and waits. `mode`: `Text` (a box; `preset` is what it starts with) or `YesNo` (`out` becomes `1` or `0`). `ok` is `0` when it was cancelled or no window program exists (Linux needs `zenity` or `kdialog`); on Windows an empty answer counts as cancelled |
+| Run | `{ "Run": { "command": "git rev-parse HEAD", "out": "rev", "timeout_s": 10 } }` | runs a shell command and **waits** (1 to 120 s, then it is ended). `out` gets what it printed (trailing line breaks cut, at most 256 KB), `code` its exit code. Every variable is also in its environment as `CURSORPIE_<NAME>` |
+| Native | `{ "Native": { "op": "Notify", "a": "Title", "b": "Text" } }` | something the system does or tells; `op` decides what `a` and `b` are for (table below) |
+
+`Native` operations (`a` and `b` are text; a field written as *variable* is a bare variable name):
+
+| `op` | `a` | `b` |
+|---|---|---|
+| `ClipboardSet` | text to copy | |
+| `ClipboardGet` | | variable |
+| `TypeText` | text to type (pasted into the app in front; the clipboard is put back) | |
+| `Notify` | title | text |
+| `ReadFile` | path (UTF-8 text, at most 256 KB; `~/` is the home folder) | variable |
+| `WriteFile` | path (replaces the file) | text |
+| `AppendFile` | path | text |
+| `FileExists` | path | variable (`1` or `0`) |
+| `Env` | name of an environment variable | variable |
+| `FrontApp` | | variable (the id of the app in front) |
+| `ActivateApp` | app id | |
+| `AppRunning` | app | variable (`1` or `0`) |
+| `CursorPos` | variable for x | variable for y |
+| `Random` | number: the result is below it | variable |
+| `UnixTime` | | variable (seconds since 1970 UTC) |
+| `Reveal` | path | |
+
+The clipboard needs `pbcopy` / PowerShell / `wl-copy`, `xclip` or `xsel`; notifications need `osascript` / PowerShell /
+`notify-send`. A missing tool makes `ok` `0`; nothing else happens. There is no block that moves or clicks the mouse
+and none that makes a network request.
 
 ## Shortcuts
 
@@ -148,21 +229,24 @@ needs care:
 
 ## How a flow runs
 
-1. The slice is released (or its mode button pressed) and the app copies the flow's steps out.
-2. Steps run on a worker thread, in chain order, **40 ms apart**, and a `Wait` adds its own pause on top of that.
-3. `Start` and `End` are not steps. Unwired blocks are not steps.
+1. The slice is released (or its mode button pressed) and the app copies the flow out of the config.
+2. The run is on a worker thread. It starts at the block `Start` leads to and goes block by block along the wires.
+   After a block that *does* something (`Key`, `OpenApp`, `OpenUrl`, `Command`, `Wait`, `Run`, `Native`) it pauses
+   **40 ms**; blocks that only compute or decide do not pause.
+3. It ends at `End`, at `Stop`, at an output without a wire, after **10000 blocks**, or after **600 seconds**
+   (time spent waiting for an answer in `Ask` does not count). A loop is also limited to 1000 rounds.
 4. If the slice points at a flow id that does not exist, nothing happens.
 
-Because actions run one at a time, a long flow keeps the worker busy: a `Wait` is capped at 10 s. Give an app time to
+The worker does one thing at a time, so a long run keeps later actions waiting: keep flows short. Give an app time to
 come to the front before a shortcut is sent to it: **put a `Wait` (300 to 800 ms) between `OpenApp` / `OpenUrl` and
-a following `Key`.** A shortcut sent too early goes to the app that was in front before.
+a following `Key`.** A `Command` is started and **not waited for**; use `Run` when a later step needs its result.
 
 ## The recipe
 
 To turn a request such as "copy the selection, open Notes, make a new note, paste" into JSON:
 
 1. **Fix the target OS** (it decides `mods`, app names, and commands). Ask if unknown.
-2. **Break the request into steps** and pick one kind per step from the seven kinds. Insert a `Wait` after every
+2. **Break the request into steps** and pick one kind per step from the kinds above. Insert a `Wait` after every
    step that opens something (`OpenApp`, `OpenUrl`, a shortcut that opens a window) and before the step that depends
    on it.
 3. **Number the blocks** 1..n: `Start` is 1, the steps are 2..n-1, `End` is n.
@@ -194,21 +278,20 @@ on it. Note especially the ones that change behaviour:
 
 | Rule | If you break it |
 |---|---|
-| Exactly one `"Start"` and one `"End"` | A duplicate is dropped. **A missing `Start` is added with no wire, so the chain is just that `Start` and every other block is ignored: the flow does nothing.** A missing `End` is added after the last block of the chain. |
-| `Start` is the first block of the chain and nothing is wired into it | A wire into `Start` is removed. |
-| Every `next` names an existing block id | A wire to a missing block is removed; the chain stops there. |
-| One wire **into** each block | If two blocks point at the same target, only the first keeps its wire. |
-| One wire **out of** each block (`next` is a single id) | A list is a wrong shape and the file is refused. |
-| No loops, no wire from a block to itself | The wire that closes the loop is removed. |
-| `End` has no `next` | It is cleared. |
+| Exactly one `"Start"` and one `"End"` | A duplicate is dropped. **A missing `Start` is added with no wire, so nothing runs.** A missing `End` is added after the last block of the `next` chain. |
+| Nothing is wired into `Start` | A wire into `Start` is removed. |
+| Every `next` and `alt` names an existing block id | A wire to a missing block is removed; the run ends there. |
+| A block does not point at itself | The wire is removed. |
+| `End` and `Stop` have no outputs; only `Branch`, `Repeat` and `While` have `alt` | The extra wire is removed. |
 | Block `id`s unique | Duplicates are dropped (the later one). |
-| At most 64 blocks (32 flows per config) | The extra blocks are cut off the end of the list. |
-| `Wait` is 0 to 10000 | Cut to 10000. A negative or fractional number is a wrong shape: file refused. |
-| Block kinds are exactly the seven above, spelled with that capitalisation | **An unknown kind refuses the whole file** ("That flow file is damaged."). |
-| `cursorpie_flow` is present and is 1 | Missing: "not a CursorPie flow". Greater than 1: "made by a newer CursorPie". |
+| At most 128 blocks (32 flows per config) | The extra blocks are cut off the end of the list. |
+| `Wait` is 0 to 10000, `Repeat` 0 to 1000, `Run.timeout_s` 1 to 120, a text field at most 4000 characters, a variable name as described above | Cut or cleaned to the limit. A negative or fractional number is a wrong shape: file refused. |
+| Block kinds, `op` and `mode` values are exactly the ones in this page, spelled with that capitalisation | **An unknown one refuses the whole file** ("That flow file is damaged."). |
+| `cursorpie_flow` is present and is 1 or 2 | Missing: "not a CursorPie flow". Greater than 2: "made by a newer CursorPie". |
 | The file is valid JSON, UTF-8, at most 1 MiB | Refused. No comments, no trailing commas (the `jsonc` in this page is for reading only). |
 
-A wrong **type** (a string where a number goes, an array for `next`) refuses the file; unknown extra fields are ignored.
+Several wires into one block and wires back to an earlier block are **allowed**. A wrong **type** (a string where a
+number goes, an array for `next`) refuses the file; unknown extra fields are ignored.
 
 ## Attaching a flow to a slice
 
@@ -272,19 +355,28 @@ rows: `Key Cmd+C`, `Wait 150`, `Key Cmd+Tab` (`key` 48), `Wait 250`, `Key Cmd+V`
 **4. Inside a config**: `config-with-flow.json` has a `flows` array and a slice whose action is
 `{ "Flow": "morning" }`.
 
+**5. Ask, decide, loop, use the system** (any OS): `ask-and-loop.cursorpie-flow.json`. Asks "How many times?"
+(`Ask`, answer in `n`), stops at once when the question was cancelled (`Branch` on `ok`, its `alt` leads to `End`),
+then counts `i` from 0 with a `While` whose body is a notification (`Native` `Notify`, with `{{index}}` and `{{n}}`)
+and `Calc` `i = i + 1` wired back to the `While`; when it is done a last notification says so.
+
 ## The checklist before you answer
 
 - [ ] The JSON parses (no comments, no trailing commas, double quotes, escaped backslashes and quotes).
-- [ ] Top level is `{ "cursorpie_flow": 1, "flow": { "id", "name", "nodes" } }`.
-- [ ] Exactly one `"Start"` and one `"End"`; `End.next` is `null`.
+- [ ] Top level is `{ "cursorpie_flow": 1 or 2, "flow": { "id", "name", "nodes" } }`; 2 whenever a block of the logic,
+      ask or system sections or an `alt` is used.
+- [ ] Exactly one `"Start"` and one `"End"`; `End` has no `next`.
 - [ ] Every block has `id`, `x`, `y`, `kind`; ids are unique integers.
-- [ ] Following `next` from `Start` visits **every** block once and ends at `End` (no block left over, no loop, no
-      two blocks pointing at the same one).
-- [ ] Each `kind` is one of `"Start"`, `"End"`, `{"Key":{"key":int,"mods":int}}`, `{"OpenApp":str}`,
-      `{"OpenUrl":str}`, `{"Command":str}`, `{"Wait":int 0..10000}`.
+- [ ] Every `next` and `alt` names an existing block; only `Branch`, `Repeat` and `While` have an `alt`.
+- [ ] Every block is reachable from `Start` (following `next` and `alt`); every path ends at `End`, at `Stop` or at a
+      deliberate missing wire.
+- [ ] A `Repeat` or `While` has its body on `next`, the last block of the body wired **back to the loop block**, and
+      what follows on `alt`. A `While` changes something its condition reads.
+- [ ] Each variable is **written before it is read**, and each result field holds a bare name (no braces).
 - [ ] `Key.key` is a number from the table; `mods` is the sum of bits for the **target OS**.
 - [ ] A `Wait` sits between a step that opens something and the step that needs it.
-- [ ] If there is a `Command`, you have said so and quoted it for the person.
+- [ ] If there is a `Command`, a `Run` or a block that writes a file, you have said so and quoted it for the person;
+      text from a variable inside a shell command uses `{{name|sh}}` (or the environment variable of `Run`).
 - [ ] The answer tells the person the file name and the import steps.
 
 When you can run code, this check is short (Python):
@@ -292,24 +384,36 @@ When you can run code, this check is short (Python):
 ```python
 import json, sys
 f = json.load(open(sys.argv[1]))
-assert f["cursorpie_flow"] == 1
+assert f["cursorpie_flow"] in (1, 2)
 nodes = f["flow"]["nodes"]; by_id = {n["id"]: n for n in nodes}
-assert len(by_id) == len(nodes) <= 64, "ids must be unique, at most 64 blocks"
-kinds = [n["kind"] if isinstance(n["kind"], str) else next(iter(n["kind"])) for n in nodes]
+assert len(by_id) == len(nodes) <= 128, "ids must be unique, at most 128 blocks"
+name = lambda k: k if isinstance(k, str) else next(iter(k))
+kinds = [name(n["kind"]) for n in nodes]
 assert kinds.count("Start") == 1 and kinds.count("End") == 1
-assert set(kinds) <= {"Start","End","Key","OpenApp","OpenUrl","Command","Wait"}
-cur, seen = next(n for n in nodes if n["kind"] == "Start"), []
-while cur:
-    assert cur["id"] not in seen, "loop"
-    seen.append(cur["id"])
-    cur = by_id.get(cur.get("next")) if cur.get("next") is not None else None
-assert len(seen) == len(nodes), "a block is not on the chain"
-assert by_id[seen[-1]]["kind"] == "End", "the chain must end at End"
+assert set(kinds) <= {"Start","End","Key","OpenApp","OpenUrl","Command","Wait","Set","Calc","Logic",
+                      "Branch","Repeat","While","Ask","Run","Native","Call","Stop"}
+two_out = {"Branch", "Repeat", "While"}
+no_out = {"End", "Stop"}
+for n in nodes:
+    k = name(n["kind"])
+    outs = [n.get("next"), n.get("alt")]
+    assert all(t is None or t in by_id for t in outs), f"block {n['id']}: a wire to nothing"
+    assert n.get("alt") is None or k in two_out, f"block {n['id']}: only Branch, Repeat, While have alt"
+    assert not (k in no_out and n.get("next") is not None), f"block {n['id']}: no outputs"
+    assert all(t != 1 for t in outs), "nothing goes into Start"
+seen, todo = [], [next(n["id"] for n in nodes if n["kind"] == "Start")]
+while todo:
+    i = todo.pop()
+    if i in seen: continue
+    seen.append(i)
+    todo += [t for t in (by_id[i].get("next"), by_id[i].get("alt")) if t is not None]
+assert len(seen) == len(nodes), "a block is not reachable from Start"
 for n in nodes:
     k = n["kind"]
     if isinstance(k, dict) and "Wait" in k: assert 0 <= k["Wait"] <= 10000
+    if isinstance(k, dict) and "Repeat" in k: assert 0 <= k["Repeat"] <= 1000
     if isinstance(k, dict) and "Key" in k: assert 0 <= k["Key"]["mods"] <= 15
-print("ok:", " -> ".join(str(i) for i in seen))
+print("ok:", len(seen), "blocks reachable")
 ```
 
 ## Answering well
@@ -317,5 +421,7 @@ print("ok:", " -> ".join(str(i) for i in seen))
 - Output the JSON in **one code block**, then the file name and the import steps. Do not add commentary inside the JSON.
 - Name the target OS you assumed, and every assumption about app names and key positions.
 - Keep flows short and every `Wait` purposeful. Prefer several small flows over one with 40 blocks.
-- If the request needs something a flow cannot do (branching, repeating, reading the screen, typing arbitrary text
-  without a command), say so instead of faking it with extra block kinds.
+- If the request needs something a flow cannot do (reading the screen, moving or clicking the mouse, a network
+  request, a loop over the lines of a file), say so instead of faking it with extra block kinds.
+- Explain every loop and every branch in one sentence ("the body repeats until `i` reaches `n`"), and say which
+  variables the flow uses.

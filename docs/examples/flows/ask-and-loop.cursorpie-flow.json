@@ -1,0 +1,18 @@
+{
+  "cursorpie_flow": 2,
+  "flow": {
+    "id": "ask-and-loop",
+    "name": "Ask how many, notify that many times",
+    "nodes": [
+      { "id": 1, "x": 40.0,  "y": 60.0,  "kind": "Start", "next": 2 },
+      { "id": 2, "x": 240.0, "y": 60.0,  "kind": { "Ask": { "mode": "Text", "message": "How many times?", "preset": "3", "out": "n" } }, "next": 3 },
+      { "id": 3, "x": 540.0, "y": 60.0,  "kind": { "Branch": { "a": "ok", "op": "IsTrue", "b": "" } }, "next": 4, "alt": 9 },
+      { "id": 4, "x": 40.0,  "y": 260.0, "kind": { "Set": { "name": "i", "value": "0" } }, "next": 5 },
+      { "id": 5, "x": 340.0, "y": 260.0, "kind": { "While": { "a": "i", "op": "Lt", "b": "n" } }, "next": 6, "alt": 8 },
+      { "id": 6, "x": 640.0, "y": 260.0, "kind": { "Native": { "op": "Notify", "a": "Hello", "b": "Round {{index}} of {{n}}" } }, "next": 7 },
+      { "id": 7, "x": 640.0, "y": 400.0, "kind": { "Calc": { "out": "i", "a": "i", "op": "Add", "b": "1" } }, "next": 5 },
+      { "id": 8, "x": 340.0, "y": 400.0, "kind": { "Native": { "op": "Notify", "a": "Done", "b": "" } }, "next": 9 },
+      { "id": 9, "x": 40.0,  "y": 400.0, "kind": "End" }
+    ]
+  }
+}

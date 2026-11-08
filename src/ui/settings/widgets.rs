@@ -1283,7 +1283,29 @@ pub(in crate::ui::settings) fn select(
     selected: usize,
 ) -> Option<usize> {
     let items: Vec<(Option<char>, &str)> = labels.iter().map(|&l| (None, l)).collect();
-    select_with(ui, width, None, current, &items, selected)
+    select_with(ui, width, width, None, current, &items, selected)
+}
+
+/// [`select`] whose list is wider than the pill: for a small pill (an operator in a row of
+/// fields) whose choices have longer names than the pill can show.
+pub(in crate::ui::settings) fn select_wide(
+    ui: &mut egui::Ui,
+    width: f32,
+    list_width: f32,
+    current: &str,
+    labels: &[&str],
+    selected: usize,
+) -> Option<usize> {
+    let items: Vec<(Option<char>, &str)> = labels.iter().map(|&l| (None, l)).collect();
+    select_with(
+        ui,
+        width,
+        list_width.max(width),
+        None,
+        current,
+        &items,
+        selected,
+    )
 }
 
 /// [`select`] whose choices have an icon each: the icon of the current one shows on the pill, and
@@ -1295,12 +1317,13 @@ pub(in crate::ui::settings) fn select_icons(
     selected: usize,
 ) -> Option<usize> {
     let (icon, label) = items.get(selected).copied().unwrap_or((None, ""));
-    select_with(ui, width, icon, label, items, selected)
+    select_with(ui, width, width, icon, label, items, selected)
 }
 
 fn select_with(
     ui: &mut egui::Ui,
     width: f32,
+    list_width: f32,
     current_icon: Option<char>,
     current: &str,
     items: &[(Option<char>, &str)],
@@ -1350,10 +1373,10 @@ fn select_with(
         .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
         .align(egui::RectAlign::BOTTOM_START)
         .gap(6.0)
-        .width(width)
+        .width(list_width)
         .frame(popup_frame().inner_margin(egui::Margin::same(6)))
         .show(|ui| {
-            ui.set_width(width - 12.0);
+            ui.set_width(list_width - 12.0);
             ui.spacing_mut().item_spacing.y = 2.0;
             for (i, (icon, label)) in items.iter().enumerate() {
                 if select_item(ui, *icon, label, i == selected).clicked() {
@@ -1365,7 +1388,12 @@ fn select_with(
 }
 
 /// One line of a [`select`] list.
-fn select_item(ui: &mut egui::Ui, icon: Option<char>, label: &str, on: bool) -> egui::Response {
+pub(in crate::ui::settings) fn select_item(
+    ui: &mut egui::Ui,
+    icon: Option<char>,
+    label: &str,
+    on: bool,
+) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(
         Vec2::new(ui.available_width(), CONTROL_H),
         egui::Sense::click(),

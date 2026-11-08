@@ -33,7 +33,7 @@ mod tree;
 
 pub use defaults::{blank_items, presets, quick_actions};
 pub use first_run::{FirstRun, mark_welcomed, welcome_due};
-pub use flow::{Flow, FlowNode, NodeKind};
+pub use flow::{AskMode, CalcOp, CmpOp, Cond, Flow, FlowNode, LogicOp, NativeOp, NodeKind, Port};
 pub use model::*;
 pub use share::image_path;
 pub use store::*;
@@ -50,7 +50,27 @@ pub const MAX_PROFILES: usize = 16;
 /// Max number of flows (see [`flow`]).
 pub const MAX_FLOWS: usize = 32;
 /// Max blocks in one flow, *Start* included.
-pub const MAX_FLOW_NODES: usize = 64;
+pub const MAX_FLOW_NODES: usize = 128;
+/// Most times a *Repeat* or *While* block sends the flow into its body in one run.
+pub const MAX_REPEAT: u32 = 1_000;
+/// Most blocks one run of a flow carries out, loops and called flows included. A flow that never
+/// ends (a *While* whose condition stays true) is stopped here.
+pub const MAX_FLOW_STEPS: u32 = 10_000;
+/// Longest one run of a flow lasts, in seconds. Time spent waiting for an answer in an *Ask*
+/// block does not count.
+pub const MAX_FLOW_RUN_SECS: u64 = 600;
+/// Deepest a flow can call another flow (a *Call* block) before the call is skipped.
+pub const MAX_CALL_DEPTH: u8 = 8;
+/// Longest a *Run* block waits for its command, in seconds.
+pub const MAX_RUN_SECS: u32 = 120;
+/// Longest text a field of a block holds, in characters.
+pub const MAX_FIELD_CHARS: usize = 4_000;
+/// Longest name of a variable of a flow, in characters.
+pub const MAX_VAR_NAME_CHARS: usize = 32;
+/// Most variables one run of a flow keeps.
+pub const MAX_VARS: usize = 128;
+/// Longest value of a variable, in characters. A longer one is cut.
+pub const MAX_VALUE_CHARS: usize = 16_384;
 /// Longest a *Wait* step lasts, in milliseconds. The actions worker does one thing at a time, so
 /// a long wait would hold up every other action.
 pub const MAX_WAIT_MS: u32 = 10_000;

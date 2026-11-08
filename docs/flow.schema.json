@@ -2,11 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/sebastvnd/cursorpie/docs/flow.schema.json",
   "title": "CursorPie flow file (*.cursorpie-flow.json)",
-  "description": "One flow: a chain of blocks from the single Start block to the single End block. See docs/FLOWS_FOR_AI.md. The app repairs most violations on import, but a wrong shape (unknown block kind, wrong type) makes it refuse the whole file.",
+  "description": "One flow: a graph of blocks from the single Start block, with decisions, loops, variables and system blocks. See docs/FLOWS_FOR_AI.md. The app repairs most violations on import, but a wrong shape (unknown block kind, wrong type) makes it refuse the whole file.",
   "type": "object",
   "required": ["cursorpie_flow", "flow"],
   "properties": {
-    "cursorpie_flow": { "const": 1, "description": "File format version. Always 1." },
+    "cursorpie_flow": { "enum": [1, 2], "description": "File format version. 1 when the flow only uses Start, End, Key, OpenApp, OpenUrl, Command and Wait and no alt (an older CursorPie opens it too); 2 otherwise." },
     "flow": { "$ref": "#/$defs/flow" }
   },
   "$defs": {
@@ -14,9 +14,9 @@
       "type": "object",
       "required": ["id", "name", "nodes"],
       "properties": {
-        "id": { "type": "string", "minLength": 1, "description": "Unique in a config.json (Action::Flow refers to it). Replaced with a fresh id when the file is imported." },
+        "id": { "type": "string", "minLength": 1, "description": "Unique in a config.json (Action::Flow and the Call block refer to it). Replaced with a fresh id when the file is imported." },
         "name": { "type": "string", "minLength": 1, "maxLength": 60, "description": "Shown in the Flow tab; trimmed, cut to 60 characters, made unique on import." },
-        "nodes": { "type": "array", "minItems": 2, "maxItems": 64, "items": { "$ref": "#/$defs/node" } }
+        "nodes": { "type": "array", "minItems": 2, "maxItems": 128, "items": { "$ref": "#/$defs/node" } }
       }
     },
     "node": {
@@ -27,32 +27,84 @@
         "x": { "type": "number", "minimum": -20000, "maximum": 20000, "description": "Editor position only; has no effect on what runs." },
         "y": { "type": "number", "minimum": -20000, "maximum": 20000 },
         "kind": { "$ref": "#/$defs/kind" },
-        "next": { "type": ["integer", "null"], "minimum": 0, "description": "id of the block the wire from this block leads to; null or absent = no wire. End has none." }
+        "next": { "type": ["integer", "null"], "minimum": 0, "description": "id of the block the first output leads to (the then branch of Branch, the body of Repeat and While); null or absent = no wire, the run ends there. End and Stop have none." },
+        "alt": { "type": ["integer", "null"], "minimum": 0, "description": "id of the block the second output leads to (the else branch of Branch, what follows Repeat and While). Only those three blocks have one." }
+      }
+    },
+    "text": { "type": "string", "maxLength": 4000, "description": "A text field. {{name}} is replaced by the value of the variable name; {{name|sh}} by the value quoted for the shell." },
+    "variable": { "type": "string", "maxLength": 32, "pattern": "^[A-Za-z_][A-Za-z0-9_]*$", "description": "A variable name: letters, digits and underscores, not starting with a digit." },
+    "cond": {
+      "type": "object",
+      "properties": {
+        "a": { "$ref": "#/$defs/text", "description": "A value or the name of a variable." },
+        "op": { "enum": ["Eq", "Ne", "Lt", "Le", "Gt", "Ge", "Contains", "StartsWith", "EndsWith", "IsTrue", "IsEmpty"] },
+        "b": { "$ref": "#/$defs/text", "description": "Unused by IsTrue and IsEmpty." }
       }
     },
     "kind": {
       "oneOf": [
         { "const": "Start", "description": "Exactly one per flow. Nothing may be wired into it." },
-        { "const": "End", "description": "Exactly one per flow. It has no next." },
+        { "const": "End", "description": "Exactly one per flow. It has no outputs." },
+        { "const": "Stop", "description": "Ends the whole run, also inside a called flow. No outputs." },
         {
           "type": "object", "required": ["Key"], "additionalProperties": false,
           "properties": { "Key": { "$ref": "#/$defs/shortcut" } }
         },
         {
           "type": "object", "required": ["OpenApp"], "additionalProperties": false,
-          "properties": { "OpenApp": { "type": "string", "description": "App name or path, as in an Open app slice: Safari, /Applications/X.app (macOS); chrome or C:\\Path\\App.exe (Windows); firefox or /usr/bin/app (Linux)." } }
+          "properties": { "OpenApp": { "$ref": "#/$defs/text", "description": "App name or path, as in an Open app slice: Safari, /Applications/X.app (macOS); chrome or C:\\Path\\App.exe (Windows); firefox or /usr/bin/app (Linux)." } }
         },
         {
           "type": "object", "required": ["OpenUrl"], "additionalProperties": false,
-          "properties": { "OpenUrl": { "type": "string", "description": "A URL or a file path, opened with the system default." } }
+          "properties": { "OpenUrl": { "$ref": "#/$defs/text", "description": "A URL or a file path, opened with the system default." } }
         },
         {
           "type": "object", "required": ["Command"], "additionalProperties": false,
-          "properties": { "Command": { "type": "string", "description": "A shell command line. Runs with the user's rights: the app warns about it when a flow with a command is imported." } }
+          "properties": { "Command": { "$ref": "#/$defs/text", "description": "A shell command line, started and not waited for. Runs with the user's rights: the app warns about it when a flow with a command is imported." } }
         },
         {
           "type": "object", "required": ["Wait"], "additionalProperties": false,
           "properties": { "Wait": { "type": "integer", "minimum": 0, "maximum": 10000, "description": "Milliseconds. Values above 10000 are cut to 10000." } }
+        },
+        {
+          "type": "object", "required": ["Set"], "additionalProperties": false,
+          "properties": { "Set": { "type": "object", "properties": { "name": { "$ref": "#/$defs/variable" }, "value": { "$ref": "#/$defs/text" } } } }
+        },
+        {
+          "type": "object", "required": ["Calc"], "additionalProperties": false,
+          "properties": { "Calc": { "type": "object", "properties": { "out": { "$ref": "#/$defs/variable" }, "a": { "$ref": "#/$defs/text" }, "op": { "enum": ["Add", "Sub", "Mul", "Div", "Rem", "Min", "Max"] }, "b": { "$ref": "#/$defs/text" } } } }
+        },
+        {
+          "type": "object", "required": ["Logic"], "additionalProperties": false,
+          "properties": { "Logic": { "type": "object", "properties": { "out": { "$ref": "#/$defs/variable" }, "a": { "$ref": "#/$defs/text" }, "op": { "enum": ["And", "Or", "Xor", "Nand", "Nor", "Not"] }, "b": { "$ref": "#/$defs/text" } } } }
+        },
+        {
+          "type": "object", "required": ["Branch"], "additionalProperties": false,
+          "properties": { "Branch": { "$ref": "#/$defs/cond" } }
+        },
+        {
+          "type": "object", "required": ["Repeat"], "additionalProperties": false,
+          "properties": { "Repeat": { "type": "integer", "minimum": 0, "maximum": 1000, "description": "Rounds through next (the body); then alt." } }
+        },
+        {
+          "type": "object", "required": ["While"], "additionalProperties": false,
+          "properties": { "While": { "$ref": "#/$defs/cond" } }
+        },
+        {
+          "type": "object", "required": ["Ask"], "additionalProperties": false,
+          "properties": { "Ask": { "type": "object", "properties": { "mode": { "enum": ["Text", "YesNo"] }, "message": { "$ref": "#/$defs/text" }, "preset": { "$ref": "#/$defs/text" }, "out": { "$ref": "#/$defs/variable" } } } }
+        },
+        {
+          "type": "object", "required": ["Run"], "additionalProperties": false,
+          "properties": { "Run": { "type": "object", "properties": { "command": { "$ref": "#/$defs/text" }, "out": { "$ref": "#/$defs/variable" }, "timeout_s": { "type": "integer", "minimum": 1, "maximum": 120, "default": 10 } } } }
+        },
+        {
+          "type": "object", "required": ["Native"], "additionalProperties": false,
+          "properties": { "Native": { "type": "object", "properties": { "op": { "enum": ["ClipboardSet", "ClipboardGet", "TypeText", "Notify", "ReadFile", "WriteFile", "AppendFile", "FileExists", "Env", "FrontApp", "ActivateApp", "AppRunning", "CursorPos", "Random", "UnixTime", "Reveal"] }, "a": { "$ref": "#/$defs/text" }, "b": { "$ref": "#/$defs/text" } } } }
+        },
+        {
+          "type": "object", "required": ["Call"], "additionalProperties": false,
+          "properties": { "Call": { "$ref": "#/$defs/text", "description": "The id of another flow of the config." } }
         }
       ]
     },

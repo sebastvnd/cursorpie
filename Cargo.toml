@@ -1,6 +1,6 @@
 [package]
 name = "cursorpie"
-version = "0.8.8"
+version = "0.8.9"
 edition = "2024"
 rust-version = "1.88"
 description = "Hold-to-open pie menu for macOS, Windows and Linux (X11 and Wayland): per-app profiles, shortcuts, launchers and submenus."

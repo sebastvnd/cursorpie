@@ -34,6 +34,7 @@
 //! | `declares_single_window` | whether an app says it has a single main window, so the "Open app" choice leaves out the new-window badge (Linux: `SingleMainWindow` in the `.desktop` file; elsewhere false, and [`windowing`](crate::windowing) has a list of well-known one-window apps that applies on every OS) |
 //! | `running_among`, `open_app_new_window` | for the choice an "Open app" slice offers when its app already runs (see [`running`](crate::running)): which of some apps run (one look at the system for all of them, called off the tap thread), and a new window of an app (macOS: `open -a`, then Cmd+N; Windows and Linux: start it again) |
 //! | [`web`] | the same choice for an "Open URL" slice with a web link: which pages CursorPie opened and are still open, a new browser window, and going to the browser that has the page (not a backend function: it is built from `open_url`, `reveal_app` and `running_among`) |
+//! | [`native`] | what the blocks of a flow ask of the desktop beyond the backend: the clipboard, notifications, questions in a window, a shell command that is waited for, text files (not a backend function: it runs the programs each system ships) |
 //! | [`http`] | a plain HTTPS `GET` for the update check (see [`update`](crate::update)): not a backend function, it is the same code on every OS and runs the system's `curl` (or `wget`) |
 //! | `choose_file`, `tick` | file chooser and hover sound |
 //! | `haptic` | one haptic tick on a trackpad (macOS only, no-op elsewhere), see [`HapticKind`] |
@@ -54,6 +55,9 @@ pub mod desktops;
 pub mod http;
 pub mod installed;
 pub mod keymap;
+// Clipboard, notifications, questions and a command that is waited for, for the blocks of a flow:
+// built from the programs of each system, so it is the same on every OS.
+pub mod native;
 // Which web pages are open, a new browser window, going to the page that is open: built from the
 // functions of the backends, so it is the same on every OS.
 pub mod web;

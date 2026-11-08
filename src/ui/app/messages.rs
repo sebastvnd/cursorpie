@@ -170,7 +170,7 @@ impl App {
                     self.ed.stop_recording();
                     self.ed.icons.revalidate();
                     self.say(if warn {
-                        "Imported. This config runs shell commands - review them before you Save."
+                        "Imported. This config can run shell commands or write files - review them before you Save."
                     } else {
                         "Imported. Review it, then press Save to apply."
                     });
@@ -259,7 +259,7 @@ impl App {
                 self.ed.stop_recording();
                 self.ed.icons.revalidate();
                 self.say(if runs_commands {
-                    "Profile imported. It runs shell commands - review them before you Save."
+                    "Profile imported. It can run shell commands or write files - review them before you Save."
                 } else {
                     "Profile imported. Review it, then press Save to apply."
                 });
@@ -285,7 +285,7 @@ impl App {
                 self.ed.flow_pan = egui::Vec2::ZERO;
                 self.ed.stop_recording();
                 self.say(if runs_commands {
-                    "Flow imported. It runs shell commands - review them before you Save."
+                    "Flow imported. It can run shell commands or write files - review them before you Save."
                 } else {
                     "Flow imported. Review it, then press Save to apply."
                 });

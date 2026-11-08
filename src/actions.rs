@@ -3,15 +3,19 @@
 //! [`run_in`] only queues a job, so it is safe to call from the event-tap callback. The worker (started
 //! by [`init`]) sends keys through the platform backend (`CGEvent` on macOS, `SendInput` on Windows)
 //! and launches apps, URLs and shell commands through it as well. Events posted here carry [`SYNTH_TAG`] so the event tap ignores them.
+//! A flow is run by [`flowrun`], which asks `SystemHost` (the real [`Host`]) for everything it does.
 
-use crate::config::{Action, is_web_url};
+use crate::config::{Action, Flow, is_web_url};
+use crate::flowrun::{self, ExecResult, Host};
 use crate::geometry::Point;
+use crate::keys::Shortcut;
 use crate::platform;
 use crate::running::{self, Choice};
 use crate::tap::Kind;
 use crate::windowing::{Asked, Baseline};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{OnceLock, mpsc};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Marks events we posted ourselves so the event tap ignores them.
 pub const SYNTH_TAG: i64 = 0x504F_5055;
@@ -101,23 +105,18 @@ fn sends_keys(action: &Action) -> bool {
     match action {
         Action::Key(_) => true,
         Action::Sequence(steps) => steps.iter().any(sends_keys),
-        Action::Flow(id) => flow_steps(id).iter().any(sends_keys),
+        Action::Flow(id) => flow_by_id(id).is_some_and(|f| f.sends_keys()),
         _ => false,
     }
 }
 
-/// The steps of the flow with this id, copied out so the config lock is not held while they run.
-/// Empty when there is no such flow.
-fn flow_steps(id: &str) -> Vec<Action> {
+/// The flow with this id, copied out so the config lock is not held while it runs. `None` when
+/// there is no such flow.
+fn flow_by_id(id: &str) -> Option<Flow> {
     let c = crate::config::cfg();
-    let steps: Vec<Action> = c
-        .flows
-        .iter()
-        .find(|f| f.id == id)
-        .map(|f| f.steps())
-        .unwrap_or_default();
+    let flow = c.flows.iter().find(|f| f.id == id).cloned();
     drop(c);
-    steps
+    flow
 }
 
 /// Runs one action on the worker thread. A sequence (and a flow) waits 40 ms between steps; a
@@ -165,9 +164,11 @@ fn execute_step(action: &Action, choice: &mut Option<Choice>) {
             std::thread::sleep(Duration::from_millis(u64::from(ms)));
         }
         Action::Flow(id) => {
-            for s in flow_steps(id) {
-                execute_step(&s, choice);
-                std::thread::sleep(Duration::from_millis(40));
+            if let Some(flow) = flow_by_id(id) {
+                let mut host = SystemHost {
+                    choice: choice.take(),
+                };
+                flowrun::run(&mut host, &flow, platform::OS);
             }
         }
         _ => {}
@@ -216,6 +217,144 @@ fn open_web(target: &str, choice: Option<Choice>) {
         }
         None => platform::open_url(target),
     }
+}
+
+/// The real [`Host`] of a flow run: every request goes to [`platform`] or [`platform::native`].
+struct SystemHost {
+    /// What was picked on an "Open app" slice whose app already runs; the first block of the flow
+    /// that opens an app (or a web link) uses it, like the first step of a sequence does.
+    choice: Option<Choice>,
+}
+
+impl Host for SystemHost {
+    fn key(&mut self, sc: Shortcut) {
+        platform::press_shortcut(sc);
+    }
+
+    fn open_app(&mut self, app: &str) {
+        open_app(app, self.choice.take());
+    }
+
+    fn open_url(&mut self, target: &str) {
+        // only a web link takes the choice: a file or a `mailto:` link leaves it for a later block
+        let picked = if is_web_url(target) {
+            self.choice.take()
+        } else {
+            None
+        };
+        open_web(target, picked);
+    }
+
+    fn command(&mut self, command: &str) {
+        platform::run_shell(command);
+    }
+
+    fn sleep(&mut self, ms: u64) {
+        std::thread::sleep(Duration::from_millis(ms));
+    }
+
+    fn exec(
+        &mut self,
+        command: &str,
+        env: &[(String, String)],
+        timeout: Duration,
+    ) -> Option<ExecResult> {
+        platform::native::exec(command, env, timeout).map(|o| ExecResult {
+            code: o.code,
+            stdout: o.stdout,
+        })
+    }
+
+    fn ask_text(&mut self, message: &str, preset: &str) -> Option<String> {
+        platform::native::ask_text(message, preset)
+    }
+
+    fn ask_yes_no(&mut self, message: &str) -> Option<bool> {
+        platform::native::ask_yes_no(message)
+    }
+
+    fn clipboard(&mut self) -> Option<String> {
+        platform::native::clipboard_get()
+    }
+
+    fn set_clipboard(&mut self, text: &str) -> bool {
+        platform::native::clipboard_set(text)
+    }
+
+    fn notify(&mut self, title: &str, text: &str) -> bool {
+        platform::native::notify(title, text)
+    }
+
+    fn read_file(&mut self, path: &str) -> Option<String> {
+        platform::native::read_file(path)
+    }
+
+    fn write_file(&mut self, path: &str, text: &str, append: bool) -> bool {
+        platform::native::write_file(path, text, append)
+    }
+
+    fn file_exists(&mut self, path: &str) -> bool {
+        platform::native::file_exists(path)
+    }
+
+    fn env_var(&mut self, name: &str) -> Option<String> {
+        if name.is_empty() {
+            return None;
+        }
+        std::env::var(name).ok()
+    }
+
+    fn front_app(&mut self) -> Option<String> {
+        platform::frontmost_bundle_id()
+    }
+
+    fn activate_app(&mut self, app: &str) {
+        platform::activate_app(app);
+    }
+
+    fn app_running(&mut self, app: &str) -> bool {
+        // one look at the system, on this worker thread (the pie is not waiting for it)
+        platform::running_among(&[app.to_string()])
+            .first()
+            .copied()
+            .unwrap_or(false)
+    }
+
+    fn cursor_pos(&mut self) -> Option<(f64, f64)> {
+        platform::cursor_pos()
+    }
+
+    fn random_below(&mut self, below: u64) -> u64 {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos() as u64);
+        // two calls in the same nanosecond still differ
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        mix(nanos ^ n.wrapping_mul(0x9E37_79B9_7F4A_7C15)) % below.max(1)
+    }
+
+    fn unix_time(&mut self) -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs())
+    }
+
+    fn reveal(&mut self, path: &str) {
+        platform::reveal_in_file_manager(std::path::Path::new(path));
+    }
+
+    fn flow(&mut self, id: &str) -> Option<Flow> {
+        flow_by_id(id)
+    }
+}
+
+/// Spreads the bits of `x` (the finalizer of SplitMix64), so numbers that differ little give
+/// numbers that look unrelated. Not for secrets: a flow only rolls dice with it.
+fn mix(mut x: u64) -> u64 {
+    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    x ^ (x >> 31)
 }
 
 /// Re-posts a swallowed mouse press/release (used when a quick click must reach the app after all).
@@ -312,6 +451,27 @@ mod tests {
             "a link is told from an app by its key"
         );
         assert_eq!(OpenTarget::App("Notes").key(), "Notes");
+    }
+
+    #[test]
+    fn mixing_spreads_neighbouring_numbers_and_the_dice_stay_in_range() {
+        assert_ne!(mix(1), mix(2));
+        assert_ne!(mix(0) % 100, mix(1) % 100);
+        let mut host = SystemHost { choice: None };
+        for _ in 0..50 {
+            assert!(host.random_below(6) < 6);
+        }
+        assert_eq!(host.random_below(1), 0);
+        assert_eq!(host.random_below(0), 0, "never divides by zero");
+    }
+
+    #[test]
+    fn the_host_answers_for_files_and_the_environment() {
+        let mut host = SystemHost { choice: None };
+        assert_eq!(host.env_var(""), None);
+        assert_eq!(host.env_var("CURSORPIE_SURELY_NOT_SET_0"), None);
+        assert!(!host.file_exists(""));
+        assert!(host.unix_time() > 1_600_000_000);
     }
 
     #[test]

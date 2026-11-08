@@ -61,11 +61,14 @@ default external tagging, for example `{"Run": {"OpenApp": "Notes"}}`.
 ### Flows
 
 `flows[]` is the list the **Flow** tab edits. Each flow is `{ "id", "name", "nodes": [...] }`; a node is
-`{ "id", "x", "y", "kind", "next" }` where `kind` is `Start`, `End`, `{"Key": ..}`, `{"OpenApp": ".."}`,
-`{"OpenUrl": ".."}`, `{"Command": ".."}` or `{"Wait": 500}` and `next` is the `id` of the node its wire leads to (or
-`null`). The flow runs from the one `Start` node along the `next` wires to the one `End` node (which has no `next`; a flow
-without one gets it when the file is loaded). At most 32 flows of 64 nodes; a wait is at
-most 10000 ms. Anything outside the limits is repaired when the file is loaded. The full reference for writing a flow by
+`{ "id", "x", "y", "kind", "next", "alt" }` where `kind` is `Start`, `End`, `Stop`, `{"Key": ..}`, `{"OpenApp": ".."}`,
+`{"OpenUrl": ".."}`, `{"Command": ".."}`, `{"Wait": 500}` or one of the blocks for variables, decisions, loops, questions
+and the system (`Set`, `Calc`, `Logic`, `Branch`, `Repeat`, `While`, `Ask`, `Run`, `Native`, `Call`), and `next` is the
+`id` of the node its wire leads to (or `null`); `alt` is the second output of `Branch`, `Repeat` and `While` (absent on
+the others). The flow runs from the one `Start` node along the wires until `End`, `Stop`, an output without a wire or a
+limit (10000 blocks, 10 minutes); several wires may lead into a node and a wire may lead back (a loop). A flow without an
+`End` gets one when the file is loaded. At most 32 flows of 128 nodes; a wait is at
+most 10000 ms, a repeat 1000 rounds, a `Run` 120 s. Anything outside the limits is repaired when the file is loaded. The full reference for writing a flow by
 hand or with an AI agent (key codes, rules, recipe, examples, a JSON Schema) is [FLOWS_FOR_AI.md](FLOWS_FOR_AI.md).
 
 ```json

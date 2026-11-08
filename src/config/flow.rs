@@ -1,10 +1,19 @@
-//! Flows: chains of steps drawn as blocks joined by wires (the *Flow* tab of Settings).
+//! Flows: graphs of blocks joined by wires (the *Flow* tab of Settings).
 //!
-//! A [`Flow`] is a small graph. Every block ([`FlowNode`]) has at most one wire going out
-//! (`next`) and at most one coming in, so the graph is a chain that starts at the one
-//! [`NodeKind::Start`] block and ends at the one [`NodeKind::End`] block. Running a flow follows the
-//! wires from *Start* and does each block in order ([`Flow::steps`]); blocks that are not wired
-//! to the chain are ignored.
+//! A [`Flow`] is a small program drawn as a graph. Every block ([`FlowNode`]) has one input and
+//! one or two outputs: most blocks have the output `next`; the blocks that decide ([`NodeKind::Branch`],
+//! [`NodeKind::Repeat`], [`NodeKind::While`]) have a second one, `alt` (see [`Port`]). Any number of
+//! wires can lead into a block, so two paths can join again, and a wire may lead back to an earlier
+//! block: that is how a loop is made. A run starts at the one [`NodeKind::Start`] block, does what
+//! each block says and follows the wire it leads to; it ends at [`NodeKind::End`], at
+//! [`NodeKind::Stop`], at an output without a wire, or when it hits one of the limits of
+//! [`flowrun`](crate::flowrun). Blocks that no path from *Start* reaches are ignored.
+//!
+//! A run has **variables**: named texts that the blocks read and write (`{{name}}` in a text field
+//! is replaced by the value of the variable). The blocks that compute, ask or look at the system
+//! put their result in a variable, and the blocks that decide read them. The interpreter lives in
+//! [`flowrun`](crate::flowrun); this module is the data model, the rules that keep a flow valid
+//! and the share file.
 //!
 //! A slice uses a flow through [`Action::Flow`], which names the flow by its `id`. The flows live in
 //! [`Config::flows`](super::Config::flows), so they are saved, backed up, exported and undone with the rest of the config.
@@ -14,40 +23,366 @@
 //! A flow is shared as one JSON file, `<name>.cursorpie-flow.json`:
 //!
 //! ```text
-//! { "cursorpie_flow": 1, "flow": { "id": "...", "name": "...", "nodes": [...] } }
+//! { "cursorpie_flow": 2, "flow": { "id": "...", "name": "...", "nodes": [...] } }
 //! ```
+//!
+//! The number is 1 for a flow that only uses the blocks and wires of the first version, so those
+//! files still open in an older CursorPie, and 2 when a block or a second output needs this one.
 //!
 //! A profile file ([`share`](super::share)) also carries the flows its slices use, so a shared
 //! profile keeps working. Importing never trusts a file: the flow goes through [`Flow::clean`]
-//! (limits, one *Start* and one *End*, no loops), it always gets a **new** id and a unique name, and the caller
-//! warns when it holds shell commands ([`Flow::has_commands`]).
+//! (limits, one *Start* and one *End*), it always gets a **new** id and a unique name, and the
+//! caller warns when it can run shell commands or write files ([`Flow::has_commands`]).
 
 use super::share::safe_stem;
-use super::{Action, Item, ItemKind, MAX_FLOW_NODES, MAX_FLOWS, MAX_WAIT_MS};
+use super::{
+    Action, Item, ItemKind, MAX_FIELD_CHARS, MAX_FLOW_NODES, MAX_FLOWS, MAX_REPEAT, MAX_RUN_SECS,
+    MAX_VAR_NAME_CHARS, MAX_WAIT_MS,
+};
 use crate::keys::Shortcut;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::path::PathBuf;
 
-/// Value of `cursorpie_flow` in files written by this version.
-pub const FLOW_FORMAT: u32 = 1;
+/// Value of `cursorpie_flow` in files that need this version of CursorPie (see [`Flow::format`]).
+pub const FLOW_FORMAT: u32 = 2;
+/// Value of `cursorpie_flow` in files that an older CursorPie can open too.
+pub const LEGACY_FLOW_FORMAT: u32 = 1;
 /// Larger flow files are refused without being read.
 pub const MAX_FLOW_FILE_BYTES: u64 = 1024 * 1024;
 /// Blocks are kept inside this distance of the origin, so a hostile file cannot place one at
 /// infinity.
 pub const COORD_LIMIT: f32 = 20_000.0;
 /// Width of an ordinary block in the editor, in points.
-pub const NODE_W: f32 = 250.0;
-/// Width of the *Start* block.
+pub const NODE_W: f32 = 280.0;
+/// Width of the *Start*, *End* and *Stop* blocks.
 pub const START_W: f32 = 150.0;
 /// Longest name of a flow, in characters.
 pub const MAX_NAME_CHARS: usize = 60;
+/// How long a *Run* block waits for its command when the file does not say.
+const DEFAULT_RUN_SECS: u32 = 10;
+
+fn default_run_secs() -> u32 {
+    DEFAULT_RUN_SECS
+}
+
+/// Which output of a block a wire leaves from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Port {
+    /// The ordinary output: the next block, the *then* branch of a [`NodeKind::Branch`], the body
+    /// of a loop.
+    Next,
+    /// The second output of a block that decides: the *else* branch, or what follows a loop.
+    Alt,
+}
+
+/// How a [`Cond`] compares its two operands.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CmpOp {
+    /// Equal (as numbers when both are numbers, as text otherwise).
+    #[default]
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    /// The left text contains the right one.
+    Contains,
+    StartsWith,
+    EndsWith,
+    /// The left operand is true (not empty, not `0`, `false`, `no` or `off`). The right one is unused.
+    IsTrue,
+    /// The left operand is empty or only spaces. The right one is unused.
+    IsEmpty,
+}
+
+impl CmpOp {
+    /// Every comparison, in the order the editor lists them.
+    pub const ALL: [CmpOp; 11] = [
+        CmpOp::Eq,
+        CmpOp::Ne,
+        CmpOp::Lt,
+        CmpOp::Le,
+        CmpOp::Gt,
+        CmpOp::Ge,
+        CmpOp::Contains,
+        CmpOp::StartsWith,
+        CmpOp::EndsWith,
+        CmpOp::IsTrue,
+        CmpOp::IsEmpty,
+    ];
+
+    /// What the editor shows for it.
+    pub const fn label(self) -> &'static str {
+        match self {
+            CmpOp::Eq => "==",
+            CmpOp::Ne => "!=",
+            CmpOp::Lt => "<",
+            CmpOp::Le => "<=",
+            CmpOp::Gt => ">",
+            CmpOp::Ge => ">=",
+            CmpOp::Contains => "has",
+            CmpOp::StartsWith => "begins",
+            CmpOp::EndsWith => "ends",
+            CmpOp::IsTrue => "is true",
+            CmpOp::IsEmpty => "is empty",
+        }
+    }
+
+    /// Whether the comparison looks at the left operand only.
+    pub const fn is_unary(self) -> bool {
+        matches!(self, CmpOp::IsTrue | CmpOp::IsEmpty)
+    }
+}
+
+/// What a *Branch* or *While* block asks: `a op b`. An operand is a value or the name of a
+/// variable (see [`flowrun`](crate::flowrun)).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Cond {
+    #[serde(default)]
+    pub a: String,
+    #[serde(default)]
+    pub op: CmpOp,
+    #[serde(default)]
+    pub b: String,
+}
+
+/// The arithmetic of a *Calc* block.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CalcOp {
+    #[default]
+    Add,
+    Sub,
+    Mul,
+    Div,
+    /// The remainder of a division.
+    Rem,
+    Min,
+    Max,
+}
+
+impl CalcOp {
+    /// Every operation, in the order the editor lists them.
+    pub const ALL: [CalcOp; 7] = [
+        CalcOp::Add,
+        CalcOp::Sub,
+        CalcOp::Mul,
+        CalcOp::Div,
+        CalcOp::Rem,
+        CalcOp::Min,
+        CalcOp::Max,
+    ];
+
+    /// What the editor shows for it.
+    pub const fn label(self) -> &'static str {
+        match self {
+            CalcOp::Add => "+",
+            CalcOp::Sub => "-",
+            CalcOp::Mul => "*",
+            CalcOp::Div => "/",
+            CalcOp::Rem => "%",
+            CalcOp::Min => "min",
+            CalcOp::Max => "max",
+        }
+    }
+}
+
+/// The logic gate of a *Logic* block. The operands are read as true or false.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LogicOp {
+    #[default]
+    And,
+    Or,
+    Xor,
+    Nand,
+    Nor,
+    /// Inverts the left operand. The right one is unused.
+    Not,
+}
+
+impl LogicOp {
+    /// Every gate, in the order the editor lists them.
+    pub const ALL: [LogicOp; 6] = [
+        LogicOp::And,
+        LogicOp::Or,
+        LogicOp::Xor,
+        LogicOp::Nand,
+        LogicOp::Nor,
+        LogicOp::Not,
+    ];
+
+    /// What the editor shows for it.
+    pub const fn label(self) -> &'static str {
+        match self {
+            LogicOp::And => "AND",
+            LogicOp::Or => "OR",
+            LogicOp::Xor => "XOR",
+            LogicOp::Nand => "NAND",
+            LogicOp::Nor => "NOR",
+            LogicOp::Not => "NOT",
+        }
+    }
+
+    /// Whether the gate looks at the left operand only.
+    pub const fn is_unary(self) -> bool {
+        matches!(self, LogicOp::Not)
+    }
+}
+
+/// What an *Ask* block shows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AskMode {
+    /// A box to type a text in.
+    #[default]
+    Text,
+    /// A question with Yes and No.
+    YesNo,
+}
+
+impl AskMode {
+    /// Every mode, in the order the editor lists them.
+    pub const ALL: [AskMode; 2] = [AskMode::Text, AskMode::YesNo];
+
+    /// What the editor shows for it.
+    pub const fn label(self) -> &'static str {
+        match self {
+            AskMode::Text => "Text",
+            AskMode::YesNo => "Yes / No",
+        }
+    }
+}
+
+/// What a *Native* block does with the operating system. Each one takes up to two texts, `a` and
+/// `b`; [`NativeOp::hints`] says what each is for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NativeOp {
+    /// Puts `a` on the clipboard.
+    #[default]
+    ClipboardSet,
+    /// Reads the clipboard into the variable `b`.
+    ClipboardGet,
+    /// Types `a` into the app in front (through the clipboard and the paste shortcut; the clipboard is put back).
+    TypeText,
+    /// Shows a desktop notification: title `a`, text `b`.
+    Notify,
+    /// Reads the file `a` (text, at most 256 KB) into the variable `b`.
+    ReadFile,
+    /// Writes `b` to the file `a`, replacing what was there.
+    WriteFile,
+    /// Adds `b` at the end of the file `a`.
+    AppendFile,
+    /// Puts 1 in the variable `b` when the file or folder `a` exists, 0 otherwise.
+    FileExists,
+    /// Reads the environment variable `a` into the variable `b`.
+    Env,
+    /// Puts the id of the app in front in the variable `b`.
+    FrontApp,
+    /// Brings the app with the id `a` to the front.
+    ActivateApp,
+    /// Puts 1 in the variable `b` when the app `a` has a window, 0 otherwise.
+    AppRunning,
+    /// Puts the position of the pointer in the variables `a` (x) and `b` (y).
+    CursorPos,
+    /// Puts a whole number from 0 up to, not including, `a` in the variable `b`.
+    Random,
+    /// Puts the seconds since 1 January 1970 (UTC) in the variable `b`.
+    UnixTime,
+    /// Shows the file or folder `a` in the file manager.
+    Reveal,
+}
+
+impl NativeOp {
+    /// Every operation, in the order the editor lists them.
+    pub const ALL: [NativeOp; 16] = [
+        NativeOp::ClipboardSet,
+        NativeOp::ClipboardGet,
+        NativeOp::TypeText,
+        NativeOp::Notify,
+        NativeOp::ReadFile,
+        NativeOp::WriteFile,
+        NativeOp::AppendFile,
+        NativeOp::FileExists,
+        NativeOp::Env,
+        NativeOp::FrontApp,
+        NativeOp::ActivateApp,
+        NativeOp::AppRunning,
+        NativeOp::CursorPos,
+        NativeOp::Random,
+        NativeOp::UnixTime,
+        NativeOp::Reveal,
+    ];
+
+    /// What the editor shows for it.
+    pub const fn label(self) -> &'static str {
+        match self {
+            NativeOp::ClipboardSet => "Copy text to clipboard",
+            NativeOp::ClipboardGet => "Read clipboard",
+            NativeOp::TypeText => "Type text",
+            NativeOp::Notify => "Notification",
+            NativeOp::ReadFile => "Read file",
+            NativeOp::WriteFile => "Write file",
+            NativeOp::AppendFile => "Append to file",
+            NativeOp::FileExists => "File exists?",
+            NativeOp::Env => "Environment variable",
+            NativeOp::FrontApp => "App in front",
+            NativeOp::ActivateApp => "Bring app to front",
+            NativeOp::AppRunning => "App has a window?",
+            NativeOp::CursorPos => "Pointer position",
+            NativeOp::Random => "Random number",
+            NativeOp::UnixTime => "Time (Unix seconds)",
+            NativeOp::Reveal => "Show in file manager",
+        }
+    }
+
+    /// What the two text fields are for, as the hints the editor shows. An empty hint means the
+    /// operation does not use that field and the editor leaves it out.
+    pub const fn hints(self) -> (&'static str, &'static str) {
+        match self {
+            NativeOp::ClipboardSet => ("text to copy", ""),
+            NativeOp::ClipboardGet => ("", "variable"),
+            NativeOp::TypeText => ("text to type", ""),
+            NativeOp::Notify => ("title", "text"),
+            NativeOp::ReadFile => ("file path", "variable"),
+            NativeOp::WriteFile | NativeOp::AppendFile => ("file path", "text"),
+            NativeOp::FileExists => ("file or folder path", "variable"),
+            NativeOp::Env => ("name, e.g. HOME", "variable"),
+            NativeOp::FrontApp | NativeOp::UnixTime => ("", "variable"),
+            NativeOp::ActivateApp => ("app id", ""),
+            NativeOp::AppRunning => ("app", "variable"),
+            NativeOp::CursorPos => ("x variable", "y variable"),
+            NativeOp::Random => ("below (e.g. 100)", "variable"),
+            NativeOp::Reveal => ("file or folder path", ""),
+        }
+    }
+
+    /// Whether field `a` names a variable that gets a result.
+    pub const fn a_is_variable(self) -> bool {
+        matches!(self, NativeOp::CursorPos)
+    }
+
+    /// Whether field `b` names a variable that gets a result.
+    pub const fn b_is_variable(self) -> bool {
+        matches!(
+            self,
+            NativeOp::ClipboardGet
+                | NativeOp::ReadFile
+                | NativeOp::FileExists
+                | NativeOp::Env
+                | NativeOp::FrontApp
+                | NativeOp::AppRunning
+                | NativeOp::CursorPos
+                | NativeOp::Random
+                | NativeOp::UnixTime
+        )
+    }
+}
 
 /// What a block does.
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub enum NodeKind {
-    /// Where the chain begins. There is exactly one.
+    /// Where a run begins. There is exactly one.
     Start,
     /// Press a shortcut.
     Key(Shortcut),
@@ -55,35 +390,251 @@ pub enum NodeKind {
     OpenApp(String),
     /// Open a URL or a file.
     OpenUrl(String),
-    /// Run a shell command.
+    /// Run a shell command and go on without waiting for it.
     Command(String),
     /// Wait this many milliseconds before the next block.
     Wait(u32),
     /// Where the chain ends. There is exactly one; it has an input and no output.
     End,
+    /// Puts `value` (with its `{{variables}}` filled in) in the variable `name`.
+    Set {
+        #[serde(default)]
+        name: String,
+        #[serde(default)]
+        value: String,
+    },
+    /// `out = a op b`, as numbers. A text that is not a number, or a division by zero, leaves
+    /// `out` empty and `ok` at 0.
+    Calc {
+        #[serde(default)]
+        out: String,
+        #[serde(default)]
+        a: String,
+        #[serde(default)]
+        op: CalcOp,
+        #[serde(default)]
+        b: String,
+    },
+    /// `out = a gate b`, as 1 or 0.
+    Logic {
+        #[serde(default)]
+        out: String,
+        #[serde(default)]
+        a: String,
+        #[serde(default)]
+        op: LogicOp,
+        #[serde(default)]
+        b: String,
+    },
+    /// Follows `next` when the condition holds and `alt` when it does not.
+    Branch(Cond),
+    /// Goes through `next` (the body) this many times, then follows `alt`. The variable `index`
+    /// counts the rounds from 1.
+    Repeat(u32),
+    /// Goes through `next` (the body) as long as the condition holds, then follows `alt`.
+    While(Cond),
+    /// Asks the person, in a window of the system, and puts the answer in `out`. `ok` says whether
+    /// there was one.
+    Ask {
+        #[serde(default)]
+        mode: AskMode,
+        #[serde(default)]
+        message: String,
+        /// What the box starts with ([`AskMode::Text`] only).
+        #[serde(default)]
+        preset: String,
+        #[serde(default)]
+        out: String,
+    },
+    /// Runs a shell command, **waits** for it (at most `timeout_s` seconds), puts what it printed
+    /// in `out` and its exit code in the variable `code`.
+    Run {
+        #[serde(default)]
+        command: String,
+        #[serde(default)]
+        out: String,
+        #[serde(default = "default_run_secs")]
+        timeout_s: u32,
+    },
+    /// Something the operating system does or tells.
+    Native {
+        #[serde(default)]
+        op: NativeOp,
+        #[serde(default)]
+        a: String,
+        #[serde(default)]
+        b: String,
+    },
+    /// Runs the flow with this id, with the same variables, then goes on.
+    Call(String),
+    /// Ends the whole run, also when this flow was called by another one.
+    Stop,
 }
 
 impl NodeKind {
-    /// The action this block performs; `None` for *Start* and *End*.
+    /// The action this block performs; `None` for the blocks that are not a plain action (*Start*,
+    /// *End* and everything that computes, decides or asks).
     pub fn to_action(&self) -> Option<Action> {
         match self {
-            NodeKind::Start | NodeKind::End => None,
             NodeKind::Key(sc) => Some(Action::Key(*sc)),
             NodeKind::OpenApp(s) => Some(Action::OpenApp(s.clone())),
             NodeKind::OpenUrl(s) => Some(Action::OpenUrl(s.clone())),
             NodeKind::Command(s) => Some(Action::Command(s.clone())),
             NodeKind::Wait(ms) => Some(Action::Wait(*ms)),
+            _ => None,
         }
+    }
+
+    /// Whether this is one of the blocks that are only a header: *Start*, *End* and *Stop*.
+    pub fn is_marker(&self) -> bool {
+        matches!(self, NodeKind::Start | NodeKind::End | NodeKind::Stop)
     }
 
     /// Width of the block in the editor.
     pub fn width(&self) -> f32 {
-        if matches!(self, NodeKind::Start | NodeKind::End) {
-            START_W
-        } else {
-            NODE_W
+        if self.is_marker() { START_W } else { NODE_W }
+    }
+
+    /// The outputs the block has, in the order the editor draws them.
+    pub fn outputs(&self) -> &'static [Port] {
+        match self {
+            NodeKind::End | NodeKind::Stop => &[],
+            NodeKind::Branch(_) | NodeKind::Repeat(_) | NodeKind::While(_) => {
+                &[Port::Next, Port::Alt]
+            }
+            _ => &[Port::Next],
         }
     }
+
+    /// The names of the two outputs for the editor; empty for an output the block does not have
+    /// or one that needs no name.
+    pub fn output_names(&self) -> [&'static str; 2] {
+        match self {
+            NodeKind::Branch(_) => ["then", "else"],
+            NodeKind::Repeat(_) | NodeKind::While(_) => ["body", "done"],
+            _ => ["", ""],
+        }
+    }
+
+    /// Whether the block is one of the first version (a file with only these opens in an older CursorPie).
+    pub fn is_legacy(&self) -> bool {
+        matches!(
+            self,
+            NodeKind::Start
+                | NodeKind::Key(_)
+                | NodeKind::OpenApp(_)
+                | NodeKind::OpenUrl(_)
+                | NodeKind::Command(_)
+                | NodeKind::Wait(_)
+                | NodeKind::End
+        )
+    }
+
+    /// Whether the block runs a shell command or writes a file: what an import warns about.
+    pub fn is_sensitive(&self) -> bool {
+        match self {
+            NodeKind::Command(_) | NodeKind::Run { .. } => true,
+            NodeKind::Native { op, .. } => {
+                matches!(op, NativeOp::WriteFile | NativeOp::AppendFile)
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether the block sends keystrokes, so the app of the slice has to be in front first.
+    pub fn sends_keys(&self) -> bool {
+        match self {
+            NodeKind::Key(_) => true,
+            NodeKind::Native { op, .. } => matches!(op, NativeOp::TypeText),
+            _ => false,
+        }
+    }
+
+    /// Forces the fields of the block into their limits: texts of at most [`MAX_FIELD_CHARS`],
+    /// variable names that [`is_var_name`] accepts, a wait of at most [`MAX_WAIT_MS`], a loop of at
+    /// most [`MAX_REPEAT`] rounds and a command timeout of 1 to [`MAX_RUN_SECS`] seconds.
+    fn clean(&mut self) {
+        fn text(s: &mut String) {
+            if s.chars().count() > MAX_FIELD_CHARS {
+                *s = s.chars().take(MAX_FIELD_CHARS).collect();
+            }
+        }
+        fn var(s: &mut String) {
+            *s = clean_var_name(s);
+        }
+        match self {
+            NodeKind::Start | NodeKind::End | NodeKind::Stop | NodeKind::Key(_) => {}
+            NodeKind::OpenApp(s)
+            | NodeKind::OpenUrl(s)
+            | NodeKind::Command(s)
+            | NodeKind::Call(s) => text(s),
+            NodeKind::Wait(ms) => *ms = (*ms).min(MAX_WAIT_MS),
+            NodeKind::Repeat(n) => *n = (*n).min(MAX_REPEAT),
+            NodeKind::Set { name, value } => {
+                var(name);
+                text(value);
+            }
+            NodeKind::Calc { out, a, b, .. } | NodeKind::Logic { out, a, b, .. } => {
+                var(out);
+                text(a);
+                text(b);
+            }
+            NodeKind::Branch(c) | NodeKind::While(c) => {
+                text(&mut c.a);
+                text(&mut c.b);
+            }
+            NodeKind::Ask {
+                message,
+                preset,
+                out,
+                ..
+            } => {
+                text(message);
+                text(preset);
+                var(out);
+            }
+            NodeKind::Run {
+                command,
+                out,
+                timeout_s,
+            } => {
+                text(command);
+                var(out);
+                *timeout_s = (*timeout_s).clamp(1, MAX_RUN_SECS);
+            }
+            NodeKind::Native { op, a, b } => {
+                if op.a_is_variable() {
+                    var(a);
+                } else {
+                    text(a);
+                }
+                if op.b_is_variable() {
+                    var(b);
+                } else {
+                    text(b);
+                }
+            }
+        }
+    }
+}
+
+/// Whether `s` can be the name of a variable: 1 to [`MAX_VAR_NAME_CHARS`] letters, digits and
+/// underscores (ASCII), not starting with a digit.
+pub fn is_var_name(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars().count() <= MAX_VAR_NAME_CHARS
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && !s.starts_with(|c: char| c.is_ascii_digit())
+}
+
+/// The variable name closest to `s`: what [`is_var_name`] does not allow is dropped. May be empty.
+pub fn clean_var_name(s: &str) -> String {
+    s.trim()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+        .skip_while(char::is_ascii_digit)
+        .take(MAX_VAR_NAME_CHARS)
+        .collect()
 }
 
 /// One block of a flow.
@@ -95,12 +646,39 @@ pub struct FlowNode {
     pub x: f32,
     pub y: f32,
     pub kind: NodeKind,
-    /// The block the wire from this block's output goes to.
+    /// The block the wire from this block's output goes to ([`Port::Next`]).
     #[serde(default)]
     pub next: Option<u32>,
+    /// The block the wire from the second output goes to ([`Port::Alt`]); only the blocks that
+    /// decide have one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alt: Option<u32>,
 }
 
-/// A named chain of blocks.
+impl FlowNode {
+    /// The block the wire from `port` leads to.
+    pub fn wire(&self, port: Port) -> Option<u32> {
+        match port {
+            Port::Next => self.next,
+            Port::Alt => self.alt,
+        }
+    }
+
+    /// Mutable version of [`FlowNode::wire`].
+    fn wire_mut(&mut self, port: Port) -> &mut Option<u32> {
+        match port {
+            Port::Next => &mut self.next,
+            Port::Alt => &mut self.alt,
+        }
+    }
+
+    /// Both wires that leave the block (`None` for an output without one).
+    pub fn wires(&self) -> [Option<u32>; 2] {
+        [self.next, self.alt]
+    }
+}
+
+/// A named graph of blocks.
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct Flow {
     /// What [`Action::Flow`] refers to. Unique in the config; never shown.
@@ -122,6 +700,7 @@ impl Flow {
                     y: 60.0,
                     kind: NodeKind::Start,
                     next: Some(2),
+                    alt: None,
                 },
                 FlowNode {
                     id: 2,
@@ -129,6 +708,7 @@ impl Flow {
                     y: 60.0,
                     kind: NodeKind::End,
                     next: None,
+                    alt: None,
                 },
             ],
         }
@@ -175,16 +755,42 @@ impl Flow {
             .saturating_add(1)
     }
 
-    /// The blocks that run, in order: *Start*, then whatever its wire leads to, and so on.
+    /// The blocks reached from *Start* by following only the `next` wires, in order. For a flow
+    /// without decisions and loops this is everything that runs; [`Flow::reachable`] is the general
+    /// version.
     pub fn chain(&self) -> Vec<&FlowNode> {
         let mut out: Vec<&FlowNode> = Vec::new();
+        let mut seen = BTreeSet::new();
         let mut cur = self.start();
         while let Some(n) = cur {
-            if out.len() > self.nodes.len() {
-                break; // a loop (clean() removes them, this keeps a hand-made one harmless)
+            if !seen.insert(n.id) {
+                break; // a loop: the chain ends where it comes back
             }
             out.push(n);
             cur = n.next.and_then(|id| self.node(id));
+        }
+        out
+    }
+
+    /// Every block a run can get to: *Start*, and whatever its wires, of both outputs, lead to,
+    /// each once, in the order a breadth-first walk finds them. A block that is not here never runs.
+    pub fn reachable(&self) -> Vec<&FlowNode> {
+        let mut out: Vec<&FlowNode> = Vec::new();
+        let mut seen = BTreeSet::new();
+        let mut queue: VecDeque<&FlowNode> = VecDeque::new();
+        if let Some(s) = self.start() {
+            seen.insert(s.id);
+            queue.push_back(s);
+        }
+        while let Some(n) = queue.pop_front() {
+            out.push(n);
+            for t in n.wires().into_iter().flatten() {
+                if let Some(m) = self.node(t)
+                    && seen.insert(m.id)
+                {
+                    queue.push_back(m);
+                }
+            }
         }
         out
     }
@@ -194,7 +800,8 @@ impl Flow {
         self.chain().last().map(|n| n.id)
     }
 
-    /// The actions the flow performs, in order.
+    /// The plain actions along the `next` wires, in order. Blocks that compute, decide or ask are
+    /// not actions and are left out, so this is the whole flow only when it has none of them.
     pub fn steps(&self) -> Vec<Action> {
         self.chain()
             .iter()
@@ -202,25 +809,42 @@ impl Flow {
             .collect()
     }
 
-    /// Whether running the flow runs a shell command. Only the blocks that are wired count: an
-    /// unplugged one never runs. (Importing warns about all of them anyway, see
-    /// [`Flow::has_commands`].)
-    pub fn runs_commands(&self) -> bool {
-        self.chain()
-            .iter()
-            .any(|n| matches!(n.kind, NodeKind::Command(_)))
+    /// Whether a run can send keystrokes, so the app of the slice must be brought to the front first.
+    pub fn sends_keys(&self) -> bool {
+        self.reachable().iter().any(|n| n.kind.sends_keys())
     }
 
-    /// Whether any block, wired or not, holds a shell command: what a warning after an import
-    /// goes by, because wiring it up later is one drag.
+    /// Whether running the flow can run a shell command or write a file. Only the blocks a run
+    /// can reach count: an unplugged one never runs. (Importing warns about all of them anyway,
+    /// see [`Flow::has_commands`].)
+    pub fn runs_commands(&self) -> bool {
+        self.reachable().iter().any(|n| n.kind.is_sensitive())
+    }
+
+    /// Whether any block, wired or not, runs a shell command or writes a file: what a warning
+    /// after an import goes by, because wiring it up later is one drag.
     pub fn has_commands(&self) -> bool {
-        self.nodes
+        self.nodes.iter().any(|n| n.kind.is_sensitive())
+    }
+
+    /// The `cursorpie_flow` number the share file of this flow carries: the first version's when an
+    /// older CursorPie can still read it, [`FLOW_FORMAT`] when a block or an output needs this one.
+    pub fn format(&self) -> u32 {
+        if self
+            .nodes
             .iter()
-            .any(|n| matches!(n.kind, NodeKind::Command(_)))
+            .any(|n| n.alt.is_some() || !n.kind.is_legacy())
+        {
+            FLOW_FORMAT
+        } else {
+            LEGACY_FLOW_FORMAT
+        }
     }
 
     /// Adds a block after `after` (or just before *End* when `after` is `None`, gone, or *End*
     /// itself) and wires it in: a block that already had a successor keeps it, behind the new one.
+    /// A block that decides (*Branch*, *Repeat*, *While*) gets that successor on the output that
+    /// continues the flow (both of a *Branch*; the `alt` of a loop, so its body starts empty).
     /// When the new block goes right before *End*, *End* moves to the right of it.
     /// Returns the id of the new block.
     pub fn add_after(&mut self, after: Option<u32>, kind: NodeKind) -> u32 {
@@ -241,12 +865,19 @@ impl Flow {
         } else {
             (ax + aw + 50.0, ay)
         };
+        let (own_next, own_alt) = match &kind {
+            NodeKind::Repeat(_) | NodeKind::While(_) => (None, anext),
+            NodeKind::Branch(_) => (anext, anext),
+            NodeKind::Stop => (None, None),
+            _ => (anext, None),
+        };
         self.nodes.push(FlowNode {
             id,
             x,
             y,
             kind,
-            next: anext,
+            next: own_next,
+            alt: own_alt,
         });
         if let Some(a) = after_id
             && let Some(n) = self.node_mut(a)
@@ -267,8 +898,33 @@ impl Flow {
         id
     }
 
-    /// Removes a block (never *Start* or *End*) and joins its neighbours, so deleting a step in the
-    /// middle of a chain leaves no gap. Returns whether a block was removed.
+    /// Adds a block with no wires, with its top left corner at (`x`, `y`) (kept inside
+    /// [`COORD_LIMIT`]): what the right-click menu of the editor does, so the person decides where
+    /// it goes. Returns the id of the new block.
+    pub fn add_at(&mut self, kind: NodeKind, x: f32, y: f32) -> u32 {
+        let id = self.next_node_id();
+        let fit = |v: f32| {
+            if v.is_finite() {
+                v.clamp(-COORD_LIMIT, COORD_LIMIT)
+            } else {
+                0.0
+            }
+        };
+        self.nodes.push(FlowNode {
+            id,
+            x: fit(x),
+            y: fit(y),
+            kind,
+            next: None,
+            alt: None,
+        });
+        id
+    }
+
+    /// Removes a block (never *Start* or *End*) and joins its neighbours: every wire that led into
+    /// it now leads where its own `next` did, so deleting a step in the middle of a chain leaves
+    /// no gap (a wire that would lead back to its own block is dropped). Returns whether a block
+    /// was removed.
     pub fn remove_node(&mut self, id: u32) -> bool {
         let Some(node) = self.node(id) else {
             return false;
@@ -278,62 +934,62 @@ impl Flow {
         }
         let after = node.next;
         for n in &mut self.nodes {
-            if n.next == Some(id) {
-                n.next = after;
+            let me = n.id;
+            for port in [Port::Next, Port::Alt] {
+                if n.wire(port) == Some(id) {
+                    *n.wire_mut(port) = after.filter(|a| *a != me && *a != id);
+                }
             }
         }
         self.nodes.retain(|n| n.id != id);
         true
     }
 
-    /// Draws a wire from the output of `from` to the input of `to`. The input takes one wire, so
-    /// the one that was there is removed, and so is the one that left `from` before. Refused
-    /// (`false`) for a block to itself, for *Start* as a target, for *End* as a source, and when
-    /// it would make a loop.
-    pub fn connect(&mut self, from: u32, to: u32) -> bool {
+    /// Draws a wire from the output `port` of `from` to the input of `to`. An output gives one
+    /// wire, so the one that left it before is replaced; an input takes any number of them, which
+    /// is how two paths join. A wire may lead back to an earlier block: that is a loop. Refused
+    /// (`false`) for a block to itself, for *Start* as a target, and for an output the block does not have.
+    pub fn connect(&mut self, from: u32, port: Port, to: u32) -> bool {
         if from == to {
             return false;
         }
         let (Some(a), Some(b)) = (self.node(from), self.node(to)) else {
             return false;
         };
-        if matches!(b.kind, NodeKind::Start) || matches!(a.kind, NodeKind::End) {
+        if matches!(b.kind, NodeKind::Start) || !a.kind.outputs().contains(&port) {
             return false;
         }
-        // a loop: following the wires from `to` would come back to `from`
-        let mut cur = Some(to);
-        let mut guard = 0;
-        while let Some(c) = cur {
-            if c == from {
-                return false;
-            }
-            guard += 1;
-            if guard > self.nodes.len() {
-                return false;
-            }
-            cur = self.node(c).and_then(|n| n.next);
-        }
-        self.unplug_into(to);
         if let Some(n) = self.node_mut(from) {
-            n.next = Some(to);
+            *n.wire_mut(port) = Some(to);
         }
         true
     }
 
-    /// Removes the wire that goes into `to`.
+    /// Removes every wire that goes into `to`.
     pub fn unplug_into(&mut self, to: u32) {
         for n in &mut self.nodes {
-            if n.next == Some(to) {
-                n.next = None;
+            for port in [Port::Next, Port::Alt] {
+                if n.wire(port) == Some(to) {
+                    *n.wire_mut(port) = None;
+                }
             }
+        }
+    }
+
+    /// Removes the wire that leaves the output `port` of `from`.
+    pub fn unplug_out(&mut self, from: u32, port: Port) {
+        if let Some(n) = self.node_mut(from) {
+            *n.wire_mut(port) = None;
         }
     }
 
     /// Forces the flow into the limits the rest of the program relies on: a name, at most
     /// [`MAX_FLOW_NODES`] blocks with unique ids and reasonable places, exactly one *Start* and one
-    /// *End* (a flow from before *End* existed gets one after its last block), waits
-    /// of at most [`MAX_WAIT_MS`], wires that lead to real blocks, one wire into each block, and
-    /// no loops. Called for every config that is loaded, imported or saved.
+    /// *End* (a flow from before *End* existed gets one after its last block), the fields of each
+    /// block within their limits ([`NodeKind`]), and wires that lead to real blocks, never into
+    /// *Start* and never out of an output a block does not have. Loops and several wires into one
+    /// block are allowed: a run is limited while it runs, see [`flowrun`](crate::flowrun). Called
+    /// for every config that is loaded, imported or saved.
     pub fn clean(&mut self) {
         let name: String = self.name.trim().chars().take(MAX_NAME_CHARS).collect();
         self.name = if name.is_empty() { "Flow".into() } else { name };
@@ -374,6 +1030,7 @@ impl Flow {
                     y: 60.0,
                     kind: NodeKind::Start,
                     next: None,
+                    alt: None,
                 },
             );
         }
@@ -395,6 +1052,7 @@ impl Flow {
                 y: 0.0,
                 kind: NodeKind::End,
                 next: None,
+                alt: None,
             });
             new_end = Some(id);
         }
@@ -409,43 +1067,23 @@ impl Flow {
             } else {
                 0.0
             };
-            if let NodeKind::Wait(ms) = &mut n.kind {
-                *ms = (*ms).min(MAX_WAIT_MS);
-            }
+            n.kind.clean();
         }
 
-        // wires: to a block that exists, not to itself, not into Start, one into each block
+        // wires: to a block that exists, not to itself, not into Start, only out of an output the
+        // block has (nothing comes after End or Stop)
         let live: BTreeSet<u32> = self.nodes.iter().map(|n| n.id).collect();
         let start_id = self.start().map(|n| n.id);
-        let mut targeted = BTreeSet::new();
         for n in &mut self.nodes {
-            if matches!(n.kind, NodeKind::End) {
-                n.next = None; // nothing comes after End
-            }
-            if let Some(t) = n.next {
-                let ok =
-                    t != n.id && live.contains(&t) && Some(t) != start_id && targeted.insert(t);
-                if !ok {
-                    n.next = None;
+            let me = n.id;
+            let outputs = n.kind.outputs();
+            for port in [Port::Next, Port::Alt] {
+                let keep = outputs.contains(&port)
+                    && n.wire(port)
+                        .is_some_and(|t| t != me && live.contains(&t) && Some(t) != start_id);
+                if !keep {
+                    *n.wire_mut(port) = None;
                 }
-            }
-        }
-        // loops: a block whose wires lead back to itself loses its own wire
-        let count = self.nodes.len();
-        for i in 0..count {
-            let me = self.nodes[i].id;
-            let mut cur = self.nodes[i].next;
-            let mut steps = 0;
-            while let Some(c) = cur {
-                if c == me {
-                    self.nodes[i].next = None;
-                    break;
-                }
-                steps += 1;
-                if steps > count {
-                    break;
-                }
-                cur = self.node(c).and_then(|n| n.next);
             }
         }
         // the End that was just added goes after the last block of the chain and is wired to it
@@ -464,7 +1102,9 @@ impl Flow {
                     e.x = x;
                     e.y = y;
                 }
-                if let Some(t) = self.node_mut(tid) {
+                if let Some(t) = self.node_mut(tid)
+                    && t.kind.outputs().contains(&Port::Next)
+                {
                     t.next = Some(end_id);
                 }
             }
@@ -627,7 +1267,7 @@ struct FlowFile {
 /// The text of the flow file for `flow`.
 pub fn export_flow(flow: &Flow) -> Result<String, String> {
     let file = FlowFile {
-        cursorpie_flow: FLOW_FORMAT,
+        cursorpie_flow: flow.format(),
         flow: flow.clone(),
     };
     serde_json::to_string_pretty(&file).map_err(|e| e.to_string())
@@ -703,6 +1343,8 @@ mod tests {
     const EX_COMMAND: &str =
         include_str!("../../docs/examples/flows/link-wait-command.cursorpie-flow.json");
     const EX_CONFIG: &str = include_str!("../../docs/examples/flows/config-with-flow.json");
+    const EX_LOOP: &str =
+        include_str!("../../docs/examples/flows/ask-and-loop.cursorpie-flow.json");
 
     /// A flow loads "as written" when cleaning it changes nothing: every block is on the chain, in
     /// the order of the file's ids, and the chain runs from Start to End.
@@ -749,6 +1391,23 @@ mod tests {
     }
 
     #[test]
+    fn the_documented_example_with_decisions_and_a_loop_loads_untouched_and_is_all_reachable() {
+        let raw: serde_json::Value = serde_json::from_str(EX_LOOP).unwrap();
+        let written: FlowFile = serde_json::from_value(raw).unwrap();
+        let flow = parse_flow(EX_LOOP).expect("the example is a valid flow file");
+        assert_eq!(
+            flow, written.flow,
+            "clean() repaired something in the example"
+        );
+        assert_eq!(flow.reachable().len(), flow.nodes.len());
+        assert_eq!(flow.format(), FLOW_FORMAT);
+        assert!(!flow.has_commands());
+        // the loop: 7 leads back to 5
+        assert_eq!(flow.node(7).unwrap().next, Some(5));
+        assert_eq!(flow.node(3).unwrap().alt, Some(9));
+    }
+
+    #[test]
     fn the_documented_config_example_has_a_slice_that_reaches_its_flow() {
         let c = crate::config::parse_config(EX_CONFIG).expect("the example config loads");
         assert_eq!(c.flows.len(), 1);
@@ -779,17 +1438,17 @@ mod tests {
             vec![Action::Wait(MAX_WAIT_MS)]
         );
         assert!(parse_flow(&long.replace("99999", "-5")).is_err());
-        // two wires into one block: only the first keeps its wire
+        // two wires into one block are both kept (two paths can join)
         let two = r#"{"cursorpie_flow":1,"flow":{"id":"a","name":"A","nodes":[
             {"id":1,"x":0,"y":0,"kind":"Start","next":3},
             {"id":2,"x":0,"y":0,"kind":{"Wait":1},"next":3},
             {"id":3,"x":0,"y":0,"kind":"End","next":null}]}}"#;
         let f = parse_flow(two).unwrap();
         assert_eq!(f.node(1).unwrap().next, Some(3));
-        assert_eq!(f.node(2).unwrap().next, None);
+        assert_eq!(f.node(2).unwrap().next, Some(3));
         // a file made by a newer version is refused with its own sentence
         assert!(
-            parse_flow(&long.replace("\"cursorpie_flow\":1", "\"cursorpie_flow\":2"))
+            parse_flow(&long.replace("\"cursorpie_flow\":1", "\"cursorpie_flow\":3"))
                 .unwrap_err()
                 .contains("newer")
         );
@@ -816,7 +1475,7 @@ mod tests {
             "End moved to the right"
         );
         assert!(!f.remove_node(2));
-        assert!(!f.connect(2, a));
+        assert!(!f.connect(2, Port::Next, a));
     }
 
     #[test]
@@ -830,6 +1489,7 @@ mod tests {
             y: 60.0,
             kind: key(),
             next: None,
+            alt: None,
         });
         f.nodes[0].next = Some(3);
         f.clean();
@@ -885,19 +1545,103 @@ mod tests {
     }
 
     #[test]
-    fn connecting_replaces_wires_and_refuses_loops() {
+    fn connecting_replaces_the_wire_of_an_output_and_refuses_what_makes_no_sense() {
         let mut f = sample();
         let (k, w, u) = (f.nodes[2].id, f.nodes[3].id, f.nodes[4].id);
-        assert!(!f.connect(k, k), "a block to itself");
-        assert!(!f.connect(u, 1), "nothing goes into Start");
-        assert!(!f.connect(u, k), "a loop");
-        // Start -> url directly: the old wires into url and out of Start are replaced
-        assert!(f.connect(1, u));
+        assert!(!f.connect(k, Port::Next, k), "a block to itself");
+        assert!(!f.connect(u, Port::Next, 1), "nothing goes into Start");
+        assert!(!f.connect(k, Port::Alt, w), "a plain block has one output");
+        assert!(!f.connect(2, Port::Next, k), "End has no output");
+        // Start -> url directly: the wire out of Start is replaced
+        assert!(f.connect(1, Port::Next, u));
         assert_eq!(
             f.steps(),
             vec![Action::OpenUrl("https://example.com".into())]
         );
         assert!(f.node(w).is_some(), "the unplugged blocks are still there");
+    }
+
+    #[test]
+    fn two_paths_can_join_and_a_wire_can_lead_back() {
+        let mut f = Flow::new("a", "A");
+        let b = f.add_after(
+            None,
+            NodeKind::Branch(Cond {
+                a: "x".into(),
+                op: CmpOp::IsTrue,
+                b: String::new(),
+            }),
+        );
+        let t = f.add_after(Some(b), NodeKind::Wait(1));
+        // the else output goes to End too: two wires into one block
+        assert!(f.connect(b, Port::Alt, 2));
+        assert!(f.connect(t, Port::Next, 2));
+        f.clean();
+        assert_eq!(f.node(b).unwrap().alt, Some(2));
+        assert_eq!(f.node(t).unwrap().next, Some(2));
+        // a loop: the body leads back to the block that decides
+        assert!(f.connect(t, Port::Next, b));
+        f.clean();
+        assert_eq!(f.node(t).unwrap().next, Some(b), "clean keeps a loop");
+        assert!(
+            f.chain().len() <= f.nodes.len(),
+            "the chain stops at a loop"
+        );
+        assert_eq!(f.reachable().len(), f.nodes.len());
+    }
+
+    #[test]
+    fn a_block_placed_by_hand_has_no_wires_and_stays_in_range() {
+        let mut f = Flow::new("a", "A");
+        let id = f.add_at(NodeKind::Wait(1), 120.0, 80.0);
+        let n = f.node(id).unwrap();
+        assert_eq!((n.x, n.y, n.next, n.alt), (120.0, 80.0, None, None));
+        assert!(
+            !f.reachable().iter().any(|m| m.id == id),
+            "nothing leads to it yet"
+        );
+        let far = f.add_at(NodeKind::Stop, f32::INFINITY, -1e9);
+        let n = f.node(far).unwrap();
+        assert_eq!((n.x, n.y), (0.0, -COORD_LIMIT));
+        assert_ne!(id, far);
+    }
+
+    #[test]
+    fn a_block_that_decides_starts_with_its_outputs_where_the_flow_continues() {
+        let mut f = Flow::new("a", "A");
+        let r = f.add_after(None, NodeKind::Repeat(3));
+        let n = f.node(r).unwrap();
+        assert_eq!(n.next, None, "the body starts empty");
+        assert_eq!(n.alt, Some(2), "and what follows the loop is End");
+        let b = f.add_after(Some(1), NodeKind::Branch(Cond::default()));
+        let n = f.node(b).unwrap();
+        assert_eq!((n.next, n.alt), (Some(r), Some(r)));
+        let s = f.add_after(Some(b), NodeKind::Stop);
+        assert_eq!(f.node(s).unwrap().next, None, "Stop has no output");
+    }
+
+    #[test]
+    fn removing_a_block_joins_the_wires_of_both_outputs_and_drops_a_self_wire() {
+        let mut f = Flow::new("a", "A");
+        let r = f.add_after(None, NodeKind::Repeat(2));
+        let body = f.add_after(Some(r), NodeKind::Wait(1));
+        // body -> r makes a loop; the branch alt of r leads to End
+        assert!(f.connect(body, Port::Next, r));
+        // removing the body: r.next would lead to what the body led to, which is r itself
+        assert!(f.remove_node(body));
+        assert_eq!(f.node(r).unwrap().next, None);
+        assert_eq!(f.node(r).unwrap().alt, Some(2));
+    }
+
+    #[test]
+    fn unplugging_an_input_cuts_every_wire_into_it_and_an_output_only_its_own() {
+        let mut f = Flow::new("a", "A");
+        let b = f.add_after(None, NodeKind::Branch(Cond::default()));
+        assert_eq!(f.node(b).unwrap().wires(), [Some(2), Some(2)]);
+        f.unplug_out(b, Port::Alt);
+        assert_eq!(f.node(b).unwrap().wires(), [Some(2), None]);
+        f.unplug_into(2);
+        assert_eq!(f.node(b).unwrap().wires(), [None, None]);
     }
 
     #[test]
@@ -908,6 +1652,7 @@ mod tests {
             y: 1e9,
             kind,
             next,
+            alt: None,
         };
         let mut f = Flow {
             id: "x".into(),
@@ -954,6 +1699,7 @@ mod tests {
                 y: 0.0,
                 kind: NodeKind::Wait(1),
                 next: None,
+                alt: None,
             });
         }
         f.clean();
@@ -1025,6 +1771,7 @@ mod tests {
             y: 0.0,
             kind: NodeKind::Command("rm -rf x".into()),
             next: None,
+            alt: None,
         });
         assert!(f.has_commands());
         assert!(!f.runs_commands(), "it is not wired in");
@@ -1075,5 +1822,191 @@ mod tests {
         let mut items = vec![Item::run("A", "A", Action::Flow(f.id.clone()))];
         merge_flows(&mut mine, vec![f.clone()], &mut items).unwrap();
         assert_eq!(mine.len(), 1);
+    }
+
+    #[test]
+    fn the_new_blocks_round_trip_and_older_flows_keep_their_format_number() {
+        let mut f = sample();
+        assert_eq!(f.format(), LEGACY_FLOW_FORMAT, "only the first blocks");
+        let a = f.add_after(
+            None,
+            NodeKind::Set {
+                name: "n".into(),
+                value: "{{n}}1".into(),
+            },
+        );
+        let b = f.add_after(
+            Some(a),
+            NodeKind::Native {
+                op: NativeOp::Notify,
+                a: "t".into(),
+                b: "x".into(),
+            },
+        );
+        f.add_after(
+            Some(b),
+            NodeKind::Run {
+                command: "echo hi".into(),
+                out: "o".into(),
+                timeout_s: 5,
+            },
+        );
+        assert_eq!(f.format(), FLOW_FORMAT);
+        let text = export_flow(&f).unwrap();
+        assert!(text.contains("\"cursorpie_flow\": 2"));
+        assert_eq!(parse_flow(&text).unwrap(), f);
+    }
+
+    #[test]
+    fn a_block_written_without_its_optional_fields_gets_their_defaults() {
+        let text = r#"{"cursorpie_flow":2,"flow":{"id":"a","name":"A","nodes":[
+            {"id":1,"x":0,"y":0,"kind":"Start","next":2},
+            {"id":2,"x":0,"y":0,"kind":{"Run":{"command":"true"}},"next":3},
+            {"id":3,"x":0,"y":0,"kind":{"Native":{"op":"Notify"}},"next":4},
+            {"id":4,"x":0,"y":0,"kind":{"Branch":{"a":"x"}},"next":5,"alt":5},
+            {"id":5,"x":0,"y":0,"kind":"End"}]}}"#;
+        let f = parse_flow(text).unwrap();
+        assert_eq!(
+            f.node(2).unwrap().kind,
+            NodeKind::Run {
+                command: "true".into(),
+                out: String::new(),
+                timeout_s: 10
+            }
+        );
+        assert_eq!(f.node(4).unwrap().alt, Some(5));
+        assert_eq!(f.reachable().len(), 5);
+    }
+
+    #[test]
+    fn clean_limits_the_fields_of_the_new_blocks() {
+        let mut f = Flow::new("a", "A");
+        let long = "x".repeat(MAX_FIELD_CHARS + 50);
+        f.add_after(None, NodeKind::Repeat(u32::MAX));
+        f.add_after(
+            None,
+            NodeKind::Run {
+                command: long.clone(),
+                out: "9bad name!".into(),
+                timeout_s: 0,
+            },
+        );
+        f.add_after(
+            None,
+            NodeKind::Native {
+                op: NativeOp::Random,
+                a: long,
+                b: "n m".into(),
+            },
+        );
+        f.clean();
+        for n in &f.nodes {
+            match &n.kind {
+                NodeKind::Repeat(c) => assert_eq!(*c, MAX_REPEAT),
+                NodeKind::Run {
+                    command,
+                    out,
+                    timeout_s,
+                } => {
+                    assert_eq!(command.chars().count(), MAX_FIELD_CHARS);
+                    assert_eq!(out, "badname");
+                    assert_eq!(*timeout_s, 1);
+                }
+                NodeKind::Native { a, b, .. } => {
+                    assert_eq!(a.chars().count(), MAX_FIELD_CHARS);
+                    assert_eq!(b, "nm");
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn wires_out_of_an_output_a_block_does_not_have_are_removed() {
+        let mut f = Flow::new("a", "A");
+        let w = f.add_after(None, NodeKind::Wait(1));
+        f.node_mut(w).unwrap().alt = Some(2);
+        f.node_mut(2).unwrap().next = Some(w);
+        f.clean();
+        assert_eq!(f.node(w).unwrap().alt, None);
+        assert_eq!(f.node(2).unwrap().next, None);
+    }
+
+    #[test]
+    fn variable_names_are_letters_digits_and_underscores_not_starting_with_a_digit() {
+        assert!(is_var_name("a"));
+        assert!(is_var_name("_x1"));
+        assert!(!is_var_name(""));
+        assert!(!is_var_name("1a"));
+        assert!(!is_var_name("a b"));
+        assert!(!is_var_name(&"a".repeat(MAX_VAR_NAME_CHARS + 1)));
+        assert_eq!(clean_var_name("  9 my-var! "), "myvar");
+        assert!(clean_var_name("é").is_empty());
+    }
+
+    #[test]
+    fn only_blocks_that_run_commands_or_write_files_are_sensitive_and_unreachable_ones_do_not_run()
+    {
+        let mut f = sample();
+        assert!(!f.has_commands());
+        let w = f.add_after(
+            None,
+            NodeKind::Native {
+                op: NativeOp::WriteFile,
+                a: "/tmp/x".into(),
+                b: "t".into(),
+            },
+        );
+        assert!(f.has_commands() && f.runs_commands());
+        f.unplug_into(w);
+        assert!(f.has_commands(), "found even when nothing leads to it");
+        assert!(!f.runs_commands());
+        let read = NodeKind::Native {
+            op: NativeOp::ReadFile,
+            a: String::new(),
+            b: String::new(),
+        };
+        assert!(!read.is_sensitive());
+        assert!(
+            NodeKind::Run {
+                command: String::new(),
+                out: String::new(),
+                timeout_s: 1
+            }
+            .is_sensitive()
+        );
+    }
+
+    #[test]
+    fn only_key_and_type_text_blocks_need_the_app_in_front() {
+        let mut f = Flow::new("a", "A");
+        assert!(!f.sends_keys());
+        f.add_after(None, NodeKind::Wait(1));
+        assert!(!f.sends_keys());
+        f.add_after(
+            None,
+            NodeKind::Native {
+                op: NativeOp::TypeText,
+                a: "x".into(),
+                b: String::new(),
+            },
+        );
+        assert!(f.sends_keys());
+    }
+
+    #[test]
+    fn every_native_operation_has_a_label_and_a_hint_for_the_field_it_uses() {
+        for op in NativeOp::ALL {
+            assert!(!op.label().is_empty());
+            let (a, b) = op.hints();
+            assert!(!a.is_empty() || !b.is_empty(), "{op:?} uses no field");
+            assert!(!op.a_is_variable() || !a.is_empty());
+            assert!(!op.b_is_variable() || !b.is_empty());
+        }
+        assert_eq!(CmpOp::ALL.len(), 11);
+        assert!(CmpOp::ALL.iter().all(|c| !c.label().is_empty()));
+        assert!(CalcOp::ALL.iter().all(|c| !c.label().is_empty()));
+        assert!(LogicOp::ALL.iter().all(|c| !c.label().is_empty()));
+        assert!(AskMode::ALL.iter().all(|c| !c.label().is_empty()));
     }
 }

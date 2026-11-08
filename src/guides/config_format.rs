@@ -66,7 +66,7 @@
 //! | `preview_ms` | at most 3000 |
 //! | `sleep_after_s` | 0 (never sleep) or 10 to 3600 |
 //! | `trigger_button` | 2, 5, 6 or 7 (otherwise 2) |
-//! | `flows` | at most [`MAX_FLOWS`](crate::config::MAX_FLOWS); unique non-empty ids; per flow see [`Flow::clean`](crate::config::Flow::clean): at most [`MAX_FLOW_NODES`](crate::config::MAX_FLOW_NODES) blocks, one `Start` and one `End`, waits of at most [`MAX_WAIT_MS`](crate::config::MAX_WAIT_MS), no loops |
+//! | `flows` | at most [`MAX_FLOWS`](crate::config::MAX_FLOWS); unique non-empty ids; per flow see [`Flow::clean`](crate::config::Flow::clean): at most [`MAX_FLOW_NODES`](crate::config::MAX_FLOW_NODES) blocks, one `Start` and one `End`, waits of at most [`MAX_WAIT_MS`](crate::config::MAX_WAIT_MS), repeats of at most [`MAX_REPEAT`](crate::config::MAX_REPEAT), wires only to existing blocks and out of outputs the block has (loops and joining wires are allowed; a run is limited by [`MAX_FLOW_STEPS`](crate::config::MAX_FLOW_STEPS)) |
 //!
 //! If you add a setting with a range, clamp it there and add a test.
 //!

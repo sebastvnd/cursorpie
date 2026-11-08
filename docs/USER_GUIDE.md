@@ -76,22 +76,60 @@ slice changes.
 
 ## Flows: chains of steps
 
-The **Flow** section of Settings is a small node editor. A *flow* is a chain of steps (shortcuts, apps, links,
-shell commands, waits) that one slice runs one after the other, for example "copy, open Notes, wait half a second,
-paste".
+The **Flow** section of Settings is a small node editor. A *flow* is a small program made of blocks and wires that one
+slice runs: shortcuts, apps, links, shell commands and waits, one after the other, for example "copy, open Notes, wait
+half a second, paste", and also variables, conditions, loops, questions to the person and things the system can do.
 
 1. **+** makes a new flow. Give it a name.
-2. **Add a step** puts a block on the canvas. A flow always runs from **Start** to **End**: a new block is wired in
-   after the selected one (before **End** when nothing is selected), and a block added in the middle of the chain
-   goes between its neighbours. **Start** and **End** cannot be removed.
+2. **Add block** (top right) opens a list of every block, in groups. A flow always runs from **Start** to **End**: a
+   block added this way is wired in after the selected one (before **End** when nothing is selected), and a block
+   added in the middle of the chain goes between its neighbours. **Right-click** on the empty canvas opens the same
+   list at the pointer; a block added that way is put exactly there and has no wires yet. **Start** and **End**
+   cannot be removed.
 3. Fill in each block: record a shortcut, type an app (or press **Pick...** to choose one of the installed apps,
    as in a slice), type a URL or a command, set the wait in milliseconds (at most 10 s, because actions run one at
    a time).
-4. To change the order, drag from the dot on the right of a block to the dot on the left of another one. An input
-   takes one wire and an output gives one, so a new wire replaces the old one. Click a wired input dot to unplug
-   it. The number in the header of a block is its place in the chain; a block marked *not wired* never runs.
-   **x** removes a block and joins its neighbours.
+4. To change the order, drag from a dot on the right of a block to the dot on the left of another one. An output gives
+   one wire, so a new wire replaces the old one; an input takes any number of wires, so two paths can join, and a wire
+   may lead back to an earlier block, which makes a loop. Click a wired output dot to unplug that wire, a wired input
+   dot to unplug every wire into it. The number in the header of a block is its place in the walk from **Start**; a
+   block marked *not wired* never runs. **x**, or **Delete** / **Backspace** on the selected block (when no field is
+   being typed in), removes a block and joins its neighbours.
 5. In the **Menu** section choose a slice, set its action to **Flow** and pick the flow.
+
+### Variables, decisions and loops
+
+A run has *variables*: a name and a text. A block that computes, asks or looks at the system puts its result in one;
+in any text field `{{name}}` is replaced by the value (`{{name|sh}}` quotes it for the shell, use it inside a command).
+A condition or a calculation takes a value or the bare name of a variable.
+
+| Block | What it does |
+|---|---|
+| **Set** | puts a text in a variable |
+| **Calculate** | `result = a + b` (also `-`, `*`, `/`, `%`, min, max) |
+| **Gate** | `result = a AND b` (also OR, XOR, NAND, NOR, NOT), as 1 or 0 |
+| **If** | follows **then** when `a == b` (or `<`, `>`, contains, is empty...) holds, **else** when it does not |
+| **Repeat** | goes through **body** a number of times, then **done**; the variable `index` counts the rounds from 1 |
+| **While** | goes through **body** as long as its condition holds, then **done** |
+| **Call** | runs another flow with the same variables |
+| **Stop** | ends the whole run |
+
+The body of a loop is the chain that starts at its **body** dot; wire its last block back to the loop block. A run
+ends at **End**, at **Stop**, at a dot without a wire, after 10000 blocks or after 10 minutes, so a loop that never
+ends is stopped for you.
+
+### Asking and the system
+
+| Block | What it does |
+|---|---|
+| **Ask** | shows a window of the system with a question and puts the answer (a text, or 1 / 0 for yes / no) in a variable; the variable `ok` says whether it was answered. On Linux it needs `zenity` or `kdialog` |
+| **Run and wait** | runs a shell command, waits for it (1 to 120 s) and keeps what it printed and its exit code (`code`); every variable is in its environment as `CURSORPIE_<NAME>` |
+| **System** | one of: copy to / read the clipboard, type a text into the app in front, a notification, read / write / append a file, whether a file exists, an environment variable, the app in front, bring an app forward, whether an app has a window, the pointer position, a random number, the time, show a file in the file manager |
+
+A block that runs a command (**Command**, **Run and wait**) or writes a file is drawn in red, and importing a flow or a
+profile with one warns you before you save. The clipboard, notifications and questions use the tools of each system
+(`pbcopy`, PowerShell, `wl-copy` / `xclip`, `osascript`, `notify-send`...); when one is missing the block does
+nothing and `ok` is 0.
 
 Drag the header of a block to move it. The canvas has a dot grid and moves like any node editor: drag the empty
 canvas, hold the **middle button** anywhere on it (even though it is the trigger button, CursorPie lets it through

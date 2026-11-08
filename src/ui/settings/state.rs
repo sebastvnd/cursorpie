@@ -171,8 +171,8 @@ pub struct Ed {
     pub flow_target: Option<(usize, u32)>,
     /// Flow tab: the selected block
     pub flow_sel: Option<u32>,
-    /// Flow tab: the block whose output a wire is being dragged from
-    pub flow_wire: Option<u32>,
+    /// Flow tab: the block and output a wire is being dragged from
+    pub flow_wire: Option<(u32, crate::config::Port)>,
     /// What the About tab says about updates. Kept across Settings sessions: a check that is still
     /// running when Settings closes reports into it, and the next opening starts from what the last
     /// check found (see `App::update_on_settings_open`).

@@ -137,7 +137,7 @@ fn section_info(tab: Tab) -> (char, &'static str, &'static str) {
         Tab::Flow => (
             symbols::LIGHTNING,
             "Flow",
-            "Chain steps together with wires, then share the flow.",
+            "Build small programs from blocks and wires, then share the flow.",
         ),
         Tab::Behavior => (
             symbols::SLIDERS_HORIZONTAL,
