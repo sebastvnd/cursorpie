@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.8.8
+
+- **Settings no longer stops answering clicks.** When the pie was closed while Settings was open (the hook
+  watchdog resetting a gesture, a press that began before Settings opened, a cancelled trackpad hold), the shared
+  window became click-through, so Settings stayed on screen but Close and Save did nothing, while the tray menu and
+  CPU use looked normal. Hiding the pie now leaves Settings clickable on macOS, Windows and Linux.
+
 ## 0.8.7
 
 - **Updates: CursorPie tells you when a newer release is out and can install it, the same on macOS, Windows and

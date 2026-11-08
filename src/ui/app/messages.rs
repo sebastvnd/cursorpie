@@ -90,8 +90,12 @@ impl App {
                 self.hover = None;
                 self.pie_open = false;
                 self.preview_until = None;
-                // the pie that took the pointer for a trackpad hold lets it through again while it fades
-                ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(true));
+                // the pie that took the pointer for a trackpad hold lets it through again while it
+                // fades; Settings shares this window and must keep its clicks (see
+                // `passthrough_after_hide`)
+                ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(
+                    super::windows::passthrough_after_hide(self.settings_open),
+                ));
             }
             Msg::KeyCaptured(sc) => {
                 // a shortcut block of the Flow tab, or a field of a slice of the Menu tab

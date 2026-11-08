@@ -144,7 +144,7 @@ mod tests {
         let _g = serial();
         let st = open(Source::Mouse);
         assert_eq!(filter(&st, Kind::Down, 0, Verdict::Keep), Verdict::Drop);
-        *st.lock().unwrap() = Gesture::Idle; // the pie closed while the button was down
+        *crate::config::lock(&st) = Gesture::Idle; // the pie closed while the button was down
         assert_eq!(filter(&st, Kind::Up, 0, Verdict::Keep), Verdict::Drop);
         // and the next click is the app's again
         assert_eq!(filter(&st, Kind::Down, 0, Verdict::Keep), Verdict::Keep);
@@ -167,7 +167,7 @@ mod tests {
         let _g = serial();
         let st = open(Source::Touch);
         assert_eq!(filter(&st, Kind::Down, 0, Verdict::Keep), Verdict::Drop);
-        *st.lock().unwrap() = Gesture::Idle; // the release never came
+        *crate::config::lock(&st) = Gesture::Idle; // the release never came
         assert_eq!(filter(&st, Kind::Down, 0, Verdict::Keep), Verdict::Keep);
         assert_eq!(filter(&st, Kind::Drag, 0, Verdict::Keep), Verdict::Keep);
         assert_eq!(HELD.load(Ordering::SeqCst), 0);

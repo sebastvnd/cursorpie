@@ -36,6 +36,17 @@ fn has_size(size: Option<Vec2>, want: Vec2) -> bool {
     size.is_none_or(|s| (s.x - want.x).abs() <= 2.0 && (s.y - want.y).abs() <= 2.0)
 }
 
+/// Whether the shared window lets the pointer through once the pie is hidden ([`HidePie`](crate::msg::Msg::HidePie)).
+///
+/// The pie, the welcome card and Settings are one window. The pie is click-through; Settings takes
+/// the pointer. The tap can send `HidePie` while Settings is open (the hook watchdog resetting the
+/// gesture, a press that began before Settings opened and ended after it, a trackpad hold that was
+/// cancelled), and making the window click-through then leaves a Settings card that shows but
+/// ignores every click (Close and Save included), while the tray menu still works.
+pub(super) fn passthrough_after_hide(settings_open: bool) -> bool {
+    !settings_open
+}
+
 impl App {
     /// Applies the edited config and writes it to disk (with a backup), without closing Settings:
     /// the config is sanitized and stored, and the launch-at-login setting is applied.
@@ -622,6 +633,12 @@ fn blocked_reaction(touch: bool, focused: bool) -> Blocked {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn hiding_the_pie_never_makes_an_open_settings_window_click_through() {
+        assert!(super::passthrough_after_hide(false));
+        assert!(!super::passthrough_after_hide(true));
+    }
+
     use super::*;
 
     #[test]
