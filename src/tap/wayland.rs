@@ -85,6 +85,10 @@ pub(super) trait Env {
     /// The latest pointer position the compositor reported and its number (it grows with every
     /// answer).
     fn compositor_pointer(&self) -> Option<(u64, Point)>;
+    /// The pointer for a press that happens now. With `wait` the compositor is asked and its
+    /// answer awaited for a few milliseconds (the press of the trigger, which places the pie);
+    /// without it this is the latest answer, as [`Env::compositor_pointer`] gives it.
+    fn pointer_at_press(&self, wait: bool) -> Option<(u64, Point)>;
     /// A position to start from when the compositor has not answered yet.
     fn fallback_pointer(&self) -> Option<Point>;
     /// Asks for the pointer at full rate while a hold runs (`true`), or at the idle rate.
@@ -225,6 +229,27 @@ impl Engine {
         }
     }
 
+    /// Where the pointer is at the press of a routed button.
+    ///
+    /// What the engine adds up is only the motion of *this* mouse since the last answer: after the
+    /// pointer was moved by a touchpad or another mouse, or after fast motion that the compositor's
+    /// throttled reports did not cover, it is somewhere else, and so is the pie opened at it. So
+    /// the press takes the compositor's answer whenever there is one the engine has not used yet,
+    /// and for the trigger (which places the pie) it asks for a fresh one first. The pointer of the
+    /// X server is the last resort: in a Wayland session it only knows the pointer while it is
+    /// over an X window.
+    fn anchor(&mut self, env: &dyn Env, wait: bool) {
+        if let Some((seq, p)) = env.pointer_at_press(wait)
+            && seq != self.seen
+        {
+            self.seen = seq;
+            self.pos = Some(p);
+        }
+        if self.pos.is_none() {
+            self.pos = env.fallback_pointer();
+        }
+    }
+
     /// Follows the pointer: the compositor's latest answer when it is a new one, otherwise the
     /// motion of the frame added to what is known.
     fn track(&mut self, env: &dyn Env, dx: i64, dy: i64) {
@@ -259,13 +284,13 @@ impl Engine {
         };
         match e.value {
             1 => {
-                if self.pos.is_none() {
-                    self.pos = env.fallback_pointer();
-                }
-                let pos = self.pos.unwrap_or_default();
-                if button == self.trigger {
+                let is_trigger = button == self.trigger;
+                // first: the compositor then answers while the position is being decided
+                if is_trigger {
                     env.arm(true);
                 }
+                self.anchor(env, is_trigger);
+                let pos = self.pos.unwrap_or_default();
                 let keep = env.route(Ev::Mouse {
                     kind: Kind::Down,
                     button,
@@ -338,6 +363,23 @@ impl Env for PipeEnv {
 
     fn compositor_pointer(&self) -> Option<(u64, Point)> {
         kwin::pointer()
+    }
+
+    fn pointer_at_press(&self, wait: bool) -> Option<(u64, Point)> {
+        let started = Instant::now();
+        let answer = if wait {
+            kwin::sample_pointer()
+        } else {
+            kwin::pointer()
+        };
+        diag::log!(
+            "tap",
+            "press_pointer",
+            wait = wait,
+            answered = answer.is_some(),
+            took_ms = started.elapsed()
+        );
+        answer
     }
 
     fn fallback_pointer(&self) -> Option<Point> {
@@ -756,6 +798,10 @@ mod tests {
         armed: RefCell<Vec<bool>>,
         rule: Box<dyn Fn(&Ev) -> Verdict>,
         pointer: Cell<Option<(u64, Point)>>,
+        /// What the compositor answers when it is asked at a press (the latest one if `None`).
+        fresh: Cell<Option<(u64, Point)>>,
+        /// For each press that asked for the pointer: whether it waited for a fresh answer.
+        asked: RefCell<Vec<bool>>,
         scanning: Cell<bool>,
     }
 
@@ -766,6 +812,8 @@ mod tests {
                 armed: RefCell::new(Vec::new()),
                 rule: Box::new(rule),
                 pointer: Cell::new(None),
+                fresh: Cell::new(None),
+                asked: RefCell::new(Vec::new()),
                 scanning: Cell::new(false),
             }
         }
@@ -787,6 +835,14 @@ mod tests {
         }
         fn compositor_pointer(&self) -> Option<(u64, Point)> {
             self.pointer.get()
+        }
+        fn pointer_at_press(&self, wait: bool) -> Option<(u64, Point)> {
+            self.asked.borrow_mut().push(wait);
+            if wait {
+                self.fresh.get().or(self.pointer.get())
+            } else {
+                self.pointer.get()
+            }
         }
         fn fallback_pointer(&self) -> Option<Point> {
             Some(Point::new(100.0, 200.0))
@@ -956,6 +1012,74 @@ mod tests {
             })
             .collect();
         assert_eq!(drags, [Point::new(500.0, 600.0), Point::new(503.0, 600.0)]);
+    }
+
+    fn first_down(fake: &Fake) -> Point {
+        match fake.events().first() {
+            Some(Ev::Mouse {
+                kind: Kind::Down,
+                pos,
+                ..
+            }) => *pos,
+            other => panic!("no press was routed: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_trigger_press_takes_the_fresh_answer_of_the_compositor() {
+        // the engine had added up a position from its own mouse; a touchpad moved the pointer since
+        let fake = Fake::swallowing();
+        let mut e = engine();
+        fake.pointer.set(Some((3, Point::new(10.0, 10.0))));
+        e.feed(&fake, &[rel(REL_X, 1), SYN]);
+        fake.fresh.set(Some((4, Point::new(900.0, 700.0))));
+        e.feed(&fake, &[btn(MIDDLE, true), SYN]);
+        assert_eq!(first_down(&fake), Point::new(900.0, 700.0));
+        assert_eq!(*fake.asked.borrow(), [true], "the trigger asks and waits");
+    }
+
+    #[test]
+    fn the_first_press_starts_from_the_compositor_and_not_from_the_x_server() {
+        // no motion was read yet, so the engine knows nothing; the X server (XWayland) only knows
+        // the pointer while it is over an X window
+        let fake = Fake::swallowing();
+        let mut e = engine();
+        fake.pointer.set(Some((1, Point::new(640.0, 360.0))));
+        e.feed(&fake, &[btn(MIDDLE, true), SYN]);
+        assert_eq!(first_down(&fake), Point::new(640.0, 360.0));
+    }
+
+    #[test]
+    fn the_x_server_is_the_last_resort() {
+        let fake = Fake::swallowing();
+        let mut e = engine();
+        e.feed(&fake, &[btn(MIDDLE, true), SYN]);
+        assert_eq!(first_down(&fake), Point::new(100.0, 200.0));
+    }
+
+    #[test]
+    fn a_late_answer_keeps_the_added_up_position() {
+        // the compositor did not answer in time: the answer it gave before was already used
+        let fake = Fake::swallowing();
+        let mut e = engine();
+        fake.pointer.set(Some((5, Point::new(500.0, 600.0))));
+        e.feed(&fake, &[rel(REL_X, 1), SYN]);
+        e.feed(&fake, &[rel(REL_X, 4), SYN]);
+        e.feed(&fake, &[btn(MIDDLE, true), SYN]);
+        assert_eq!(first_down(&fake), Point::new(504.0, 600.0));
+    }
+
+    #[test]
+    fn only_the_trigger_waits_for_the_compositor() {
+        let fake = Fake::new(|_| Verdict::Keep);
+        let mut e = engine();
+        e.feed(&fake, &[btn(BTN_SIDE, true), SYN]);
+        e.feed(&fake, &[btn(MIDDLE, true), SYN]);
+        assert_eq!(
+            *fake.asked.borrow(),
+            [false, true],
+            "a side button takes what is known, the trigger asks"
+        );
     }
 
     #[test]

@@ -32,6 +32,8 @@ pub fn app_icon(_bundle: &str) -> Option<NativeIcon> {
 pub fn set_accessory_policy() {}
 /// The window has no frame to remove.
 pub fn clear_window_frame(_handle: isize) {}
+/// There is no window.
+pub fn set_window_passive(_on: bool) {}
 /// Nothing moves the window.
 pub fn window_manager_may_recenter() -> bool {
     false
@@ -39,6 +41,11 @@ pub fn window_manager_may_recenter() -> bool {
 /// A window is placed in the same points the pointer is in.
 pub fn window_point(x: f64, y: f64) -> (f64, f64) {
     (x, y)
+}
+
+/// The pie is drawn in the same points the pointer moves in.
+pub fn window_scale(_x: f64, _y: f64) -> f64 {
+    1.0
 }
 
 /// There is no window.

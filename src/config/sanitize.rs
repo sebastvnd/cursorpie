@@ -1,8 +1,8 @@
 //! Validation: forces a freshly loaded or edited [`Config`] back into the limits the app relies on.
 
 use super::{
-    CONFIG_VERSION, Config, Item, ItemKind, MAX_DEPTH, MAX_ITEMS, MAX_PROFILES, item_at, presets,
-    share::clean_apps,
+    CONFIG_VERSION, Config, HUD_MS_MAX, HUD_MS_MIN, HUD_SIZE_MAX, HUD_SIZE_MIN, Item, ItemKind,
+    MAX_DEPTH, MAX_ITEMS, MAX_PROFILES, item_at, presets, share::clean_apps,
 };
 use crate::platform::{Os, linux::roles};
 
@@ -105,6 +105,8 @@ impl Config {
         self.settings_hold_ms = self.settings_hold_ms.max(self.pie_hold_ms + 300);
         self.pie_size = self.pie_size.clamp(140.0, 360.0);
         self.preview_ms = self.preview_ms.min(3000);
+        self.hud_ms = self.hud_ms.clamp(HUD_MS_MIN, HUD_MS_MAX);
+        self.hud_size = self.hud_size.clamp(HUD_SIZE_MIN, HUD_SIZE_MAX);
         if self.sleep_after_s != 0 {
             self.sleep_after_s = self.sleep_after_s.clamp(10, 3600);
         }

@@ -123,6 +123,16 @@ impl App {
             }
             return;
         }
+        // Tell the tap the pie is on screen: the second drawn frame, so the window has been mapped.
+        // The Settings ring starts counting from here, like the timer of the tap does.
+        if self.pie_frames < 2 {
+            self.pie_frames += 1;
+            if self.pie_frames == 2 {
+                self.opened_at = std::time::Instant::now();
+                crate::tap::pie_painted();
+            }
+            ctx.request_repaint();
+        }
         let top_level = self.path.is_empty();
         let previewing = self.preview_until.is_some();
         if moving || (self.pie_open && self.hover.is_none() && top_level) {

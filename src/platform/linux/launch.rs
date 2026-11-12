@@ -1,7 +1,7 @@
 //! How to start an app and how to ask the user for a file. Pure decisions; the backend runs them.
 
 use super::desktop_entry::Index;
-use crate::platform::FileKind;
+use crate::platform::{FileKind, IMAGE_EXTENSIONS};
 
 /// How an "Open app" action is started.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -52,13 +52,20 @@ pub fn chooser_args(tool: Chooser, kind: FileKind, prompt: &str) -> Vec<String> 
         FileKind::App => "Applications",
     };
     let patterns: &[&str] = match kind {
-        FileKind::Image => &[
-            "*.png", "*.jpg", "*.jpeg", "*.webp", "*.PNG", "*.JPG", "*.JPEG", "*.WEBP",
-        ],
+        FileKind::Image => &[],
         FileKind::Json => &["*.json", "*.JSON"],
         FileKind::App => &["*.desktop"],
     };
-    let patterns = patterns.join(" ");
+    // the choosers match case-sensitively, so every image extension is given in both cases
+    let patterns = if kind == FileKind::Image {
+        let lower = IMAGE_EXTENSIONS.iter().map(|e| format!("*.{e}"));
+        let upper = IMAGE_EXTENSIONS
+            .iter()
+            .map(|e| format!("*.{}", e.to_ascii_uppercase()));
+        lower.chain(upper).collect::<Vec<_>>().join(" ")
+    } else {
+        patterns.join(" ")
+    };
     match tool {
         Chooser::Zenity => {
             let mut args = vec![

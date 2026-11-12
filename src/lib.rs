@@ -36,10 +36,12 @@
 //! | [`geometry`] | any thread | pie sizes and slice hit-testing (shared by tap and UI) |
 //! | [`keys`] | any thread | shortcut model (key code + modifiers) and its labels |
 //! | [`msg`] | any thread | messages sent *to* the UI thread |
+//! | [`panel`] | any thread (the window: UI thread) | panels: small interactive windows (fields, lists, buttons) that a flow or the browser extension asks for, and the answer that comes back |
 //! | [`platform`] | any thread (some main only) | OS glue: permissions, apps, login item, keyboard layout (macOS, Windows, Linux, stub) |
 //! | [`ui`] | main thread | eframe app, pie renderer, Settings window, first-launch welcome window, menu bar icon |
 //! | [`about`] | - | name, version, links shown in the About tab |
 //! | [`update`] | UI thread, one short-lived worker | the daily look for a newer release, the offer (About tab, sheet when Settings opens) and the install (download, checksum, swap) |
+//! | [`refresh`] | main thread, at start-up | the first start of a new version writes again the files that belong to the program and not to the person (the browser extension folder, the login entry, on Linux the desktop entry and the GNOME extension); `config.json` is never touched |
 //!
 //! ## Platform
 //!
@@ -72,7 +74,9 @@ pub mod keys;
 pub mod learn;
 pub mod mouse;
 pub mod msg;
+pub mod panel;
 pub mod platform;
+pub mod refresh;
 pub mod running;
 pub mod side;
 pub mod tap;
@@ -147,6 +151,8 @@ pub fn run() -> eframe::Result<()> {
         .with_transparent(true)
         .with_has_shadow(false)
         .with_resizable(false)
+        // images dropped on Settings become the icon of the selected slice (ui::settings::inspector)
+        .with_drag_and_drop(true)
         .with_always_on_top()
         .with_mouse_passthrough(true)
         .with_active(false)
@@ -193,6 +199,11 @@ pub fn run() -> eframe::Result<()> {
                 ctx: cc.egui_ctx.clone(),
             };
             running::init(notifier.clone()); // before the tap: its presses ask what runs
+            actions::set_notifier(notifier.clone()); // a flow that fails tells the UI
+            panel::set_notifier(notifier.clone()); // a flow or the extension may ask for a panel
+            // the first start of a new version: the files of the program that live outside its
+            // executable are written again, before the extension connects and finds them old
+            refresh::run();
             bridge::apply(config::cfg().browser_bridge); // the optional browser extension link
             // the very first start: decided before anything can write config.json, and before the
             // tap starts, so a trackpad that is there works from the first hold (the switch is

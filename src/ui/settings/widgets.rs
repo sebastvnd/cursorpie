@@ -48,8 +48,42 @@ fn galley(ui: &egui::Ui, text: &str, font: FontId, color: Color32) -> std::sync:
     ui.painter().layout_no_wrap(text.to_owned(), font, color)
 }
 
+/// Lays `text` out on one line that is at most `max_w` wide. A longer text is cut and ends in an
+/// ellipsis, so it never paints over the caret, the check or the edge of what holds it. The bool
+/// says whether the text had to be cut (the caller can then show the whole of it as a tooltip).
+pub(in crate::ui::settings) fn fit_galley(
+    ui: &egui::Ui,
+    text: &str,
+    font: FontId,
+    color: Color32,
+    max_w: f32,
+) -> (std::sync::Arc<egui::Galley>, bool) {
+    let max_w = max_w.max(0.0);
+    let whole = galley(ui, text, font.clone(), color);
+    if whole.size().x <= max_w {
+        return (whole, false);
+    }
+    // the most characters that still fit together with the ellipsis (the width only grows with
+    // the length, so a binary search finds it in a few steps)
+    let chars: Vec<char> = text.chars().collect();
+    let (mut lo, mut hi) = (0usize, chars.len());
+    while lo < hi {
+        let mid = lo + (hi - lo).div_ceil(2);
+        let head: String = chars[..mid].iter().collect();
+        let probe = format!("{}\u{2026}", head.trim_end());
+        if galley(ui, &probe, font.clone(), color).size().x <= max_w {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    let head: String = chars[..lo].iter().collect();
+    let cut = format!("{}\u{2026}", head.trim_end());
+    (galley(ui, &cut, font, color), true)
+}
+
 /// The text font at `size`, in the regular or the title weight.
-fn text_font(size: f32, bold: bool) -> FontId {
+pub(in crate::ui::settings) fn text_font(size: f32, bold: bool) -> FontId {
     if bold {
         FontId::new(size, fonts::semibold())
     } else {
@@ -100,7 +134,12 @@ impl Look {
 }
 
 /// Paints the frame of a button-like control and returns the color its content should use.
-fn button_frame(ui: &egui::Ui, rect: Rect, resp: &egui::Response, look: Look) -> Color32 {
+pub(in crate::ui::settings) fn button_frame(
+    ui: &egui::Ui,
+    rect: Rect,
+    resp: &egui::Response,
+    look: Look,
+) -> Color32 {
     let enabled = ui.is_enabled();
     let (rest, hot, fg) = look.colors();
     let fill = if !enabled {
@@ -331,6 +370,110 @@ pub(in crate::ui::settings) fn round_button(
     } else {
         resp.on_disabled_hover_text(tip)
     }
+}
+
+/// How long the circle of an [`icon_switch`] takes to travel, in seconds.
+const SWITCH_SECS: f64 = 0.28;
+
+/// A switch between two or more pages, with icons only: one round track, one round cell for each
+/// page, and a circle in the accent color under the chosen one. When another is picked the circle
+/// travels to it, stretching on the way (the edge it moves towards leaves first, the other follows)
+/// while the icons change color as it passes. `items` are `(icon, tooltip)`; `cell` is the width of
+/// one round cell (the track is 6 points higher); `track_fill` is the color of the track (the color
+/// of a floating bar that is itself the track).
+///
+/// Returns the index that was clicked, if it is not the chosen one.
+pub(in crate::ui::settings) fn icon_switch(
+    ui: &mut egui::Ui,
+    items: &[(char, String)],
+    selected: usize,
+    accent: Color32,
+    track_fill: Color32,
+    cell: f32,
+) -> Option<usize> {
+    let n = items.len();
+    let size = Vec2::new(
+        n as f32 * cell + n.saturating_sub(1) as f32 * 2.0 + 6.0,
+        cell + 6.0,
+    );
+    let (track, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let cell_at = |i: usize| {
+        Rect::from_min_size(
+            Pos2::new(
+                track.min.x + 3.0 + i as f32 * (cell + 2.0),
+                track.min.y + 3.0,
+            ),
+            Vec2::splat(cell),
+        )
+    };
+    let mut picked = None;
+    let mut hot = vec![false; n];
+    for (i, (_, tip)) in items.iter().enumerate() {
+        let resp = ui.interact(
+            cell_at(i),
+            ui.id().with(("icon_switch", i)),
+            egui::Sense::click(),
+        );
+        resp.widget_info(|| {
+            egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, i == selected, tip)
+        });
+        hot[i] = resp.hovered();
+        let resp = resp
+            .on_hover_text(tip)
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        if resp.clicked() && i != selected {
+            picked = Some(i);
+        }
+    }
+    // the move that is going on: from which cell, to which, since when
+    let now = ui.input(|i| i.time);
+    let key = ui.id().with("icon_switch_move");
+    let (from, to, since) = ui
+        .data(|d| d.get_temp::<(usize, usize, f64)>(key))
+        .unwrap_or((selected, selected, -1.0e9));
+    let (from, to, since) = if to != selected {
+        (to, selected, now)
+    } else {
+        (from, to, since)
+    };
+    ui.data_mut(|d| d.insert_temp(key, (from, to, since)));
+    let u = (((now - since) / SWITCH_SECS) as f32).clamp(0.0, 1.0);
+    if u < 1.0 {
+        ui.ctx().request_repaint();
+    }
+    let lead = egui::emath::easing::cubic_out(u);
+    let lag = egui::emath::easing::cubic_in(u);
+    let (a, b) = (cell_at(from), cell_at(to));
+    let right = b.min.x >= a.min.x;
+    let left_edge = a.min.x + (b.min.x - a.min.x) * if right { lag } else { lead };
+    let right_edge = a.max.x + (b.max.x - a.max.x) * if right { lead } else { lag };
+    let thumb = Rect::from_min_max(
+        Pos2::new(left_edge, a.min.y),
+        Pos2::new(right_edge, a.max.y),
+    );
+    let painter = ui.painter();
+    painter.rect_filled(track, PILL, track_fill);
+    for (i, h) in hot.iter().enumerate() {
+        // the wash under the pointer, on a cell that is not chosen
+        if *h && i != selected {
+            painter.circle_filled(cell_at(i).center(), cell / 2.0, pal().hot);
+        }
+    }
+    painter.rect_filled(thumb, PILL, accent);
+    for (i, (icon, _)) in items.iter().enumerate() {
+        let near = if from == to {
+            f32::from(i == to)
+        } else if i == to {
+            lead
+        } else if i == from {
+            1.0 - lead
+        } else {
+            0.0
+        };
+        let ink = pal().muted.lerp_to_gamma(on_accent(accent), near);
+        fonts::paint_icon(painter, cell_at(i).center(), *icon, cell * 0.56, ink, false);
+    }
+    picked
 }
 
 /// Room added around the content of one option of a [`segmented`] control, per side.
@@ -762,34 +905,94 @@ pub(in crate::ui::settings) fn slider<Num: egui::emath::Numeric>(
 /// Height of one sidebar entry.
 pub(in crate::ui::settings) const NAV_H: f32 = 44.0;
 
+/// The wash behind the chosen entry of the sidebar, which travels from the old entry to the new
+/// one when another is picked: the edge it moves towards leaves first and the other follows, so
+/// it stretches on the way and settles, in [`SWITCH_SECS`]. It is drawn first, so the entries are
+/// painted on top of it. The entries are `count` rows of [`NAV_H`], `gap` apart, from `top_left`
+/// down, `width` wide.
+///
+/// Returns for each entry how much it is the chosen one (0 to 1): the entries use it to blend their
+/// icon and title between the quiet color and the accent while the wash passes.
+pub(in crate::ui::settings) fn nav_highlight(
+    ui: &mut egui::Ui,
+    top_left: Pos2,
+    width: f32,
+    gap: f32,
+    selected: usize,
+    count: usize,
+    accent: Color32,
+) -> Vec<f32> {
+    let row = |i: usize| {
+        Rect::from_min_size(
+            Pos2::new(top_left.x, top_left.y + i as f32 * (NAV_H + gap)),
+            Vec2::new(width, NAV_H),
+        )
+    };
+    let now = ui.input(|i| i.time);
+    let key = ui.id().with("nav_highlight_move");
+    let (from, to, since) = ui
+        .data(|d| d.get_temp::<(usize, usize, f64)>(key))
+        .unwrap_or((selected, selected, -1.0e9));
+    let (from, to, since) = if to != selected {
+        (to, selected, now)
+    } else {
+        (from, to, since)
+    };
+    ui.data_mut(|d| d.insert_temp(key, (from, to, since)));
+    let u = (((now - since) / SWITCH_SECS) as f32).clamp(0.0, 1.0);
+    if u < 1.0 {
+        ui.ctx().request_repaint();
+    }
+    let lead = egui::emath::easing::cubic_out(u);
+    let lag = egui::emath::easing::cubic_in(u);
+    let (a, b) = (row(from), row(to));
+    let down = b.min.y >= a.min.y;
+    let top = a.min.y + (b.min.y - a.min.y) * if down { lag } else { lead };
+    let bottom = a.max.y + (b.max.y - a.max.y) * if down { lead } else { lag };
+    let wash_rect = Rect::from_min_max(Pos2::new(a.min.x, top), Pos2::new(a.max.x, bottom));
+    ui.painter()
+        .rect_filled(wash_rect, CONTROL_R, wash(accent, 0.14));
+    (0..count)
+        .map(|i| {
+            if from == to {
+                f32::from(i == to)
+            } else if i == to {
+                lead
+            } else if i == from {
+                1.0 - lead
+            } else {
+                0.0
+            }
+        })
+        .collect()
+}
+
 /// One entry of the sidebar: an icon and a title, as wide as the sidebar. Folded (`compact`), only
 /// the icon is drawn and the title is the tooltip.
 ///
-/// The selected entry gets a wash of the accent, the filled version of its icon in the accent
-/// color and the title weight; the others are quiet and light up under the pointer.
+/// The chosen entry has the filled version of its icon in the accent color and the title weight;
+/// the others are quiet and light up under the pointer. The wash behind the chosen one is not
+/// drawn here but by [`nav_highlight`], which also says how much this entry is the chosen one
+/// (`near`, 0 to 1) so the colors change as the wash passes.
 pub(in crate::ui::settings) fn nav_item(
     ui: &mut egui::Ui,
     icon: char,
     title: &str,
-    on: bool,
+    near: f32,
     accent: Color32,
     compact: bool,
 ) -> egui::Response {
+    let on = near > 0.5;
     let (rect, resp) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), NAV_H), egui::Sense::click());
     resp.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, on, title)
     });
-    let fill = if on {
-        wash(accent, 0.14)
-    } else if resp.hovered() {
-        wash(pal().text, 0.07)
-    } else {
-        Color32::TRANSPARENT
-    };
     let painter = ui.painter();
-    painter.rect_filled(rect, CONTROL_R, fill);
-    let ink = if on { accent } else { pal().muted };
+    if near < 0.05 && resp.hovered() {
+        painter.rect_filled(rect, CONTROL_R, wash(pal().text, 0.07));
+    }
+    let ink = pal().muted.lerp_to_gamma(accent, near);
     let icon_x = if compact {
         rect.center().x
     } else {
@@ -806,7 +1009,7 @@ pub(in crate::ui::settings) fn nav_item(
         ui,
         title,
         text_font(14.5, on),
-        if on { pal().text } else { pal().muted },
+        pal().muted.lerp_to_gamma(pal().text, near),
     );
     let at = Pos2::new(
         rect.min.x + 14.0 + 22.0 + 12.0,
@@ -1167,6 +1370,14 @@ pub(in crate::ui::settings) fn text_field(text: &mut String) -> egui::TextEdit<'
         .margin(egui::Margin::symmetric(12, 4))
 }
 
+/// A text field of several lines (`rows` high before it scrolls), with the margins of
+/// [`text_field`]. For a sentence or more that the person writes in their own words.
+pub(in crate::ui::settings) fn text_area(text: &mut String, rows: usize) -> egui::TextEdit<'_> {
+    egui::TextEdit::multiline(text)
+        .desired_rows(rows)
+        .margin(egui::Margin::symmetric(12, 8))
+}
+
 // ------------------------------------------------------------------ floating things
 
 /// What a [`sheet`] or a [`popover`] asks for.
@@ -1283,7 +1494,25 @@ pub(in crate::ui::settings) fn select(
     selected: usize,
 ) -> Option<usize> {
     let items: Vec<(Option<char>, &str)> = labels.iter().map(|&l| (None, l)).collect();
-    select_with(ui, width, width, None, current, &items, selected)
+    select_with(
+        ui, width, width, None, current, &items, selected, LIST_MAX_H,
+    )
+}
+
+/// [`select`] whose list is at most `max_height` high: for a drop-down inside a small window (a
+/// panel of a flow), where the usual list would run past the edge and be cut off.
+pub(in crate::ui::settings) fn select_capped(
+    ui: &mut egui::Ui,
+    width: f32,
+    current: &str,
+    labels: &[&str],
+    selected: usize,
+    max_height: f32,
+) -> Option<usize> {
+    let items: Vec<(Option<char>, &str)> = labels.iter().map(|&l| (None, l)).collect();
+    select_with(
+        ui, width, width, None, current, &items, selected, max_height,
+    )
 }
 
 /// [`select`] whose list is wider than the pill: for a small pill (an operator in a row of
@@ -1305,6 +1534,7 @@ pub(in crate::ui::settings) fn select_wide(
         current,
         &items,
         selected,
+        LIST_MAX_H,
     )
 }
 
@@ -1317,9 +1547,13 @@ pub(in crate::ui::settings) fn select_icons(
     selected: usize,
 ) -> Option<usize> {
     let (icon, label) = items.get(selected).copied().unwrap_or((None, ""));
-    select_with(ui, width, width, icon, label, items, selected)
+    select_with(ui, width, width, icon, label, items, selected, LIST_MAX_H)
 }
 
+/// How high the list of a [`select`] gets before it scrolls.
+const LIST_MAX_H: f32 = 340.0;
+
+#[allow(clippy::too_many_arguments)]
 fn select_with(
     ui: &mut egui::Ui,
     width: f32,
@@ -1328,6 +1562,7 @@ fn select_with(
     current: &str,
     items: &[(Option<char>, &str)],
     selected: usize,
+    max_height: f32,
 ) -> Option<usize> {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, CONTROL_H), egui::Sense::click());
     let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
@@ -1349,7 +1584,14 @@ fn select_with(
         );
         text_x = rect.min.x + 44.0;
     }
-    let g = galley(ui, current, FontId::proportional(14.0), pal().text);
+    // the name stops before the caret instead of running under it
+    let (g, cut) = fit_galley(
+        ui,
+        current,
+        FontId::proportional(14.0),
+        pal().text,
+        rect.max.x - 36.0 - text_x,
+    );
     ui.painter().galley(
         Pos2::new(text_x, rect.center().y - g.size().y / 2.0).round(),
         g,
@@ -1367,7 +1609,10 @@ fn select_with(
         pal().muted,
         false,
     );
-    let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let mut resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+    if cut && !open {
+        resp = resp.on_hover_text(current);
+    }
     let mut picked = None;
     egui::Popup::from_toggle_button_response(&resp)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
@@ -1378,11 +1623,17 @@ fn select_with(
         .show(|ui| {
             ui.set_width(list_width - 12.0);
             ui.spacing_mut().item_spacing.y = 2.0;
-            for (i, (icon, label)) in items.iter().enumerate() {
-                if select_item(ui, *icon, label, i == selected).clicked() {
-                    picked = Some(i);
-                }
-            }
+            // a long list (the operations of a System block) scrolls instead of running out of
+            // the window
+            egui::ScrollArea::vertical()
+                .max_height(max_height)
+                .show(ui, |ui| {
+                    for (i, (icon, label)) in items.iter().enumerate() {
+                        if select_item(ui, *icon, label, i == selected).clicked() {
+                            picked = Some(i);
+                        }
+                    }
+                });
         });
     picked
 }
@@ -1413,7 +1664,15 @@ pub(in crate::ui::settings) fn select_item(
         );
         text_x = rect.min.x + 42.0;
     }
-    let g = galley(ui, label, text_font(14.0, on), pal().text);
+    // room for the check at the right: a long name is cut before it, never drawn over it
+    let right_pad = if on { 40.0 } else { 14.0 };
+    let (g, cut) = fit_galley(
+        ui,
+        label,
+        text_font(14.0, on),
+        pal().text,
+        rect.max.x - right_pad - text_x,
+    );
     ui.painter().galley(
         Pos2::new(text_x, rect.center().y - g.size().y / 2.0).round(),
         g,
@@ -1429,7 +1688,8 @@ pub(in crate::ui::settings) fn select_item(
             false,
         );
     }
-    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+    let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+    if cut { resp.on_hover_text(label) } else { resp }
 }
 
 /// A menu of actions under a button: no title, no close button, just [`menu_item`] lines on a

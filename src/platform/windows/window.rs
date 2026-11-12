@@ -12,7 +12,7 @@
 
 use super::util::{frameless_ex_style, frameless_style, frameless_styles};
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicIsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::time::{Duration, Instant};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::Graphics::Dwm::{
@@ -81,6 +81,42 @@ unsafe extern "system" fn frameless_proc(
 /// The window the DWM attributes were last applied to (they stay on the window, so once is enough).
 static DWM_DONE: AtomicIsize = AtomicIsize::new(0);
 
+/// Whether the window should not take the focus when it is shown (the notice of an action, see
+/// [`set_window_passive`]).
+static PASSIVE: AtomicBool = AtomicBool::new(false);
+
+/// The window of the notice on the screen (`ui::hud`) must not take the keyboard from the app the
+/// action is for, so while it is on, the window gets `WS_EX_NOACTIVATE`: a click-through window
+/// that is shown without being activated. Applied at once to the window the frame code has seen, and
+/// again by every `clear_window_frame` (winit rewrites the styles when it shows or hides the window).
+pub fn set_window_passive(on: bool) {
+    PASSIVE.store(on, Ordering::Relaxed);
+    let handle = DWM_DONE.load(Ordering::Relaxed);
+    if handle != 0 {
+        apply_passive(handle as HWND);
+    }
+}
+
+/// Sets or clears `WS_EX_NOACTIVATE` on `hwnd` to match [`PASSIVE`].
+fn apply_passive(hwnd: HWND) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::WS_EX_NOACTIVATE;
+    // SAFETY: only reads and writes the extended style of a window of this process, after IsWindow.
+    unsafe {
+        if IsWindow(hwnd) == 0 {
+            return;
+        }
+        let ex = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+        let want = if PASSIVE.load(Ordering::Relaxed) {
+            ex | WS_EX_NOACTIVATE
+        } else {
+            ex & !WS_EX_NOACTIVATE
+        };
+        if want != ex {
+            SetWindowLongW(hwnd, GWL_EXSTYLE, want as i32);
+        }
+    }
+}
+
 /// Removes the frame of the window `handle` (an `HWND`; 0 is ignored).
 ///
 /// * the frame styles are stripped and the window becomes a plain `WS_POPUP`, which is what the
@@ -117,6 +153,7 @@ pub fn clear_window_frame(handle: isize) {
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
             );
         }
+        apply_passive(hwnd);
         take_pending_raise(hwnd);
         if DWM_DONE.swap(handle, Ordering::Relaxed) != handle {
             // keeps the frame away for good (see `frameless_proc`); the window belongs to the UI
@@ -159,6 +196,11 @@ pub fn window_manager_may_recenter() -> bool {
 /// A window is placed in the same points the pointer is in.
 pub fn window_point(x: f64, y: f64) -> (f64, f64) {
     (x, y)
+}
+
+/// The pie is drawn in the same points the pointer moves in.
+pub fn window_scale(_x: f64, _y: f64) -> f64 {
+    1.0
 }
 
 /// How long a request to raise the window stays valid. A request made while the window is still

@@ -35,9 +35,28 @@ What is remembered (day of the last check, newest version, day of the last offer
 
 Only an ordinary install is updated: macOS `CursorPie.app` in a folder you can write to, Windows
 `%LOCALAPPDATA%\Programs\CursorPie\cursorpie.exe`, Linux a program outside a `target/` folder in a folder you can
-write to. Anything else gets **Download page**. On Linux only the program is replaced (not the desktop entry, the icons
-or the udev rule); run the new `install.sh` for those. On macOS the app is signed ad hoc, so macOS may ask for the
+write to. Anything else gets **Download page**. On macOS the app is signed ad hoc, so macOS may ask for the
 Accessibility permission again after an update.
+
+## What an update brings besides the program
+
+The swap replaces the program. The files CursorPie keeps *outside* its executable, which it wrote for you and which a
+release can change, are brought up to date by the program itself at the **first start of a new version** (`src/refresh.rs`),
+so it makes no difference how the new version got there (the update button, Setup, a disk image, `install.sh`, a package
+manager). The version that did it last is remembered in `program_version` in the support folder; a copy from before that
+file existed counts as "not done yet".
+
+| File | Brought up to date when |
+|---|---|
+| Browser extension (`<support folder>/browser-extension`) | you exported it there before (**Show the extension files**); nothing is created for someone who never did. The extension that is loaded then reloads itself, see `docs/BROWSER_EXTENSION.md` |
+| Login entry (LaunchAgent, `Run` key, autostart file) | *Launch at login* is on and this is an ordinary install (the test of the update: a build folder never takes it over) |
+| Linux: `~/.local/share/applications/cursorpie.desktop` | it is there and still CursorPie's own (its `Name` and `Exec` lines are the shipped ones); one you edited stays |
+| Linux: the GNOME Shell extension in `~/.local/share/gnome-shell/extensions/` | the folder is there. GNOME reads an extension once per session, so the new code runs after the next log in |
+
+**Never touched:** `config.json` (profiles, slices, flows, settings), its backups, `update_state.json`. What "Add a slice"
+offers, the panel templates and the flow kit are compiled into the program, so a new version has them without any file
+being written. Not written either, because they are not in your own folders: the udev rule (`/etc/udev/rules.d`, needs
+root) and the icons; `install.sh` does those. Everything is best effort: a file that cannot be written stays as it was.
 
 ## Checking it by hand
 
@@ -49,6 +68,11 @@ system, install the *previous* release, publish (or point `LATEST_RELEASE_API_UR
 - [ ] **Install update**: status goes *Downloading*, then the app quits and the new version starts (About shows the new
       number). Settings, pies and the login entry are unchanged.
 - [ ] With unsaved changes in Settings the app does not quit; **Restart to update** works after saving.
+- [ ] After the update, with the extension exported before and loaded: `browser-extension/` holds the new version (its
+      `manifest.json`), and within a minute the extension has reloaded itself (the line under the switch no longer says
+      *from another version*) without pressing **Show the extension files**. Loaded from another folder: it is asked at most
+      a few times and the line says what to do.
+- [ ] Linux: an old `~/.local/share/applications/cursorpie.desktop` is the new one; an edited one is left alone.
 - [ ] Offline: **Check now** says *Could not check*, nothing else changes. A tampered file (change one byte of the
       downloaded package while it sits in `updates/`) is refused as *not the file the release published*.
 - [ ] A copy run from `target/release` (or an unzipped Windows download) shows **Download page**, not *Install update*.

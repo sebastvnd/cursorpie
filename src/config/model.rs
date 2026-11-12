@@ -22,6 +22,12 @@ pub enum Action {
     OpenUrl(String),
     /// Shell command, run with `/bin/sh -c` (macOS) or `cmd /C` (Windows).
     Command(String),
+    /// Do something in the browser, through the browser extension: a line such as `media.next`,
+    /// `tab.close` or `chat.send_to Anna :: on my way` (the command, then its text). See
+    /// [`bridge::commands`](crate::bridge::commands) for the commands and
+    /// `docs/BROWSER_EXTENSION.md`. Needs [`Config::browser_bridge`](super::Config::browser_bridge)
+    /// and the extension; without them it tells the person so and does nothing.
+    Browser(String),
     Sequence(Vec<Action>),
     /// Pause this many milliseconds (at most [`MAX_WAIT_MS`](super::MAX_WAIT_MS)). Made by the
     /// *Wait* block of a flow; useful inside a `Sequence` too.
@@ -313,6 +319,25 @@ pub enum Appearance {
     Dark,
 }
 
+/// Shortest and longest time the notice of an action stays on screen, in milliseconds.
+pub const HUD_MS_MIN: u64 = 500;
+pub const HUD_MS_MAX: u64 = 6000;
+/// Smallest and largest size of the notice, in percent of the normal size.
+pub const HUD_SIZE_MIN: u32 = 70;
+pub const HUD_SIZE_MAX: u32 = 160;
+
+/// Where the notice of the actions CursorPie carries out (see [`crate::ui::hud`]) appears.
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq, Default)]
+pub enum HudPosition {
+    /// Bottom center of the display the pointer is on, above the dock or taskbar.
+    #[default]
+    Bottom,
+    /// Top center of the display the pointer is on.
+    Top,
+    /// Just below the pointer.
+    Cursor,
+}
+
 /// How the slices of the pie are drawn.
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq, Default)]
 pub enum PieStyle {
@@ -385,6 +410,15 @@ pub struct Config {
     /// Dragging right after pressing opens the pie instantly (disables middle-drag pass-through).
     pub flick: bool,
     pub sound: bool,
+    /// Show a small notice on screen (a pill with an icon and a line of text) for each action that
+    /// runs: an app that opens, a link, a shortcut, a flow. See [`crate::ui::hud`].
+    pub hud: bool,
+    /// Where that notice appears.
+    pub hud_position: HudPosition,
+    /// How long the notice stays, in milliseconds.
+    pub hud_ms: u64,
+    /// How big that notice is, in percent of the normal size (see `HUD_SIZE_MIN` and `HUD_SIZE_MAX`).
+    pub hud_size: u32,
     pub launch_at_login: bool,
     pub app_gesture: AppGesture,
     pub double_click_ms: u64,
@@ -403,6 +437,13 @@ pub struct Config {
     /// (see [`bridge`](crate::bridge)). Off by default: the person installs the extension and
     /// switches this on.
     pub browser_bridge: bool,
+    /// A flow may show a *panel*: a small window with fields, lists and buttons (an *Ask* block in
+    /// Panel mode, see [`panel`](crate::panel)). On by default: the person wrote the flow.
+    pub panels: bool,
+    /// The browser extension may show panels too (a tab switcher, a question). Off by default,
+    /// because it puts content from outside CursorPie on the screen; needs
+    /// [`Config::browser_bridge`].
+    pub extension_panels: bool,
     /// Look for a newer release once a day, when Settings opens, and offer it (see
     /// [`update`](crate::update)). It is the only network connection CursorPie makes by itself; the package is only downloaded when the person presses *Install update*. On by default,
     /// also for a file saved before this setting existed; *Check now* in the About tab works either way.

@@ -1,5 +1,7 @@
 # Browser bridge: the optional extension for "Open URL" slices
 
+> The extension can also control the browser (media, tabs, WhatsApp / Telegram Web): see `docs/BROWSER_EXTENSION.md`.
+
 An *Open URL* slice with an `http(s)` link offers the choice **new window / the page that is open** (see
 `docs/OPEN_URL_CHOICE.md`) **only with this extension**: a browser does not tell other programs which tabs it has, and
 guessing opens the same page twice.
@@ -29,6 +31,15 @@ extension ──native messaging (stdin/stdout)──▶ cursorpie --(started by
 The extension version is the version of the build: `{{VERSION}}` in the manifests is replaced when the files are written
 (`--export-extension`, or the **Show the extension files** button), so a version bump needs no edit there.
 
+**After an update** the files are written again by the program (`src/refresh.rs`, at the first start of the new version,
+before the bridge starts) when the folder was exported to before. A browser keeps running the old code until the extension
+is reloaded, so when an extension says `hello` with another version than the build and the folder it most likely was loaded
+from (`<support folder>/browser-extension/chromium` or `firefox`) holds the build's files, the app sends it
+`{"type":"reload","version":"<build>"}` (`bridge::ask_to_reload_in`). The extension calls `runtime.reload()` once per version
+(`CP.reloadFor` remembers the version in `storage.local`), and the app asks a browser at most 3 times per run, so an
+extension loaded from another folder, which stays old, cannot be made to reload for ever. An extension from before this
+message ignores it, so the update that first brings the message still needs one manual reload.
+
 ## Turning it on
 
 1. Settings > Behavior > **Browser extension**: switch on *Know which web pages are open* and **save the settings**
@@ -46,14 +57,27 @@ Turning the switch off stops the server, removes `bridge.json` and removes the h
 
 ## Privacy and security
 
-* The extension sends the **address** of `http(s)` tabs (and tab and window numbers) to CursorPie on the same computer.
-  No page content, no titles, nothing over the network. Private windows are not included unless the person allowed the
-  extension there.
+* The extension sends the **address** of `http(s)` tabs (and tab and window numbers) to CursorPie on the same computer,
+  and since the commands of `docs/BROWSER_EXTENSION.md` also how many tabs make sound and how many chats wait (numbers
+  only). No page content, no titles, nothing over the network. Private windows are not included unless the person allowed
+  the extension there.
 * The browser decides who may start the host: the manifest names the extension (`allowed_origins` with the fixed id
   `mbfoipmefaenedenjnepgcdkgkmefpnk`, `allowed_extensions` with `browser-bridge@cursorpie`).
 * The host reaches the app only on `127.0.0.1`, after sending the secret of `bridge.json`. The secret is random per run;
   the file is readable by the user only on Linux and macOS (on Windows it lives in the user's own `%APPDATA%`).
-* The app takes only data from the extension (a list of tabs). The extension opens only `http(s)` links.
+* The app takes only data from the extension (a list of tabs, counts, the result of a command). The extension opens only
+  `http(s)` links, and the app asks it only for the commands of `docs/BROWSER_EXTENSION.md`.
+
+## Panels
+
+Besides tabs, state and commands, the extension may ask CursorPie to show a **panel** (`docs/PANELS.md`) and gets the
+answer back: `panel`, `panel_update` and `panel_close` from the extension, `panel_result` from the app. The app refuses
+every one of them (answering `unavailable` with the reason) unless **both** "Know which web pages are open..." and
+"Let the browser extension show panels" are on in Settings, checks the description (size, limits, ids) before drawing,
+allows at most 4 panels waiting at once and 5 minutes for each, and lets an extension update or close only the panels
+it started. What an extension puts in a panel (for example tab titles in `ui.tabs`) is shown on screen only: it is not
+stored and not sent anywhere, and the *Privacy* rule above about titles still holds for everything the extension sends
+on its own.
 
 ## Browser by browser
 

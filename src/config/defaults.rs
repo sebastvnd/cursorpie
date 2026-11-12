@@ -7,8 +7,8 @@
 //! as a parameter in its `_for` form (so tests cover both); the plain form uses the OS the build runs on.
 
 use super::{
-    Action, AppGesture, AppIconStyle, Appearance, CONFIG_VERSION, Config, DesktopMode, IconShadow,
-    Item, PieStyle, Profile, SideTarget, TargetApp, TouchClickAction,
+    Action, AppGesture, AppIconStyle, Appearance, CONFIG_VERSION, Config, DesktopMode, HudPosition,
+    IconShadow, Item, PieStyle, Profile, SideTarget, TargetApp, TouchClickAction,
 };
 use crate::keys::{MOD_ALT, MOD_CMD, MOD_CTRL, MOD_SHIFT, Shortcut, key};
 use crate::platform::Os;
@@ -329,6 +329,10 @@ impl Config {
             trigger_button: 2,
             flick: false,
             sound: false,
+            hud: true,
+            hud_position: HudPosition::Bottom,
+            hud_ms: 1500,
+            hud_size: 100,
             launch_at_login: false,
             app_gesture: AppGesture::DoubleClick,
             double_click_ms: 260,
@@ -337,6 +341,8 @@ impl Config {
             desktop_mode: DesktopMode::SwitchToApp,
             open_app_choice: true,
             browser_bridge: false,
+            panels: true,
+            extension_panels: false,
             check_updates: true,
             side_default: SideTarget::App,
             side_adopt: true,
@@ -478,6 +484,9 @@ mod tests {
         assert_eq!(c.double_click_ms, 260);
         assert_eq!(c.sleep_after_s, 60);
         assert!(!c.flick && !c.sound && !c.launch_at_login);
+        assert!(c.hud, "the notice of actions is on by default");
+        assert_eq!(c.hud_position, HudPosition::Bottom);
+        assert_eq!(c.hud_ms, 1500);
         assert_eq!(c.app_gesture, AppGesture::DoubleClick);
         assert_eq!(c.target_app, TargetApp::UnderCursor);
     }

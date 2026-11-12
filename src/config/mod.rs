@@ -25,6 +25,9 @@ pub mod backup;
 mod defaults;
 mod first_run;
 pub mod flow;
+pub mod flow_check;
+pub mod flow_kit;
+pub mod flow_list;
 mod model;
 mod sanitize;
 pub mod share;
@@ -33,7 +36,10 @@ mod tree;
 
 pub use defaults::{blank_items, presets, quick_actions};
 pub use first_run::{FirstRun, mark_welcomed, welcome_due};
-pub use flow::{AskMode, CalcOp, CmpOp, Cond, Flow, FlowNode, LogicOp, NativeOp, NodeKind, Port};
+pub use flow::{
+    AskMode, CalcOp, CmpOp, Cond, Flow, FlowNode, ListOp, LogicOp, NativeOp, NodeKind, Port,
+};
+pub use flow_check::{Issue, Severity, check_flow};
 pub use model::*;
 pub use share::image_path;
 pub use store::*;
@@ -131,6 +137,17 @@ mod tests {
     }
 
     #[test]
+    fn panels_are_on_for_flows_and_off_for_the_extension_and_old_files_load() {
+        let d = Config::default();
+        assert!(d.panels && !d.extension_panels);
+        let old = parse_config(r#"{"version": 2}"#).expect("parses");
+        assert!(old.panels && !old.extension_panels);
+        let off = parse_config(r#"{"version": 2, "panels": false, "extension_panels": true}"#)
+            .expect("parses");
+        assert!(!off.panels && off.extension_panels);
+    }
+
+    #[test]
     fn the_update_check_is_on_by_default_and_old_files_get_it() {
         assert!(Config::default().check_updates);
         let old = parse_config(r#"{"version": 2}"#).expect("parses");
@@ -204,6 +221,29 @@ mod tests {
         assert_eq!(c.target_app, TargetApp::Focused);
         assert_eq!(c.side_default, SideTarget::General);
         assert_eq!(c.preview_ms, 3000);
+    }
+
+    #[test]
+    fn the_notice_time_is_clamped_and_an_old_file_gets_the_defaults() {
+        let old = parse_config(r#"{"version": 2}"#).unwrap();
+        assert!(old.hud);
+        assert_eq!(old.hud_position, HudPosition::Bottom);
+        assert_eq!(old.hud_ms, 1500);
+        let low = parse_config(r#"{"version": 2, "hud_ms": 1, "hud_position": "Top"}"#).unwrap();
+        assert_eq!((low.hud_ms, low.hud_position), (500, HudPosition::Top));
+        let high = parse_config(r#"{"version": 2, "hud_ms": 999999, "hud": false}"#).unwrap();
+        assert_eq!(high.hud_ms, 6000);
+        assert!(!high.hud);
+    }
+
+    #[test]
+    fn the_notice_size_is_clamped_and_an_old_file_gets_the_normal_size() {
+        let old = parse_config(r#"{"version": 2}"#).unwrap();
+        assert_eq!(old.hud_size, 100);
+        let small = parse_config(r#"{"version": 2, "hud_size": 5}"#).unwrap();
+        assert_eq!(small.hud_size, HUD_SIZE_MIN);
+        let big = parse_config(r#"{"version": 2, "hud_size": 9999}"#).unwrap();
+        assert_eq!(big.hud_size, HUD_SIZE_MAX);
     }
 
     #[test]

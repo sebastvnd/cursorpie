@@ -1,7 +1,7 @@
 //! Side and extra mouse buttons (back, forward, button 5 and up): send the active mode's actions,
 //! otherwise pass through.
 
-use super::resolve::{remember_target, run_action, target_bundle_at};
+use super::resolve::{remember_target, run_action_quiet, target_bundle_at};
 use super::{Gesture, Kind, Verdict, settings_open};
 use crate::config::{Action, cfg, extra_buttons_in_use, item_at, lock};
 use crate::geometry::Point;
@@ -97,7 +97,7 @@ pub(super) fn handle_side(
                 return Verdict::Keep; // native back/forward keeps working
             }
             SIDE_SWALLOWED[idx].store(true, Ordering::SeqCst);
-            run_action(action, target, None);
+            run_action_quiet(action, target);
             Verdict::Drop
         }
         Kind::Up => {

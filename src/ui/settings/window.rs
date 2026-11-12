@@ -202,7 +202,11 @@ impl App {
                     self.confirm_quit = false; // "keep editing"
                 } else if self.confirm_discard {
                     self.confirm_discard = false; // "keep editing"
-                } else if !self.ed.close_sheet() && !egui::Popup::is_any_open(&ctx) {
+                } else if !self.ed.close_sheet()
+                    && !self.ed.close_flow_menu()
+                    && !egui::Popup::is_any_open(&ctx)
+                    && !self.leave_flow_full(&ctx)
+                {
                     self.request_cancel();
                 }
             }
@@ -219,6 +223,14 @@ impl App {
             self.opened = Some(self.edit.clone()); // nothing is unsaved any more
             self.say("Saved.");
             ctx.request_repaint();
+        }
+        // F11 fills the display with the Flow tab and back (the button of the bar does the same)
+        if self.closing.is_none()
+            && self.ed.recording.is_none()
+            && self.ed.tab == Tab::Flow
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F11))
+        {
+            self.ed.flow_full_req = true;
         }
         self.history_keys(&ctx);
         if self
@@ -240,17 +252,30 @@ impl App {
         }
         let compact = COMPACT.load(Ordering::Relaxed);
         let open = ctx.animate_bool_with_time(egui::Id::new("sidebar_open"), !compact, 0.16);
-        let side_w = RAIL_W + (SIDE_W - RAIL_W) * open;
+        // the Flow tab on the whole display: no sidebar, no shadow, the card is the display
+        if self.ed.flow_full.is_some() && self.ed.tab != Tab::Flow {
+            self.leave_flow_full(&ctx);
+        }
+        let full_screen = self.ed.flow_full.is_some();
+        let side_w = if full_screen {
+            0.0
+        } else {
+            RAIL_W + (SIDE_W - RAIL_W) * open
+        };
         let wide = open > 0.5;
 
         // The window, always centered. Its rectangle is snapped to whole pixels: a hairline that
         // sits between two pixels is smeared over both, which is what made the old card look soft.
         let full = ui.max_rect();
-        let card_rect = snap_rect(
-            egui::Rect::from_center_size(full.center(), self.card_size)
-                .translate(Vec2::new(0.0, slide)),
-            ctx.pixels_per_point(),
-        );
+        let card_rect = if full_screen {
+            snap_rect(full, ctx.pixels_per_point())
+        } else {
+            snap_rect(
+                egui::Rect::from_center_size(full.center(), self.card_size)
+                    .translate(Vec2::new(0.0, slide)),
+                ctx.pixels_per_point(),
+            )
+        };
         self.ed.card = card_rect;
         let Regions {
             top,
@@ -259,23 +284,27 @@ impl App {
             foot,
         } = regions(card_rect, side_w);
         let painter = ui.painter().clone();
-        painter.add(window_shadow().as_shape(card_rect, CARD_RADIUS));
-        painter.rect_filled(card_rect, CARD_RADIUS, pal().bg);
-        painter.rect_filled(
-            side,
-            egui::CornerRadius {
-                nw: CARD_RADIUS_PT,
-                sw: CARD_RADIUS_PT,
-                ne: 0,
-                se: 0,
-            },
-            pal().sidebar,
-        );
-        painter.line_segment(
-            [side.right_top(), side.right_bottom()],
-            egui::Stroke::new(1.0, pal().border),
-        );
-        window_outline(&painter, card_rect, accent);
+        if full_screen {
+            painter.rect_filled(card_rect, 0.0, pal().bg);
+        } else {
+            painter.add(window_shadow().as_shape(card_rect, CARD_RADIUS));
+            painter.rect_filled(card_rect, CARD_RADIUS, pal().bg);
+            painter.rect_filled(
+                side,
+                egui::CornerRadius {
+                    nw: CARD_RADIUS_PT,
+                    sw: CARD_RADIUS_PT,
+                    ne: 0,
+                    se: 0,
+                },
+                pal().sidebar,
+            );
+            painter.line_segment(
+                [side.right_top(), side.right_bottom()],
+                egui::Stroke::new(1.0, pal().border),
+            );
+            window_outline(&painter, card_rect, accent);
+        }
 
         // dragging the empty part of the top bar or the sidebar's head moves the window; the
         // buttons are added after it, so they sit on top and keep their clicks
@@ -285,7 +314,7 @@ impl App {
             egui::Id::new("settings_drag"),
             egui::Sense::click_and_drag(),
         );
-        if drag.drag_started() {
+        if drag.drag_started() && !full_screen {
             ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
         }
 
@@ -294,95 +323,106 @@ impl App {
         let primary = platform::OS.primary_name();
 
         // ---------------------------------------------------------------- sidebar
-        let brand_y = side.min.y + 30.0;
-        if wide {
-            // the logo already has the name written in it
-            draw_wordmark(&painter, side.min.x + PAD, brand_y + 14.0, 30.0);
-        } else {
-            draw_logo(&painter, egui::pos2(side.center().x, brand_y + 14.0), 14.0);
-        }
-        ui.scope_builder(
-            egui::UiBuilder::new().max_rect(egui::Rect::from_min_max(
-                egui::pos2(side.min.x + GAP + 4.0, side.min.y + 92.0),
-                egui::pos2(side.max.x - GAP - 4.0, side.max.y - 90.0),
-            )),
-            |ui| {
-                ui.spacing_mut().item_spacing.y = 4.0;
-                for tab in [
-                    Tab::Menu,
-                    Tab::Flow,
-                    Tab::Behavior,
-                    Tab::General,
-                    Tab::About,
-                ] {
-                    let (icon, title, _) = section_info(tab);
-                    if nav_item(ui, icon, title, self.ed.tab == tab, accent, !wide).clicked() {
-                        self.ed.tab = tab;
-                        self.ed.stop_recording(); // a shortcut is recorded on one page only
-                        self.ed.scan = None; // a scan belongs to the General tab
-                        self.ed.close_sheet();
-                        if tab == Tab::General {
-                            self.ed.backups = backups(); // read once, not on every frame
+        if !full_screen {
+            let brand_y = side.min.y + 30.0;
+            if wide {
+                // the logo already has the name written in it
+                draw_wordmark(&painter, side.min.x + PAD, brand_y + 14.0, 30.0);
+            } else {
+                draw_logo(&painter, egui::pos2(side.center().x, brand_y + 14.0), 14.0);
+            }
+            ui.scope_builder(
+                egui::UiBuilder::new().max_rect(egui::Rect::from_min_max(
+                    egui::pos2(side.min.x + GAP + 4.0, side.min.y + 92.0),
+                    egui::pos2(side.max.x - GAP - 4.0, side.max.y - 90.0),
+                )),
+                |ui| {
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    let tabs = [
+                        Tab::Menu,
+                        Tab::Flow,
+                        Tab::Behavior,
+                        Tab::General,
+                        Tab::About,
+                    ];
+                    // the wash behind the chosen entry travels to the one that is picked
+                    let at = tabs.iter().position(|t| *t == self.ed.tab).unwrap_or(0);
+                    let (origin, width) = (ui.cursor().min, ui.available_width());
+                    let near = nav_highlight(ui, origin, width, 4.0, at, tabs.len(), accent);
+                    for (i, tab) in tabs.into_iter().enumerate() {
+                        let (icon, title, _) = section_info(tab);
+                        if nav_item(ui, icon, title, near[i], accent, !wide).clicked() {
+                            self.ed.tab = tab;
+                            self.ed.stop_recording(); // a shortcut is recorded on one page only
+                            self.ed.scan = None; // a scan belongs to the General tab
+                            self.ed.close_sheet();
+                            if tab == Tab::General {
+                                self.ed.backups = backups(); // read once, not on every frame
+                            }
                         }
                     }
-                }
-            },
-        );
-        ui.scope_builder(
-            egui::UiBuilder::new()
-                .max_rect(side.shrink2(Vec2::new(GAP + 4.0, GAP + 4.0)))
-                .layout(egui::Layout::bottom_up(egui::Align::Min)),
-            |ui| {
-                ui.spacing_mut().item_spacing.y = 4.0;
-                if wide {
-                    if button(ui, Look::Danger, Some(symbols::POWER), "Quit CursorPie").clicked() {
-                        action = UiAction::Quit;
-                    }
-                    ui.add_space(2.0);
-                    ui.horizontal(|ui| {
-                        ui.add_space(8.0);
-                        ui.label(
-                            RichText::new(format!("Version {VERSION}"))
-                                .size(12.0)
-                                .color(pal().muted),
-                        );
-                    });
-                } else {
-                    ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
-                        let quit = icon_button_look(
-                            ui,
-                            Look::Danger,
-                            symbols::POWER,
-                            "Quit CursorPie",
-                            true,
-                        );
-                        if quit.clicked() {
+                },
+            );
+            ui.scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(side.shrink2(Vec2::new(GAP + 4.0, GAP + 4.0)))
+                    .layout(egui::Layout::bottom_up(egui::Align::Min)),
+                |ui| {
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    if wide {
+                        if button(ui, Look::Danger, Some(symbols::POWER), "Quit CursorPie")
+                            .clicked()
+                        {
                             action = UiAction::Quit;
                         }
-                    });
-                }
-            },
-        );
+                        ui.add_space(2.0);
+                        ui.horizontal(|ui| {
+                            ui.add_space(8.0);
+                            ui.label(
+                                RichText::new(format!("Version {VERSION}"))
+                                    .size(12.0)
+                                    .color(pal().muted),
+                            );
+                        });
+                    } else {
+                        ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
+                            let quit = icon_button_look(
+                                ui,
+                                Look::Danger,
+                                symbols::POWER,
+                                "Quit CursorPie",
+                                true,
+                            );
+                            if quit.clicked() {
+                                action = UiAction::Quit;
+                            }
+                        });
+                    }
+                },
+            );
+        }
 
         // ---------------------------------------------------------------- top bar
         let (_, title, subtitle) = section_info(self.ed.tab);
-        let title_x = top.min.x + PAD + 44.0;
-        ui.scope_builder(
-            egui::UiBuilder::new().max_rect(egui::Rect::from_min_size(
-                egui::pos2(top.min.x + PAD, top.min.y + 8.0),
-                Vec2::splat(CONTROL_H),
-            )),
-            |ui| {
-                let tip = if compact {
-                    format!("Show the sidebar ({primary}+B)")
-                } else {
-                    format!("Fold the sidebar to icons ({primary}+B)")
-                };
-                if icon_button(ui, symbols::SIDEBAR_SIMPLE, &tip, true).clicked() {
-                    COMPACT.fetch_xor(true, Ordering::Relaxed);
-                }
-            },
-        );
+        let title_x = top.min.x + PAD + if full_screen { 0.0 } else { 44.0 };
+        if !full_screen {
+            ui.scope_builder(
+                egui::UiBuilder::new().max_rect(egui::Rect::from_min_size(
+                    egui::pos2(top.min.x + PAD, top.min.y + 8.0),
+                    Vec2::splat(CONTROL_H),
+                )),
+                |ui| {
+                    let tip = if compact {
+                        format!("Show the sidebar ({primary}+B)")
+                    } else {
+                        format!("Fold the sidebar to icons ({primary}+B)")
+                    };
+                    if icon_button(ui, symbols::SIDEBAR_SIMPLE, &tip, true).clicked() {
+                        COMPACT.fetch_xor(true, Ordering::Relaxed);
+                    }
+                },
+            );
+        }
         painter.text(
             egui::pos2(title_x, top.min.y + 26.0),
             egui::Align2::LEFT_CENTER,
@@ -430,6 +470,7 @@ impl App {
             ui.set_clip_rect(ui.clip_rect().intersect(body));
             if self.ed.tab != Tab::Flow {
                 crate::tap::FLOW_CANVAS_HOVER.store(false, std::sync::atomic::Ordering::SeqCst);
+                self.ed.flow_menu = None;
             }
             if self.ed.tab == Tab::Menu {
                 // Menu: two tiles, no outer scroll
@@ -460,6 +501,10 @@ impl App {
                     });
             }
         });
+
+        if std::mem::take(&mut self.ed.flow_full_req) {
+            self.toggle_flow_full(&ctx);
+        }
 
         // ---------------------------------------------------------------- footer
         ui.scope_builder(
@@ -504,6 +549,10 @@ impl App {
         self.quit_dialog(&ctx, accent);
         // the sheet that asks before Cancel / Esc throws unsaved changes away
         self.discard_dialog(&ctx);
+        // the sheet that says why an imported file was refused or what was repaired in it
+        self.import_report_dialog(&ctx);
+        // the sheet that says what went wrong in a run of a flow
+        self.run_report_dialog(&ctx);
         // the sheet that offers a newer release, once a day
         self.update_dialog(&ctx, accent);
 

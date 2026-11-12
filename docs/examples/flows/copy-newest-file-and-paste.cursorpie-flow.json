@@ -1,0 +1,162 @@
+{
+  "cursorpie_flow": 2,
+  "flow": {
+    "id": "copy-newest-file-and-paste",
+    "name": "Copy the newest export as a file, then paste",
+    "nodes": [
+      {
+        "id": 1,
+        "x": 40.0,
+        "y": 60.0,
+        "kind": "Start",
+        "next": 2
+      },
+      {
+        "id": 2,
+        "x": 240.0,
+        "y": 60.0,
+        "kind": {
+          "Run": {
+            "command": "if ! ls \"$HOME/Downloads\" >/dev/null 2>&1; then\n  echo \"macOS memblokir akses ke Downloads: izinkan CursorPie di Pengaturan Sistem > Privasi & Keamanan > File dan Folder (atau Akses Disk Penuh).\"\n  exit 1\nfi\nlatest=\"$(find \"$HOME/Downloads\" \"$HOME/Desktop\" \"$HOME/Documents\" -maxdepth 2 -type f -mmin -120 \\( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.pdf' -o -iname '*.svg' -o -iname '*.webp' -o -iname '*.tif' -o -iname '*.tiff' -o -iname '*.gif' -o -iname '*.psd' -o -iname '*.eps' -o -iname '*.heic' -o -iname '*.avif' \\) -exec stat -f '%m %N' {} + 2>/dev/null | sort -rn | head -n 1 | cut -d ' ' -f 2-)\"\nif [ -z \"$latest\" ] || [ ! -f \"$latest\" ]; then\n  echo \"Tidak ada file hasil export (2 jam terakhir) di Downloads/Desktop/Documents.\"\n  exit 1\nfi\nif ! { osascript -l JavaScript -e 'ObjC.import(\"AppKit\");function run(argv){var pb=$.NSPasteboard.generalPasteboard;pb.clearContents;var ok=pb.writeObjects($([$.NSURL.fileURLWithPath(argv[0])]));if(!ok){throw new Error(\"write failed\");}return \"ok\";}' \"$latest\" >/dev/null 2>&1 || osascript -e 'on run argv' -e 'set the clipboard to ((POSIX file (item 1 of argv)) as alias)' -e 'end run' \"$latest\" >/dev/null 2>&1; }; then\n  echo \"Gagal menaruh file di clipboard: $latest\"\n  exit 1\nfi\nprintf '%s' \"$latest\"",
+            "out": "file",
+            "timeout_s": 30
+          }
+        },
+        "next": 3
+      },
+      {
+        "id": 3,
+        "x": 540.0,
+        "y": 60.0,
+        "kind": {
+          "Branch": {
+            "a": "ok",
+            "op": "IsTrue",
+            "b": ""
+          }
+        },
+        "next": 4,
+        "alt": 10
+      },
+      {
+        "id": 4,
+        "x": 40.0,
+        "y": 190.0,
+        "kind": {
+          "Native": {
+            "op": "FrontApp",
+            "a": "",
+            "b": "app"
+          }
+        },
+        "next": 5
+      },
+      {
+        "id": 5,
+        "x": 340.0,
+        "y": 190.0,
+        "kind": {
+          "Ask": {
+            "mode": "YesNo",
+            "message": "On the clipboard as a file:\n{{file}}\n\nPut the cursor where it should go (a chat, a mail), then press Yes to paste.",
+            "preset": "",
+            "out": "go"
+          }
+        },
+        "next": 6
+      },
+      {
+        "id": 6,
+        "x": 640.0,
+        "y": 190.0,
+        "kind": {
+          "Branch": {
+            "a": "go",
+            "op": "IsTrue",
+            "b": ""
+          }
+        },
+        "next": 7,
+        "alt": 11
+      },
+      {
+        "id": 7,
+        "x": 40.0,
+        "y": 320.0,
+        "kind": {
+          "Native": {
+            "op": "ActivateApp",
+            "a": "{{app}}",
+            "b": ""
+          }
+        },
+        "next": 8
+      },
+      {
+        "id": 8,
+        "x": 340.0,
+        "y": 320.0,
+        "kind": {
+          "Wait": 700
+        },
+        "next": 9
+      },
+      {
+        "id": 9,
+        "x": 640.0,
+        "y": 320.0,
+        "kind": {
+          "Key": {
+            "key": 9,
+            "mods": 8
+          }
+        },
+        "next": 12
+      },
+      {
+        "id": 12,
+        "x": 40.0,
+        "y": 450.0,
+        "kind": "End"
+      },
+      {
+        "id": 10,
+        "x": 340.0,
+        "y": 450.0,
+        "kind": {
+          "Native": {
+            "op": "Notify",
+            "a": "No file to copy",
+            "b": "{{file}}"
+          }
+        },
+        "next": 13
+      },
+      {
+        "id": 13,
+        "x": 640.0,
+        "y": 450.0,
+        "kind": "Stop"
+      },
+      {
+        "id": 11,
+        "x": 40.0,
+        "y": 580.0,
+        "kind": {
+          "Native": {
+            "op": "Notify",
+            "a": "Cancelled",
+            "b": "The file is still on the clipboard."
+          }
+        },
+        "next": 14
+      },
+      {
+        "id": 14,
+        "x": 340.0,
+        "y": 580.0,
+        "kind": "Stop"
+      }
+    ]
+  }
+}

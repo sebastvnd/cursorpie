@@ -92,7 +92,7 @@
         },
         {
           "type": "object", "required": ["Ask"], "additionalProperties": false,
-          "properties": { "Ask": { "type": "object", "properties": { "mode": { "enum": ["Text", "YesNo"] }, "message": { "$ref": "#/$defs/text" }, "preset": { "$ref": "#/$defs/text" }, "out": { "$ref": "#/$defs/variable" } } } }
+          "properties": { "Ask": { "type": "object", "properties": { "mode": { "enum": ["Text", "YesNo", "Panel"] }, "message": { "$ref": "#/$defs/text" }, "preset": { "$ref": "#/$defs/text" }, "out": { "$ref": "#/$defs/variable" } } } }
         },
         {
           "type": "object", "required": ["Run"], "additionalProperties": false,
@@ -100,7 +100,7 @@
         },
         {
           "type": "object", "required": ["Native"], "additionalProperties": false,
-          "properties": { "Native": { "type": "object", "properties": { "op": { "enum": ["ClipboardSet", "ClipboardGet", "TypeText", "Notify", "ReadFile", "WriteFile", "AppendFile", "FileExists", "Env", "FrontApp", "ActivateApp", "AppRunning", "CursorPos", "Random", "UnixTime", "Reveal"] }, "a": { "$ref": "#/$defs/text" }, "b": { "$ref": "#/$defs/text" } } } }
+          "properties": { "Native": { "type": "object", "properties": { "op": { "enum": ["ClipboardSet", "ClipboardGet", "TypeText", "Notify", "ReadFile", "WriteFile", "AppendFile", "FileExists", "Env", "FrontApp", "ActivateApp", "AppRunning", "CursorPos", "Random", "UnixTime", "Reveal", "ListDir", "MakeDir", "CopyFile", "MoveFile", "DeleteFile", "FileSize", "FileTime", "SystemInfo", "Say", "Screenshot", "VolumeGet", "VolumeSet", "Browser", "OpenAppSmart", "OpenUrlSmart", "Quiet"] }, "a": { "$ref": "#/$defs/text" }, "b": { "$ref": "#/$defs/text" } } } }
         },
         {
           "type": "object", "required": ["Call"], "additionalProperties": false,

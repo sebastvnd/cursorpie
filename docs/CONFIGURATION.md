@@ -20,6 +20,7 @@ config.broken.json     a config that could not be read (see below)
 mice.json              the mice CursorPie has met and their extra buttons (not part of the config, see below)
 icons/                 images copied in by a profile import, and the smaller copies made when you choose a big image
 welcome_shown          empty file: the welcome window was already shown
+ai-kit/                the zip "New flow, Build it with AI" puts on the clipboard (one file, made again on every copy)
 logs/                  diagnostic logs, only when logging is on (see DEBUGGING.md)
 debug                  optional empty file that turns the diagnostic log on (see DEBUGGING.md)
 ```
@@ -81,6 +82,9 @@ hand or with an AI agent (key codes, rules, recipe, examples, a JSON Schema) is 
   "trigger_button": 2,
   "flick": false,
   "sound": false,
+  "hud": true,
+  "hud_position": "Bottom",
+  "hud_ms": 1500,
   "launch_at_login": false,
   "app_gesture": "DoubleClick",
   "double_click_ms": 260,
@@ -187,6 +191,11 @@ hand or with an AI agent (key codes, rules, recipe, examples, a JSON Schema) is 
 | `touch_click_action` | `"SwitchPie"` (default, like the right-click), `"PickHovered"` (the hovered Mode slice becomes the active mode) or `"Nothing"`: what the extra click does |
 | `touch_typing_guard_ms` | 0 to 2000 (default `400`, `0` = off): no hold is armed this soon after a key press |
 | `haptics`, `haptic_hover` | macOS only (ignored on Windows and Linux): trackpad ticks when the pie opens and the mode switches (default on), and when the hovered slice changes (default on, needs `haptics`) |
+| `hud` | `true` (default, also for a file that lacks the field): a small notice on the screen says what CursorPie does when an action runs: "Open app Safari", "Open link github.com", "Shortcut Cmd + C", "Run flow Morning". A shell command is announced as "Run command" and never with its text. The back and forward buttons stay quiet. `false` turns it off |
+| `hud_position` | `"Bottom"` (default, above the dock or taskbar), `"Top"` or `"Cursor"` (just below the pointer): where the notice appears, on the display the pointer is on |
+| `panels` | `true` (default): a flow may show a panel (an *Ask* block in Panel mode, `docs/PANELS.md`). `false`: those blocks fail with a note and the flow goes on |
+| `extension_panels` | `false` (default): the browser extension may show panels (needs `browser_bridge` too). Off, every panel it asks for is refused |
+| `hud_ms` | 500 to 6000 (default `1500`): how long the whole pill stays, in milliseconds, after it has come in (a round badge rises from the bottom, stretches into the pill and shows its text, about 0.6 s) and before it goes away (the same, backwards, about 0.3 s). A new action while it is on screen changes its text and keeps it longer |
 | `sleep_after_s` | Seconds without a pie or Settings before cached icons (except those of the general pie) and the Settings copy are freed (10 to 3600, `0` = never) |
 | `check_updates` | `true` (default, also for a file that lacks the field) or `false`. When Settings opens, CursorPie looks at most once a day for a newer stable release on GitHub and offers it once that day; the About tab always shows the result. It runs the system's `curl` (or `wget`), sends only your IP address and the CursorPie version. Together with the download that *Install update* starts, it is the only network use of the app. `false`: no automatic look; **Check now** in the About tab still works. What is remembered between runs (the day of the last check, the newest version found, the day of the last offer) is not in `config.json` but in `update_state.json` next to it; deleting that file only makes the next opening look again |
 | `apps` | App ids: bundle identifiers on macOS, executable names on Windows, desktop-entry ids on Linux. An empty list marks the general profile; only the first such profile is kept, all others need at least one app |

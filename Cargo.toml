@@ -1,6 +1,6 @@
 [package]
 name = "cursorpie"
-version = "0.8.9"
+version = "0.8.10"
 edition = "2024"
 rust-version = "1.88"
 description = "Hold-to-open pie menu for macOS, Windows and Linux (X11 and Wayland): per-app profiles, shortcuts, launchers and submenus."
@@ -75,7 +75,12 @@ raw-window-handle = "0.6"
 # Config + icons
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+# Decoders for the formats a user may drop in as an icon (see `platform::IMAGE_EXTENSIONS`). Whatever is
+# not PNG, JPEG or WebP is converted to a PNG when it is imported (`ui::iconfit`), so the profile
+# sharing, which only writes those three, keeps working. All of them are plain Rust.
+image = { version = "0.25", default-features = false, features = [
+    "png", "jpeg", "webp", "gif", "bmp", "ico", "tiff", "tga", "qoi", "pnm",
+] }
 
 # Windows backend, only enabled by the `check-windows` feature on other targets (see [target.'cfg(windows)']).
 windows-sys = { version = "0.61", optional = true, features = [

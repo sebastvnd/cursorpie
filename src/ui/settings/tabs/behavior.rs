@@ -5,14 +5,15 @@
 //! startup and memory.
 
 use crate::config::{
-    AppGesture, AppIconStyle, Appearance, Config, DesktopMode, IconShadow, PieStyle, SideTarget,
-    TargetApp, TouchClickAction,
+    AppGesture, AppIconStyle, Appearance, Config, DesktopMode, HudPosition, IconShadow, PieStyle,
+    SideTarget, TargetApp, TouchClickAction,
 };
 use crate::platform::Os;
 use crate::ui::app::App;
 use crate::ui::draw::rgb;
 use crate::ui::pie::glass::Glass;
 use crate::ui::settings::demo;
+use crate::ui::settings::state::BehaviorPage;
 use crate::ui::settings::theme::*;
 use crate::ui::settings::widgets::*;
 use crate::ui::symbols;
@@ -33,7 +34,28 @@ fn bridge_status_text(st: &crate::bridge::Status) -> String {
             .iter()
             .map(|(b, n)| format!("{b} ({n} {})", if *n == 1 { "tab" } else { "tabs" }))
             .collect();
-        return format!("Connected: {}.", list.join(", "));
+        let mut text = format!("Connected: {}.", list.join(", "));
+        if st.playing > 0 {
+            text += &format!(
+                " Sound in {} {}.",
+                st.playing,
+                if st.playing == 1 { "tab" } else { "tabs" }
+            );
+        }
+        for (site, unread) in &st.chats {
+            let name = crate::bridge::chat_label(site);
+            match unread {
+                Some(n) if *n > 0 => text += &format!(" {name}: {n} unread."),
+                _ => text += &format!(" {name} is open."),
+            }
+        }
+        if !st.outdated.is_empty() {
+            text += &format!(
+                " The extension in {} is from another version: show the extension files and reload it, or the newer commands will not work.",
+                st.outdated.join(", ")
+            );
+        }
+        return text;
     }
     if let Some(e) = st.errors.first() {
         return format!("No browser connected yet. Could not register with a browser: {e}");
@@ -91,9 +113,52 @@ fn desktop_mode_label(mode: DesktopMode) -> String {
 }
 
 impl App {
-    /// Draws the Behavior tab. Widgets edit `self.edit`, so nothing changes until Save.
+    /// Draws the Behavior tab: a switch between its pages, then the panels of the page that is
+    /// chosen. Widgets edit `self.edit`, so nothing changes until Save.
     pub(in crate::ui::settings) fn behavior_tab(&mut self, ui: &mut egui::Ui) {
         let accent = rgb(self.edit.accent);
+        // the pages are chosen with a switch of icons that floats over the bottom of the page
+        let items: Vec<(char, String)> = BehaviorPage::ALL
+            .iter()
+            .map(|p| (p.icon(), format!("{}: {}", p.label(), p.hint())))
+            .collect();
+        let at = BehaviorPage::ALL
+            .iter()
+            .position(|p| *p == self.ed.behavior_page)
+            .unwrap_or(0);
+        let view = ui.clip_rect();
+        let mut picked = None;
+        egui::Area::new(egui::Id::new("behavior_pages"))
+            .order(egui::Order::Foreground)
+            .pivot(egui::Align2::CENTER_BOTTOM)
+            .fixed_pos(egui::pos2(view.center().x, view.max.y - 20.0))
+            .constrain(false)
+            .show(ui.ctx(), |ui| {
+                egui::Frame::new()
+                    .fill(pal().card)
+                    .inner_margin(egui::Margin::same(1))
+                    .stroke(egui::Stroke::new(1.0, pal().border))
+                    .corner_radius(PILL)
+                    .shadow(popup_shadow())
+                    .show(ui, |ui| {
+                        picked = icon_switch(ui, &items, at, accent, pal().card, 40.0);
+                    });
+            });
+        if let Some(i) = picked {
+            self.ed.behavior_page = BehaviorPage::ALL[i];
+        }
+        match self.ed.behavior_page {
+            BehaviorPage::Input => self.behavior_input(ui, accent),
+            BehaviorPage::Look => self.behavior_look(ui, accent),
+            BehaviorPage::Apps => self.behavior_apps(ui, accent),
+            BehaviorPage::System => self.behavior_system(ui, accent),
+        }
+        // room under the last panel for the floating switch
+        ui.add_space(100.0);
+    }
+
+    /// The "Input" page of the Behavior tab: trigger button and timings, the side buttons and the trackpad.
+    fn behavior_input(&mut self, ui: &mut egui::Ui, accent: Color32) {
         let cfg = &mut self.edit;
         panel(ui, "Trigger", |ui| {
             demo::hold_demo(ui, accent, cfg.pie_hold_ms, cfg.settings_hold_ms, cfg.flick);
@@ -143,6 +208,86 @@ impl App {
                 accent,
             );
         });
+        panel(ui, "Side buttons", |ui| {
+            demo::side_demo(
+                ui,
+                accent,
+                rgb(cfg.inactive_color),
+                cfg.side_default,
+                cfg.right_click_switch,
+                cfg.side_indicator,
+            );
+            note(
+                ui,
+                "In an app that has its own pie, the side buttons follow:",
+            );
+            choice_row(
+                ui,
+                &mut cfg.side_default,
+                SideTarget::App,
+                "The app's pie",
+                "",
+                accent,
+            );
+            choice_row(
+                ui,
+                &mut cfg.side_default,
+                SideTarget::General,
+                "The general pie",
+                "",
+                accent,
+            );
+            toggle_row(
+                ui,
+                &mut cfg.side_adopt,
+                "Follow the pie I choose a mode in",
+                "Choosing a side-button mode in a pie makes the side buttons follow that pie.",
+                accent,
+            );
+            toggle_row(
+                ui,
+                &mut cfg.side_forget,
+                "Forget that choice on another app",
+                "When I switch to another app.",
+                accent,
+            );
+            toggle_row(
+                ui,
+                &mut cfg.right_click_switch,
+                "Right-click switches the pie",
+                "While the pie is open, right-click switches which pie the side buttons follow.",
+                accent,
+            );
+            toggle_row(
+                ui,
+                &mut cfg.side_indicator,
+                "Color the pie ring",
+                "Accent = the side buttons follow this pie; the other color = the other pie.",
+                accent,
+            );
+            row_wide(ui, "Other-pie color", "", 40.0, |ui| {
+                ui.color_edit_button_srgb(&mut cfg.inactive_color);
+            });
+            slider_row(
+                ui,
+                &format!(
+                    "Show the pie after switching ({})",
+                    crate::platform::OS.tray_name()
+                ),
+                &mut cfg.preview_ms,
+                0..=2000,
+                " ms",
+                accent,
+            );
+        });
+        if crate::platform::OS.has_trackpad() {
+            trackpad_panel(ui, cfg, accent, crate::tap::touch_status());
+        }
+    }
+
+    /// The "Look" page of the Behavior tab: the look of the pie and the notice on the screen.
+    fn behavior_look(&mut self, ui: &mut egui::Ui, accent: Color32) {
+        let cfg = &mut self.edit;
         panel(ui, "Look & feel", |ui| {
             demo::look_demo(
                 ui,
@@ -235,35 +380,6 @@ impl App {
                 slider_row(ui, "Shine", &mut cfg.glass_shine, 0..=100, " %", accent);
             }
         });
-        panel(ui, "Pie of the app in front", |ui| {
-            demo::gesture_demo(ui, accent, cfg.app_gesture, cfg.double_click_ms);
-            choice_row(
-                ui,
-                &mut cfg.app_gesture,
-                AppGesture::DoubleClick,
-                "Double-click opens the app's pie",
-                "Hold opens the general pie; double-click opens the pie of the app (e.g. Photoshop).",
-                accent,
-            );
-            choice_row(
-                ui,
-                &mut cfg.app_gesture,
-                AppGesture::Merged,
-                "Classic",
-                "Hold opens the app's own pie if it has one.",
-                accent,
-            );
-            if cfg.app_gesture == AppGesture::DoubleClick {
-                slider_row(
-                    ui,
-                    "Double-click speed",
-                    &mut cfg.double_click_ms,
-                    150..=500,
-                    " ms",
-                    accent,
-                );
-            }
-        });
         panel(ui, "App icon in the pie", |ui| {
             demo::app_icon_demo(ui, accent, cfg.app_icon_style, cfg.center_app_icon);
             ui.add_enabled_ui(cfg.center_app_icon, |ui| {
@@ -327,6 +443,92 @@ impl App {
                 );
             }
         });
+        panel(ui, "Action notice", |ui| {
+            toggle_row(
+                ui,
+                &mut cfg.hud,
+                "Show what CursorPie does",
+                "A small notice on the screen when an app opens, a link opens, a shortcut is sent or a flow runs.",
+                accent,
+            );
+            if cfg.hud {
+                hud_preview(ui, cfg);
+                row_wide(
+                    ui,
+                    "Position",
+                    "On the display the pointer is on.",
+                    300.0,
+                    |ui| {
+                        let places = [
+                            (HudPosition::Bottom, symbols::ARROW_DOWN, "Bottom"),
+                            (HudPosition::Top, symbols::ARROW_UP, "Top"),
+                            (HudPosition::Cursor, symbols::CURSOR_CLICK, "Pointer"),
+                        ];
+                        let items: Vec<(Option<char>, &str)> = places
+                            .iter()
+                            .map(|&(_, icon, label)| (Some(icon), label))
+                            .collect();
+                        let at = places
+                            .iter()
+                            .position(|m| m.0 == cfg.hud_position)
+                            .unwrap_or(0);
+                        if let Some(i) = segmented(ui, &items, at) {
+                            cfg.hud_position = places[i].0;
+                        }
+                    },
+                );
+                slider_row(
+                    ui,
+                    "Stays on screen",
+                    &mut cfg.hud_ms,
+                    crate::config::HUD_MS_MIN..=3000,
+                    " ms",
+                    accent,
+                );
+                slider_row(
+                    ui,
+                    "Size",
+                    &mut cfg.hud_size,
+                    crate::config::HUD_SIZE_MIN..=crate::config::HUD_SIZE_MAX,
+                    "%",
+                    accent,
+                );
+            }
+        });
+    }
+
+    /// The "Apps" page of the Behavior tab: which pie opens for which app, how apps are found and the desktops.
+    fn behavior_apps(&mut self, ui: &mut egui::Ui, accent: Color32) {
+        let cfg = &mut self.edit;
+        panel(ui, "Pie of the app in front", |ui| {
+            demo::gesture_demo(ui, accent, cfg.app_gesture, cfg.double_click_ms);
+            choice_row(
+                ui,
+                &mut cfg.app_gesture,
+                AppGesture::DoubleClick,
+                "Double-click opens the app's pie",
+                "Hold opens the general pie; double-click opens the pie of the app (e.g. Photoshop).",
+                accent,
+            );
+            choice_row(
+                ui,
+                &mut cfg.app_gesture,
+                AppGesture::Merged,
+                "Classic",
+                "Hold opens the app's own pie if it has one.",
+                accent,
+            );
+            if cfg.app_gesture == AppGesture::DoubleClick {
+                slider_row(
+                    ui,
+                    "Double-click speed",
+                    &mut cfg.double_click_ms,
+                    150..=500,
+                    " ms",
+                    accent,
+                );
+            }
+        });
         panel(ui, "App detection", |ui| {
             demo::target_demo(ui, accent, cfg.target_app, cfg.focus_target);
             choice_row(
@@ -380,8 +582,8 @@ impl App {
             toggle_row(
                 ui,
                 &mut cfg.browser_bridge,
-                "Know which web pages are open",
-                "CursorPie carries a small extension for Firefox and Chromium browsers (Chrome, Edge, Brave, Vivaldi). With it, an Open URL slice with an http or https link shows the two badges when that page is open, goes to that very tab, and opens a real new window. Off, or without the extension, an Open URL slice just opens its link and shows no badges.",
+                "Know which web pages are open, and control the browser",
+                "CursorPie carries a small extension for Firefox and Chromium browsers (Chrome, Edge, Brave, Vivaldi). With it, an Open URL slice with an http or https link shows the two badges when that page is open, goes to that very tab, and opens a real new window. It also lets a Browser slice play, pause and skip songs, switch and close tabs, and move around WhatsApp Web and Telegram Web. Off, or without the extension, an Open URL slice just opens its link and a Browser slice tells you it cannot reach a browser.",
                 accent,
             );
             if cfg.browser_bridge {
@@ -400,12 +602,28 @@ impl App {
                     }
                 });
                 note(ui, BRIDGE_INSTALL_HELP);
+                toggle_row(
+                    ui,
+                    &mut cfg.extension_panels,
+                    "Let the browser extension show panels",
+                    "A panel is a small window of CursorPie with a list, a box or buttons. With this on, the extension's own commands (Panels: pick a tab from a list, ask for a word then go to that tab, a media menu...) and other code of the extension can ask you something on the desktop and get your answer. The panel shows what the extension wrote in it, such as the titles of your open tabs, only on screen and only for you; nothing is saved or sent anywhere. Off, those commands say that panels are switched off.",
+                    accent,
+                );
             } else {
                 note(
                     ui,
-                    "Nothing is installed or listened to while this is off. The extension only tells CursorPie, on this computer, the address of the pages that are open; it sends nothing over the network.",
+                    "Nothing is installed or listened to while this is off. The extension only talks to CursorPie on this computer (the address of the pages that are open, how many tabs make sound, how many chats wait, the answer to a command); it sends nothing over the network.",
                 );
             }
+        });
+        panel(ui, "Panels of flows", |ui| {
+            toggle_row(
+                ui,
+                &mut cfg.panels,
+                "Let flows show panels",
+                "An Ask block in Panel mode shows a small window of CursorPie with the fields, lists and buttons the flow describes, and the flow gets what you entered. Off, those blocks fail with a note that panels are switched off and the flow goes on.",
+                accent,
+            );
         });
         panel(ui, desktops_title(), |ui| {
             let mode = cfg.desktop_mode.effective(crate::platform::OS);
@@ -428,78 +646,11 @@ impl App {
                 );
             }
         });
-        panel(ui, "Side buttons", |ui| {
-            demo::side_demo(
-                ui,
-                accent,
-                rgb(cfg.inactive_color),
-                cfg.side_default,
-                cfg.right_click_switch,
-                cfg.side_indicator,
-            );
-            note(
-                ui,
-                "In an app that has its own pie, the side buttons follow:",
-            );
-            choice_row(
-                ui,
-                &mut cfg.side_default,
-                SideTarget::App,
-                "The app's pie",
-                "",
-                accent,
-            );
-            choice_row(
-                ui,
-                &mut cfg.side_default,
-                SideTarget::General,
-                "The general pie",
-                "",
-                accent,
-            );
-            toggle_row(
-                ui,
-                &mut cfg.side_adopt,
-                "Follow the pie I choose a mode in",
-                "Choosing a side-button mode in a pie makes the side buttons follow that pie.",
-                accent,
-            );
-            toggle_row(
-                ui,
-                &mut cfg.side_forget,
-                "Forget that choice on another app",
-                "When I switch to another app.",
-                accent,
-            );
-            toggle_row(
-                ui,
-                &mut cfg.right_click_switch,
-                "Right-click switches the pie",
-                "While the pie is open, right-click switches which pie the side buttons follow.",
-                accent,
-            );
-            toggle_row(
-                ui,
-                &mut cfg.side_indicator,
-                "Color the pie ring",
-                "Accent = the side buttons follow this pie; the other color = the other pie.",
-                accent,
-            );
-            row_wide(ui, "Other-pie color", "", 40.0, |ui| {
-                ui.color_edit_button_srgb(&mut cfg.inactive_color);
-            });
-            slider_row(
-                ui,
-                &format!(
-                    "Show the pie after switching ({})",
-                    crate::platform::OS.tray_name()
-                ),
-                &mut cfg.preview_ms,
-                0..=2000,
-                " ms",
-                accent,
-            );
-        });
+    }
+
+    /// The "System" page of the Behavior tab: startup and memory.
+    fn behavior_system(&mut self, ui: &mut egui::Ui, accent: Color32) {
+        let cfg = &mut self.edit;
         panel(ui, "Startup", |ui| {
             toggle_row(
                 ui,
@@ -534,9 +685,6 @@ impl App {
                 );
             }
         });
-        if crate::platform::OS.has_trackpad() {
-            trackpad_panel(ui, cfg, accent, crate::tap::touch_status());
-        }
     }
 }
 
@@ -766,6 +914,23 @@ fn extra_finger_hint(os: Os) -> &'static str {
     }
 }
 
+/// The notice as it will look, in the accent and the material that are set, on a strip of the
+/// page color: what "Show what CursorPie does" switches on.
+fn hud_preview(ui: &mut egui::Ui, cfg: &Config) {
+    use crate::ui::hud::{self, HudKind, HudNote};
+    ui.add_space(GAP);
+    // the strip grows with the size, so the pill and its shadow always fit
+    let height = (hud::scale_of(cfg) * 56.0 + 40.0).max(96.0);
+    let (rect, _) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), height),
+        egui::Sense::hover(),
+    );
+    let painter = ui.painter().with_clip_rect(rect);
+    painter.rect_filled(rect, CONTROL_R, pal().bg);
+    let note = HudNote::new(HudKind::App, "Open app", "Safari");
+    hud::paint_pill(&painter, rect.center(), &note, &hud::PillLook::at_rest(cfg));
+}
+
 /// A strip of colors with four slices of the configured glass over it, so a change of the
 /// sliders shows at once: how much of the colors comes through and how thick the frost is.
 fn glass_preview(ui: &mut egui::Ui, cfg: &Config) {
@@ -839,6 +1004,17 @@ mod bridge_text_tests {
             bridge_status_text(&st),
             "Connected: Firefox (1 tab), Chrome (12 tabs)."
         );
+        st.playing = 2;
+        st.chats = vec![("whatsapp".into(), Some(3)), ("telegram".into(), None)];
+        assert_eq!(
+            bridge_status_text(&st),
+            "Connected: Firefox (1 tab), Chrome (12 tabs). Sound in 2 tabs. WhatsApp: 3 unread. Telegram is open."
+        );
+        st.outdated = vec!["Chrome".into()];
+        assert!(bridge_status_text(&st).contains("extension in Chrome is from another version"));
+        st.playing = 0;
+        st.chats.clear();
+        st.outdated.clear();
         st.browsers.clear();
         st.errors = vec!["Brave: permission denied".into()];
         assert!(bridge_status_text(&st).contains("permission denied"));

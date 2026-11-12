@@ -21,8 +21,10 @@
 //! | `app_icon` | the real icon of an app, see [`NativeIcon`] |
 //! | `set_accessory_policy` | hide the Dock icon (macOS only, no-op elsewhere) |
 //! | `clear_window_frame` | strip the OS frame of the native window handle (Windows only, no-op elsewhere) |
+//! | `set_window_passive` | the window that shows the notice of an action must not take the focus (Windows: `WS_EX_NOACTIVATE`; no-op elsewhere) |
 //! | `window_manager_may_recenter` | whether the window manager may ignore the position of a hidden window when it is shown again (X11 only) |
 //! | `window_point` | where to ask the toolkit to put a window centered on a point of the pointer's space (identity except on Linux in a Wayland session, where KWin's points and XWayland's differ) |
+//! | `window_scale` | how many of the toolkit's points one point of the pointer's space is, to turn a distance of the pointer into a distance in the pie (1 except on Linux in a Wayland session, where KWin's points and XWayland's differ) |
 //! | `raise_own_window` | bring CursorPie's own window (Settings) to the front, on whichever workspace it is (X11: the toolkit's own request is refused there; Windows: the toolkit's request injects an Alt key press that eats the next click, so this is the only request sent; macOS: the toolkit's is enough) |
 //! | `cursor_pos`, `display_rects` | pointer position and display bounds, in logical points |
 //! | `is_trusted_cached`, `open_accessibility_settings`, `open_input_monitoring_settings` | input permission |
@@ -306,10 +308,24 @@ pub const OS: Os = Os::current();
 /// [`Os::primary_mod`] of this build.
 pub const MOD_PRIMARY: u8 = OS.primary_mod();
 
+/// File extensions (lower case) of the images CursorPie can decode, which is what the `image` crate
+/// is built with (see `Cargo.toml`). One list for the file choosers, the icons folder scan and the
+/// drag and drop, so they cannot disagree.
+pub const IMAGE_EXTENSIONS: &[&str] = &[
+    "png", "jpg", "jpeg", "webp", "gif", "bmp", "ico", "tif", "tiff", "tga", "qoi", "pbm", "pgm",
+    "ppm", "pnm",
+];
+
+/// Whether `ext` (any case, no dot) is one of [`IMAGE_EXTENSIONS`].
+pub fn is_image_extension(ext: &str) -> bool {
+    let ext = ext.to_ascii_lowercase();
+    IMAGE_EXTENSIONS.contains(&ext.as_str())
+}
+
 /// What a file chooser should accept.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileKind {
-    /// png, jpg, jpeg, webp
+    /// the extensions in [`IMAGE_EXTENSIONS`]
     Image,
     /// a JSON file (config or profile)
     Json,

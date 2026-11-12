@@ -34,7 +34,7 @@ use crate::diag::{EXPECTED, Expected};
 /// categories in `docs/DEBUGGING.md` (the lint checks that it is there).
 pub const CATEGORIES: &[&str] = &[
     "diag", "sys", "x11", "wayland", "tap", "touch", "ui", "win", "panic", "cfg", "act", "run",
-    "bridge",
+    "bridge", "panel", "refresh",
 ];
 
 /// Written by the `diag` crate, not by a line in `src/`.

@@ -89,16 +89,109 @@ fn pick_icon(env: &Env, path: &[usize]) {
         FileKind::Image,
         "Choose an icon image",
         // runs on the chooser's worker thread: a big image is shrunk there, not on the UI thread
-        move |file| match crate::ui::iconfit::fit(&file) {
+        move |file| match crate::ui::iconfit::fit(&file, crate::ui::iconfit::Mode::InPlace) {
             Ok(fitted) => Some(Msg::IconPicked {
                 profile,
                 path,
                 file: fitted.icon,
                 note: fitted.note,
             }),
-            Err(why) => Some(Msg::Notice(why)),
+            // a pop-up that says why, not one line that disappears
+            Err(why) => Some(Msg::IconRefused {
+                file,
+                lines: vec![why],
+            }),
         },
     );
+}
+
+/// Imports the images dropped on the window as icons, on a worker thread (a big photo takes a
+/// moment to shrink). The first one that works becomes the icon of the slice at `path`; the others
+/// are added to the icons folder ("Mine"); each one that cannot be used is explained in a pop-up.
+fn import_dropped(env: &Env, path: &[usize], files: Vec<std::path::PathBuf>) {
+    let (profile, path) = (env.profile, path.to_vec());
+    let (tx, ctx) = (env.tx.clone(), env.ctx.clone());
+    std::thread::spawn(move || {
+        let batch = crate::ui::iconfit::import_all(
+            &files,
+            &crate::config::icons_dir(),
+            &crate::config::tilde,
+        );
+        if let Some(icon) = batch.icon {
+            let more = batch.added.saturating_sub(1);
+            let note = match (batch.note, more) {
+                (n, 0) => n,
+                (Some(n), m) => Some(format!("{n} {m} more added to your icons (Mine).")),
+                (None, m) => Some(format!("{m} more added to your icons (Mine).")),
+            };
+            let _ = tx.send(Msg::IconPicked {
+                profile,
+                path,
+                file: icon,
+                note,
+            });
+        }
+        if !batch.failed.is_empty() {
+            let (file, lines) = match batch.failed.as_slice() {
+                [(name, why)] => (name.clone(), vec![why.clone()]),
+                many => (
+                    format!("{} files", many.len()),
+                    many.iter().map(|(n, why)| format!("{n}: {why}")).collect(),
+                ),
+            };
+            let _ = tx.send(Msg::IconRefused { file, lines });
+        }
+        ctx.request_repaint();
+    });
+}
+
+/// Drag and drop of image files on Settings: while files are held over the window a hint covers it,
+/// and when they are dropped they become the icon of the selected slice (`path`). Works with the
+/// icon picker open or closed.
+fn icon_drop(env: &Env, ed: &mut Ed, path: &[usize], name: &str) {
+    let (hovering, dropped) = env.ctx.input(|i| {
+        let files: Vec<std::path::PathBuf> = i
+            .raw
+            .dropped_files
+            .iter()
+            .map(|f| f.path().to_path_buf())
+            .collect();
+        (!i.raw.hovered_files.is_empty(), files)
+    });
+    if hovering {
+        let painter = env.ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("icon_drop_hint"),
+        ));
+        let rect = env.bounds.shrink(10.0);
+        painter.rect(
+            rect,
+            14.0,
+            env.accent.gamma_multiply(0.16),
+            egui::Stroke::new(2.0, env.accent),
+            egui::StrokeKind::Inside,
+        );
+        let label = if name.trim().is_empty() {
+            "Drop images to use as the icon".to_string()
+        } else {
+            format!(
+                "Drop images to use as the icon of \u{201c}{}\u{201d}",
+                name.trim()
+            )
+        };
+        painter.text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            label,
+            egui::FontId::proportional(18.0),
+            pal().text,
+        );
+        env.ctx.request_repaint();
+    }
+    if !dropped.is_empty() {
+        ed.picking_icon = false;
+        import_dropped(env, path, dropped);
+    }
 }
 
 /// Draws the editor for the selected slice of `ring` (`nav` = path of the ring itself).
@@ -140,6 +233,9 @@ pub(super) fn item_inspector(
     let n = ring.len();
     let mut path = nav.to_vec();
     path.push(i);
+
+    // ---- drag and drop of image files on the window (the picker may be open or not)
+    icon_drop(env, ed, &path, &ring[i].name);
 
     // ---- icon picker: a sheet over the window, the editor stays visible behind it
     if ed.picking_icon {

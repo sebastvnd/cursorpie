@@ -238,16 +238,37 @@ pub(super) fn safe_stem(name: &str, fallback: &str) -> String {
 
 /// Parses a profile file. The error is a sentence for the status bar.
 pub fn parse_bundle(text: &str) -> Result<Bundle, String> {
-    let v: serde_json::Value = serde_json::from_str(text)
-        .map_err(|_| "That file is not a CursorPie profile.".to_string())?;
+    let v: serde_json::Value = serde_json::from_str(text).map_err(|e| {
+        format!(
+            "That file is not valid JSON (line {}, column {}), so it is not a CursorPie profile.",
+            e.line(),
+            e.column()
+        )
+    })?;
     match v.get("cursorpie_profile").and_then(|x| x.as_u64()) {
-        None => return Err("That file is not a CursorPie profile.".into()),
+        None if v.get("cursorpie_flow").is_some() => {
+            return Err(
+                "That is a flow file, not a profile. Import it in the Flow tab with its Import button."
+                    .into(),
+            );
+        }
+        None => {
+            return Err(
+                "That file is not a CursorPie profile: it has no \"cursorpie_profile\" number at the top."
+                    .into(),
+            );
+        }
         Some(n) if n > FORMAT as u64 => {
             return Err("That profile was made by a newer CursorPie. Update the app first.".into());
         }
         Some(_) => {}
     }
-    serde_json::from_value(v).map_err(|_| "That profile file is damaged.".to_string())
+    serde_json::from_value(v).map_err(|e| {
+        format!(
+            "That profile file is damaged: {}.",
+            e.to_string().chars().take(220).collect::<String>()
+        )
+    })
 }
 
 /// Writes the embedded icons of `bundle` into `icons_dir` and returns the profile with its icon

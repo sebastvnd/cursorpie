@@ -184,6 +184,10 @@ pub fn set_accessory_policy() {}
 /// The window manager draws no frame around an undecorated window.
 pub fn clear_window_frame(_handle: isize) {}
 
+/// The window of the notice on the screen (`ui::hud`) must not take the keyboard from the app the
+/// action is for. Nothing to ask here: the window manager decides who gets the focus, and the pie window is shown the same way.
+pub fn set_window_passive(_on: bool) {}
+
 /// X11 window managers (KWin, ...) may place a window that is mapped again at the center of the
 /// screen, ignoring the position it was given while hidden, so the pie asks for it again.
 pub fn window_manager_may_recenter() -> bool {
@@ -216,6 +220,40 @@ pub fn window_point(x: f64, y: f64) -> (f64, f64) {
         }
     }
     (x, y)
+}
+
+/// How long [`window_scale`] keeps the list of X monitors it asked the X server for.
+const MONITORS_KEPT: Duration = Duration::from_secs(1);
+
+/// The X monitors in the toolkit's points, read from the X server at most once per
+/// [`MONITORS_KEPT`]: [`window_scale`] is asked on every motion of the mouse while the pie is open,
+/// on the thread that reads the mouse, and the list costs a round trip to the X server.
+fn x_monitors_kept() -> Vec<ScreenRect> {
+    static KEPT: Mutex<Option<(Instant, Vec<ScreenRect>)>> = Mutex::new(None);
+    let mut kept = KEPT.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, list)) = kept.as_ref()
+        && at.elapsed() < MONITORS_KEPT
+    {
+        return list.clone();
+    }
+    let fresh = x11::conn().map(|c| c.monitors()).unwrap_or_default();
+    *kept = Some((Instant::now(), fresh.clone()));
+    fresh
+}
+
+/// How many of the toolkit's points one logical point of the pointer's space is at `(x, y)`, to turn
+/// a distance of the pointer into a distance in the pie (drawn in the toolkit's points). 1 in an
+/// X11 session, and in a Wayland session where the screens cannot be matched; otherwise the ratio
+/// of the X monitor to the KWin output the point is on (see `wayland::coords`).
+pub fn window_scale(x: f64, y: f64) -> f64 {
+    if !wayland::active() {
+        return 1.0;
+    }
+    let outputs = wayland::kwin::displays();
+    if outputs.is_empty() {
+        return 1.0;
+    }
+    wayland::coords::scale_at((x, y), &outputs, &x_monitors_kept()).unwrap_or(1.0)
 }
 
 /// The monitors in logical points.

@@ -290,6 +290,7 @@ fn hold_open_pie(st: &Arc<Mutex<Gesture>>, n: &Notifier, id: u64, pie_ms: u64, s
         return;
     };
     diag::log!("tap", "hold_open", x = pos.x, y = pos.y, profile = profile);
+    super::pie_requested(); // not drawn yet: Settings must wait for the UI to say it was
     n.send(Msg::ShowPie {
         x: pos.x,
         y: pos.y,
@@ -300,16 +301,115 @@ fn hold_open_pie(st: &Arc<Mutex<Gesture>>, n: &Notifier, id: u64, pie_ms: u64, s
         haptic::emit(n, Tick::Open);
     }
     let (st, n) = (Arc::clone(st), n.clone());
+    // How long the pie must have been on screen, untouched, before Settings takes its place.
+    let dwell = Duration::from_millis(settings_ms.saturating_sub(pie_ms));
+    let hold = SettingsHold {
+        id,
+        pos,
+        source,
+        dwell,
+        opened: Instant::now(),
+        resent: false,
+    };
     // if the second step cannot be scheduled the pie simply never turns into Settings
-    let _ = super::timers::after(
-        Duration::from_millis(settings_ms.saturating_sub(pie_ms)),
-        move || hold_open_settings(&st, &n, id, pos, source),
-    );
+    let _ = super::timers::after(dwell, move || hold_open_settings(&st, &n, hold));
 }
+
+/// What the second step of the hold timer knows. It runs again and again (see
+/// [`hold_open_settings`]) until the pie has been on screen long enough.
+#[derive(Clone, Copy)]
+struct SettingsHold {
+    id: u64,
+    pos: Point,
+    source: Source,
+    /// How long the pie has to be visible and untouched before Settings opens.
+    dwell: Duration,
+    /// When the tap asked the UI for the pie.
+    opened: Instant,
+    /// Whether the pie was asked for a second time already (see [`PIE_GIVE_UP`]).
+    resent: bool,
+}
+
+/// If the UI has not drawn the pie this long after it was asked to, the request is sent once more
+/// (and the UI is woken again): the first one may have reached a window that was not awake yet.
+const PIE_RESEND: Duration = Duration::from_millis(350);
+/// If the pie has still not been drawn after this long, Settings is **not** opened: nothing should
+/// appear that the person did not ask for. The gesture stays what it is until the button is
+/// released.
+const PIE_GIVE_UP: Duration = Duration::from_millis(4000);
+/// How often the second step looks again while the pie has not been drawn.
+const PIE_POLL: Duration = Duration::from_millis(40);
 
 /// Second step of the hold timer: the pie is still untouched after `settings_hold_ms`, so
 /// Settings opens in its place.
-fn hold_open_settings(st: &Arc<Mutex<Gesture>>, n: &Notifier, id: u64, pos: Point, source: Source) {
+///
+/// "Still untouched" used to be judged by the clock alone, counted from the moment the tap sent
+/// the request. When the window was slow to show the pie (the first press after the program
+/// started or after a long idle time, a Mac that had put the hidden program to sleep, a window that
+/// had not been mapped yet) the person saw **nothing**, kept holding, and the timer opened Settings
+/// over the missing pie, or the press seemed to be lost and had to be repeated. Now Settings only
+/// opens for a pie the UI says it has drawn, and only after it has been drawn for the full dwell
+/// time. While it has not been drawn the step looks again every [`PIE_POLL`], wakes the UI, and after
+/// [`PIE_RESEND`] asks for the pie a second time; after [`PIE_GIVE_UP`] it stops without opening
+/// anything.
+fn hold_open_settings(st: &Arc<Mutex<Gesture>>, n: &Notifier, mut hold: SettingsHold) {
+    let SettingsHold {
+        id,
+        pos,
+        source,
+        dwell,
+        ..
+    } = hold;
+    // Still the same untouched pie? (the profile is kept for a resend)
+    let still = {
+        let gg = lock(st);
+        match &*gg {
+            Gesture::ActivePie {
+                id: cur,
+                hover: None,
+                path,
+                profile,
+                ..
+            } if *cur == id && path.is_empty() => Some(*profile),
+            _ => None,
+        }
+    };
+    let Some(profile) = still else {
+        diag::log!("tap", "hold_settings", id = id, opened = false);
+        return;
+    };
+    // has the UI drawn the pie, and for how long
+    let wait = match super::pie_painted_for() {
+        Some(seen) if seen >= dwell => None,
+        Some(seen) => Some(dwell - seen),
+        None => {
+            let waited = hold.opened.elapsed();
+            if waited >= PIE_GIVE_UP {
+                diag::log!("tap", "hold_settings_no_pie", id = id, waited_ms = waited);
+                return;
+            }
+            if !hold.resent && waited >= PIE_RESEND {
+                hold.resent = true;
+                diag::log!("tap", "hold_pie_resend", id = id, waited_ms = waited);
+                n.send(Msg::ShowPie {
+                    x: pos.x,
+                    y: pos.y,
+                    profile,
+                    path: Vec::new(),
+                });
+            } else {
+                n.wake();
+            }
+            Some(PIE_POLL)
+        }
+    };
+    if let Some(wait) = wait {
+        let (st2, n2) = (Arc::clone(st), n.clone());
+        if !super::timers::after(wait, move || hold_open_settings(&st2, &n2, hold)) {
+            diag::log!("tap", "hold_settings_no_timer", id = id);
+        }
+        return;
+    }
     let open_settings = {
         let mut gg = lock(st);
         let go = matches!(
@@ -700,5 +800,128 @@ pub(super) fn touch_cancel(state: &Arc<Mutex<Gesture>>, notifier: &Notifier) {
         }
         | Gesture::InSettings(Source::Touch) => *g = Gesture::Idle,
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+
+    fn setup(id: u64) -> (Arc<Mutex<Gesture>>, Notifier, mpsc::Receiver<Msg>) {
+        let (tx, rx) = mpsc::channel();
+        let n = Notifier {
+            tx,
+            ctx: eframe::egui::Context::default(),
+        };
+        let st = Arc::new(Mutex::new(Gesture::ActivePie {
+            id,
+            center: Point { x: 10.0, y: 10.0 },
+            profile: 0,
+            path: Vec::new(),
+            hover: None,
+            source: Source::Mouse,
+        }));
+        (st, n, rx)
+    }
+
+    fn hold(id: u64, dwell_ms: u64) -> SettingsHold {
+        SettingsHold {
+            id,
+            pos: Point { x: 10.0, y: 10.0 },
+            source: Source::Mouse,
+            dwell: Duration::from_millis(dwell_ms),
+            opened: Instant::now(),
+            resent: false,
+        }
+    }
+
+    fn settings_opened(rx: &mpsc::Receiver<Msg>, within_ms: u64) -> bool {
+        let end = Instant::now() + Duration::from_millis(within_ms);
+        while Instant::now() < end {
+            if let Ok(Msg::OpenSettings { .. }) = rx.recv_timeout(Duration::from_millis(20)) {
+                return true;
+            }
+        }
+        false
+    }
+
+    #[test]
+    fn settings_do_not_open_over_a_pie_that_was_never_drawn() {
+        let _serial = super::super::TEST_SERIAL
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (st, n, rx) = setup(7);
+        super::super::pie_requested();
+        hold_open_settings(&st, &n, hold(7, 30));
+        assert!(
+            !settings_opened(&rx, 400),
+            "the dwell time passed, but the UI never drew the pie"
+        );
+        assert!(
+            matches!(&*lock(&st), Gesture::ActivePie { .. }),
+            "the gesture is untouched"
+        );
+    }
+
+    #[test]
+    fn settings_open_after_the_pie_was_drawn_for_the_dwell_time() {
+        let _serial = super::super::TEST_SERIAL
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (st, n, rx) = setup(8);
+        super::super::pie_requested();
+        hold_open_settings(&st, &n, hold(8, 120));
+        std::thread::sleep(Duration::from_millis(100));
+        super::super::pie_painted(); // the UI draws it late
+        let t = Instant::now();
+        assert!(
+            settings_opened(&rx, 1500),
+            "it opens once the pie has been seen long enough"
+        );
+        assert!(
+            t.elapsed() >= Duration::from_millis(90),
+            "not at once: the pie was seen for the whole dwell time first ({:?})",
+            t.elapsed()
+        );
+        assert!(matches!(&*lock(&st), Gesture::InSettings(_)));
+    }
+
+    #[test]
+    fn a_pie_that_was_touched_never_becomes_settings() {
+        let _serial = super::super::TEST_SERIAL
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (st, n, rx) = setup(9);
+        super::super::pie_requested();
+        super::super::pie_painted();
+        if let Gesture::ActivePie { hover, .. } = &mut *lock(&st) {
+            *hover = Some(2);
+        }
+        hold_open_settings(&st, &n, hold(9, 0));
+        assert!(!settings_opened(&rx, 150));
+    }
+
+    #[test]
+    fn the_pie_is_asked_for_again_when_it_is_late() {
+        let _serial = super::super::TEST_SERIAL
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let (st, n, rx) = setup(10);
+        super::super::pie_requested();
+        let mut h = hold(10, 30);
+        h.opened = Instant::now() - PIE_RESEND; // already late
+        hold_open_settings(&st, &n, h);
+        let end = Instant::now() + Duration::from_millis(300);
+        let mut asked = false;
+        while Instant::now() < end && !asked {
+            asked = matches!(
+                rx.recv_timeout(Duration::from_millis(20)),
+                Ok(Msg::ShowPie { .. })
+            );
+        }
+        assert!(asked, "a second ShowPie was sent");
+        super::super::pie_painted(); // let the polling job end
+        std::thread::sleep(Duration::from_millis(100));
     }
 }

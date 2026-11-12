@@ -19,6 +19,15 @@ pub(crate) const BRIDGE_IFACE: &str = "org.cursorpie.GnomeBridge";
 /// The method that makes the extension report now.
 pub(crate) const BRIDGE_SYNC: &str = "Sync";
 
+/// The files of the extension, compiled into the program so that the copy the person installed
+/// can be brought up to date after an update (see `platform::linux::refresh`).
+pub(crate) const SCRIPT: &str = include_str!(
+    "../../../../packaging/linux/gnome-extension/cursorpie-adapter@sebastvnd.github.io/extension.js"
+);
+pub(crate) const METADATA: &str = include_str!(
+    "../../../../packaging/linux/gnome-extension/cursorpie-adapter@sebastvnd.github.io/metadata.json"
+);
+
 /// What to do to turn the extension on, for the report text.
 pub(crate) fn enable_steps() -> String {
     format!(
@@ -31,13 +40,6 @@ pub(crate) fn enable_steps() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const SCRIPT: &str = include_str!(
-        "../../../../packaging/linux/gnome-extension/cursorpie-adapter@sebastvnd.github.io/extension.js"
-    );
-    const METADATA: &str = include_str!(
-        "../../../../packaging/linux/gnome-extension/cursorpie-adapter@sebastvnd.github.io/metadata.json"
-    );
 
     #[test]
     fn the_extension_and_the_program_agree_on_every_name() {

@@ -14,6 +14,8 @@
 //! ```
 //!
 //! * [`proto`]: the messages and the framing of both links.
+//! * [`commands`]: what a "Browser" action can ask the browser to do (`media.next`, `tab.close`,
+//!   `chat.next_unread`...), see `docs/BROWSER_EXTENSION.md`.
 //! * [`extension`]: the extension files, embedded at build time, and their export.
 //! * [`install`]: registers the host with the installed browsers (a file, or a registry key).
 //! * [`host`]: the process the browser starts: a relay with no window.
@@ -24,10 +26,13 @@
 //! Only the browser can start the host (it names the extension that may), and the host only talks
 //! to the app on `127.0.0.1`, after sending the secret of `bridge.json` (a random token, written
 //! when the bridge starts, readable by the user only on Linux and macOS; the folder is the user's
-//! own on Windows). The extension sends the address of `http(s)` tabs and nothing else; private
-//! windows are not included unless the person allowed the extension there. The app accepts
-//! commands from the extension only as data: a tab list.
+//! own on Windows). The extension sends the address of `http(s)` tabs, and how many tabs make
+//! sound and how many chats wait (numbers only), and the answer to a command; private windows are
+//! not included unless the person allowed the extension there. The app takes all of it only as
+//! data. What the app asks of the browser is limited to [`commands::CATALOG`]: a line that names
+//! anything else is never sent.
 
+pub mod commands;
 pub mod extension;
 pub mod host;
 pub mod install;
@@ -39,7 +44,7 @@ use proto::{Auth, BridgeFile, FromBrowser, ToBrowser};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, mpsc};
 use std::time::{Duration, Instant};
 
@@ -70,6 +75,20 @@ struct Client {
     sock: Option<TcpStream>,
     /// When it last said something: the most recent browser is the one used for a new window.
     seen: Instant,
+    /// The version of the extension (it is the version of the app that exported it).
+    version: String,
+    /// The commands the extension knows. Empty: an extension from before commands existed.
+    commands: Vec<String>,
+    state: Activity,
+}
+
+/// What the extension last said about sound and chats.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct Activity {
+    audible: u32,
+    media_tabs: u32,
+    /// Open chat sites (`whatsapp`, `telegram`) and their unread number when known.
+    chats: Vec<(String, Option<u32>)>,
 }
 
 struct State {
@@ -77,9 +96,36 @@ struct State {
     /// Changes at every start and stop, so a server thread of an earlier run ends.
     generation: u64,
     next: u64,
+    /// The `id` of the next command sent to a browser.
+    next_command: u64,
     clients: BTreeMap<u64, Client>,
     /// What registering the host did at the last start.
     report: install::Report,
+    /// Commands somebody waits for the answer of (a *System / Browser command* block of a flow),
+    /// by the `id` they were sent with. A command nobody waits for is not in here: its answer is
+    /// shown on the screen instead (see [`on_line`]).
+    waiting: BTreeMap<u64, Waiter>,
+    /// How many times each browser (`chrome`, `firefox`...) was asked to reload its extension in this
+    /// run, so an extension that keeps coming back old (loaded from another folder) is not asked for
+    /// ever (see [`reload_wanted`]).
+    reloads: BTreeMap<String, u8>,
+}
+
+/// Who waits for the answer of a command, and through which connection it has to come.
+struct Waiter {
+    /// The connection the command was sent to: no other one may answer it.
+    client: u64,
+    tx: mpsc::Sender<Reply>,
+}
+
+/// What a browser said about a command it ran.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Reply {
+    /// Whether it worked.
+    pub ok: bool,
+    /// The words of the browser: what went wrong, or the answer to a question (`tab.url`,
+    /// `media.state`...). Empty for a command that has nothing to say.
+    pub message: String,
 }
 
 impl State {
@@ -88,11 +134,14 @@ impl State {
             running: false,
             generation: 0,
             next: 1,
+            next_command: 1,
             clients: BTreeMap::new(),
             report: install::Report {
                 registered: Vec::new(),
                 errors: Vec::new(),
             },
+            waiting: BTreeMap::new(),
+            reloads: BTreeMap::new(),
         }
     }
 }
@@ -172,6 +221,8 @@ fn stop() {
 }
 
 fn drop_clients(s: &mut State) {
+    // dropping the senders ends every wait: nobody is going to answer now
+    s.waiting.clear();
     for c in std::mem::take(&mut s.clients).into_values() {
         if let Some(sock) = c.sock {
             let _ = sock.shutdown(Shutdown::Both);
@@ -297,6 +348,9 @@ fn handle(stream: TcpStream, token: &str, generation: u64) {
                 out: Some(tx),
                 sock: Some(sock),
                 seen: Instant::now(),
+                version: String::new(),
+                commands: Vec::new(),
+                state: Activity::default(),
             },
         );
         id
@@ -310,7 +364,14 @@ fn handle(stream: TcpStream, token: &str, generation: u64) {
         }
         on_line(id, &line);
     }
-    lock().clients.remove(&id);
+    forget_client(&mut lock(), id);
+}
+
+/// Removes a connection that ended. A command somebody waits for on it will not be answered, so
+/// the wait ends at once (the sender is dropped) instead of at its time limit.
+fn forget_client(s: &mut State, id: u64) {
+    s.clients.remove(&id);
+    s.waiting.retain(|_, w| w.client != id);
 }
 
 /// Applies one message of the extension to the client `id`.
@@ -318,17 +379,212 @@ fn on_line(id: u64, line: &str) {
     let Ok(msg) = serde_json::from_str::<FromBrowser>(line.trim()) else {
         return;
     };
+    // panels: answered on a thread of their own, because the person takes their time
+    let msg = match msg {
+        FromBrowser::Panel { req, spec } => {
+            panel_request(id, req, spec);
+            return;
+        }
+        FromBrowser::PanelUpdate { panel, patch } => {
+            if let Some(browser) = browser_of(id) {
+                crate::panel::patch(&panel, patch, crate::panel::Source::Extension(browser));
+            }
+            return;
+        }
+        FromBrowser::PanelClose { panel } => {
+            if let Some(browser) = browser_of(id) {
+                crate::panel::close(&panel, crate::panel::Source::Extension(browser));
+            }
+            return;
+        }
+        other => other,
+    };
+    if let FromBrowser::Outcome {
+        id: command,
+        ok,
+        message,
+        notify,
+    } = msg
+    {
+        diag::log!("bridge", "result", seq = command, ok = ok);
+        let (known, waiter) = {
+            let mut s = lock();
+            let known = s.clients.contains_key(&id);
+            // only the connection a command was sent to can answer it
+            let mine = s.waiting.get(&command).is_some_and(|w| w.client == id);
+            let waiter = if known && mine {
+                s.waiting.remove(&command)
+            } else {
+                None
+            };
+            (known, waiter)
+        };
+        if let Some(w) = waiter {
+            // a flow waits for this: it gets the words, and the screen stays quiet
+            let _ = w.tx.send(Reply {
+                ok,
+                message: message.trim().to_string(),
+            });
+        } else if known {
+            show_result(ok, &message, notify);
+        }
+        return;
+    }
+    let hello = matches!(msg, FromBrowser::Hello { .. });
+    {
+        let mut s = lock();
+        let Some(client) = s.clients.get_mut(&id) else {
+            return;
+        };
+        apply_message(client, msg);
+    }
+    if hello {
+        ask_to_reload_in(id, &extension::default_dir());
+    }
+}
+
+/// Most times one browser is asked to reload its extension in one run of the app.
+const MAX_RELOAD_ASKS: u8 = 3;
+
+/// Whether an extension that has just said hello should be asked to reload itself: it is not the
+/// version of this build, the folder it was most likely loaded from now holds this build's files
+/// (`files`, see [`extension::exported_version`]), so the reload makes it current, and it was not
+/// asked too often already (an extension loaded from another folder stays old however often it
+/// reloads). One that did not say its version is too old to understand the request.
+fn reload_wanted(extension: &str, build: &str, files: Option<&str>, asked: u8) -> bool {
+    !extension.is_empty() && extension != build && files == Some(build) && asked < MAX_RELOAD_ASKS
+}
+
+/// After an update the app writes the new extension files into the folder it exported to (see
+/// [`crate::refresh`]), but a browser keeps running the old code until the extension is reloaded.
+/// So when an extension says hello with another version than this build and `dir` holds the files of
+/// this build, it is asked to reload itself: no trip to the extensions page.
+fn ask_to_reload_in(id: u64, dir: &Path) {
+    let build = env!("CARGO_PKG_VERSION");
+    let (browser, version) = {
+        let s = lock();
+        match s.clients.get(&id) {
+            Some(c) => (c.browser.clone(), c.version.clone()),
+            None => return,
+        }
+    };
+    // read the folder with the lock released
+    let files = extension::exported_version(dir, &browser);
     let mut s = lock();
-    let Some(client) = s.clients.get_mut(&id) else {
+    let asked = s.reloads.get(&browser).copied().unwrap_or(0);
+    if !reload_wanted(&version, build, files.as_deref(), asked) {
+        return;
+    }
+    let sent = match s.clients.get(&id) {
+        Some(client) => send(
+            client,
+            &ToBrowser::Reload {
+                version: build.to_string(),
+            },
+        ),
+        None => false,
+    };
+    if sent {
+        s.reloads.insert(browser, asked + 1);
+        diag::log!("bridge", "reload", asked = u64::from(asked) + 1);
+    }
+}
+
+/// The browser of the connection `id` (`firefox`, `chrome`...), while it is connected.
+fn browser_of(id: u64) -> Option<String> {
+    lock().clients.get(&id).map(|c| c.browser.clone())
+}
+
+/// The longest an extension's panel waits for an answer, in seconds. A flow may wait longer; an
+/// extension is not asked to hold the window for ever.
+const EXTENSION_PANEL_MAX_S: u32 = 300;
+
+/// The extension asks for a panel: refused at once when panels from the extension are off or the
+/// description is not valid, otherwise shown, and the answer goes back to the same connection.
+fn panel_request(client: u64, req: u64, spec: serde_json::Value) {
+    use crate::panel::{PanelResult, PanelSpec, Source};
+    let Some(browser) = browser_of(client) else {
         return;
     };
-    apply_message(client, msg);
+    let source = Source::Extension(browser);
+    let reply = move |result: PanelResult| {
+        let msg = ToBrowser::PanelResult {
+            req,
+            result: result.to_json(),
+        };
+        if let Some(c) = lock().clients.get(&client) {
+            let _ = send(c, &msg);
+        }
+    };
+    if let Err(why) = crate::panel::broker::allowed(&source) {
+        reply(PanelResult::unavailable("", why));
+        return;
+    }
+    let mut spec = match PanelSpec::from_value(spec) {
+        Ok(s) => s,
+        Err(e) => {
+            reply(PanelResult::unavailable("", e.to_string()));
+            return;
+        }
+    };
+    let wait = match spec.timeout_s {
+        Some(s) if s > 0 => s.min(EXTENSION_PANEL_MAX_S),
+        _ => EXTENSION_PANEL_MAX_S,
+    };
+    spec.timeout_s = Some(wait);
+    diag::log!("bridge", "panel", req = req, widgets = spec.widgets.len());
+    crate::panel::ask_in_background(spec, source, reply);
+}
+
+/// Shows the person what a command said, when the extension asked for it (it follows the
+/// person's option "Notifications" of the extension).
+fn show_result(ok: bool, message: &str, notify: bool) {
+    let text = message.trim();
+    if !notify || text.is_empty() {
+        return;
+    }
+    let text: String = text.chars().take(300).collect();
+    let title = if ok {
+        "CursorPie"
+    } else {
+        "CursorPie: browser"
+    };
+    // starting the program that shows it can take a moment: not on the thread that reads the browser
+    let _ = std::thread::Builder::new()
+        .name("cursorpie-bridge-notify".into())
+        .spawn(move || {
+            crate::platform::native::notify(title, &text);
+        });
 }
 
 fn apply_message(client: &mut Client, msg: FromBrowser) {
     client.seen = Instant::now();
     match msg {
-        FromBrowser::Hello { browser, .. } => client.browser = browser,
+        FromBrowser::Hello {
+            browser,
+            version,
+            commands,
+        } => {
+            client.browser = browser;
+            client.version = version;
+            client.commands = commands;
+        }
+        FromBrowser::State {
+            audible,
+            media_tabs,
+            chats,
+        } => {
+            client.state = Activity {
+                audible,
+                media_tabs,
+                chats: chats.into_iter().map(|c| (c.site, c.unread)).collect(),
+            };
+        }
+        // answered in `on_line`, which needs more than the client
+        FromBrowser::Outcome { .. }
+        | FromBrowser::Panel { .. }
+        | FromBrowser::PanelUpdate { .. }
+        | FromBrowser::PanelClose { .. } => {}
         FromBrowser::Tabs { tabs } => {
             client.tabs = tabs
                 .into_iter()
@@ -435,6 +691,166 @@ pub fn open_new_window(url: &str) -> bool {
     )
 }
 
+/// What happened to a line of a "Browser" action.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Dispatch {
+    /// Sent to this browser (`chrome`...). Whether it worked comes back later, as a notification.
+    Sent(String),
+    /// The line is not a browser command.
+    Invalid(String),
+    /// The bridge is switched off.
+    Off,
+    /// The bridge is on but no browser is connected.
+    NoBrowser,
+    /// A browser is connected but its extension is too old to know the command.
+    Outdated(String),
+}
+
+impl Dispatch {
+    /// What to tell the person when the command could not be sent; `None` when it was sent.
+    pub fn problem(&self) -> Option<String> {
+        match self {
+            Self::Sent(_) => None,
+            Self::Invalid(why) => Some(why.clone()),
+            Self::Off => Some(
+                "The browser extension is off: turn on \"Browser extension\" in Settings > Behavior"
+                    .into(),
+            ),
+            Self::NoBrowser => Some(
+                "No browser is connected: open the browser that has the CursorPie extension".into(),
+            ),
+            Self::Outdated(b) => Some(format!(
+                "The CursorPie extension in {b} is too old for this: export it again from Settings and reload it"
+            )),
+        }
+    }
+}
+
+/// How well a connected browser suits a command: the one that makes sound for a media command, the
+/// one that has a chat site open for a chat command. Equal scores go to the browser heard from last.
+fn suits(client: &Client, group: commands::Group) -> u8 {
+    use commands::Group;
+    match group {
+        Group::Media if client.state.audible > 0 => 3,
+        Group::Media if client.state.media_tabs > 0 => 2,
+        Group::Chat if !client.state.chats.is_empty() => 3,
+        _ => 1,
+    }
+}
+
+/// A command that went to a browser.
+struct Sent {
+    /// `chrome`, `firefox`...
+    browser: String,
+    /// The `id` it was sent with.
+    id: u64,
+    /// How many seconds to wait for the browser to say how it went ([`commands::wait_secs_for`]).
+    wait: u64,
+}
+
+/// Sends the line of a "Browser" action (`media.next`, `chat.send_to Anna :: hi`) to the browser
+/// that suits it, and says what happened to it. Whether it worked comes back later, as a
+/// notification; to wait for it use [`run_command_wait`].
+pub fn run_command(spec: &str) -> Dispatch {
+    match dispatch(spec, None) {
+        Ok(sent) => Dispatch::Sent(sent.browser),
+        Err(why) => why,
+    }
+}
+
+/// The work of [`run_command`]. With a `waiter`, the answer of the browser goes to it (and not to
+/// the screen).
+fn dispatch(spec: &str, waiter: Option<mpsc::Sender<Reply>>) -> Result<Sent, Dispatch> {
+    let (cmd, arg) = match commands::parse(spec) {
+        Ok(parsed) => parsed,
+        Err(e) => return Err(Dispatch::Invalid(e.to_string())),
+    };
+    let mut s = lock();
+    if !s.running {
+        return Err(Dispatch::Off);
+    }
+    if s.clients.is_empty() {
+        return Err(Dispatch::NoBrowser);
+    }
+    let best = s
+        .clients
+        .iter()
+        .filter(|(_, c)| c.commands.iter().any(|k| k == cmd.id))
+        .max_by_key(|(_, c)| (suits(c, cmd.group), c.seen))
+        .map(|(&k, _)| k);
+    let Some(key) = best else {
+        let newest = s.clients.values().max_by_key(|c| c.seen);
+        let name = newest
+            .map_or("the browser", |c| browser_label(&c.browser))
+            .to_string();
+        return Err(Dispatch::Outdated(name));
+    };
+    let wait = commands::wait_secs_for(cmd, &arg);
+    let command = s.next_command;
+    s.next_command += 1;
+    let sent = send(
+        &s.clients[&key],
+        &ToBrowser::Command {
+            id: command,
+            cmd: cmd.id.to_string(),
+            arg,
+        },
+    );
+    diag::log!("bridge", "command", name = cmd.id, sent = sent);
+    if !sent {
+        return Err(Dispatch::NoBrowser);
+    }
+    // the lock is still held, so the answer cannot come before the waiter is in place
+    if let Some(tx) = waiter {
+        s.waiting.insert(command, Waiter { client: key, tx });
+    }
+    Ok(Sent {
+        browser: s.clients[&key].browser.clone(),
+        id: command,
+        wait,
+    })
+}
+
+/// How a command that was waited for ended.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Waited {
+    /// The browser ran it and said how it went.
+    Reply(Reply),
+    /// It could not be sent: the extension is off, no browser is connected, the line is not a
+    /// command... The words are for the person (see [`Dispatch::problem`]).
+    Problem(String),
+    /// It was sent but no answer came in time, or the browser went away.
+    Lost(String),
+}
+
+/// Sends a command like [`run_command`] and **waits** for the browser to say how it went: what a
+/// flow needs, to put the answer in a variable and decide what to do next. It waits at most
+/// [`commands::wait_secs_for`] the command (a panel is given the time a person needs, and
+/// `chat.wait` the time it was told to wait). Nothing is shown on the screen for the answer: the
+/// flow reports a failure itself.
+pub fn run_command_wait(spec: &str) -> Waited {
+    let (tx, rx) = mpsc::channel();
+    let sent = match dispatch(spec, Some(tx)) {
+        Ok(sent) => sent,
+        Err(why) => return Waited::Problem(why.problem().unwrap_or_default()),
+    };
+    let wait = Duration::from_secs(sent.wait);
+    match rx.recv_timeout(wait) {
+        Ok(reply) => Waited::Reply(reply),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            lock().waiting.remove(&sent.id);
+            Waited::Lost(format!(
+                "{} did not answer within {} seconds",
+                browser_label(&sent.browser),
+                wait.as_secs()
+            ))
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Waited::Lost("the browser closed the connection before it answered".into())
+        }
+    }
+}
+
 /// What the Settings window shows about the bridge.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Status {
@@ -445,6 +861,13 @@ pub struct Status {
     pub errors: Vec<String>,
     /// Connected browsers and how many tabs each has open.
     pub browsers: Vec<(String, usize)>,
+    /// Tabs that make sound, over all browsers.
+    pub playing: u32,
+    /// Open chat sites and their unread number when known, over all browsers.
+    pub chats: Vec<(String, Option<u32>)>,
+    /// Browsers whose extension is not the version of this app: its files were not exported again
+    /// (and reloaded) after an update, so new commands do not work there.
+    pub outdated: Vec<String>,
 }
 
 /// The state of the bridge, cheap enough to ask at every frame.
@@ -459,6 +882,32 @@ pub fn status() -> Status {
             .values()
             .map(|c| (browser_label(&c.browser).to_string(), c.tabs.len()))
             .collect(),
+        playing: s.clients.values().map(|c| c.state.audible).sum(),
+        chats: {
+            let mut all: Vec<(String, Option<u32>)> = Vec::new();
+            for (site, n) in s.clients.values().flat_map(|c| c.state.chats.iter()) {
+                match all.iter_mut().find(|(k, _)| k == site) {
+                    Some(slot) => slot.1 = slot.1.max(*n),
+                    None => all.push((site.clone(), *n)),
+                }
+            }
+            all
+        },
+        outdated: s
+            .clients
+            .values()
+            .filter(|c| c.version != env!("CARGO_PKG_VERSION"))
+            .map(|c| browser_label(&c.browser).to_string())
+            .collect(),
+    }
+}
+
+/// How the chat sites are written for a person.
+pub fn chat_label(site: &str) -> &str {
+    match site {
+        "whatsapp" => "WhatsApp",
+        "telegram" => "Telegram",
+        other => other,
     }
 }
 
@@ -486,6 +935,9 @@ mod tests {
             out: None,
             sock: None,
             seen,
+            version: String::new(),
+            commands: Vec::new(),
+            state: Activity::default(),
         };
         let tabs = urls
             .iter()
@@ -584,10 +1036,12 @@ mod tests {
             &mut c,
             FromBrowser::Hello {
                 browser: "brave".into(),
-                version: String::new(),
+                version: "1.2.3".into(),
+                commands: vec!["media.next".into()],
             },
         );
         assert_eq!(c.browser, "brave");
+        assert_eq!((c.version.as_str(), c.commands.len()), ("1.2.3", 1));
         assert_eq!(browser_label("brave"), "Brave");
         assert_eq!(browser_label("zen"), "zen");
     }
@@ -609,6 +1063,319 @@ mod tests {
         ));
         let text = rx.recv().unwrap();
         assert!(text.contains(r#""type":"activate""#) && text.contains(r#""tabId":1"#));
+    }
+
+    fn with_commands(mut c: Client, cmds: &[&str]) -> Client {
+        c.commands = cmds.iter().map(|k| (*k).to_string()).collect();
+        c
+    }
+
+    // `run_command` works on the global state, so the tests that use it run one after the other
+    static GLOBAL: Mutex<()> = Mutex::new(());
+
+    fn install_for_test(clients: Vec<Client>) -> MutexGuard<'static, ()> {
+        let guard = GLOBAL.lock().unwrap_or_else(|e| e.into_inner());
+        let mut s = lock();
+        *s = state_with(clients);
+        drop(s);
+        guard
+    }
+
+    fn sink() -> (Option<mpsc::Sender<String>>, mpsc::Receiver<String>) {
+        let (tx, rx) = mpsc::channel();
+        (Some(tx), rx)
+    }
+
+    #[test]
+    fn an_old_extension_is_asked_to_reload_only_when_its_folder_is_current() {
+        let build = env!("CARGO_PKG_VERSION");
+        assert!(reload_wanted("0.0.1", build, Some(build), 0));
+        assert!(
+            !reload_wanted(build, build, Some(build), 0),
+            "already current"
+        );
+        assert!(
+            !reload_wanted("0.0.1", build, Some("0.0.1"), 0),
+            "files not refreshed"
+        );
+        assert!(!reload_wanted("0.0.1", build, None, 0), "nothing exported");
+        assert!(
+            !reload_wanted("", build, Some(build), 0),
+            "too old to know the request"
+        );
+        assert!(
+            !reload_wanted("0.0.1", build, Some(build), MAX_RELOAD_ASKS),
+            "asked enough"
+        );
+    }
+
+    #[test]
+    fn the_reload_goes_to_the_connection_that_said_hello_and_stops_after_a_few_tries() {
+        let dir = std::env::temp_dir().join(format!("cursorpie-reload-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        extension::export(&dir).unwrap();
+        let (out, rx) = sink();
+        let mut old = client("chrome", &[], Instant::now());
+        old.out = out;
+        old.version = "0.0.1".into();
+        let _guard = install_for_test(vec![old]);
+
+        ask_to_reload_in(1, &dir);
+        let line = rx.try_recv().expect("the extension is asked");
+        let v: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(v["type"], "reload");
+        assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
+
+        // it comes back old (loaded from another folder): only a few more tries
+        for _ in 0..5 {
+            ask_to_reload_in(1, &dir);
+        }
+        assert_eq!(rx.try_iter().count(), usize::from(MAX_RELOAD_ASKS) - 1);
+
+        // a folder that was never exported is never a reason to ask
+        let none =
+            std::env::temp_dir().join(format!("cursorpie-reload-none-{}", std::process::id()));
+        let (out, rx) = sink();
+        let mut other = client("firefox", &[], Instant::now());
+        other.out = out;
+        other.version = "0.0.1".into();
+        drop(_guard);
+        let _guard = install_for_test(vec![other]);
+        ask_to_reload_in(1, &none);
+        assert!(rx.try_recv().is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_media_command_goes_to_the_browser_that_makes_sound() {
+        let t0 = Instant::now();
+        let (tx_quiet, rx_quiet) = sink();
+        let (tx_loud, rx_loud) = sink();
+        let mut quiet = with_commands(
+            client("firefox", &[], t0 + Duration::from_secs(9)),
+            &["media.next"],
+        );
+        quiet.out = tx_quiet;
+        let mut loud = with_commands(client("chrome", &[], t0), &["media.next"]);
+        loud.out = tx_loud;
+        loud.state.audible = 1;
+        let _g = install_for_test(vec![quiet, loud]);
+        assert_eq!(run_command("media.next"), Dispatch::Sent("chrome".into()));
+        let line = rx_loud.try_recv().expect("sent to the loud browser");
+        assert!(line.contains(r#""cmd":"media.next""#) && line.contains(r#""type":"command""#));
+        assert!(
+            rx_quiet.try_recv().is_err(),
+            "the browser heard from last is not the one that plays"
+        );
+    }
+
+    #[test]
+    fn a_chat_command_goes_to_the_browser_that_has_a_chat_site_and_ids_count_up() {
+        let t0 = Instant::now();
+        let (tx_a, rx_a) = sink();
+        let (tx_b, rx_b) = sink();
+        let mut a = with_commands(
+            client("chrome", &[], t0 + Duration::from_secs(5)),
+            &["chat.next_unread"],
+        );
+        a.out = tx_a;
+        let mut b = with_commands(client("firefox", &[], t0), &["chat.next_unread"]);
+        b.out = tx_b;
+        b.state.chats = vec![("whatsapp".into(), Some(2))];
+        let _g = install_for_test(vec![a, b]);
+        assert!(run_command("chat.next_unread").problem().is_none());
+        assert!(run_command("chat.next_unread").problem().is_none());
+        let first = rx_b.try_recv().unwrap();
+        let second = rx_b.try_recv().unwrap();
+        assert!(
+            first.contains(r#""id":1"#) && second.contains(r#""id":2"#),
+            "{first} {second}"
+        );
+        assert!(rx_a.try_recv().is_err());
+    }
+
+    #[test]
+    fn other_commands_go_to_the_browser_heard_from_last() {
+        let t0 = Instant::now();
+        let (tx_old, rx_old) = sink();
+        let (tx_new, rx_new) = sink();
+        let mut old = with_commands(client("firefox", &[], t0), &["tab.close"]);
+        old.out = tx_old;
+        let mut new = with_commands(
+            client("chrome", &[], t0 + Duration::from_secs(3)),
+            &["tab.close"],
+        );
+        new.out = tx_new;
+        let _g = install_for_test(vec![old, new]);
+        assert_eq!(run_command("tab.close"), Dispatch::Sent("chrome".into()));
+        assert!(rx_new.try_recv().is_ok() && rx_old.try_recv().is_err());
+    }
+
+    #[test]
+    fn nothing_is_sent_for_a_bad_line_a_stopped_bridge_or_a_missing_browser() {
+        let (tx, rx) = sink();
+        let mut c = with_commands(client("chrome", &[], Instant::now()), &["tab.close"]);
+        c.out = tx;
+        let _g = install_for_test(vec![c]);
+        assert!(matches!(run_command("rm -rf /"), Dispatch::Invalid(_)));
+        assert!(matches!(run_command(""), Dispatch::Invalid(_)));
+        assert!(matches!(
+            run_command("chat.send_to nobody"),
+            Dispatch::Invalid(_)
+        ));
+        assert!(rx.try_recv().is_err());
+        lock().clients.clear();
+        assert_eq!(run_command("tab.close"), Dispatch::NoBrowser);
+        lock().running = false;
+        assert_eq!(run_command("tab.close"), Dispatch::Off);
+        assert!(Dispatch::Off.problem().unwrap().contains("Behavior"));
+        assert!(Dispatch::Sent("chrome".into()).problem().is_none());
+    }
+
+    #[test]
+    fn an_extension_that_does_not_know_the_command_is_called_outdated() {
+        let (tx, rx) = sink();
+        // the extension of 0.8.9 said hello without a list of commands
+        let mut old = client("chrome", &[], Instant::now());
+        old.out = tx;
+        let _g = install_for_test(vec![old]);
+        let d = run_command("media.next");
+        assert_eq!(d, Dispatch::Outdated("Chrome".into()));
+        assert!(d.problem().unwrap().contains("export it again"));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn a_command_that_is_waited_for_gets_the_answer_and_not_the_screen() {
+        let (tx, rx) = sink();
+        let mut c = with_commands(client("chrome", &[], Instant::now()), &["tab.url"]);
+        c.out = tx;
+        let _g = install_for_test(vec![c]);
+        let (wtx, wrx) = mpsc::channel();
+        let Ok(sent) = dispatch("tab.url", Some(wtx)) else {
+            panic!("the command was not sent");
+        };
+        assert_eq!((sent.id, sent.browser.as_str()), (1, "chrome"));
+        assert!(rx.try_recv().is_ok(), "the browser got the command");
+        assert_eq!(lock().waiting.len(), 1);
+        on_line(
+            1,
+            r#"{"type":"result","id":1,"ok":true,"message":" https://a.b/ ","notify":true}"#,
+        );
+        let reply = wrx.try_recv().expect("the waiter was answered");
+        assert_eq!(
+            reply,
+            Reply {
+                ok: true,
+                message: "https://a.b/".into()
+            }
+        );
+        assert!(lock().waiting.is_empty(), "an answer is taken once");
+    }
+
+    #[test]
+    fn only_the_browser_a_command_went_to_can_answer_it() {
+        let (tx, _rx) = sink();
+        let mut first = with_commands(client("chrome", &[], Instant::now()), &["tab.url"]);
+        first.out = tx;
+        let second = client("firefox", &[], Instant::now());
+        let _g = install_for_test(vec![first, second]);
+        let (wtx, wrx) = mpsc::channel();
+        assert!(dispatch("tab.url", Some(wtx)).is_ok());
+        // the other connection says it ran command 1: that is not its command
+        on_line(2, r#"{"type":"result","id":1,"ok":true,"message":"x"}"#);
+        assert!(wrx.try_recv().is_err());
+        assert_eq!(lock().waiting.len(), 1, "still waiting for the right one");
+        on_line(
+            1,
+            r#"{"type":"result","id":1,"ok":false,"message":"No tab is open"}"#,
+        );
+        let reply = wrx.try_recv().expect("answered by its own browser");
+        assert!(!reply.ok);
+        assert_eq!(reply.message, "No tab is open");
+    }
+
+    #[test]
+    fn a_wait_ends_when_the_browser_goes_away() {
+        let (tx, _rx) = sink();
+        let mut c = with_commands(client("chrome", &[], Instant::now()), &["media.state"]);
+        c.out = tx;
+        let _g = install_for_test(vec![c]);
+        let (wtx, wrx) = mpsc::channel();
+        assert!(dispatch("media.state", Some(wtx)).is_ok());
+        forget_client(&mut lock(), 1);
+        assert!(matches!(
+            wrx.try_recv(),
+            Err(mpsc::TryRecvError::Disconnected)
+        ));
+        assert!(lock().clients.is_empty() && lock().waiting.is_empty());
+    }
+
+    #[test]
+    fn a_line_that_cannot_be_sent_is_a_problem_for_the_flow_not_a_wait() {
+        let (tx, rx) = sink();
+        let mut c = with_commands(client("chrome", &[], Instant::now()), &["tab.close"]);
+        c.out = tx;
+        let _g = install_for_test(vec![c]);
+        assert!(matches!(run_command_wait("rm -rf /"), Waited::Problem(_)));
+        assert!(matches!(run_command_wait("chat.open"), Waited::Problem(_)));
+        // an extension that does not know the command: told so at once, nothing is waited for
+        assert!(matches!(run_command_wait("media.next"), Waited::Problem(_)));
+        assert!(rx.try_recv().is_err());
+        assert!(lock().waiting.is_empty());
+        lock().running = false;
+        let Waited::Problem(why) = run_command_wait("tab.close") else {
+            panic!("a stopped bridge is a problem");
+        };
+        assert!(why.contains("Behavior"), "{why}");
+    }
+
+    #[test]
+    fn the_status_adds_up_sound_and_chats_and_names_a_stale_extension() {
+        let mut a = client("chrome", &["https://a.b/"], Instant::now());
+        a.version = env!("CARGO_PKG_VERSION").into();
+        a.state = Activity {
+            audible: 2,
+            media_tabs: 3,
+            chats: vec![("whatsapp".into(), Some(3))],
+        };
+        let mut b = client("firefox", &[], Instant::now());
+        b.version = "0.0.1".into();
+        b.state = Activity {
+            audible: 1,
+            media_tabs: 0,
+            chats: vec![("whatsapp".into(), Some(5)), ("telegram".into(), None)],
+        };
+        let _g = install_for_test(vec![a, b]);
+        let st = status();
+        assert_eq!(st.playing, 3);
+        assert_eq!(
+            st.chats,
+            vec![
+                ("whatsapp".to_string(), Some(5)),
+                ("telegram".to_string(), None)
+            ]
+        );
+        assert_eq!(st.outdated, vec!["Firefox".to_string()]);
+        assert_eq!(chat_label("whatsapp"), "WhatsApp");
+        lock().running = false;
+    }
+
+    #[test]
+    fn a_state_message_replaces_the_previous_one() {
+        let mut c = client("chrome", &[], Instant::now());
+        let state = |audible, n| FromBrowser::State {
+            audible,
+            media_tabs: 1,
+            chats: vec![proto::WireChat {
+                site: "telegram".into(),
+                unread: Some(n),
+            }],
+        };
+        apply_message(&mut c, state(1, 4));
+        apply_message(&mut c, state(0, 0));
+        assert_eq!(c.state.audible, 0);
+        assert_eq!(c.state.chats, vec![("telegram".to_string(), Some(0))]);
     }
 
     #[test]

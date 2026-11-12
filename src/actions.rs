@@ -4,16 +4,21 @@
 //! by [`init`]) sends keys through the platform backend (`CGEvent` on macOS, `SendInput` on Windows)
 //! and launches apps, URLs and shell commands through it as well. Events posted here carry [`SYNTH_TAG`] so the event tap ignores them.
 //! A flow is run by [`flowrun`], which asks `SystemHost` (the real [`Host`]) for everything it does.
+//! When blocks of a flow could not do their work and the flow did not deal with it, `report_run`
+//! tells the person: a desktop notification (at most one every few seconds) and a message for the
+//! UI ([`Msg::FlowRan`]) that marks the blocks and, while Settings is open, shows the details.
 
 use crate::config::{Action, Flow, is_web_url};
-use crate::flowrun::{self, ExecResult, Host};
+use crate::flowrun::{self, ExecResult, Host, OpenMode};
 use crate::geometry::Point;
 use crate::keys::Shortcut;
+use crate::msg::{Msg, Notifier};
 use crate::platform;
 use crate::running::{self, Choice};
 use crate::tap::Kind;
+use crate::ui::hud::{self, HudNote};
 use crate::windowing::{Asked, Baseline};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{OnceLock, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -28,12 +33,52 @@ struct Job {
     /// What was picked on an "Open app" slice whose app already runs: a new window, or the app
     /// that is open. `None` for every other job, which does what it always did.
     choice: Option<Choice>,
+    /// Whether the notice on the screen announces it. The side buttons do not: they fire all day.
+    announce: bool,
     /// When the job was queued, so the diagnostic log can say how long it waited for the worker.
     queued: Instant,
 }
 
 /// Sender side of the worker queue; set once by [`init`].
 static TX: OnceLock<mpsc::Sender<Job>> = OnceLock::new();
+
+/// How the worker reaches the UI, for the report of a flow run; set once by [`set_notifier`].
+static NOTIFIER: OnceLock<Notifier> = OnceLock::new();
+
+/// When the last desktop notification of a failed flow was shown (Unix seconds), so a flow that
+/// fails every time it is triggered does not bury the screen in notifications.
+static LAST_NOTE: AtomicU64 = AtomicU64::new(0);
+
+/// Fewest seconds between two desktop notifications about failed flows.
+const NOTE_EVERY_SECS: u64 = 5;
+
+/// Whether the job the worker is running now is announced on the screen (see [`announce`]). Only the
+/// worker thread writes it, and it runs one job at a time.
+static ANNOUNCING: AtomicBool = AtomicBool::new(true);
+
+/// Tells the person what is about to happen: a small notice on the screen (see [`hud`]). Does nothing
+/// for the jobs that are silent (the side buttons, which fire all the time) and when the notice is off.
+fn announce(note: Option<HudNote>) {
+    let Some(note) = note else {
+        return;
+    };
+    if !ANNOUNCING.load(Ordering::Relaxed) || !crate::config::cfg().hud {
+        return;
+    }
+    if let Some(n) = NOTIFIER.get() {
+        n.send(Msg::Hud(note));
+    }
+}
+
+/// The name of the flow `id`, for the notice.
+fn flow_name(id: &str) -> Option<String> {
+    flow_by_id(id).map(|f| f.name)
+}
+
+/// Gives the worker a way to reach the UI. Call once, when the UI exists.
+pub fn set_notifier(n: Notifier) {
+    let _ = NOTIFIER.set(n);
+}
 
 /// Starts the `cursorpie-actions` worker thread. Call once, before the first [`run_in`].
 pub fn init() {
@@ -56,6 +101,7 @@ pub fn init() {
                 {
                     platform::activate_app(app);
                 }
+                ANNOUNCING.store(job.announce, Ordering::Relaxed);
                 execute(&job.action, job.choice);
             }
         })
@@ -72,6 +118,16 @@ pub fn run_in(focus: Option<String>, action: Action) {
 /// Like [`run_in`], for a slice that offered the choice between a new window and the app that is
 /// open (see [`running`]): `choice` says which one was picked. `None` is the plain behavior.
 pub fn run_in_with(focus: Option<String>, action: Action, choice: Option<Choice>) {
+    queue(focus, action, choice, true);
+}
+
+/// Like [`run_in`], but the notice on the screen stays quiet: for what is repeated all day, such as
+/// the back and forward buttons.
+pub fn run_in_quiet(focus: Option<String>, action: Action) {
+    queue(focus, action, None, false);
+}
+
+fn queue(focus: Option<String>, action: Action, choice: Option<Choice>, announce: bool) {
     if matches!(action, Action::Nothing) {
         return;
     }
@@ -80,8 +136,20 @@ pub fn run_in_with(focus: Option<String>, action: Action, choice: Option<Choice>
             focus,
             action,
             choice,
+            announce,
             queued: Instant::now(),
         });
+    }
+}
+
+/// Sends the line of a "Browser" action to the browser. When it cannot be sent, the person is told
+/// why (a slice that does nothing and says nothing cannot be understood); what the browser then
+/// does is reported by the extension, see [`bridge::run_command`](crate::bridge::run_command).
+fn browser_command(spec: &str) {
+    let sent = crate::bridge::run_command(spec);
+    if let Some(problem) = sent.problem() {
+        diag::log!("act", "browser_command", sent = false);
+        platform::native::notify("CursorPie: browser", &problem);
     }
 }
 
@@ -94,6 +162,7 @@ fn kind_name(action: &Action) -> &'static str {
         Action::OpenApp(_) => "open_app",
         Action::OpenUrl(_) => "open_url",
         Action::Command(_) => "command",
+        Action::Browser(_) => "browser",
         Action::Sequence(_) => "sequence",
         Action::Wait(_) => "wait",
         Action::Flow(_) => "flow",
@@ -134,6 +203,8 @@ fn execute(action: &Action, choice: Option<Choice>) {
 
 /// [`execute`], with the choice that is still waiting for an "Open app" step to be used on.
 fn execute_step(action: &Action, choice: &mut Option<Choice>) {
+    // a step that does not do anything yet (an empty app name) has no notice, see `note_for`
+    announce(hud::note_for(action, flow_name));
     match action {
         Action::Nothing => {}
         Action::Key(sc) => platform::press_shortcut(*sc),
@@ -153,6 +224,7 @@ fn execute_step(action: &Action, choice: &mut Option<Choice>) {
         Action::Command(cmd) if !cmd.trim().is_empty() => {
             platform::run_shell(cmd);
         }
+        Action::Browser(spec) if !spec.trim().is_empty() => browser_command(spec),
         Action::Sequence(steps) => {
             for s in steps {
                 execute_step(s, choice);
@@ -167,11 +239,47 @@ fn execute_step(action: &Action, choice: &mut Option<Choice>) {
             if let Some(flow) = flow_by_id(id) {
                 let mut host = SystemHost {
                     choice: choice.take(),
+                    announced: ANNOUNCING.load(Ordering::Relaxed),
                 };
-                flowrun::run(&mut host, &flow, platform::OS);
+                let outcome = flowrun::run(&mut host, &flow, platform::OS);
+                // a *Hide notices* block only lasts as long as the run
+                ANNOUNCING.store(host.announced, Ordering::Relaxed);
+                // a panel that stayed on screen between two questions (`keep_open`) is not
+                // waiting for this flow any more
+                crate::panel::release(crate::panel::Source::Flow);
+                report_run(&flow, &outcome);
             }
         }
         _ => {}
+    }
+}
+
+/// Tells the person how a run of `flow` went when blocks could not do their work and the flow did
+/// not deal with it (see [`flowrun::Outcome::problems`]). The UI is told after every run, so the
+/// marks of an earlier failure go away when the flow works again.
+fn report_run(flow: &Flow, outcome: &flowrun::Outcome) {
+    let report = outcome.report(&flow.id, &flow.name);
+    if let Some(r) = &report {
+        // only how many, never what: the log must not hold the content of a flow
+        diag::log!("act", "flow_problems", count = r.lines.len());
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        if now.saturating_sub(LAST_NOTE.load(Ordering::Relaxed)) >= NOTE_EVERY_SECS {
+            LAST_NOTE.store(now, Ordering::Relaxed);
+            let title = format!("CursorPie \u{b7} flow \"{}\"", r.flow);
+            let text: String = format!("{}. {}", r.title, r.summary)
+                .chars()
+                .take(240)
+                .collect();
+            let _ = platform::native::notify(&title, &text);
+        }
+    }
+    if let Some(n) = NOTIFIER.get() {
+        n.send(Msg::FlowRan {
+            id: flow.id.clone(),
+            report,
+        });
     }
 }
 
@@ -224,18 +332,24 @@ struct SystemHost {
     /// What was picked on an "Open app" slice whose app already runs; the first block of the flow
     /// that opens an app (or a web link) uses it, like the first step of a sequence does.
     choice: Option<Choice>,
+    /// Whether the notices of this job were on when the run began (the side buttons are quiet), so
+    /// a *Hide notices* block set to `off` goes back to that and not to always on.
+    announced: bool,
 }
 
 impl Host for SystemHost {
     fn key(&mut self, sc: Shortcut) {
+        announce(hud::note_for(&Action::Key(sc), flow_name));
         platform::press_shortcut(sc);
     }
 
     fn open_app(&mut self, app: &str) {
+        announce(HudNote::open_app(app));
         open_app(app, self.choice.take());
     }
 
     fn open_url(&mut self, target: &str) {
+        announce(HudNote::open_target(target));
         // only a web link takes the choice: a file or a `mailto:` link leaves it for a later block
         let picked = if is_web_url(target) {
             self.choice.take()
@@ -246,7 +360,79 @@ impl Host for SystemHost {
     }
 
     fn command(&mut self, command: &str) {
+        announce(hud::note_for(&Action::Command(command.into()), flow_name));
         platform::run_shell(command);
+    }
+
+    fn open_app_as(&mut self, app: &str, mode: OpenMode) -> bool {
+        match mode {
+            OpenMode::New => {
+                announce(HudNote::open_app(app));
+                open_app(app, Some(Choice::NewWindow));
+                true
+            }
+            OpenMode::Existing => {
+                // read first: one look at the system, on this worker thread
+                let running = platform::running_among(&[app.to_string()])
+                    .first()
+                    .copied()
+                    .unwrap_or(false);
+                if running {
+                    announce(HudNote::open_app(app));
+                    open_app(app, Some(Choice::Existing));
+                }
+                running
+            }
+            // opening an app that runs goes to it, so smart is what the plain block does
+            OpenMode::Smart | OpenMode::Plain => {
+                self.open_app(app);
+                true
+            }
+        }
+    }
+
+    fn open_url_as(&mut self, target: &str, mode: OpenMode) -> bool {
+        // a file or a `mailto:` link has no tabs: it is opened as usual
+        if !is_web_url(target) {
+            self.open_url(target);
+            return true;
+        }
+        let tab_open = || {
+            platform::web::urls_open(&[target.to_string()])
+                .first()
+                .copied()
+                .unwrap_or(false)
+        };
+        match mode {
+            OpenMode::Plain => {
+                announce(HudNote::open_target(target));
+                open_web(target, None);
+                true
+            }
+            OpenMode::New => {
+                announce(HudNote::open_target(target));
+                open_web(target, Some(Choice::NewWindow));
+                true
+            }
+            OpenMode::Smart => {
+                let existing = tab_open().then_some(Choice::Existing);
+                announce(HudNote::open_target(target));
+                open_web(target, existing);
+                true
+            }
+            OpenMode::Existing => {
+                let open = tab_open();
+                if open {
+                    announce(HudNote::open_target(target));
+                    open_web(target, Some(Choice::Existing));
+                }
+                open
+            }
+        }
+    }
+
+    fn set_quiet(&mut self, quiet: bool) {
+        ANNOUNCING.store(self.announced && !quiet, Ordering::Relaxed);
     }
 
     fn sleep(&mut self, ms: u64) {
@@ -271,6 +457,11 @@ impl Host for SystemHost {
 
     fn ask_yes_no(&mut self, message: &str) -> Option<bool> {
         platform::native::ask_yes_no(message)
+    }
+
+    fn ask_panel(&mut self, spec: &crate::panel::PanelSpec) -> Option<crate::panel::PanelResult> {
+        // the window is the UI thread's: this worker waits here for the answer
+        Some(crate::panel::ask(spec.clone(), crate::panel::Source::Flow))
     }
 
     fn clipboard(&mut self) -> Option<String> {
@@ -346,6 +537,59 @@ impl Host for SystemHost {
 
     fn flow(&mut self, id: &str) -> Option<Flow> {
         flow_by_id(id)
+    }
+
+    fn list_dir(&mut self, path: &str) -> Option<Vec<String>> {
+        platform::native::list_dir(path)
+    }
+
+    fn make_dir(&mut self, path: &str) -> bool {
+        platform::native::make_dir(path)
+    }
+
+    fn copy_file(&mut self, from: &str, to: &str) -> bool {
+        platform::native::copy_file(from, to)
+    }
+
+    fn move_file(&mut self, from: &str, to: &str) -> bool {
+        platform::native::move_file(from, to)
+    }
+
+    fn delete_file(&mut self, path: &str) -> bool {
+        platform::native::delete_file(path)
+    }
+
+    fn file_info(&mut self, path: &str) -> Option<(u64, u64)> {
+        platform::native::file_info(path)
+    }
+
+    fn system_info(&mut self, key: &str) -> Option<String> {
+        platform::native::system_info(key)
+    }
+
+    fn say(&mut self, text: &str) -> bool {
+        platform::native::say(text)
+    }
+
+    fn screenshot(&mut self, path: &str) -> bool {
+        platform::native::screenshot(path)
+    }
+
+    fn volume(&mut self) -> Option<u8> {
+        platform::native::volume()
+    }
+
+    fn set_volume(&mut self, percent: u8) -> bool {
+        platform::native::set_volume(percent)
+    }
+
+    fn browser(&mut self, line: &str) -> flowrun::BrowserReply {
+        use crate::bridge::Waited;
+        let (ok, message) = match crate::bridge::run_command_wait(line) {
+            Waited::Reply(reply) => (reply.ok, reply.message),
+            Waited::Problem(why) | Waited::Lost(why) => (false, why),
+        };
+        flowrun::BrowserReply { ok, message }
     }
 }
 
@@ -457,7 +701,10 @@ mod tests {
     fn mixing_spreads_neighbouring_numbers_and_the_dice_stay_in_range() {
         assert_ne!(mix(1), mix(2));
         assert_ne!(mix(0) % 100, mix(1) % 100);
-        let mut host = SystemHost { choice: None };
+        let mut host = SystemHost {
+            choice: None,
+            announced: true,
+        };
         for _ in 0..50 {
             assert!(host.random_below(6) < 6);
         }
@@ -467,7 +714,10 @@ mod tests {
 
     #[test]
     fn the_host_answers_for_files_and_the_environment() {
-        let mut host = SystemHost { choice: None };
+        let mut host = SystemHost {
+            choice: None,
+            announced: true,
+        };
         assert_eq!(host.env_var(""), None);
         assert_eq!(host.env_var("CURSORPIE_SURELY_NOT_SET_0"), None);
         assert!(!host.file_exists(""));

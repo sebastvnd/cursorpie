@@ -145,6 +145,42 @@ pub static SETTINGS_OPEN: AtomicBool = AtomicBool::new(false);
 /// swallowed, so a flow can be moved by holding the middle button. See `trigger::on_press`.
 pub static FLOW_CANVAS_HOVER: AtomicBool = AtomicBool::new(false);
 
+/// When the UI first **drew** the pie of the current hold, as milliseconds since [`epoch`] plus one
+/// (0 = not drawn yet). The hold timer opens Settings in place of a pie that nobody has touched; it
+/// must only do that for a pie the person has actually been able to see, so it asks this. See
+/// `trigger::hold_open_settings`.
+static PIE_PAINTED_AT: AtomicU64 = AtomicU64::new(0);
+
+fn epoch() -> std::time::Instant {
+    static EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    *EPOCH.get_or_init(std::time::Instant::now)
+}
+
+fn now_ticks() -> u64 {
+    epoch().elapsed().as_millis() as u64 + 1
+}
+
+/// The tap asked the UI to open a pie: it has not been drawn yet.
+pub(crate) fn pie_requested() {
+    PIE_PAINTED_AT.store(0, Ordering::SeqCst);
+}
+
+/// Called by the UI once the pie has really been drawn (twice, so the window has had a frame to
+/// be mapped). Only the first call after `pie_requested` counts.
+pub fn pie_painted() {
+    let _ = PIE_PAINTED_AT.compare_exchange(0, now_ticks(), Ordering::SeqCst, Ordering::SeqCst);
+}
+
+/// How long ago the UI drew the pie of the current hold, or `None` if it has not.
+pub(crate) fn pie_painted_for() -> Option<std::time::Duration> {
+    match PIE_PAINTED_AT.load(Ordering::SeqCst) {
+        0 => None,
+        t => Some(std::time::Duration::from_millis(
+            now_ticks().saturating_sub(t),
+        )),
+    }
+}
+
 /// The statics above are process-wide, so the tests of `tap` and `tap::touch` that touch them run
 /// one at a time, all behind this one lock.
 #[cfg(test)]
@@ -308,6 +344,25 @@ mod tests {
     /// The statics above are process-wide, so tests that touch them run one at a time.
     fn serial() -> MutexGuard<'static, ()> {
         TEST_SERIAL.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Puts the factory config in the live one (in memory only) for one test and gives the
+    /// person's own back afterwards, even if the test panics.
+    struct FactoryConfig(Option<crate::config::Config>);
+
+    impl FactoryConfig {
+        fn set() -> Self {
+            let own = std::mem::take(&mut *cfg());
+            FactoryConfig(Some(own))
+        }
+    }
+
+    impl Drop for FactoryConfig {
+        fn drop(&mut self) {
+            if let Some(own) = self.0.take() {
+                *cfg() = own;
+            }
+        }
     }
 
     /// Sets [`SETTINGS_OPEN`] for one test and clears it afterwards, even if the test panics.
@@ -621,6 +676,9 @@ mod tests {
     fn a_pie_that_was_open_when_settings_opened_runs_nothing_on_release() {
         let _s = serial();
         PAUSED.store(false, Ordering::SeqCst);
+        // the live config is the one of the person who runs the test: the factory one has mode
+        // slices, a config of their own may have none
+        let _factory = FactoryConfig::set();
         // one lock at a time: the config mutex is not reentrant
         let (button, size, count, before) = {
             let c = cfg();

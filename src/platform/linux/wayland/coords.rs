@@ -8,7 +8,8 @@
 //!
 //! So the position is not taken over as it is: it is mapped from the KWin output it is on to the X
 //! monitor of the same screen, linearly, which is exact whatever the two scales are and does not
-//! assume anything about them. Pure, so it is tested on every OS.
+//! assume anything about them. The same ratio turns a distance of the pointer into a distance in
+//! the pie, which is drawn in the toolkit's points ([`scale_at`]). Pure, so it is tested on every OS.
 
 use crate::platform::ScreenRect;
 
@@ -36,15 +37,17 @@ fn in_order(list: &[ScreenRect]) -> Vec<ScreenRect> {
     v
 }
 
-/// `p` (compositor points) in the points the toolkit's window is placed in. `outputs` are the
-/// KWin outputs, `x_monitors` the X monitors in the toolkit's points. `None` when the two lists
-/// cannot be matched (a different number of screens, a screen of another shape, a bad number):
-/// the caller then keeps `p`, which is what was done before this existed.
-pub(crate) fn to_window_point(
-    p: (f64, f64),
-    outputs: &[ScreenRect],
-    x_monitors: &[ScreenRect],
-) -> Option<(f64, f64)> {
+/// The KWin output a point is on, the X monitor of the same screen, and the ratio between them.
+struct Matched {
+    out: ScreenRect,
+    mon: ScreenRect,
+    sx: f64,
+    sy: f64,
+}
+
+/// The output `p` is on and the X monitor that goes with it. `None` when the two lists cannot be
+/// matched (a different number of screens, a screen of another shape, a bad number).
+fn matched(p: (f64, f64), outputs: &[ScreenRect], x_monitors: &[ScreenRect]) -> Option<Matched> {
     if outputs.is_empty()
         || outputs.len() != x_monitors.len()
         || !outputs.iter().chain(x_monitors).all(usable)
@@ -63,7 +66,44 @@ pub(crate) fn to_window_point(
     if (sx / sy - 1.0).abs() > ASPECT_TOLERANCE {
         return None;
     }
-    Some((mon.x + (p.0 - out.x) * sx, mon.y + (p.1 - out.y) * sy))
+    Some(Matched {
+        out: *out,
+        mon,
+        sx,
+        sy,
+    })
+}
+
+/// `p` (compositor points) in the points the toolkit's window is placed in. `outputs` are the
+/// KWin outputs, `x_monitors` the X monitors in the toolkit's points. `None` when the two lists
+/// cannot be matched (a different number of screens, a screen of another shape, a bad number):
+/// the caller then keeps `p`, which is what was done before this existed.
+pub(crate) fn to_window_point(
+    p: (f64, f64),
+    outputs: &[ScreenRect],
+    x_monitors: &[ScreenRect],
+) -> Option<(f64, f64)> {
+    let m = matched(p, outputs, x_monitors)?;
+    Some((
+        m.mon.x + (p.0 - m.out.x) * m.sx,
+        m.mon.y + (p.1 - m.out.y) * m.sy,
+    ))
+}
+
+/// How many of the toolkit's points one compositor point is at `p`: 1.5 when KWin counts 2560 points
+/// across a screen that X shows as 3840. The same screens as [`to_window_point`], and `None` for
+/// the same reasons; the caller then takes 1.
+///
+/// The pie is drawn in the toolkit's points, and the pointer moves in the compositor's: a distance
+/// from the center of the pie has to be converted before it is compared with the size of a slice,
+/// or the slice that lights up is not the one the pointer is on.
+pub(crate) fn scale_at(
+    p: (f64, f64),
+    outputs: &[ScreenRect],
+    x_monitors: &[ScreenRect],
+) -> Option<f64> {
+    let m = matched(p, outputs, x_monitors)?;
+    Some((m.sx * m.sy).sqrt())
 }
 
 #[cfg(test)]
@@ -140,6 +180,35 @@ mod tests {
             to_window_point((-10.0, 50.0), &kwin, &x).unwrap(),
             (-20.0, 100.0),
         );
+    }
+
+    #[test]
+    fn the_scale_is_how_many_toolkit_points_a_compositor_point_is() {
+        let kwin = [r(0.0, 0.0, 2560.0, 1440.0)];
+        let x = [r(0.0, 0.0, 3840.0, 2160.0)];
+        let s = scale_at((100.0, 100.0), &kwin, &x).unwrap();
+        assert!((s - 1.5).abs() < 1e-9, "{s}");
+        // equal scales: 1
+        let same = [r(0.0, 0.0, 1920.0, 1080.0)];
+        assert_eq!(scale_at((5.0, 5.0), &same, &same), Some(1.0));
+    }
+
+    #[test]
+    fn each_screen_has_its_own_scale() {
+        let kwin = [r(0.0, 0.0, 1920.0, 1080.0), r(1920.0, 0.0, 1280.0, 720.0)];
+        let x = [r(0.0, 0.0, 3840.0, 2160.0), r(3840.0, 0.0, 1280.0, 720.0)];
+        assert_eq!(scale_at((10.0, 10.0), &kwin, &x), Some(2.0));
+        assert_eq!(scale_at((2000.0, 10.0), &kwin, &x), Some(1.0));
+    }
+
+    #[test]
+    fn a_scale_is_not_made_up_for_screens_that_cannot_be_matched() {
+        let one = [r(0.0, 0.0, 100.0, 100.0)];
+        let two = [r(0.0, 0.0, 100.0, 100.0), r(100.0, 0.0, 100.0, 100.0)];
+        assert_eq!(scale_at((5.0, 5.0), &one, &two), None);
+        assert_eq!(scale_at((5.0, 5.0), &[], &[]), None);
+        let wide = [r(0.0, 0.0, 200.0, 100.0)];
+        assert_eq!(scale_at((5.0, 5.0), &one, &wide), None);
     }
 
     #[test]

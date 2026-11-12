@@ -1,0 +1,307 @@
+{
+  "cursorpie_flow": 2,
+  "flow": {
+    "id": "quick-reply-unread-chats",
+    "name": "Quick reply to every unread chat",
+    "nodes": [
+      {
+        "id": 1,
+        "x": 40.0,
+        "y": 60.0,
+        "kind": "Start",
+        "next": 2
+      },
+      {
+        "id": 2,
+        "x": 340.0,
+        "y": 60.0,
+        "kind": {
+          "Native": {
+            "op": "Browser",
+            "a": "chat.unread_names",
+            "b": "names"
+          }
+        },
+        "next": 3
+      },
+      {
+        "id": 3,
+        "x": 640.0,
+        "y": 60.0,
+        "kind": {
+          "Branch": {
+            "a": "ok",
+            "op": "IsTrue",
+            "b": ""
+          }
+        },
+        "next": 4,
+        "alt": 5
+      },
+      {
+        "id": 4,
+        "x": 640.0,
+        "y": 190.0,
+        "kind": {
+          "Branch": {
+            "a": "names",
+            "op": "IsEmpty",
+            "b": ""
+          }
+        },
+        "next": 6,
+        "alt": 7
+      },
+      {
+        "id": 5,
+        "x": 40.0,
+        "y": 190.0,
+        "kind": {
+          "Native": {
+            "op": "Notify",
+            "a": "Cannot read the chats",
+            "b": "{{names}}"
+          }
+        },
+        "next": 11
+      },
+      {
+        "id": 6,
+        "x": 340.0,
+        "y": 190.0,
+        "kind": {
+          "Native": {
+            "op": "Notify",
+            "a": "No unread chats",
+            "b": "Nothing waits in WhatsApp Web or Telegram Web"
+          }
+        },
+        "next": 11
+      },
+      {
+        "id": 7,
+        "x": 40.0,
+        "y": 320.0,
+        "kind": {
+          "List": {
+            "op": "Split",
+            "list": "chats",
+            "a": "{{names}}",
+            "b": "",
+            "out": ""
+          }
+        },
+        "next": 8
+      },
+      {
+        "id": 8,
+        "x": 340.0,
+        "y": 320.0,
+        "kind": {
+          "ForEach": {
+            "list": "chats",
+            "item": "chat"
+          }
+        },
+        "next": 9,
+        "alt": 11
+      },
+      {
+        "id": 9,
+        "x": 640.0,
+        "y": 320.0,
+        "kind": {
+          "Native": {
+            "op": "Browser",
+            "a": "chat.open {{chat}}",
+            "b": "said"
+          }
+        },
+        "next": 10
+      },
+      {
+        "id": 10,
+        "x": 40.0,
+        "y": 450.0,
+        "kind": {
+          "Branch": {
+            "a": "ok",
+            "op": "IsTrue",
+            "b": ""
+          }
+        },
+        "next": 12,
+        "alt": 21
+      },
+      {
+        "id": 11,
+        "x": 340.0,
+        "y": 970.0,
+        "kind": "End"
+      },
+      {
+        "id": 12,
+        "x": 340.0,
+        "y": 450.0,
+        "kind": {
+          "Native": {
+            "op": "Browser",
+            "a": "chat.last",
+            "b": "last"
+          }
+        },
+        "next": 13
+      },
+      {
+        "id": 13,
+        "x": 640.0,
+        "y": 450.0,
+        "kind": {
+          "Branch": {
+            "a": "ok",
+            "op": "IsTrue",
+            "b": ""
+          }
+        },
+        "next": 14,
+        "alt": 22
+      },
+      {
+        "id": 14,
+        "x": 40.0,
+        "y": 580.0,
+        "kind": {
+          "Ask": {
+            "mode": "Text",
+            "message": "{{chat}} wrote:\n\n{{last}}\n\nType your reply, or press Cancel to skip this chat.",
+            "preset": "Ok, thanks! I will answer properly soon.",
+            "out": "reply"
+          }
+        },
+        "next": 15
+      },
+      {
+        "id": 15,
+        "x": 340.0,
+        "y": 580.0,
+        "kind": {
+          "Branch": {
+            "a": "ok",
+            "op": "IsTrue",
+            "b": ""
+          }
+        },
+        "next": 16,
+        "alt": 8
+      },
+      {
+        "id": 16,
+        "x": 640.0,
+        "y": 580.0,
+        "kind": {
+          "Branch": {
+            "a": "reply",
+            "op": "IsEmpty",
+            "b": ""
+          }
+        },
+        "next": 8,
+        "alt": 17
+      },
+      {
+        "id": 17,
+        "x": 40.0,
+        "y": 710.0,
+        "kind": {
+          "Ask": {
+            "mode": "YesNo",
+            "message": "Send this to {{chat}}?\n\n{{reply}}",
+            "preset": "",
+            "out": "sure"
+          }
+        },
+        "next": 18
+      },
+      {
+        "id": 18,
+        "x": 340.0,
+        "y": 710.0,
+        "kind": {
+          "Branch": {
+            "a": "sure",
+            "op": "IsTrue",
+            "b": ""
+          }
+        },
+        "next": 19,
+        "alt": 8
+      },
+      {
+        "id": 19,
+        "x": 640.0,
+        "y": 710.0,
+        "kind": {
+          "Native": {
+            "op": "Browser",
+            "a": "chat.send_to {{chat}} :: {{reply}}",
+            "b": "said"
+          }
+        },
+        "next": 20
+      },
+      {
+        "id": 20,
+        "x": 40.0,
+        "y": 840.0,
+        "kind": {
+          "Branch": {
+            "a": "ok",
+            "op": "IsTrue",
+            "b": ""
+          }
+        },
+        "next": 8,
+        "alt": 23
+      },
+      {
+        "id": 21,
+        "x": 340.0,
+        "y": 840.0,
+        "kind": {
+          "Native": {
+            "op": "Notify",
+            "a": "Skipped {{chat}}",
+            "b": "{{said}}"
+          }
+        },
+        "next": 8
+      },
+      {
+        "id": 22,
+        "x": 640.0,
+        "y": 840.0,
+        "kind": {
+          "Native": {
+            "op": "Notify",
+            "a": "Could not read {{chat}}",
+            "b": "{{last}}"
+          }
+        },
+        "next": 8
+      },
+      {
+        "id": 23,
+        "x": 40.0,
+        "y": 970.0,
+        "kind": {
+          "Native": {
+            "op": "Notify",
+            "a": "Not sent to {{chat}}",
+            "b": "{{said}}"
+          }
+        },
+        "next": 8
+      }
+    ]
+  }
+}

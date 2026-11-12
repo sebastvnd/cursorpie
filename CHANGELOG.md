@@ -2,6 +2,261 @@
 
 ## Unreleased
 
+## 0.8.10
+
+- **New: Telegram folders, mentions and a way to skip muted chats.** Three new commands for Telegram Web: `chat.folder`
+  (go to a folder tab by name or number, so `chat.next_unread` then walks that folder), `chat.folders` (the folder names,
+  for a flow; it reads names, so it needs *Allow reading messages* and is flagged like `chat.unread_names`) and
+  `chat.next_mention` (the next chat where somebody mentioned you, muted ones included). They always act on a Telegram tab,
+  also when WhatsApp is the one in front, and refuse `@whatsapp`. The new option **Skip muted chats** (on by default) makes
+  `chat.next_unread`, `chat.prev_unread`, `chat.unread_names` and the count read from the chat list leave out muted chats;
+  the number in the page title is not changed. Turn it off for the old behaviour.
+- **New: saved replies.** Write short texts in the options (*Saved replies*, JSON: `{"omw": "On my way, back at {time}"}`)
+  and use `chat.template omw` in the open chat or `chat.template omw :: Anna` to send it to a chat (checked like
+  `chat.send_to`). `{time}` and `{date}` are filled in, and `{name}` / `{first}` with the chat's name: the one after `::`,
+  else the open chat's, which needs *Allow reading messages*. It sends only with *Allow sending messages* on, else it only
+  types it, and an imported flow that has it is flagged like `chat.send`. `chat.templates` gives the names, not the texts.
+- **New: open a Telegram chat by @username.** `chat.open @durov`, `chat.draft_to @durov :: hi` and `chat.template omw ::
+  @durov` go by address, so they do not depend on the language of the page or on the search box. The chat that opened shows
+  the person's name, not the @username, so it cannot be checked: these type the message but `chat.send_to @user` and a saved
+  reply to an @username **never send** (they say so). Nothing is typed when the open chat did not change.
+- **New: two example flows for Telegram**, `telegram-folder-triage` (ask for a folder, show its unread chats, offer to open
+  the next one) and `telegram-saved-reply` (choose a saved reply and a chat, confirm, send), in `docs/examples/flows/`, in
+  the AI kit (`flow_kit::EXAMPLES`, now 10) and in the flow checker's test. Not run against a real Telegram Web.
+- **Changed: the app and the extension know 92 commands** (87 before); `bridge::commands::READS_CHATS` has `chat.folders`
+  and `is_sensitive` has `chat.template`. New tests in `tests/browser-extension/chat-telegram.test.js` (no jsdom) and
+  `bridge::commands`. The selectors for muted chats, mentions and folders (`muted`, `mention`, `folders`, with the usual
+  overrides) were written from how Telegram Web looks and are not checked against the live site: if a command does not find
+  its tab, put a working selector first in *Selector overrides*.
+- **New: a flow can read a chat and wait for the answer.** Six new browser commands for WhatsApp Web and Telegram Web:
+  `chat.unread` (how many chats wait, a plain number), `chat.who` (which chat is open), `chat.unread_names` (the names of
+  the chats that wait), `chat.last` (the last message that came), `chat.read` (the last messages, `them:` / `me:`) and
+  `chat.wait` (waits for the next message and gives it). The ones that read a chat refuse until the new option **Allow
+  reading messages** is turned on in the extension options (off by default); `chat.unread` reads numbers only. A send
+  notes what is in the chat first, so `chat.send_to` then `chat.wait` gives the answer to that message and not an older
+  one. What the extension remembers to tell messages apart is a number made from the text, never the text. The answer of
+  a command can now be up to 4000 characters (it was 300; a notification still shows 300).
+- **Changed: a flow waits for `chat.wait` as long as it was told, and that time does not count.** `chat.wait` is waited
+  for as long as it was told (1 to 300 seconds, 60 without a number) and 15 seconds more, not the 20 seconds of the other
+  chat commands, and like a `ui.*` panel it does not count against the 10 minutes a flow may run
+  (`bridge::commands::wait_secs_for`, `waits_for_others`).
+- **Changed: a command that reads a chat is flagged like one that sends.** An imported flow or profile that has
+  `chat.who`, `chat.unread_names`, `chat.last`, `chat.read` or `chat.wait` is flagged, and its block is red.
+- **Changed: the privacy page of the extension no longer says that it never reads a message.** It says what is read, by
+  which commands, and only with *Allow reading messages* on. `docs/BROWSER_EXTENSION.md` lists the new commands and
+  options (and 87 commands, and 10 minutes where it said 2 by mistake).
+- **New: two example flows for chats**, `quick-reply-unread-chats` (an unread chat at a time, a person types and confirms
+  each reply, then `chat.send_to`) and `send-then-wait-for-answer`, in `docs/examples/flows/`, in the AI kit and in the
+  tests, which run both against a scripted host.
+- **Flow canvas: an inspector for the selected block, and a way to follow a variable.** Clicking a block now opens a
+  panel at the right of the canvas (a press anywhere in the block selects it, not only its header). Its *Block* page
+  edits the block's settings, lists its problems in words, and shows what it *reads* (is it set before this block? which
+  blocks can the value come from?) and *writes* (which blocks read it afterwards?), each block a button that jumps to
+  it. Its *Variables* page lists every variable of the flow with who sets and who reads it, and marks one that is read
+  where nothing sets it. Following a variable rings the blocks that set it in green and the ones that read it in blue
+  on the canvas and draws dashed lines along which its value travels. The analysis is public in
+  `config::flow_check` (`variables`, `data_edges`, `is_set_before`, `block_reads`, `block_writes`).
+- **A panel's height can be set, not only its width.** A panel used to be as tall as its content needed, with no way to
+  change it. The panel description has a new optional `height` (200 to 900 points; without it nothing changes), and the
+  panel designer has a *Height* control under *Width*: *Auto* keeps fitting the content, *Fixed* gives a slider. With a
+  fixed height a taller content scrolls in the body and the buttons stay at the bottom; a shorter one leaves room above
+  the buttons. A panel is still never taller than the display leaves room for.
+- **An update now brings the program's other files along, and the browser extension reloads itself.** An update used to
+  replace only the executable, so everything CursorPie had written outside it stayed as the old release left it, and after
+  every update the browser extension had to be exported again and reloaded by hand. The first start of a new version now
+  writes those files again (`src/refresh.rs`): the browser extension folder (when it was exported before), the login entry
+  (when *Launch at login* is on, from an ordinary install only), and on Linux the desktop entry (when it is still
+  CursorPie's own) and the GNOME Shell extension (when installed). The app then asks the extension in the browser to
+  reload itself, once per version, so nobody goes to the extensions page. `config.json`, its backups and everything else
+  that is yours are never touched. It works the same however the new version got there (the update button, Setup, a disk
+  image, `install.sh`). One manual step is left, once: the extension already loaded in the browser when you move to this
+  version is the old code, which does not know the request, so reload it by hand as before; from then on updates need
+  nothing.
+- **Fixed: zooming keeps the text sharp, in the Flow canvas and in the panel designer.** The blocks (and the panel in
+  the designer's preview) used to be drawn once and then stretched, so the text and the icons turned blurry past 100%,
+  which is why the zoom stopped at 125% (150% in the designer). The text is now laid out again at the zoomed size, so
+  it is as crisp as a vector drawing at any zoom, and both go up to 400% (the Flow canvas from 30%, the designer from
+  50%). Lines, dots and boxes were already sharp.
+- **New: a flow can call the browser extension and wait for it.** The *System* block has a new operation, **Browser
+  command** (*Do something > Browser command*): the command line (`media.next`, `tab.find {{word}}`...) goes to the
+  extension, the block waits for the answer, `ok` says whether it worked and a variable gets the browser's words (`tab.url`,
+  `tab.count`, `media.state` and the other questions answer there, and a failure says why). A command that sends a message
+  or closes a window makes the block red. The checker reads a command that is written out (`bad-browser-command`). New
+  questions for flows: `tab.url`, `tab.count`, `media.state` (`playing`, `paused` or `none`). See
+  `docs/BROWSER_EXTENSION.md`, *Using the commands in a flow*.
+- **Fixed: the answer of a browser command was thrown away.** The extension said how a command went, but the app only showed
+  it as a notification, so nothing could wait for it. The bridge now keeps who waits for which command and gives the answer
+  to that one (and only to the browser the command went to); a browser that goes away ends the wait at once.
+- **Fixed: "Starting one player pauses the others" woke the wrong player.** Pausing the others made the extension remember
+  the paused tab as the one that played last, so *Play* after a *Pause* resumed the player that had just been silenced.
+- **Fixed: `ui.video` was missing from `docs/BROWSER_EXTENSION.md`**, which made the test that every command is documented
+  fail; the count of commands in that page was out of date too.
+- **Fixed: two bridge log lines used the field names `cmd` and `command`**, which `cargo tools diag-lint` refuses.
+- **Fixed: `docs/flow.schema.json` listed only 16 of the *System* operations**, so a flow that used any later one (folders,
+  copy, volume...) did not validate. It lists all of them now.
+
+- **New: the Flow tab can fill the whole display.** The capsule that floats at the bottom of the Flow tab (the round
+  "+" with the tidy and reset buttons, and the one of the list of steps) has a new button, and **F11** does the same:
+  the sidebar goes away, the window becomes the display and the canvas gets all the room. Esc (after any sheet or
+  popup that is open) or the same button goes back to the window as it was. Only the Flow tab has it. The "bring the
+  blocks back into view" button now uses the viewfinder icon.
+- **Changed: a tidier panel designer.** "Add" and "Start from" are two buttons that open under them, so the list of what
+  the panel holds has the whole left column; the panel in the middle scrolls when it is taller than the room instead of
+  being cut off; numbers (smallest / largest, starts at / step) sit side by side; the sheet is as big as the window
+  allows (more in full screen).
+
+- **New: a visual panel designer.** The *Ask* block in Panel mode has a **Design...** button that opens a sheet: add
+  widgets with a click, start from a template, see the real panel (the same drawing a flow uses) and click a widget to
+  edit it in the inspector. No JSON to type; every change is written to the block at once and can be undone. The rules
+  (new widgets, moving, copying, renaming without breaking a condition, options as lines of text, templates) are in the
+  tested `panel::design`; the drawing is `ui::settings::panel_designer`.
+- **New: more to interact with in a panel.** Widgets `number` (`-`/`+` and a box, with range, step and unit) and `color`
+  (accent swatches and the system picker, answers `#rrggbb`); `choice` layout `dropdown`; and `show_if` on every widget,
+  so a form can show a field only when another one says so. What the designer writes is short JSON (defaults left out,
+  plain options as texts). See `docs/PANELS.md`.
+
+- **New: panels, a base for interactive windows.** Until now CursorPie could only *announce* (the pill) or ask through
+  a window of the system (a text, yes or no). A **panel** is a small window of CursorPie's own with a title, widgets
+  (text, boxes, switches, sliders, single and multiple choice lists with search, a progress bar) and up to four buttons,
+  in the look of Settings, that hands back what the person entered. It is plain data (JSON, `docs/PANELS.md`), so flows,
+  the browser extension and later extensions share one base instead of each writing window code, and a custom look
+  replaces only the drawing (`ui::settings::panel_form`). New module `panel` (`spec`, `form`, `layout`, `broker`): the
+  description with limits, the live form with the rules (required boxes, snapping, patches), the size worked out before
+  the first frame, and `panel::ask` for any thread. It is a fourth mode of the one window: not click-through, takes the
+  keyboard, placed next to the pointer, centered or at an edge; the pie and Settings take it over (the panel is answered
+  as cancelled), and a panel asked for while the window is busy waits in a short queue.
+- **New: the *Ask* block has a Panel mode.** The block's text is the JSON of a panel; every field sets the variable
+  named by its `id`, `out` gets the button that was pressed, `ok` says whether a confirming button was. Variables are
+  filled into the *texts* of the panel after the JSON is read, so a value cannot add a widget. The editor's checks know
+  the variables of the fields. Example: `docs/examples/flows/panel-form.cursorpie-flow.json`. New `Host::ask_panel`
+  (default: cannot).
+- **New: the browser extension can show panels.** Bridge messages `panel`, `panel_update`, `panel_close` and
+  `panel_result`; `CP.ui` in the extension (`show`, `update`, `close`, `confirm`, `prompt`, `pick`) in new `ui.js`; a new
+  group of commands, **Panels**: `ui.tabs` (searchable list of open tabs), `ui.find_tab`, `ui.confirm_close_others`,
+  `ui.media`. Off by default: Settings, Behavior, *Let the browser extension show panels* (`extension_panels`; needs
+  the bridge). The app checks every description, allows 4 waiting panels and 5 minutes each, and lets an extension
+  change only its own panels. New config fields `panels` (flows, default on) and `extension_panels` (default off).
+  Not compiled or run on a machine here: see "Known limits" in `docs/PANELS.md`; the JavaScript tests
+  (`tests/browser-extension/ui.test.js`) pass.
+
+- **New: build a flow with an AI agent.** **New flow** (in the header of the Flow tab, and on the page that shows when
+  there is no flow yet) now opens a sheet that asks how to make it. **Build it myself** adds an empty flow, as before.
+  **Build it with AI** shows a box like the one of a chat, but nothing is sent: you say what the flow should do and
+  press **Copy kit**. CursorPie puts a zip on the clipboard (the flow guide, its JSON Schema, checked examples, your
+  words and the name of your system), so you can paste it into any AI agent, add a prompt such as "make this", and
+  bring the file it returns back with **Import result**. **Show in folder** and **Copy path** are there for an agent
+  that does not take a pasted file (the kit is `ai-kit/CursorPie-flow-kit.zip` next to `config.json`). The app makes no
+  new connection: the zip is made on your computer. On Linux, putting a file on the clipboard needs `wl-copy` or
+  `xclip`.
+
+- **Change: the Behavior tab is split into four pages.** It had grown to fourteen panels in one long column. A switch at
+  the top now picks a page: **Input** (Trigger, Side buttons, Trackpad), **Look** (Look & feel, Pie material, App icon
+  in the pie, Action notice), **Apps** (Pie of the app in front, App detection, Open app and web page slices, Browser
+  extension, Desktops) and **System** (Startup, Memory). The panels themselves are unchanged. The page that is open is
+  kept while Settings is open.
+
+- **Change: Flow tab, the list of flows and the buttons.** New flow and Import moved from the bottom of the list of flows
+  to the header of the page, into one capsule with Duplicate, Export and Delete (new and import, duplicate and export,
+  delete, with thin lines between the groups; New is filled with the accent). The list of flows is only the flows now:
+  a title with the number of flows, a list that scrolls (and shows the open flow when it comes out), names that are too
+  long cut with an ellipsis (the tooltip has the whole name), the open flow with a wash of the accent. The list slides
+  in from the left edge of the page with one eased movement and a fade, and goes back a moment after the pointer has
+  left it (no flicker when the pointer slips off the edge).
+
+- **New: a notice on the screen tells what CursorPie is doing.** When a slice, a flow or a sequence runs, a small pill
+  appears near the bottom of the display (icon in the accent color, a title such as "Open app" and the name below it:
+  "Safari", "github.com", "Cmd + C", the name of the flow) and goes away after 1.5 s. It comes in as a round badge that rises from below, then stretches into the pill and shows its text; it leaves the other way round. Each step of a sequence or block
+  of a flow announces itself, so a flow can be followed. It follows the look of the pie (light or dark card, smoked
+  graphite for the Glass material) and the accent color. A shell command is announced as "Run command" and never shown
+  (it may hold a secret); the back and forward buttons stay quiet. Settings, Behavior, **Action notice** switches it
+  off, picks the position (bottom, top or below the pointer), the time, and previews the pill. It is a third mode of
+  the one window (small, click-through, always on top), so the pie and Settings take it over at once; a notice that
+  arrives while the pie is still fading waits for it. New config fields `hud`, `hud_position`, `hud_ms`. On Windows
+  the window is shown with `WS_EX_NOACTIVATE` so it does not take the keyboard from the app the action is for.
+
+- **Fix (Windows): the yellow badge of an "Open app" slice opened a new window.** The yellow circle with a square means
+  "go to the app that is open", but on Windows that path started the program again whenever its window was already on
+  the desktop that is shown (only a window on another virtual desktop was handled). Chrome, Explorer, terminals and
+  editors answer a second start with a new window. `reveal_app` now puts an existing window in front (the one on this
+  desktop first, restoring it if minimized) and starts the program only when it has no window. Also fixes a plain
+  "Open app" slice of a running app, which went through the same call. With the desktop setting "Do nothing", a
+  running app is still started again as before.
+
+- **Fix: the pie did not show (or the press was lost) after starting or a long idle time, and Settings opened instead.**
+  A held trigger opens the pie and, if the pie is still untouched after `settings_hold_ms`, Settings in its place. That
+  second step was judged by the clock alone, counted from the moment the tap *asked* for the pie. When the window was
+  slow to show it (first press after the program started or after a long idle time) the person saw nothing, kept
+  holding, and Settings opened over the missing pie; releasing early looked like a lost press that had to be repeated.
+  Now the UI tells the tap when the pie has really been drawn (`tap::pie_painted`, on the second drawn frame, so the
+  window is mapped). Settings only opens for a pie that has been on screen, untouched, for the whole dwell time
+  (`settings_hold_ms - pie_hold_ms`), and the Settings ring starts counting at the same moment. While the pie has not
+  been drawn the tap looks again every 40 ms and wakes the UI, asks for the pie a second time after 350 ms, and after
+  4 s gives up without opening anything. `show_pie` also always asks for a frame, since a hidden window only draws when
+  somebody asks. New log events (`CURSORPIE_DEBUG=1`): `tap/hold_pie_resend`, `tap/hold_settings_no_pie`,
+  `tap/hold_settings_no_timer`. Not reproduced on a Mac: the cause is deduced from the code, and the log tells whether
+  the pie was late (`hold_pie_resend`) when it still happens.
+
+- **Icons: more image formats, drag and drop, and pop-ups that say why.** Besides PNG, JPEG and WebP, an icon can now
+  be a GIF, BMP, ICO, TIFF, TGA, QOI or PNM image (the file choosers offer them too). Those are converted to a PNG in
+  the icons folder when they are imported, so profile sharing keeps working. You can **drag image files onto the
+  Settings window**: the first one becomes the icon of the selected slice (with the icon picker open or not), the
+  others are added to "Mine". Dropped files are copied into the icons folder. An image that cannot be used no longer
+  produces one line in the status bar that vanishes: a **pop-up** names the file and the reason (a folder, SVG, HEIC /
+  AVIF, PDF, archive, empty or damaged file, too large, permission denied, file gone ...).
+
+- **The browser extension can now control the browser.** New slice kind **Browser**: 73 commands that play, pause and
+  skip songs (YouTube, YouTube Music, Spotify, SoundCloud, Deezer, TIDAL, Bandcamp, Netflix...), change volume, speed and
+  position, like a track, skip an ad; switch, close, reopen, find, move, pin, mute, discard and de-duplicate tabs;
+  manage windows; scroll; and move around WhatsApp Web and Telegram Web (next unread chat, open a chat by name, type or
+  send a message, how many chats wait). A command acts on the tab that makes sound, or the one that played last, or the
+  chat tab in front, and goes to the right browser when several are connected. Messages are protected: nothing is sent
+  unless "Allow sending messages" is on in the extension's new options page, and `chat.send_to` checks the name in the
+  header of the opened chat first. The Settings line shows sound and unread counts and says when the extension in the
+  browser is older than the app. Importing a profile that can send messages is flagged. See
+  `docs/BROWSER_EXTENSION.md`. The extension's pages selectors were written from how the sites are built and tested
+  against copies of them, not the live sites: the manual says how to correct one without a new version.
+
+- **Lists, filters and more of the system in flows.** A flow can now hold a **list** (an array): the new **List**
+  block makes one from a text, adds, takes, gets, changes and removes items, counts, joins, finds, sorts, reverses,
+  removes duplicates, shuffles and adds up; the new **For each item** block goes through a list one item at a time. A
+  list is a variable that holds a JSON array like `["a","b"]`, so it can be shown, saved or handed to a command.
+  `{{name}}` takes **filters** that can be chained (`{{name|trim|upper}}`): `trim upper lower title reverse len int
+  round abs num bool json url basename dirname ext count first last join item default replace` besides `sh`. The
+  **System** block has twelve more operations: list a folder, make a folder, copy, move or rename, delete a file (never
+  a folder), a file's size and change time, facts about this computer, speak a text, save a screenshot, read and set the
+  volume. The red-wire check and the failure report know all of it (a list that was never made, a body that does not
+  come back, a position that is not a number, a filter that does not exist, a folder that cannot be listed...). A flow
+  that uses these blocks cannot be opened by an older CursorPie. Details: `docs/FLOWS_FOR_AI.md`,
+  `guides::flow_checks`.
+- **Red wires.** The Flow editor now checks a flow while you draw it, without running it. A wire that cannot work
+  (a block that uses `{{name}}` that nothing before it sets, the body of a Repeat or While that never leads back, a
+  loop nothing can leave, a Call to a flow that does not exist, a Calculate on something that is not a number or on
+  zero) is drawn **red**; one that is probably a mistake (a shortcut right after Open app, a Shell command that is not
+  waited for, a wire out of a block no run reaches) is **amber**. Each has a `!` whose tooltip says why, the block is
+  outlined the same way, and the strip under the canvas counts them. Nothing is blocked. The rules are in
+  `guides::flow_checks` and, for agents, in `docs/FLOWS_FOR_AI.md`.
+- **Flows that fail now say so.** A block that cannot do its work (a command with an error code, a file that cannot be
+  read or written, the clipboard, a missing called flow, a bad calculation, the step or time limit) is written down
+  with the reason. Unless the flow looked at it (an If / else or While that reads `ok` or `code`), you get a desktop
+  notification, the block is outlined in red in the editor, and while Settings is open a sheet lists every problem in
+  full. A loop that fails each round is said once, with a count.
+
+- **The Flow canvas is steadier and tidier.** The right button now opens the list of blocks the moment it is pressed,
+  anywhere on the canvas (on a block or on one of its fields too), so a slow press or a trackpad that moves a little no
+  longer does nothing, and a press while another list was open no longer just closes it. Long names are cut with an
+  ellipsis (with the whole name as a tooltip) instead of running under the caret or the check of a list, a line break
+  in a one-line field is shown as a pilcrow instead of an empty box, and the hint line sits in a strip of its own that
+  no block can cover (and shortens itself in a narrow window). New **Tidy** button: lines the blocks up in columns,
+  left to right, so none covers another.
+
+- **Importing a file now says why it failed, or what was repaired in it.** A refused flow or profile file opens a
+  sheet with the reason (not valid JSON with the line and column, a profile given to the Flow tab or the other way
+  round, a newer file format, a damaged block with the name of the unknown kind). A flow that loads but had to be
+  repaired, or that will probably not work, lists it too: a missing or doubled Start / End, wires that were removed,
+  blocks that can never run, a file number older than the blocks it uses, a Command that is not waited for, a shortcut
+  right after opening an app without a Wait, commands made for another system, and AppleScript that puts a path on the
+  clipboard as text instead of a file.
+
 ## 0.8.9
 
 - **Flows are now programs, not only chains: variables, decisions, loops, questions and system blocks.** A flow is a

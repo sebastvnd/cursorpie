@@ -1,10 +1,42 @@
 {
   "manifest_version": 3,
   "name": "CursorPie Bridge",
-  "description": "Tells the CursorPie app on this computer which web pages are open, so its Open URL slice can go to a page that is already open. Nothing leaves your computer.",
+  "description": "Lets the CursorPie app on this computer control the browser: go to a page that is already open, play/pause/next on players, switch and close tabs, and move around WhatsApp Web and Telegram Web. Nothing leaves your computer.",
   "version": "{{VERSION}}",
   "minimum_chrome_version": "116",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmcGmO7YTUWZ1tiFqAvtMdSOQI17DNJlFj2jlBftquqpmPd5xHZwf9+hU2E10XM6YV1212qQGCh8Jyc8PJideVonlLVwVaRP+qCa5AhVDa0VnqKrDPGDe+FOt2cjk8XX/QJjt2bI0CodWTsFxcw0E8lgvgBJH3JawyxBmH8cwPMxGE8bxViPJxSg5zNVOxbXHBiAkYCMMwcP93cAPtgse8uFqqfI6dYr+k0zgkdzomYRLR78YI2u/YErHZfOPSl1psWihHrC/SfSOjc2dVd5zyVUlTJ7Fy5Ofz/UII+fjDURL4UaKNMaZxTy828hgjQDcG/WiNbom9dtj+C6xaVk9XwIDAQAB",
-  "permissions": ["tabs", "nativeMessaging", "alarms"],
-  "background": { "service_worker": "background.js" }
+  "permissions": [
+    "tabs",
+    "nativeMessaging",
+    "alarms",
+    "scripting",
+    "storage",
+    "sessions"
+  ],
+  "host_permissions": [
+    "https://*.youtube.com/*",
+    "https://open.spotify.com/*",
+    "https://soundcloud.com/*",
+    "https://music.apple.com/*",
+    "https://*.deezer.com/*",
+    "https://*.tidal.com/*",
+    "https://*.bandcamp.com/*",
+    "https://*.twitch.tv/*",
+    "https://vimeo.com/*",
+    "https://*.netflix.com/*",
+    "https://*.primevideo.com/*",
+    "https://*.dailymotion.com/*",
+    "https://web.whatsapp.com/*",
+    "https://web.telegram.org/*"
+  ],
+  "optional_host_permissions": [
+    "<all_urls>"
+  ],
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
 }

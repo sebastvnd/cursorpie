@@ -14,7 +14,13 @@ use std::time::Instant;
 impl App {
     /// Whether something is on screen: a pie, a preview or Settings.
     fn is_busy(&self) -> bool {
-        self.settings_open || self.visible || self.pie_open || self.preview_until.is_some()
+        self.settings_open
+            || self.visible
+            || self.pie_open
+            || self.preview_until.is_some()
+            || self.hud.is_some()
+            || self.panel.is_some()
+            || !self.panel_queue.is_empty()
     }
 
     /// Advances the idle clock and, when it runs out, puts the UI to sleep. Also asks egui for one
@@ -57,6 +63,7 @@ impl App {
         self.history.reset(&self.edit);
         self.ed.reset_nav();
         self.ed.update_offer = None;
+        self.ed.flow_menu = None;
         self.ed.user_icons = Vec::new();
         self.ed.icons_not_listed = 0;
         self.ed.backups = Vec::new();

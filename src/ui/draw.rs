@@ -202,10 +202,26 @@ pub fn step_linear(v: f32, target: f32, dt: f32, seconds: f32) -> (f32, bool) {
 
 /// Easing with a little overshoot at the end.
 pub fn ease_out_back(t: f32) -> f32 {
-    let c1 = 1.70158;
+    ease_out_back_with(t, 1.70158)
+}
+
+/// [`ease_out_back`] with the strength of the overshoot chosen: `1.70158` overshoots by about 10%,
+/// `1.0` by about 5%.
+pub fn ease_out_back_with(t: f32, c1: f32) -> f32 {
     let c3 = c1 + 1.0;
     let u = t - 1.0;
     1.0 + c3 * u * u * u + c1 * u * u
+}
+
+/// A damped spring that bounces: it starts at 0, overshoots 1 by about 13%, dips under it and
+/// settles on exactly 1 at `t = 1` (and stays there). `t` is clamped to 0..=1.
+pub fn spring_out(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    if t >= 1.0 {
+        return 1.0;
+    }
+    // 1.25 turns: the cosine is 0 at t = 1, so the spring arrives at rest without a jump
+    1.0 - (-5.0 * t).exp() * (std::f32::consts::TAU * 1.25 * t).cos()
 }
 
 /// Easing that starts fast and settles smoothly, with no overshoot. `t` is clamped to 0..=1.

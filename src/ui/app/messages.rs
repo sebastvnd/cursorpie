@@ -1,7 +1,7 @@
 //! Applies one [`Msg`] (sent by the event tap, the tray menu or a file-picker thread) to the UI state.
 
 use super::App;
-use crate::config::flow::{add_flow, import_flow_file, merge_flows};
+use crate::config::flow::{add_flow, import_flow_report, merge_flows};
 use crate::config::share::{add_profile, import_file_with_flows};
 use crate::config::{
     Action, Flow, ItemKind, MAX_CONFIG_FILE_BYTES, NodeKind, cfg, has_commands, icons_dir,
@@ -52,6 +52,14 @@ impl App {
                 }
                 self.hover = h;
             }
+            Msg::Hud(note) => self.hud_note(ctx, note),
+            Msg::Panel(req) => self.panel_request(ctx, req),
+            Msg::PanelPatch {
+                panel,
+                patch,
+                source,
+            } => self.panel_patch(ctx, &panel, &patch, &source),
+            Msg::PanelClose { panel, source } => self.panel_close(ctx, &panel, &source),
             Msg::Haptic(kind) => {
                 platform::haptic(kind);
             }
@@ -63,6 +71,11 @@ impl App {
             Msg::ProfileImportPicked(file) => self.import_profile(&file),
             Msg::FlowImportPicked(file) => self.import_flow(&file),
             Msg::Notice(text) => self.say(text),
+            Msg::FlowKit(status) => {
+                self.say(status.notice());
+                self.ed.flow_kit = status;
+            }
+            Msg::FlowRan { id, report } => self.flow_ran(id, report),
             Msg::UpdateChecked { manual, result } => self.update_checked(manual, result),
             Msg::UpdateStaged(result) => self.update_staged(ctx, result),
             Msg::MouseChanged { new, name, extra } => {
@@ -140,9 +153,21 @@ impl App {
                 {
                     item.icon = file;
                 }
+                // a copy may have been made in the icons folder: "Mine" lists it at once
+                self.ed.reload_user_icons();
                 if let Some(note) = note {
                     self.say(note);
                 }
+            }
+            Msg::IconRefused { file, lines } => {
+                if let Some(first) = lines.first() {
+                    self.say(first.clone());
+                }
+                self.import_report = Some(super::ImportSheet {
+                    file: file_label(&file),
+                    imported: false,
+                    lines,
+                });
             }
             Msg::AppPicked { profile, bundle } => {
                 if let Some(p) = self.edit.profiles.get_mut(profile)
@@ -170,7 +195,7 @@ impl App {
                     self.ed.stop_recording();
                     self.ed.icons.revalidate();
                     self.say(if warn {
-                        "Imported. This config can run shell commands or write files - review them before you Save."
+                        "Imported. This config can run shell commands, write files or send messages - review them before you Save."
                     } else {
                         "Imported. Review it, then press Save to apply."
                     });
@@ -259,38 +284,85 @@ impl App {
                 self.ed.stop_recording();
                 self.ed.icons.revalidate();
                 self.say(if runs_commands {
-                    "Profile imported. It can run shell commands or write files - review them before you Save."
+                    "Profile imported. It can run shell commands, write files or send messages - review them before you Save."
                 } else {
                     "Profile imported. Review it, then press Save to apply."
                 });
             }
-            Err(e) => self.say(e),
+            Err(e) => self.import_refused(file, e),
         }
     }
 
-    /// Adds the flow in `file` to the Settings copy as a new flow.
+    /// Shows the sheet that says why a file was refused.
+    fn import_refused(&mut self, file: &str, why: String) {
+        self.say(why.clone());
+        self.import_report = Some(super::ImportSheet {
+            file: file_label(file),
+            imported: false,
+            lines: vec![why],
+        });
+    }
+
+    /// Adds the flow in `file` to the Settings copy as a new flow. A refused file, or one that had
+    /// to be repaired or looks wrong, opens the import sheet that says why.
     fn import_flow(&mut self, file: &str) {
         if !self.settings_open {
             return; // the chooser answered after Settings was closed
         }
-        let added = import_flow_file(file).and_then(|f| {
-            let runs_commands = f.has_commands();
-            add_flow(&mut self.edit.flows, f).map(|i| (i, runs_commands))
-        });
-        match added {
-            Ok((index, runs_commands)) => {
+        let report = match import_flow_report(file) {
+            Ok(r) => r,
+            Err(e) => return self.import_refused(file, e),
+        };
+        let notes = report.notes;
+        let runs_commands = report.flow.has_commands();
+        match add_flow(&mut self.edit.flows, report.flow) {
+            Ok(index) => {
                 self.ed.flow = index;
                 self.ed.flow_sel = None;
                 self.ed.flow_wire = None;
                 self.ed.flow_pan = egui::Vec2::ZERO;
                 self.ed.stop_recording();
                 self.say(if runs_commands {
-                    "Flow imported. It can run shell commands or write files - review them before you Save."
+                    "Flow imported. It can run shell commands, write files or send messages - review them before you Save."
                 } else {
                     "Flow imported. Review it, then press Save to apply."
                 });
+                if !notes.is_empty() {
+                    self.import_report = Some(super::ImportSheet {
+                        file: file_label(file),
+                        imported: true,
+                        lines: notes,
+                    });
+                }
             }
-            Err(e) => self.say(e),
+            Err(e) => self.import_refused(file, e),
+        }
+    }
+}
+
+/// The last part of a path, for the sheet.
+fn file_label(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.to_string())
+}
+
+impl App {
+    /// A flow was run: the blocks that could not do their work are marked in the Flow tab (until
+    /// it runs well again), and while Settings is open the details come up in a sheet.
+    fn flow_ran(&mut self, id: String, report: Option<crate::flowrun::Report>) {
+        match report {
+            Some(r) => {
+                self.ed.flow_marks.insert(id, r.marks.clone());
+                if self.settings_open {
+                    self.say(format!("Flow \"{}\": {}", r.flow, r.title));
+                    self.run_report = Some(r);
+                }
+            }
+            None => {
+                self.ed.flow_marks.remove(&id);
+            }
         }
     }
 }

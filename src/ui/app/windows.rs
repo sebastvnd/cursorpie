@@ -74,6 +74,7 @@ impl App {
         self.ed.scan = None;
         self.confirm_quit = false;
         self.confirm_discard = false;
+        self.leave_flow_full(ctx);
         if save {
             self.persist_edit();
         }
@@ -234,6 +235,8 @@ impl App {
             return;
         }
         let was_visible = self.visible;
+        self.drop_hud(ctx);
+        self.drop_panel(ctx, true);
         self.pie_open = false;
         self.set_settings_open(true);
         self.visible = true;
@@ -255,6 +258,64 @@ impl App {
         self.update_on_settings_open(ctx);
     }
 
+    /// Puts the Flow tab on the whole display, or back into the window it was in.
+    pub(crate) fn toggle_flow_full(&mut self, ctx: &egui::Context) {
+        if self.ed.flow_full.is_some() {
+            self.leave_flow_full(ctx);
+            return;
+        }
+        let outer_rect = ctx.input(|i| i.viewport().outer_rect);
+        self.ed.flow_full = Some(crate::ui::settings::FlowFull {
+            card: self.card_size,
+            outer: outer_rect.map(|r| r.min),
+        });
+        // The window is made as big as the display it is on, the way it is made the size of the
+        // card (a native full screen does not work for a transparent window without a frame on
+        // every system, and on macOS it leaves the window as it was).
+        let area = outer_rect.and_then(|r| screen_rect_at(r.center()));
+        if let Some(area) = area {
+            // what the system draws over the display (the menu bar and the notch of a Mac, the
+            // taskbar of Windows) is left out, or the top (or bottom) of the page is hidden
+            let (top, bottom) = match platform::OS {
+                platform::Os::Mac => (38.0, 0.0),
+                platform::Os::Windows => (0.0, 48.0),
+                platform::Os::Linux => (0.0, 0.0),
+            };
+            let area = egui::Rect::from_min_max(
+                area.min + egui::vec2(0.0, top),
+                area.max - egui::vec2(0.0, bottom),
+            );
+            let c = area.center();
+            let (cx, cy) = platform::window_point(f64::from(c.x), f64::from(c.y));
+            let top_left = egui::pos2(cx as f32, cy as f32) - area.size() / 2.0;
+            // nothing is drawn until the window has the new size (see `App::window_settling`),
+            // so there is no frame of the old card stretched over the display
+            self.settings_wait = Some((area.size(), Instant::now()));
+            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(top_left));
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(area.size()));
+        } else {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
+        }
+        ctx.request_repaint();
+    }
+
+    /// Leaves the full screen of the Flow tab: the window goes back to the size and place it had.
+    /// Returns whether it was in full screen.
+    pub(crate) fn leave_flow_full(&mut self, ctx: &egui::Context) -> bool {
+        let Some(before) = self.ed.flow_full.take() else {
+            return false;
+        };
+        let win = before.card + Vec2::splat(2.0 * WIN_MARGIN);
+        self.settings_wait = Some((win, Instant::now()));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+        if let Some(at) = before.outer {
+            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(at));
+        }
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(win));
+        ctx.request_repaint();
+        true
+    }
+
     /// Turns the window into the welcome window, centered on the display that contains `at`.
     /// Does nothing to a window that is already showing Settings or the welcome window except
     /// bring it to the front.
@@ -264,6 +325,8 @@ impl App {
             return;
         }
         let was_visible = self.visible;
+        self.drop_hud(ctx);
+        self.drop_panel(ctx, true);
         self.pie_open = false;
         self.set_settings_open(true);
         self.visible = true;
@@ -425,6 +488,9 @@ impl App {
             self.pie_blocked(ctx, x, y, false);
             return;
         }
+        // the pie takes the window over from a notice or a panel that is still on screen
+        self.drop_hud(ctx);
+        self.drop_panel(ctx, false);
         self.win = cfg().pie_size;
         self.profile = profile;
         self.path = path;
@@ -435,6 +501,7 @@ impl App {
         self.badge_step = [[0.0; 2]; MAX_ITEMS];
         self.pie_open = true;
         self.fresh = true;
+        self.pie_frames = 0;
         self.anim = 0.0; // submenus "bloom" again, re-centered on the cursor
         self.opened_at = Instant::now();
         self.pie_pos = egui::pos2(x as f32, y as f32);
@@ -482,6 +549,10 @@ impl App {
             self.visible = true;
             self.show_window(ctx, Vec2::splat(w));
         }
+        // A hidden window gets its next frame only if somebody asks for it. Without this the pie
+        // could be "open" for as long as nothing else woke the window (the first press after a long
+        // idle time), and the hold timer then opened Settings instead.
+        ctx.request_repaint();
         if platform::window_manager_may_recenter() {
             // Once mapped, a move is a request from the client and the window manager honors
             // it; the position given while the window was hidden is not always kept.
@@ -498,7 +569,7 @@ impl App {
         let Some((target, since)) = self.want_pos else {
             return;
         };
-        if self.settings_open || !self.pie_open {
+        if self.settings_open || (!self.pie_open && self.hud.is_none() && self.panel.is_none()) {
             self.want_pos = None;
             return;
         }
@@ -605,7 +676,7 @@ impl App {
 /// click is then eaten as the end of a menu activation (the first click, and so the first hold of
 /// the pie, did nothing after Settings had been opened). `platform::raise_own_window` brings the
 /// window forward there without any injected key, so the request is left to it.
-fn request_focus(ctx: &egui::Context) {
+pub(super) fn request_focus(ctx: &egui::Context) {
     if platform::OS != platform::Os::Windows {
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
     }

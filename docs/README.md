@@ -8,7 +8,8 @@
 | [UPDATES.md](UPDATES.md) | The daily update check and the one-click install on each system, and how to test it |
 | [USER_GUIDE.md](USER_GUIDE.md) | The gesture, slices and actions, profiles, side buttons, Settings, undo and backups, sharing |
 | [CONFIGURATION.md](CONFIGURATION.md) | Where `config.json` lives, its structure and every field |
-| [FLOWS_FOR_AI.md](FLOWS_FOR_AI.md) | How to write a flow as JSON: the format, the rules, a recipe and checked examples. Written for AI agents; a JSON Schema is in `flow.schema.json` |
+| [FLOWS_FOR_AI.md](FLOWS_FOR_AI.md) | How to write a flow as JSON: the format, the rules, a recipe, shell and clipboard pitfalls, macOS permissions, browser patterns, debugging and checked examples. Written for AI agents; a JSON Schema is in `flow.schema.json` |
+| [PANELS.md](PANELS.md) | Panels: small interactive windows (fields, lists, buttons) that flows and the browser extension can show; the JSON format, how to use them in a flow and from an extension, and how to add a caller or a look |
 | [KNOWN_ISSUES.md](KNOWN_ISSUES.md) | What does not work yet, grouped by system |
 
 ## For contributors

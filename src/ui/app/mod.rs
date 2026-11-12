@@ -4,6 +4,7 @@
 //! |---|---|
 //! | `messages` | `App::handle_msg`: applies each [`Msg`] |
 //! | `windows` | showing the pie, opening/closing Settings, quitting, menu bar actions |
+//! | `notice` | the notice of what CursorPie is doing (`ui::hud`): showing the window as a small pill and drawing it |
 //! | `lifecycle` | idle sleep, freeing the Settings copy, warming up icons before the pie opens |
 //! | `updates` | the daily look for a newer release: what Settings does when it opens, and with the answer |
 //!
@@ -14,6 +15,8 @@
 
 mod lifecycle;
 mod messages;
+mod notice;
+mod panel;
 mod updates;
 mod windows;
 pub use windows::ShowWait;
@@ -85,6 +88,9 @@ pub struct App {
     pub pie_open: bool,
     pub visible: bool,
     pub fresh: bool,
+    /// Frames of the current pie drawn so far, up to 2. At 2 the tap is told the pie is really on
+    /// screen (`tap::pie_painted`), which is what lets a held trigger turn into Settings.
+    pub pie_frames: u8,
     pub anim: f32,
     pub hover_anim: [f32; MAX_ITEMS],
     /// How far the two badges of an "Open app" slice have come out (0 to 1, one clock per slice).
@@ -114,6 +120,12 @@ pub struct App {
     pub confirm_quit: bool,
     /// The "discard unsaved changes?" sheet is showing (Cancel or Esc with edits not saved).
     pub confirm_discard: bool,
+    /// What the last import of a file found: shown in a sheet until it is closed.
+    pub import_report: Option<ImportSheet>,
+    /// What a run of a flow that did not go well found: shown in a sheet until it is closed (see
+    /// `ui::settings::run_report`). Only set while Settings is open; the desktop notification
+    /// of the run is sent by [`actions`](crate::actions).
+    pub run_report: Option<crate::flowrun::Report>,
     pub edit: Config,
     /// What `edit` was when Settings opened, to tell whether there is anything unsaved. Dropped
     /// with the rest of the editor (`App::release_editor`).
@@ -133,6 +145,14 @@ pub struct App {
     pub closing: Option<bool>,
     pub card_size: Vec2,
     pub toast: Option<(String, Instant)>,
+    /// Some while the window shows the notice of an action (see [`crate::ui::hud`]).
+    pub hud: Option<crate::ui::hud::Hud>,
+    /// A notice that arrived while the pie was still on screen: shown as soon as the window is free.
+    pub hud_pending: Option<(crate::ui::hud::HudNote, Instant)>,
+    /// Some while the window shows a panel (see [`crate::panel`]).
+    pub panel: Option<panel::ActivePanel>,
+    /// Panels that were asked for while the window was busy: shown one by one when it is free.
+    pub panel_queue: std::collections::VecDeque<crate::panel::Request>,
     /// Some while the welcome window is open (it uses the Settings window, so `settings_open` is
     /// true too). See [`crate::ui::settings::Welcome`].
     pub welcome: Option<Welcome>,
@@ -161,6 +181,7 @@ impl App {
             pie_open: false,
             visible: false,
             fresh: false,
+            pie_frames: 2,
             anim: 0.0,
             hover_anim: [0.0; MAX_ITEMS],
             badge_in: [0.0; MAX_ITEMS],
@@ -177,6 +198,8 @@ impl App {
             quitting: false,
             confirm_quit: false,
             confirm_discard: false,
+            import_report: None,
+            run_report: None,
             opened: None,
             history: History::new(&edit, HISTORY_LIMIT),
             edit,
@@ -187,6 +210,10 @@ impl App {
             closing: None,
             card_size: egui::vec2(CARD_SIZE[0], CARD_SIZE[1]),
             toast: None,
+            hud: None,
+            hud_pending: None,
+            panel: None,
+            panel_queue: std::collections::VecDeque::new(),
             welcome: None,
             sleeper: Sleeper::new(Instant::now()),
             tray,
@@ -197,6 +224,17 @@ impl App {
     pub fn say(&mut self, text: impl Into<String>) {
         self.toast = Some((text.into(), Instant::now()));
     }
+}
+
+/// The words of the sheet that follows an import (see `ui::settings::import_report`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImportSheet {
+    /// The name of the file that was imported.
+    pub file: String,
+    /// Whether the file was imported (with notes) or refused.
+    pub imported: bool,
+    /// One line per finding: what was repaired, what will not work, or why it was refused.
+    pub lines: Vec<String>,
 }
 
 impl eframe::App for App {
@@ -232,6 +270,9 @@ impl eframe::App for App {
             self.handle_msg(ctx, msg);
         }
         self.step_show_wait(ctx);
+        self.step_hud(ctx);
+        self.step_panel(ctx);
+        self.panel_close_requested(ctx);
 
         // end of a preview (see Msg::Preview)
         if let Some(until) = self.preview_until {
@@ -273,6 +314,10 @@ impl eframe::App for App {
             self.welcome_ui(ui);
         } else if self.settings_open {
             self.settings_ui(ui);
+        } else if self.panel.is_some() && !self.pie_open {
+            self.panel_ui(ui);
+        } else if self.hud.is_some() && !self.pie_open {
+            self.hud_ui(ui);
         } else {
             self.pie_ui(ui);
         }

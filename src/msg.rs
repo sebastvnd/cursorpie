@@ -43,6 +43,10 @@ pub enum Msg {
         /// What was done to the image (shrunk, ...), for the status bar
         note: Option<String>,
     },
+    /// One or more images could not be used as an icon (chosen with the chooser or dropped on the
+    /// window). `file` is a path or a short label, `lines` say why, one sentence per file; the UI
+    /// shows them in a pop-up sheet, not only in the status bar.
+    IconRefused { file: String, lines: Vec<String> },
     /// An app was chosen for the "apps" list of `profile`; `bundle` is its bundle identifier.
     AppPicked { profile: usize, bundle: String },
     /// A config file to import was chosen (its path).
@@ -66,6 +70,13 @@ pub enum Msg {
     FlowImportPicked(String),
     /// Show a short message in the Settings status bar (sent by helpers that cannot reach `App`).
     Notice(String),
+    /// A flow was run (by the actions worker). `report` is `Some` when blocks of it could not do
+    /// their work and the flow did not deal with that: the Settings window shows the details, and
+    /// the Flow tab marks those blocks. `None` clears the marks of an earlier run of the flow.
+    FlowRan {
+        id: String,
+        report: Option<crate::flowrun::Report>,
+    },
     /// A mouse was connected that is not the one that was in use: `new` if CursorPie had never met
     /// it, otherwise one it knows. `extra` is the number of extra buttons it has.
     MouseChanged {
@@ -92,6 +103,28 @@ pub enum Msg {
     UpdateChecked {
         manual: bool,
         result: Result<crate::update::Version, crate::update::Failure>,
+    },
+    /// An action is about to run (sent by the actions worker): the UI shows what it is in a small
+    /// notice on the screen (see [`ui::hud`](crate::ui::hud)). Ignored while Settings is open or
+    /// when the notice is switched off.
+    Hud(crate::ui::hud::HudNote),
+    /// The kit for an AI agent was made, and put on the clipboard if a program could do that (see
+    /// [`config::flow_kit`](crate::config::flow_kit)). The "New flow" sheet shows the outcome.
+    FlowKit(crate::ui::settings::KitStatus),
+    /// A panel (a small window with fields and buttons, see [`panel`](crate::panel)) is asked for by
+    /// a flow or the browser extension. The UI shows it when the window is free and sends the
+    /// answer down `reply`.
+    Panel(crate::panel::Request),
+    /// Changes the open panel named `panel` (progress, new options...), if `source` asked for it.
+    PanelPatch {
+        panel: String,
+        patch: crate::panel::Patch,
+        source: crate::panel::Source,
+    },
+    /// Closes the open or waiting panel named `panel` as cancelled, if `source` asked for it.
+    PanelClose {
+        panel: String,
+        source: crate::panel::Source,
     },
     /// The package of a newer release was downloaded, checked and made ready (or could not be): see
     /// [`update::install`](crate::update::install).

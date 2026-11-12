@@ -6,6 +6,7 @@
 //! | `window` | the window, animation, top bar, sidebar, body and footer (`App::settings_ui`, `regions`) |
 //! | `tabs/*` | one file per section (the [`Tab`] enum) (`menu` also has `profile_toolbar`; `flow` is the node editor) |
 //! | `demo` | small looping animations that show what a setting does (Behavior tab) |
+//! | `panel_designer`, `panel_form` | the visual designer of the panel of an *Ask* block, and the one drawing of a panel (a flow, the designer's preview) |
 //! | `pie_designer` | the interactive pie used to pick and arrange slices |
 //! | `inspector` | editor for one slice, `add_panel` for the "Add a slice" panel |
 //! | `action_editor` | editor for one [`Action`](crate::config::Action) |
@@ -33,10 +34,14 @@ mod brand;
 mod demo;
 mod icon_catalog;
 mod icon_picker;
+mod import_report;
 mod inspector;
+mod panel_designer;
+pub mod panel_form;
 mod picker;
 mod pie_designer;
 mod quit_dialog;
+mod run_report;
 mod state;
 mod tabs;
 pub mod theme;
@@ -48,5 +53,5 @@ mod widgets;
 mod window;
 
 pub use picker::choosing;
-pub use state::{AppScan, Ed, Slot, Tab};
+pub use state::{AppScan, BehaviorPage, Ed, FlowFull, FlowNew, FlowView, KitStatus, Slot, Tab};
 pub use welcome::Welcome;

@@ -7,3 +7,4 @@ pub mod architecture;
 pub mod config_format;
 pub mod contributing;
 pub mod extending;
+pub mod flow_checks;

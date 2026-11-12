@@ -123,9 +123,9 @@ pub(super) fn icon_picker(
         muted(
             ui,
             if ed.icon_cat == mine {
-                "Drop images into the icons folder (Folder), then press Reload."
+                "Drop image files here, or put them in the icons folder and press Reload."
             } else {
-                "No icons found."
+                "No icons found. You can also drop an image file here."
             },
         );
         return out;

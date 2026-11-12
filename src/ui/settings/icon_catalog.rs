@@ -3,7 +3,7 @@
 //! - `CATEGORIES`: icons of the built-in set ([`symbols`]) usable as slice icons, each stored in
 //!   the config as `ico:<name>`. To add one, append a line `ic("ico:name", "Name", "search keywords")`
 //!   (the name must exist in `symbols.rs`; a test checks it).
-//! - `scan_user_icons()`: images (.png .jpg .jpeg .webp) found in the folder
+//! - `scan_user_icons()`: images (see `platform::IMAGE_EXTENSIONS`) found in the folder
 //!   `~/Library/Application Support/CursorPie/icons/`.
 //!
 //! Any other text or emoji can still be typed into the picker's text field; it is drawn with the
@@ -254,7 +254,7 @@ pub fn scan_user_icons() -> UserIcons {
         .filter(|p| {
             p.extension()
                 .and_then(|x| x.to_str())
-                .map(|x| matches!(x.to_lowercase().as_str(), "png" | "jpg" | "jpeg" | "webp"))
+                .map(crate::platform::is_image_extension)
                 .unwrap_or(false)
         })
         .filter(|p| {

@@ -63,9 +63,63 @@ pub enum FromBrowser {
         browser: String,
         #[serde(default)]
         version: String,
+        /// The commands this extension knows (`media.next`...). Empty for an extension from before
+        /// commands existed, which only knows tabs.
+        #[serde(default)]
+        commands: Vec<String>,
     },
     /// The whole list of open `http(s)` tabs (it replaces the previous one).
     Tabs { tabs: Vec<WireTab> },
+    /// How much is playing and how many chats wait: numbers only, never a title or a name. It
+    /// replaces the previous one.
+    State {
+        /// Tabs that are making sound.
+        #[serde(default)]
+        audible: u32,
+        /// Tabs on a player site (YouTube, Spotify...).
+        #[serde(default, rename = "mediaTabs")]
+        media_tabs: u32,
+        /// The chat sites that are open, with their unread number when the page says it.
+        #[serde(default)]
+        chats: Vec<WireChat>,
+    },
+    /// What happened to a command the app sent (see [`ToBrowser::Command`]).
+    #[serde(rename = "result")]
+    Outcome {
+        /// The `id` of the command.
+        id: u64,
+        #[serde(default)]
+        ok: bool,
+        /// What to tell the person: what went wrong, or the answer to a question.
+        #[serde(default)]
+        message: String,
+        /// The extension has decided the person should be shown `message` (it follows its option
+        /// "Notifications").
+        #[serde(default)]
+        notify: bool,
+    },
+    /// Show a panel (see [`crate::panel`]) and answer with [`ToBrowser::PanelResult`] carrying the
+    /// same `req`. `spec` is the description of the panel; the app checks it and refuses what is
+    /// not valid, and refuses all of them unless the person allowed panels from the extension.
+    Panel { req: u64, spec: serde_json::Value },
+    /// Change the open panel `panel` (progress, new options, a new title).
+    #[serde(rename = "panel_update")]
+    PanelUpdate {
+        panel: String,
+        patch: crate::panel::Patch,
+    },
+    /// Close the open panel `panel` as cancelled.
+    #[serde(rename = "panel_close")]
+    PanelClose { panel: String },
+}
+
+/// A chat site that is open (`whatsapp`, `telegram`).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct WireChat {
+    pub site: String,
+    /// The number the page shows in its title, when it shows one.
+    #[serde(default)]
+    pub unread: Option<u32>,
 }
 
 /// One open tab, as the extension reports it.
@@ -97,6 +151,18 @@ pub enum ToBrowser {
         #[serde(rename = "newWindow")]
         new_window: bool,
     },
+    /// Do something in the browser: `cmd` is one of [`commands::CATALOG`](super::commands::CATALOG)
+    /// (`media.next`, `tab.close`...), `arg` its argument (empty when it has none). The extension
+    /// answers with a [`FromBrowser::Outcome`] that has the same `id`.
+    Command { id: u64, cmd: String, arg: String },
+    /// The answer to a [`FromBrowser::Panel`]: `result` is a [`PanelResult`](crate::panel::PanelResult)
+    /// as JSON (`outcome`, `button`, `values`, `reason`).
+    #[serde(rename = "panel_result")]
+    PanelResult { req: u64, result: serde_json::Value },
+    /// The app has written the files of version `version` into the folder this extension was loaded
+    /// from (it does that when it starts after an update): load them. The extension reloads itself
+    /// once per version asked; one from before this message existed ignores it.
+    Reload { version: String },
 }
 
 /// The first line a host process sends to the app.
@@ -141,6 +207,49 @@ mod tests {
     }
 
     #[test]
+    fn the_reload_request_names_the_version_to_load() {
+        let out = serde_json::to_value(ToBrowser::Reload {
+            version: "0.9.0".into(),
+        })
+        .unwrap();
+        assert_eq!(out["type"], "reload");
+        assert_eq!(out["version"], "0.9.0");
+    }
+
+    #[test]
+    fn panel_messages_are_read_and_written() {
+        let m: FromBrowser = serde_json::from_str(
+            r#"{"type":"panel","req":7,"spec":{"title":"Hi","widgets":[{"type":"input","id":"a"}]}}"#,
+        )
+        .unwrap();
+        let FromBrowser::Panel { req, spec } = m else {
+            panic!("panel")
+        };
+        assert_eq!(req, 7);
+        assert_eq!(spec["title"], "Hi");
+        let m: FromBrowser = serde_json::from_str(
+            r#"{"type":"panel_update","panel":"p","patch":{"widget":"bar","value":0.5}}"#,
+        )
+        .unwrap();
+        let FromBrowser::PanelUpdate { panel, patch } = m else {
+            panic!("update")
+        };
+        assert_eq!((panel.as_str(), patch.widget.as_str()), ("p", "bar"));
+        assert_eq!(
+            serde_json::from_str::<FromBrowser>(r#"{"type":"panel_close","panel":"p"}"#).unwrap(),
+            FromBrowser::PanelClose { panel: "p".into() }
+        );
+        let out = serde_json::to_value(ToBrowser::PanelResult {
+            req: 7,
+            result: serde_json::json!({"outcome":"cancelled"}),
+        })
+        .unwrap();
+        assert_eq!(out["type"], "panel_result");
+        assert_eq!(out["req"], 7);
+        assert_eq!(out["result"]["outcome"], "cancelled");
+    }
+
+    #[test]
     fn messages_from_the_extension_are_read() {
         let hello: FromBrowser =
             serde_json::from_str(r#"{"type":"hello","browser":"brave","version":"0.8.4"}"#)
@@ -149,7 +258,8 @@ mod tests {
             hello,
             FromBrowser::Hello {
                 browser: "brave".into(),
-                version: "0.8.4".into()
+                version: "0.8.4".into(),
+                commands: Vec::new(),
             }
         );
         let tabs: FromBrowser = serde_json::from_str(
@@ -167,6 +277,80 @@ mod tests {
         );
         assert!(!tabs[1].active, "missing means not active");
         assert!(serde_json::from_str::<FromBrowser>(r#"{"type":"nope"}"#).is_err());
+    }
+
+    #[test]
+    fn hello_state_and_results_of_the_new_extension_are_read() {
+        let hello: FromBrowser = serde_json::from_str(
+            r#"{"type":"hello","browser":"firefox","version":"0.9.0","commands":["media.next","tab.close"]}"#,
+        )
+        .unwrap();
+        let FromBrowser::Hello { commands, .. } = hello else {
+            panic!("hello")
+        };
+        assert_eq!(commands, ["media.next", "tab.close"]);
+
+        let state: FromBrowser = serde_json::from_str(
+            r#"{"type":"state","audible":1,"mediaTabs":3,
+                "chats":[{"site":"whatsapp","unread":4},{"site":"telegram","unread":null}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            state,
+            FromBrowser::State {
+                audible: 1,
+                media_tabs: 3,
+                chats: vec![
+                    WireChat {
+                        site: "whatsapp".into(),
+                        unread: Some(4)
+                    },
+                    WireChat {
+                        site: "telegram".into(),
+                        unread: None
+                    }
+                ],
+            }
+        );
+        // every field of a state may be missing: an older or smaller extension still parses
+        assert_eq!(
+            serde_json::from_str::<FromBrowser>(r#"{"type":"state"}"#).unwrap(),
+            FromBrowser::State {
+                audible: 0,
+                media_tabs: 0,
+                chats: Vec::new()
+            }
+        );
+
+        let result: FromBrowser = serde_json::from_str(
+            r#"{"type":"result","id":12,"ok":false,"message":"No player found","notify":true}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            result,
+            FromBrowser::Outcome {
+                id: 12,
+                ok: false,
+                message: "No player found".into(),
+                notify: true
+            }
+        );
+        // a result needs the id of its command
+        assert!(serde_json::from_str::<FromBrowser>(r#"{"type":"result","ok":true}"#).is_err());
+    }
+
+    #[test]
+    fn a_command_goes_to_the_extension_with_the_names_of_the_script() {
+        let c = serde_json::to_string(&ToBrowser::Command {
+            id: 3,
+            cmd: "chat.send_to".into(),
+            arg: "Anna :: \"hi\"\nbye".into(),
+        })
+        .unwrap();
+        assert_eq!(
+            c,
+            r#"{"type":"command","id":3,"cmd":"chat.send_to","arg":"Anna :: \"hi\"\nbye"}"#
+        );
     }
 
     #[test]

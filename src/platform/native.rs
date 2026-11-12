@@ -29,6 +29,10 @@ const QUICK: Duration = Duration::from_secs(5);
 const ASK_TIMEOUT: Duration = Duration::from_secs(600);
 /// The name windows and notifications carry.
 const TITLE: &str = "CursorPie";
+/// How long a text may take to be spoken, or a screen to be saved.
+const SPEAK_TIMEOUT: Duration = Duration::from_secs(120);
+/// Most names a folder listing keeps.
+const MAX_LIST_NAMES: usize = 5000;
 
 /// One program to start.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -116,6 +120,55 @@ fn clipboard_set_programs(os: Os, text: &str) -> Vec<Invocation> {
     }
 }
 
+/// A `file://` address for the absolute `path`: everything but letters, digits and `-_.~/` is
+/// written as `%XX` of its UTF-8 bytes, which is how file managers and browsers read a copied file.
+fn file_uri(path: &str) -> String {
+    let mut uri = String::from("file://");
+    for b in path.bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~' | b'/') {
+            uri.push(char::from(b));
+        } else {
+            uri.push_str(&format!("%{b:02X}"));
+        }
+    }
+    uri
+}
+
+/// The programs that put the *file* at `path` on the clipboard (not its name as text), so that
+/// pasting in a chat window or a file manager attaches or copies it, in the order they are tried.
+/// The path goes in as an argument, an environment variable or an address, never into a script.
+fn clipboard_set_file_programs(os: Os, path: &str) -> Vec<Invocation> {
+    match os {
+        Os::Mac => vec![Invocation::new(
+            "osascript",
+            &[
+                "-e",
+                "on run argv",
+                "-e",
+                "set the clipboard to (POSIX file (item 1 of argv))",
+                "-e",
+                "end run",
+                path,
+            ],
+        )],
+        Os::Windows => vec![
+            powershell("Set-Clipboard -LiteralPath $env:CURSORPIE_FILE")
+                .env("CURSORPIE_FILE", path),
+        ],
+        Os::Linux => {
+            let list = format!("{}\r\n", file_uri(path));
+            vec![
+                Invocation::new("wl-copy", &["--type", "text/uri-list"]).stdin(&list),
+                Invocation::new(
+                    "xclip",
+                    &["-selection", "clipboard", "-t", "text/uri-list", "-in"],
+                )
+                .stdin(&list),
+            ]
+        }
+    }
+}
+
 /// The programs that show a notification, in the order they are tried.
 fn notify_programs(os: Os, title: &str, text: &str) -> Vec<Invocation> {
     match os {
@@ -148,6 +201,131 @@ fn notify_programs(os: Os, title: &str, text: &str) -> Vec<Invocation> {
             &["--app-name=CursorPie", "--", title, text],
         )],
     }
+}
+
+/// The programs that speak `text`, in the order they are tried. The text is standard input or an
+/// environment variable (after `--` on Linux), never part of a command.
+fn say_programs(os: Os, text: &str) -> Vec<Invocation> {
+    match os {
+        Os::Mac => vec![Invocation::new("say", &[]).stdin(text)],
+        Os::Windows => vec![
+            powershell(
+                "Add-Type -AssemblyName System.Speech; \
+                 $s=New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.Speak($env:CURSORPIE_TEXT)",
+            )
+            .env("CURSORPIE_TEXT", text),
+        ],
+        Os::Linux => vec![
+            Invocation::new("spd-say", &["--wait", "--", text]),
+            Invocation::new("espeak-ng", &["--stdin"]).stdin(text),
+            Invocation::new("espeak", &["--stdin"]).stdin(text),
+        ],
+    }
+}
+
+/// The programs that save a picture of the screen as the PNG file `path` (which does not start
+/// with `-`), in the order they are tried.
+fn screenshot_programs(os: Os, path: &str) -> Vec<Invocation> {
+    match os {
+        Os::Mac => vec![Invocation::new("screencapture", &["-x", path])],
+        Os::Windows => vec![
+            powershell(
+                "Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; \
+                 $b=[System.Windows.Forms.SystemInformation]::VirtualScreen; \
+                 $bmp=New-Object System.Drawing.Bitmap $b.Width,$b.Height; \
+                 $g=[System.Drawing.Graphics]::FromImage($bmp); \
+                 $g.CopyFromScreen($b.Location,[System.Drawing.Point]::Empty,$b.Size); \
+                 $bmp.Save($env:CURSORPIE_PATH,[System.Drawing.Imaging.ImageFormat]::Png)",
+            )
+            .env("CURSORPIE_PATH", path),
+        ],
+        Os::Linux => vec![
+            Invocation::new("grim", &[path]),
+            Invocation::new("gnome-screenshot", &["-f", path]),
+            Invocation::new("spectacle", &["-b", "-n", "-o", path]),
+            Invocation::new("scrot", &["-o", path]),
+            Invocation::new("import", &["-window", "root", path]),
+        ],
+    }
+}
+
+/// The programs that print the volume of the speakers, in the order they are tried. Windows has
+/// none: it has no program that does this without installing one.
+fn volume_get_programs(os: Os) -> Vec<Invocation> {
+    match os {
+        Os::Mac => vec![Invocation::new(
+            "osascript",
+            &["-e", "output volume of (get volume settings)"],
+        )],
+        Os::Windows => Vec::new(),
+        Os::Linux => vec![
+            Invocation::new("wpctl", &["get-volume", "@DEFAULT_AUDIO_SINK@"]),
+            Invocation::new("pactl", &["get-sink-volume", "@DEFAULT_SINK@"]),
+            Invocation::new("amixer", &["get", "Master"]),
+        ],
+    }
+}
+
+/// The programs that set the volume of the speakers to `percent` (0 to 100), in the order they
+/// are tried.
+fn volume_set_programs(os: Os, percent: u8) -> Vec<Invocation> {
+    let percent = percent.min(100);
+    match os {
+        Os::Mac => vec![Invocation::new(
+            "osascript",
+            &[
+                "-e",
+                "on run argv",
+                "-e",
+                "set volume output volume ((item 1 of argv) as integer)",
+                "-e",
+                "end run",
+                &percent.to_string(),
+            ],
+        )],
+        Os::Windows => Vec::new(),
+        Os::Linux => vec![
+            Invocation::new(
+                "wpctl",
+                &[
+                    "set-volume",
+                    "@DEFAULT_AUDIO_SINK@",
+                    &format!("{:.2}", f64::from(percent) / 100.0),
+                ],
+            ),
+            Invocation::new(
+                "pactl",
+                &["set-sink-volume", "@DEFAULT_SINK@", &format!("{percent}%")],
+            ),
+            Invocation::new("amixer", &["set", "Master", &format!("{percent}%")]),
+        ],
+    }
+}
+
+/// The volume (0 to 100) in what a volume program printed: a plain number (`osascript`), the
+/// first `NN%` (`pactl`, `amixer`) or `Volume: 0.NN` (`wpctl`).
+fn parse_volume(text: &str) -> Option<u8> {
+    let t = text.trim();
+    if let Ok(n) = t.parse::<f64>() {
+        return n.is_finite().then(|| n.round().clamp(0.0, 100.0) as u8);
+    }
+    if let Some(at) = t.find('%') {
+        let digits: String = t[..at]
+            .chars()
+            .rev()
+            .take_while(char::is_ascii_digit)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        if let Ok(n) = digits.parse::<u32>() {
+            return Some(n.min(100) as u8);
+        }
+    }
+    let after = t.split("Volume:").nth(1)?;
+    let n: f64 = after.split_whitespace().next()?.parse().ok()?;
+    n.is_finite()
+        .then(|| (n * 100.0).round().clamp(0.0, 100.0) as u8)
 }
 
 /// The programs that ask for a text, in the order they are tried.
@@ -413,11 +591,159 @@ pub fn clipboard_set(text: &str) -> bool {
         .any(|o| o.code == Some(0))
 }
 
+/// Puts the file at `path` on the clipboard as a file, so it can be pasted into a chat window or a
+/// file manager. `false` when no program could do it (on Linux that needs `wl-copy` or `xclip`) or
+/// the path is not text.
+pub fn clipboard_set_file(path: &std::path::Path) -> bool {
+    let Some(path) = path.to_str() else {
+        return false;
+    };
+    let programs = clipboard_set_file_programs(Os::current(), path);
+    programs
+        .iter()
+        .filter_map(|p| run(p, QUICK, false))
+        .any(|o| o.code == Some(0))
+}
+
 /// Shows a notification; whether a program could be started to show it.
 pub fn notify(title: &str, text: &str) -> bool {
     notify_programs(Os::current(), title, text)
         .iter()
         .any(start_and_forget)
+}
+
+/// Speaks `text` aloud and waits until it is said; whether a program did.
+pub fn say(text: &str) -> bool {
+    if text.trim().is_empty() {
+        return false;
+    }
+    say_programs(Os::current(), text)
+        .iter()
+        .filter_map(|p| run(p, SPEAK_TIMEOUT, false))
+        .any(|o| o.code == Some(0))
+}
+
+/// Saves a picture of the screen as the PNG file `path`; whether a program did.
+pub fn screenshot(path: &str) -> bool {
+    let path = path.trim();
+    // a path that looks like an option must not reach a program as one
+    if path.is_empty() || path.starts_with('-') || !path.to_ascii_lowercase().ends_with(".png") {
+        return false;
+    }
+    let target = expand_home(path);
+    let target = target.to_string_lossy();
+    screenshot_programs(Os::current(), &target)
+        .iter()
+        .filter_map(|p| run(p, SPEAK_TIMEOUT, false))
+        .any(|o| o.code == Some(0))
+}
+
+/// The volume of the speakers, 0 to 100; `None` when no program can tell.
+pub fn volume() -> Option<u8> {
+    volume_get_programs(Os::current())
+        .iter()
+        .filter_map(|p| run(p, QUICK, true))
+        .filter(|o| o.code == Some(0))
+        .find_map(|o| parse_volume(&o.stdout))
+}
+
+/// Sets the volume of the speakers; whether a program did.
+pub fn set_volume(percent: u8) -> bool {
+    volume_set_programs(Os::current(), percent)
+        .iter()
+        .filter_map(|p| run(p, QUICK, false))
+        .any(|o| o.code == Some(0))
+}
+
+/// The names (not the paths) of what is in the folder `path`, sorted; `None` when it cannot be
+/// read. At most `MAX_LIST_NAMES` names.
+pub fn list_dir(path: &str) -> Option<Vec<String>> {
+    if path.trim().is_empty() {
+        return None;
+    }
+    let mut names: Vec<String> = std::fs::read_dir(expand_home(path.trim()))
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names.truncate(MAX_LIST_NAMES);
+    Some(names)
+}
+
+/// Makes the folder `path` and the ones above it that are missing.
+pub fn make_dir(path: &str) -> bool {
+    !path.trim().is_empty() && std::fs::create_dir_all(expand_home(path.trim())).is_ok()
+}
+
+/// Copies the file `from` to `to`, replacing what is there. A folder is not copied.
+pub fn copy_file(from: &str, to: &str) -> bool {
+    if from.trim().is_empty() || to.trim().is_empty() {
+        return false;
+    }
+    let (from, to) = (expand_home(from.trim()), expand_home(to.trim()));
+    from.is_file() && std::fs::copy(from, to).is_ok()
+}
+
+/// Moves or renames `from` to `to`. Across disks a file is copied and then removed.
+pub fn move_file(from: &str, to: &str) -> bool {
+    if from.trim().is_empty() || to.trim().is_empty() {
+        return false;
+    }
+    let (from, to) = (expand_home(from.trim()), expand_home(to.trim()));
+    if std::fs::rename(&from, &to).is_ok() {
+        return true;
+    }
+    from.is_file() && std::fs::copy(&from, &to).is_ok() && std::fs::remove_file(&from).is_ok()
+}
+
+/// Deletes the file `path`. A folder is never deleted, and neither is a link to one.
+pub fn delete_file(path: &str) -> bool {
+    if path.trim().is_empty() {
+        return false;
+    }
+    let path = expand_home(path.trim());
+    match std::fs::symlink_metadata(&path) {
+        Ok(meta) if !meta.file_type().is_dir() => std::fs::remove_file(&path).is_ok(),
+        _ => false,
+    }
+}
+
+/// The size in bytes and the time of the last change (Unix seconds) of `path`.
+pub fn file_info(path: &str) -> Option<(u64, u64)> {
+    if path.trim().is_empty() {
+        return None;
+    }
+    let meta = std::fs::metadata(expand_home(path.trim())).ok()?;
+    let time = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    Some((meta.len(), time))
+}
+
+/// A fact about this computer: `os`, `arch`, `user`, `host`, `home` or `temp`.
+pub fn system_info(key: &str) -> Option<String> {
+    let env = |names: &[&str]| {
+        names
+            .iter()
+            .find_map(|n| std::env::var(n).ok().filter(|v| !v.trim().is_empty()))
+    };
+    match key {
+        "os" => Some(std::env::consts::OS.to_string()),
+        "arch" => Some(std::env::consts::ARCH.to_string()),
+        "user" => env(&["USER", "USERNAME", "LOGNAME"]),
+        "host" => env(&["HOSTNAME", "COMPUTERNAME"]).or_else(|| {
+            run(&Invocation::new("hostname", &[]), QUICK, true)
+                .filter(|o| o.code == Some(0))
+                .map(|o| o.stdout.trim().to_string())
+                .filter(|h| !h.is_empty())
+        }),
+        "home" => Some(crate::config::home().to_string_lossy().into_owned()),
+        "temp" => Some(std::env::temp_dir().to_string_lossy().into_owned()),
+        _ => None,
+    }
 }
 
 /// Asks for a text in a window and waits for the answer. `None` when it was cancelled or no program
@@ -479,6 +805,57 @@ pub fn file_exists(path: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_file_address_encodes_what_a_path_may_hold() {
+        assert_eq!(file_uri("/home/a/x.zip"), "file:///home/a/x.zip");
+        assert_eq!(
+            file_uri("/Users/Ana Maria/Library/App Support/x'y.zip"),
+            "file:///Users/Ana%20Maria/Library/App%20Support/x%27y.zip"
+        );
+        assert_eq!(file_uri("/caf\u{e9}"), "file:///caf%C3%A9");
+    }
+
+    #[test]
+    fn the_file_clipboard_programs_never_put_the_path_in_a_script() {
+        let evil = "/tmp/x'; rm -rf ~ #.zip";
+        for os in [Os::Mac, Os::Windows, Os::Linux] {
+            let all = clipboard_set_file_programs(os, evil);
+            assert!(!all.is_empty(), "{os:?}");
+            for inv in &all {
+                assert!(!inv.program.contains(evil));
+                // a script is fixed text: the path is the last argument, an environment value or
+                // the encoded address on standard input
+                assert!(
+                    inv.args.iter().all(|a| !a.contains(evil) || a == evil),
+                    "{inv:?}"
+                );
+                if let Some(input) = &inv.stdin {
+                    assert!(!input.contains("rm -rf"), "{inv:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_file_goes_on_the_clipboard_as_a_file_not_as_text() {
+        let mac = clipboard_set_file_programs(Os::Mac, "/tmp/k.zip");
+        assert!(mac[0].args.iter().any(|a| a.contains("POSIX file")));
+        let win = clipboard_set_file_programs(Os::Windows, "C:\\k.zip");
+        assert!(
+            win[0]
+                .args
+                .iter()
+                .any(|a| a.contains("Set-Clipboard -LiteralPath"))
+        );
+        let linux = clipboard_set_file_programs(Os::Linux, "/tmp/k.zip");
+        assert!(
+            linux
+                .iter()
+                .all(|i| i.args.contains(&"text/uri-list".to_string()))
+        );
+        assert_eq!(linux[0].stdin.as_deref(), Some("file:///tmp/k.zip\r\n"));
+    }
+
     fn out(code: Option<i32>, stdout: &str) -> Output {
         Output {
             code,
@@ -508,6 +885,118 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn speaking_and_screenshots_never_put_a_text_or_a_path_in_a_command() {
+        let evil = "x'; rm -rf ~ #";
+        for os in [Os::Mac, Os::Windows, Os::Linux] {
+            let all = [say_programs(os, evil), screenshot_programs(os, evil)];
+            for inv in all.iter().flatten() {
+                assert!(!inv.program.contains(evil));
+                assert!(
+                    inv.args
+                        .iter()
+                        .all(|a| a == evil || a.starts_with('-') || !a.contains(evil)),
+                    "{inv:?}"
+                );
+            }
+        }
+        // Windows: in the environment, not in the script
+        let spoken = &say_programs(Os::Windows, "SECRET")[0];
+        assert!(spoken.args.iter().all(|a| !a.contains("SECRET")));
+        assert_eq!(
+            spoken.envs,
+            vec![("CURSORPIE_TEXT".to_string(), "SECRET".to_string())]
+        );
+        let shot = &screenshot_programs(Os::Windows, "C:/s.png")[0];
+        assert_eq!(
+            shot.envs,
+            vec![("CURSORPIE_PATH".to_string(), "C:/s.png".to_string())]
+        );
+        // a path that looks like an option, or is not a PNG, is refused before anything starts
+        assert!(!screenshot("-o"));
+        assert!(!screenshot("/tmp/x.jpg"));
+        assert!(!screenshot("  "));
+        assert!(!say("   "));
+        // the speech goes in through standard input on a Mac
+        assert_eq!(say_programs(Os::Mac, "hi")[0].stdin.as_deref(), Some("hi"));
+    }
+
+    #[test]
+    fn the_volume_is_read_from_what_each_program_prints() {
+        assert_eq!(parse_volume("50\n"), Some(50));
+        assert_eq!(parse_volume("Volume: 0.35\n"), Some(35));
+        assert_eq!(parse_volume("Volume: 0.35 [MUTED]"), Some(35));
+        assert_eq!(
+            parse_volume(
+                "Volume: front-left: 32768 /  50% / -18.06 dB,   front-right: 32768 /  50% / -18.06 dB"
+            ),
+            Some(50)
+        );
+        assert_eq!(
+            parse_volume("  Front Left: Playback 40 [62%] [on]"),
+            Some(62)
+        );
+        assert_eq!(parse_volume("nothing"), None);
+        assert_eq!(parse_volume("250"), Some(100));
+        assert!(volume_get_programs(Os::Windows).is_empty());
+        let set = &volume_set_programs(Os::Linux, 75);
+        assert_eq!(set[0].args.last().map(String::as_str), Some("0.75"));
+        assert_eq!(set[1].args.last().map(String::as_str), Some("75%"));
+        assert_eq!(
+            volume_set_programs(Os::Mac, 200)[0]
+                .args
+                .last()
+                .map(String::as_str),
+            Some("100")
+        );
+    }
+
+    #[test]
+    fn files_and_folders_are_handled_with_plain_std_and_never_a_folder_deleted() {
+        // a folder of its own: the tests run side by side and one of them deletes its folder
+        let dir =
+            std::env::temp_dir().join(format!("cursorpie-native-dirs-{}", std::process::id()));
+        let d = dir.to_string_lossy().into_owned();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(make_dir(&format!("{d}/a/b")));
+        assert!(write_file(&format!("{d}/a/one.txt"), "hello", false));
+        assert_eq!(file_info(&format!("{d}/a/one.txt")).map(|i| i.0), Some(5));
+        assert_eq!(
+            list_dir(&format!("{d}/a")),
+            Some(vec!["b".to_string(), "one.txt".to_string()])
+        );
+        assert!(copy_file(
+            &format!("{d}/a/one.txt"),
+            &format!("{d}/a/two.txt")
+        ));
+        assert!(move_file(
+            &format!("{d}/a/two.txt"),
+            &format!("{d}/a/b/three.txt")
+        ));
+        assert_eq!(
+            read_file(&format!("{d}/a/b/three.txt")).as_deref(),
+            Some("hello")
+        );
+        // a folder is not copied, and is never deleted
+        assert!(!copy_file(&format!("{d}/a/b"), &format!("{d}/c")));
+        assert!(!delete_file(&format!("{d}/a/b")));
+        assert!(delete_file(&format!("{d}/a/b/three.txt")));
+        assert!(!delete_file(&format!("{d}/a/b/three.txt")), "already gone");
+        assert!(list_dir(&format!("{d}/missing")).is_none());
+        assert!(file_info(&format!("{d}/missing")).is_none());
+        assert!(!make_dir("  "));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_facts_about_this_computer_have_a_fixed_list() {
+        assert_eq!(system_info("os").as_deref(), Some(std::env::consts::OS));
+        assert_eq!(system_info("arch").as_deref(), Some(std::env::consts::ARCH));
+        assert!(system_info("temp").is_some());
+        assert!(system_info("home").is_some());
+        assert!(system_info("colour").is_none());
     }
 
     #[test]

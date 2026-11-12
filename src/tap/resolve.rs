@@ -21,8 +21,22 @@ pub(super) struct Hit {
     pub choice: Option<Choice>,
 }
 
+/// `p` as a distance from `center` in the points the pie is drawn in, when one point of the pointer
+/// is `scale` of them (see [`platform::window_scale`]). `p` itself when the scale is 1, which is
+/// every system but Linux in a Wayland session whose scale differs from XWayland's.
+fn in_pie_points(center: Point, p: Point, scale: f64) -> Point {
+    if (scale - 1.0).abs() < 1e-9 {
+        return p;
+    }
+    Point::new(
+        center.x + (p.x - center.x) * scale,
+        center.y + (p.y - center.y) * scale,
+    )
+}
+
 /// Which slice is under `p`, and whether `p` crossed the outer rim over a submenu slice.
 pub(super) fn eval(profile: usize, path: &[usize], center: Point, p: Point) -> Hit {
+    let p = in_pie_points(center, p, platform::window_scale(center.x, center.y));
     let c = cfg();
     let win = c.pie_size;
     let Some(items) = c
@@ -128,11 +142,24 @@ pub(super) fn is_mode(profile: usize, path: &[usize], index: usize) -> bool {
 /// Runs an action. If the settings say so, the target app is brought to the front first, because
 /// shortcuts always go to the app in front.
 pub(super) fn run_action(action: Action, target: Option<String>, choice: Option<Choice>) {
+    let focus = focus_for(target);
+    actions::run_in_with(focus, action, choice);
+}
+
+/// [`run_action`] for the back and forward buttons: the notice on the screen stays quiet, they are
+/// used all day.
+pub(super) fn run_action_quiet(action: Action, target: Option<String>) {
+    let focus = focus_for(target);
+    actions::run_in_quiet(focus, action);
+}
+
+/// The app to bring to the front before an action that sends keys, if the settings say so.
+fn focus_for(target: Option<String>) -> Option<String> {
     let focus = {
         let c = cfg();
         c.target_app == TargetApp::UnderCursor && c.focus_target
     };
-    actions::run_in_with(if focus { target } else { None }, action, choice);
+    if focus { target } else { None }
 }
 
 /// The app a gesture at `p` is about: the app in front, or the app whose window is under `p`
@@ -177,4 +204,28 @@ pub(super) fn resolve_profiles(p: Point) -> (usize, Option<usize>) {
         app_profile = own
     );
     (general, own)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_scale_of_one_leaves_the_pointer_alone() {
+        let (c, p) = (Point::new(100.0, 100.0), Point::new(130.3, 90.7));
+        assert_eq!(in_pie_points(c, p, 1.0), p, "to the last bit");
+    }
+
+    #[test]
+    fn a_distance_is_counted_in_the_points_the_pie_is_drawn_in() {
+        // X shows the screen at 1.5 times the points of the compositor: 20 compositor points from
+        // the center are 30 points of the pie
+        let (c, p) = (Point::new(100.0, 100.0), Point::new(120.0, 80.0));
+        assert_eq!(in_pie_points(c, p, 1.5), Point::new(130.0, 70.0));
+        assert_eq!(
+            in_pie_points(c, c, 1.5),
+            c,
+            "the center is the center at any scale"
+        );
+    }
 }

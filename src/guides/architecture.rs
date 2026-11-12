@@ -49,6 +49,9 @@
 //! (white box, border, shadow) is stripped every frame by `platform::clear_window_frame`. On Linux that
 //! function does nothing, and per-pixel alpha needs a compositing manager on X11 (see
 //! `docs/UI_DESIGN.md`).
+//! A third mode, the *notice* (`ui::hud`, `ui::app::notice`), makes the window a small pill near the
+//! edge of the display for a second or so: it says what the actions worker is doing. It is
+//! click-through like the pie and is taken over by the pie or Settings at once.
 //! Because the window is click-through, the pie never steals mouse events: the
 //! event tap is what sees the mouse, and the UI only draws.
 //!

@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CursorPie Bridge</title>
+<style>
+  :root { color-scheme: light dark; --bg: #fafafa; --fg: #1d1d1f; --mut: #6e6e73; --card: #fff; --line: #d9d9de; --acc: #2f6df6; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #1c1c1e; --fg: #f2f2f7; --mut: #98989f; --card: #2c2c2e; --line: #3a3a3c; --acc: #6c9bff; } }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--mut); margin: 28px 0 8px; }
+  p.lead, p.note { color: var(--mut); margin: 4px 0 12px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 4px 14px; }
+  .row { display: flex; gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .row:last-child { border-bottom: 0; }
+  .row > label { flex: 1; }
+  .row small { display: block; color: var(--mut); }
+  input[type=number] { width: 80px; }
+  input[type=number], select, textarea { background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font: inherit; }
+  textarea { width: 100%; box-sizing: border-box; min-height: 130px; font-family: ui-monospace, monospace; font-size: 12px; }
+  button { background: var(--acc); color: #fff; border: 0; border-radius: 6px; padding: 6px 14px; font: inherit; cursor: pointer; }
+  button.soft { background: transparent; color: var(--acc); border: 1px solid var(--line); }
+  #saved { color: var(--mut); margin-left: 10px; }
+  #bad, .bad { color: #d70015; margin: 6px 0 0; min-height: 1.2em; }
+</style>
+</head>
+<body>
+<main>
+  <h1>CursorPie Bridge</h1>
+  <p class="lead">What the browser may do when CursorPie asks. Everything stays on this computer.</p>
+
+  <h2>Groups of commands</h2>
+  <div class="card">
+    <div class="row"><label for="media">Media <small>media.play, media.next, media.volume_up ... on YouTube, Spotify, SoundCloud and other players</small></label><input id="media" type="checkbox"></div>
+    <div class="row"><label for="tabs">Tabs, windows and scrolling <small>tab.next, tab.close, window.new, page.down ...</small></label><input id="tabs" type="checkbox"></div>
+    <div class="row"><label for="chat">Chats <small>chat.next_unread, chat.open, chat.draft, chat.wait ... on WhatsApp Web and Telegram Web</small></label><input id="chat" type="checkbox"></div>
+    <div class="row"><label for="ui">Panels <small>ui.tabs, ui.find_tab, ui.media, ui.video ... ask on the desktop, in a panel of CursorPie. CursorPie must also allow it: Settings, Behavior, "Let the browser extension show panels".</small></label><input id="ui" type="checkbox"></div>
+  </div>
+
+  <h2>Messages</h2>
+  <div class="card">
+    <div class="row"><label for="allowRead">Allow reading messages <small>Off: chat.last, chat.read, chat.wait, chat.who, chat.unread_names and chat.folders refuse. On: they hand the text of the messages, and the names of the chats, to CursorPie on this computer, for a flow to use. Nothing leaves your computer. Turn it on only if you want a flow to read your chats.</small></label><input id="allowRead" type="checkbox"></div>
+    <div class="row"><label for="skipMuted">Skip muted chats <small>On: chat.next_unread, chat.prev_unread, chat.unread_names and the unread numbers read from the page leave out chats whose notifications are off. A chat with an @mention still counts for chat.next_mention.</small></label><input id="skipMuted" type="checkbox"></div>
+    <div class="row"><label for="allowSend">Allow sending messages <small>Off: chat.send, chat.send_to and chat.template only type the message, and you press Send yourself. Turn it on only if you want a slice to send for you.</small></label><input id="allowSend" type="checkbox"></div>
+  </div>
+
+  <h2>Saved replies</h2>
+  <p class="note">Short texts for <code>chat.template name</code> (types it in the open chat) or <code>chat.template name :: Chat</code> (opens that chat first, like chat.send_to). Written as JSON, a name (letters, digits, - and _) and its text. In the text, <code>{time}</code> and <code>{date}</code> are filled in, and <code>{name}</code> and <code>{first}</code> (the first word) are the chat's name: the one written after ::, else the open chat's, which needs <em>Allow reading messages</em>. Example: <code>{"omw": "On my way, back at {time}", "hi": "Hi {first}, I will call you later"}</code></p>
+  <textarea id="templates" spellcheck="false" placeholder="{}"></textarea>
+  <div id="badTemplates" class="bad"></div>
+
+  <h2>Players</h2>
+  <div class="card">
+    <div class="row"><label for="autoPauseOthers">Starting one player pauses the others <small>When a tab starts to make sound, every other tab that is playing is paused.</small></label><input id="autoPauseOthers" type="checkbox"></div>
+    <div class="row"><label for="seekSeconds">Seek step <small>seconds, for media.seek_fwd and media.seek_back</small></label><input id="seekSeconds" type="number" min="1" max="600" step="1"></div>
+    <div class="row"><label for="volumeStep">Volume step <small>percent, for media.volume_up and media.volume_down</small></label><input id="volumeStep" type="number" min="1" max="50" step="1"></div>
+    <div class="row"><label for="speedStep">Speed step <small>for media.speed_up and media.speed_down</small></label><input id="speedStep" type="number" min="0.05" max="1" step="0.05"></div>
+  </div>
+
+  <h2>Notifications</h2>
+  <div class="card">
+    <div class="row"><label for="notify">CursorPie shows a notification for <small>Questions you ask (media.now_playing, chat.status) are always shown.</small></label>
+      <select id="notify"><option value="errors">only what went wrong</option><option value="all">every result</option><option value="none">nothing</option></select></div>
+  </div>
+
+  <h2>All sites</h2>
+  <p class="note">The extension is allowed on the player sites, WhatsApp Web and Telegram Web only. To control the player of any other site (and to scroll any page) allow all sites; the extension still only acts when CursorPie asks.</p>
+  <div class="card">
+    <div class="row"><label>Permission <small id="permState">checking...</small></label><button id="perm" class="soft">Allow all sites</button></div>
+  </div>
+
+  <h2>Selector overrides (chats)</h2>
+  <p class="note">WhatsApp Web and Telegram Web change their pages without notice. If a chat command stops finding something, put a working CSS selector first here. Keys: rows, selected, unread, search, composer, send, header, scroll, messages (one message), text (the words inside it), incoming, outgoing (what says who wrote it), muted (a chat with notifications off), mention (an @mention badge), folders (the Telegram folder tabs). Example: <code>{"whatsapp": {"composer": ["footer div[contenteditable]"]}}</code></p>
+  <textarea id="selectors" spellcheck="false" placeholder="{}"></textarea>
+  <div id="bad"></div>
+
+  <p><button id="save">Save</button><span id="saved"></span></p>
+</main>
+<script src="util.js"></script>
+<script src="options.js"></script>
+</body>
+</html>

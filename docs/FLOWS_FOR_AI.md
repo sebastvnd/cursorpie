@@ -6,6 +6,10 @@ without opening the app. It is complete on its own; the sources it is checked ag
 The examples in [`examples/flows/`](examples/flows) are parsed by the unit tests, so they cannot drift from the code,
 and [`flow.schema.json`](flow.schema.json) is a JSON Schema of the file for tools that can validate against one.
 
+The app can hand this page to an agent for the person: **New flow, Build it with AI** in the Flow tab puts a zip with this
+page, `flow.schema.json`, the examples and the person's request (`REQUEST.md`) on the clipboard (the code is
+`config::flow_kit`, and `flow-kit/START_HERE.md` is what the agent reads first).
+
 If you only read one section, read [The recipe](#the-recipe) and [The rules that make a flow wrong](#the-rules-that-make-a-flow-wrong).
 
 ## What a flow is
@@ -89,7 +93,8 @@ value (at most 16384 characters; at most 128 variables). They start empty and ar
   `Native`...) `{{name}}` is replaced by the value. `{{name|sh}}` is replaced by the value **quoted for the shell**
   (single quotes on macOS and Linux; on Windows double quotes with `"`, `%` and line breaks dropped): use it inside a
   `Command` or `Run`. Only a **defined** variable is replaced, so a command that contains `{{x}}` for another reason
-  is left as it is.
+  is left as it is. After the name any number of **filters** can follow (`{{name|trim|upper}}`), see "Filters and
+  lists" below.
 - The **operands** of `Calc`, `Logic`, `Branch` and `While` are a value (`3`, `yes`, `{{x}}`) or the bare **name of a
   variable** (`n`). A bare name that is defined means its value.
 - A field that **receives** a result (`out`, `name`, and the `variable` fields of `Native`) takes a bare variable name,
@@ -99,7 +104,7 @@ value (at most 16384 characters; at most 128 variables). They start empty and ar
 - **Numbers:** a text is a number when it parses as one (`3`, `-2.5`); whole results are written without a decimal point.
 - Set by the blocks themselves: `ok` (`1` when the last block that can fail worked: `Calc`, `Ask`, `Run`, `Native`), `code` (the
   exit code of the last `Run`; `-1` when it could not start, was ended by the time limit or a signal) and `index` (the
-  round of the innermost `Repeat` or `While`, counting from 1).
+  round of the innermost `Repeat`, `While` or `ForEach`, counting from 1).
 
 ### The logic blocks
 
@@ -111,20 +116,22 @@ value (at most 16384 characters; at most 128 variables). They start empty and ar
 | Branch | `{ "Branch": { "a": "n", "op": "Gt", "b": "3" } }` | follows **`next` when the condition holds, `alt` when it does not** |
 | Repeat | `{ "Repeat": 3 }` | goes through **`next` (the body)** 3 times (0 to 1000), then follows **`alt` (done)** |
 | While | `{ "While": { "a": "i", "op": "Lt", "b": "n" } }` | goes through `next` (the body) while the condition holds (at most 1000 rounds), then follows `alt` |
+| List | `{ "List": { "op": "Push", "list": "xs", "a": "{{item}}", "b": "", "out": "" } }` | works on the **list** kept in the variable `list` (see "Filters and lists"); `op` decides what `a`, `b` and `out` are for |
+| ForEach | `{ "ForEach": { "list": "xs", "item": "x" } }` | goes through **`next` (the body)** once for every item of the list in `list`, with the item in `item` and its position (from 1) in `index`, then follows **`alt` (done)**. At most 1000 rounds. A variable that does not hold a list ends the loop at once (and `ok` is `0`) |
 | Call | `{ "Call": "other-flow-id" }` | runs the flow with that id (same variables), then goes on. Depth at most 8; a missing flow is skipped |
 | Stop | `"Stop"` | ends the **whole run**, also inside a called flow. No outputs |
 
 `op` of a condition (`Branch`, `While`): `Eq`, `Ne`, `Lt`, `Le`, `Gt`, `Ge` (two numbers are compared as numbers,
 anything else as text), `Contains`, `StartsWith`, `EndsWith`, `IsTrue` (only `a`), `IsEmpty` (only `a`).
 
-**A loop is a wire back.** The body of a `Repeat` or `While` is the chain that starts at `next`; its last block must be
+**A loop is a wire back.** The body of a `Repeat`, `While` or `ForEach` is the chain that starts at `next`; its last block must be
 wired **back to the loop block itself**. `alt` leads on. See `examples/flows/ask-and-loop.cursorpie-flow.json`.
 
 ### The blocks that ask and the blocks that use the system
 
 | `kind` | JSON | Behaviour |
 |---|---|---|
-| Ask | `{ "Ask": { "mode": "Text", "message": "Name?", "preset": "Bob", "out": "name" } }` | shows a window of the system and waits. `mode`: `Text` (a box; `preset` is what it starts with) or `YesNo` (`out` becomes `1` or `0`). `ok` is `0` when it was cancelled or no window program exists (Linux needs `zenity` or `kdialog`); on Windows an empty answer counts as cancelled |
+| Ask | `{ "Ask": { "mode": "Text", "message": "Name?", "preset": "Bob", "out": "name" } }` | shows a window of the system and waits. `mode`: `Text` (a box; `preset` is what it starts with), `YesNo` (`out` becomes `1` or `0`) or `Panel` (`message` is the JSON of a panel, see `docs/PANELS.md`: each field sets the variable named by its `id`, `out` gets the id of the button that was pressed, `ok` is `1` only when a confirming button was pressed). `ok` is `0` when it was cancelled or no window program exists (Linux needs `zenity` or `kdialog`); on Windows an empty answer counts as cancelled |
 | Run | `{ "Run": { "command": "git rev-parse HEAD", "out": "rev", "timeout_s": 10 } }` | runs a shell command and **waits** (1 to 120 s, then it is ended). `out` gets what it printed (trailing line breaks cut, at most 256 KB), `code` its exit code. Every variable is also in its environment as `CURSORPIE_<NAME>` |
 | Native | `{ "Native": { "op": "Notify", "a": "Title", "b": "Text" } }` | something the system does or tells; `op` decides what `a` and `b` are for (table below) |
 
@@ -148,10 +155,111 @@ wired **back to the loop block itself**. `alt` leads on. See `examples/flows/ask
 | `Random` | number: the result is below it | variable |
 | `UnixTime` | | variable (seconds since 1970 UTC) |
 | `Reveal` | path | |
+| `ListDir` | folder path | variable: **a list** of the names in it (sorted, no path; at most 5000) |
+| `MakeDir` | folder path (and the folders above it) | |
+| `CopyFile` | from file (a folder is not copied) | to file (replaced) |
+| `MoveFile` | from path | to path (across disks a file is copied, then removed) |
+| `DeleteFile` | file path. **A folder is never deleted**, and neither is a link to one | |
+| `FileSize` | file path | variable (bytes) |
+| `FileTime` | file or folder path | variable (when it was last changed, Unix seconds) |
+| `SystemInfo` | one of `os` (`macos`, `windows`, `linux`), `arch`, `user`, `host`, `home`, `temp` | variable |
+| `Say` | text to speak (waits until it is said; macOS `say`, Windows PowerShell, Linux `spd-say`, `espeak-ng` or `espeak`) | |
+| `Screenshot` | path of a `.png` file for a picture of the whole screen (macOS asks for the *Screen Recording* permission) | |
+| `VolumeGet` | | variable (0 to 100; macOS, Linux with `wpctl`, `pactl` or `amixer`; **not Windows**) |
+| `VolumeSet` | number 0 to 100 (same systems) | |
+| `Browser` | a command of the browser extension (`media.next`, `tab.find {{word}}`, `chat.draft_to Anna :: hi`; the list is in `docs/BROWSER_EXTENSION.md`) | variable for the browser's reply (optional) |
+| `OpenAppSmart` | app name or id | how: `smart` (default: go to it when open, start it when not), `existing` (only go to it when open; `ok` is `0` when it is not), `new` (a new window), `plain` (as the *Open app* block) |
+| `OpenUrlSmart` | link or file | how, as above: `smart` goes to the tab that has the page when the browser extension reports it open, `existing` only does that (`ok` is `0` when no tab has it), `new` opens a new browser window |
+| `Quiet` | `on` (or empty) or `off` | |
+
+`Quiet` hides the notices of the rest of the run: the pill that announces keys, apps and links, and the `Notify` blocks.
+Put it right after *Start* in a flow that asks again and again (a remote control in a panel).
+
+`Browser` **waits** until the extension says how the command went (20 seconds at most; a `ui.*` panel as long as a person
+needs, up to 5 minutes, and `chat.wait` as long as it was told to wait, up to 300 seconds, plus 15; that time does not
+count against the run). `ok` is `1` if it worked. The variable gets the
+browser's words: the answer of a question (`tab.url` the address, `tab.count` the number of tabs, `media.state` `playing`,
+`paused` or `none`), or the reason when it failed. Without the extension (or with no browser connected) `ok` is `0` and
+the run reports it unless the flow looks at `ok`. A command that sends a message, closes a window or reads a chat
+(`chat.send`, `chat.send_to`, `chat.template`, `window.close`, `chat.who`, `chat.unread_names`, `chat.folders`, `chat.last`,
+`chat.read`, `chat.wait`), or
+one that is only a `{{variable}}`, makes the block red like `Run`.
+
+The chat questions for a flow: `chat.unread` (a number), `chat.unread_names` (the names of the chats that wait, one to a
+line: `List` `Split` makes a list of it), `chat.who`, `chat.last`, `chat.read N` and `chat.wait SECONDS` (the next message
+that comes in the open chat; empty with `ok` `1` when none came in time). The ones that read a chat refuse (`ok` `0`, the
+variable says why) until the person turns on *Allow reading messages* in the extension options, and `chat.send_to` only
+types the message until *Allow sending messages* is on. Ask the person for the name of a chat, or take it from
+`chat.unread_names`; never invent one. Always put a `Branch` on `ok` after a chat command and an `Ask` `YesNo` before
+`chat.send_to`: a message cannot be taken back.
+
+Telegram extras for a flow: `chat.folder NAME` (a folder tab, by name or number) before `chat.next_unread` walks that folder's
+unread chats; `chat.folders` (the folder names, one to a line, like `chat.unread_names`; needs *Allow reading messages*);
+`chat.next_mention` (a chat where somebody wrote the person's @name); `chat.template NAME` or `chat.template NAME :: Chat` (a
+reply the person saved in the extension options, sent like `chat.send_to`: ask first, and never invent a name; `chat.templates`
+lists the names). `chat.open @username` and `chat.draft_to @username :: text` open a Telegram chat by address; the chat cannot
+be checked then, so `chat.send_to @username` only types the message and answers `ok` `0`: do not use it to send.
 
 The clipboard needs `pbcopy` / PowerShell / `wl-copy`, `xclip` or `xsel`; notifications need `osascript` / PowerShell /
-`notify-send`. A missing tool makes `ok` `0`; nothing else happens. There is no block that moves or clicks the mouse
-and none that makes a network request.
+`notify-send`. A missing tool makes `ok` `0` (and the run reports it unless the flow looks at `ok`). There is no block
+that moves or clicks the mouse and none that makes a network request (use `Run` with `curl`).
+
+`MakeDir`, `CopyFile`, `MoveFile`, `DeleteFile`, `WriteFile`, `AppendFile` and `Screenshot` **change the computer**: the
+block is drawn in red and importing a flow with one warns the person. Say in your answer which files the flow touches,
+and prefer a `Notify` or a `Branch` that asks (`Ask` with `YesNo`) before a `DeleteFile` or a `MoveFile`.
+
+### Filters and lists
+
+**Filters.** `{{name|f1|f2}}` applies the filters from left to right. An argument comes after a `:` and is **not**
+trimmed (a separator can be a space); `\n` and `\t` in an argument are a line break and a tab. A variable that was never
+set is only replaced when a `default:` filter is in the chain. A filter that does not exist, has the wrong argument, or
+cannot work on the value leaves the **whole** `{{...}}` as written (and the editor shows an amber warning).
+
+| Filter | Result |
+|---|---|
+| `sh` | quoted as one word for the shell |
+| `trim`, `upper`, `lower`, `title`, `reverse` | spaces around it cut; in capitals; in small letters; each word capitalized; backwards |
+| `len` | how many characters |
+| `int`, `round`, `abs`, `num` | the number cut, rounded, without its sign, written the plain way (not a number: the text stays as written) |
+| `bool` | `1` or `0`, read like a condition reads it |
+| `json` | a JSON string, quotes included (for building JSON by hand) |
+| `url` | percent-encoded (safe in a URL) |
+| `basename`, `dirname`, `ext` | last part of a path; the folder; the extension without the dot |
+| `count`, `first`, `last` | of a list: how many items, the first, the last |
+| `join` / `join:SEP` | of a list: the items with `, ` (or `SEP`) between them |
+| `item:N` | of a list: the item at position `N` (from 1, `-1` the last) |
+| `default:TEXT` | `TEXT` when the value is empty (or the variable was never set) |
+| `replace:A:B` | every `A` replaced by `B` |
+
+**Lists** are kept in a variable as a **JSON array of texts**: `["a","b"]` (numbers and other values in a file you write
+by hand become their text). An empty or unset variable is the empty list. A text that is not a JSON array is not a
+list: a block that needs one fails (`ok` `0`, and the run reports it). The list in a variable must stay under 16384
+characters. Positions count from 1, a negative one from the end. In the `List` block `list` is the **bare name** of the
+variable; `a`, `b` take `{{variables}}` like any text field and `out` is a bare variable name.
+
+| `op` | `a` | `b` | `out` | Does |
+|---|---|---|---|---|
+| `Split` (default) | text to cut | separator (empty or `\n`: every line; `\t` is a tab) | | makes the list from the text |
+| `Push` | item to add | | | adds at the end |
+| `Pop` | | | variable | takes the last item out and puts it in `out` (empty list: `ok` `0`) |
+| `Get` | position | | variable | puts the item in `out` (no such item: `ok` `0`) |
+| `SetItem` | position | new value | | replaces the item |
+| `Remove` | position | | | removes the item |
+| `Length` | | | variable | how many items |
+| `Join` | text between the items | | variable | the items as one text |
+| `IndexOf` | item to find | | variable | its position, `0` when it is not there |
+| `Sort` | | | | numbers as numbers when **all** are numbers, else as text |
+| `Reverse`, `Unique`, `Shuffle`, `Clear` | | | | reverses; keeps the first of equal items; random order; empties |
+| `Sum` | | | variable | the sum (an item that is not a number: `ok` `0`) |
+
+To do something for **every item**, use `ForEach` and wire the last block of its body back to it. The item is in the
+variable named by `item`, its position in `index`. A position in `a` is a number or `{{variable}}`: a bare name such as
+`i` is **not** read as a variable there.
+
+```text
+Set text = "a\nb\nc"  ->  List Split (list "xs", a "{{text}}")  ->  ForEach (list "xs", item "x")
+   body: Notify (a "Item {{index}}", b "{{x|upper}}")  ->  back to the ForEach
+```
 
 ## Shortcuts
 
@@ -227,6 +335,104 @@ needs care:
 - The shell is `/bin/sh -c` on macOS and Linux and `cmd.exe` (hidden window) on Windows, so write the line for the
   target OS: `$HOME`, `>>` to `$HOME/x`, `date` and `open -a` are Unix; `%USERPROFILE%` and `echo %DATE%` are Windows.
 
+## Writing shell lines that work (`Run` and `Command`)
+
+These are facts about how the line is started, and each one has caused a flow that "does nothing":
+
+- **Only standard output comes back.** `Run` captures what the line prints to stdout into `out`. **Standard
+  error is thrown away.** A message written with `echo "..." >&2` is never seen: print the reason to stdout
+  (`echo "why"`), then `exit 1`, and show `{{out}}` in a `Notify`. `Run` still stores stdout when the exit code
+  is not 0, and `ok` is `1` only when the exit code is `0`.
+- **The shell is `/bin/sh`, started by the app, not by the person's terminal.** It does not read `.zshrc` or
+  `.bash_profile`, and `PATH` is the short one of a graphical app: Homebrew tools (`/opt/homebrew/bin`,
+  `/usr/local/bin`) are usually **not** found. Call them by full path, or use only what the system ships.
+- **`!` binds to the first command only.** `if ! a || b; then fail` means `(not a) or b`, so it fails when `a`
+  *works* and `b` also does. To say "neither worked" write `if ! { a || b; }; then`.
+- **BSD versus GNU tools.** On macOS `stat -f '%m %N'` prints the modification time and the name; on Linux it is
+  `stat -c '%Y %n'`. `date`, `sed -i`, `find -printf` and `readlink -f` differ the same way. Write the line for the
+  system the flow is for (see [Which OS is it for?](#shortcuts)).
+- **Quote every path.** File names have spaces and brackets. Use `"$HOME/..."` in a line and `{{name|sh}}` for a
+  variable. Splitting `find` output with `cut -d ' '` is fine only when the file name is the **last** field.
+- **Say what happened.** A flow that fails silently cannot be fixed by someone who was not looking. Make the line
+  print a sentence for each way it can fail and show it:
+
+  ```
+  Run   (out = why)   ... || { echo "No export found in the last 2 hours."; exit 1; }
+  Branch ok IsTrue    then -> go on,  else -> Notify "{{why}}"
+  ```
+
+## Putting a file on the clipboard
+
+`Native` `ClipboardSet` puts **text** on the clipboard, never a file. A path pasted as text is not an attachment.
+To make a *copy of a file* (the thing that attaches in a chat or a mail when pasted), use a `Run`:
+
+| System | Line (the path is in `$f`) | Notes |
+|---|---|---|
+| macOS | `osascript -l JavaScript -e 'ObjC.import("AppKit");function run(a){var p=$.NSPasteboard.generalPasteboard;p.clearContents;return p.writeObjects($([$.NSURL.fileURLWithPath(a[0])]))}' "$f"` | Writes the file URL the way Finder does (the tested flow tries this first). Fallback, tried second: `osascript -e 'on run argv' -e 'set the clipboard to ((POSIX file (item 1 of argv)) as alias)' -e 'end run' "$f"` |
+| Windows | `powershell -NoProfile -STA -Command "Set-Clipboard -LiteralPath $env:CURSORPIE_FILE"` | `-STA` is the safe choice for the clipboard. Pass the path as the variable `file`: `Run` gives it to the line as `CURSORPIE_FILE`, which avoids quoting. For anything longer than a line, use `-EncodedCommand` (UTF-16LE, base64) |
+| Linux | depends on the desktop (`wl-copy` / `xclip` with a `text/uri-list` or `x-special/gnome-copied-files` target) | Not the same on every desktop: test it before you promise it |
+
+Two mistakes to avoid on macOS:
+
+- `set the clipboard to (item 1 of argv) as «class furl»` is **not** a file: the argument is text, so the clipboard
+  holds a path as text. The path must be made a file reference first (`POSIX file ...`, then `as alias`).
+- `set the clipboard to "/path/file.png"` is text as well.
+
+Re-copy the file **right before** the paste (a second `Run` with `{{file|sh}}`): a dialog, a notification or a
+clipboard manager may have replaced it in between. The finished example is
+[`examples/flows/copy-newest-file-and-paste.cursorpie-flow.json`](examples/flows/copy-newest-file-and-paste.cursorpie-flow.json)
+(macOS).
+
+## What the system asks permission for (macOS)
+
+A flow can be correct and still be refused by the system. None of these shows an error in a flow, because the
+refused line prints nothing:
+
+| What the flow does | What macOS requires | Symptom |
+|---|---|---|
+| `Key` (a shortcut) | CursorPie in **Privacy & Security > Accessibility** | the shortcut is never pressed |
+| `Run` that reads `~/Downloads`, `~/Desktop`, `~/Documents` | CursorPie in **Privacy & Security > Files and Folders** (or Full Disk Access) | `ls` and `find` print nothing and the exit code is not 0; a `find ... 2>/dev/null` looks like "no files" |
+| `Native` `Notify` | notifications allowed for the app that shows them | no banner |
+
+So test access first and say it: `ls "$HOME/Downloads" >/dev/null 2>&1 || { echo "macOS blocks Downloads: allow CursorPie in Privacy & Security > Files and Folders."; exit 1; }`.
+Windows and most Linux desktops do not ask.
+
+## Web pages in a browser
+
+`OpenUrl` returns as soon as the browser is told, **not** when the page has loaded, and a web app does nothing with
+a shortcut until it is loaded, signed in, and showing the right place. A flow cannot read the screen, so it cannot
+see any of that. The pattern that works for "open a web app, then paste":
+
+1. `OpenUrl` the app, then a `Wait` of 2000 to 3000 ms.
+2. `Native` `FrontApp` into a variable (`app`): this is the browser, whichever one the person uses.
+3. `Ask` `YesNo`: tell the person what to do by hand (log in, open the chat), and that **Yes** continues.
+4. `Native` `ActivateApp` with `{{app}}`, a `Wait` of about 700 ms (the dialog has to close and the browser to take
+   the focus back), then the `Key`.
+
+Chat web apps (Telegram Web, WhatsApp Web, Slack) take a pasted file only when a conversation is open and the page
+is in front. Pasting a file usually opens a preview that still waits for **Enter** or **Send**: do not press Send
+for the person.
+
+## When a flow "does nothing"
+
+Work through these in order; each takes a minute.
+
+0. **Is anything red?** Open the flow: a red or amber wire, or a block outlined in red, has a `!` that says what is
+   wrong (see "Wires the editor marks" below). After a run that failed, a notification and the sheet in Settings
+   name the block and the reason, unless an `If / else` on `ok` or `code` handles the failure.
+1. **Did it start?** Put a `Notify` right after `Start`. If it does not show, the slice is not pointing at this flow
+   (or notifications are blocked), not a problem of the flow.
+2. **Which block was the last to run?** Add a `Notify` with `{{code}}` and `{{ok}}` after each `Run`. `code` `-1`
+   means the line could not start, ran out of time, or was killed.
+3. **Run the line by hand.** Paste the `Run` text in a terminal, with the variables replaced. If the terminal works
+   and the flow does not, the cause is the short `PATH`, a missing permission (above), or standard error.
+4. **Look for what the flow cannot see.** A browser that has not loaded, a window that did not come to the front,
+   a clipboard that was replaced. Add a `Wait`, an `Ask`, or a second copy of the file.
+5. **Leave a trace.** `echo "$(date '+%F %T') $f" >> "$HOME/flow.log"` inside the `Run` shows, afterwards, what it
+   saw and when.
+6. **Ending a flow in two places.** There is exactly one `End`. Every other path ends with `Stop` (or a missing
+   wire). A second `End` is dropped on load, and the wires that led to it are cut.
+
 ## How a flow runs
 
 1. The slice is released (or its mode button pressed) and the app copies the flow out of the config.
@@ -236,6 +442,9 @@ needs care:
 3. It ends at `End`, at `Stop`, at an output without a wire, after **10000 blocks**, or after **600 seconds**
    (time spent waiting for an answer in `Ask` does not count). A loop is also limited to 1000 rounds.
 4. If the slice points at a flow id that does not exist, nothing happens.
+5. After the run, a block that could not do its work and that no `If / else` looked at (`ok` / `code`) is reported:
+   a desktop notification (at most one every few seconds), a red outline on the block in the editor, and, while
+   Settings is open, a sheet with the reason.
 
 The worker does one thing at a time, so a long run keeps later actions waiting: keep flows short. Give an app time to
 come to the front before a shortcut is sent to it: **put a `Wait` (300 to 800 ms) between `OpenApp` / `OpenUrl` and
@@ -292,6 +501,49 @@ on it. Note especially the ones that change behaviour:
 
 Several wires into one block and wires back to an earlier block are **allowed**. A wrong **type** (a string where a
 number goes, an array for `next`) refuses the file; unknown extra fields are ignored.
+
+## Wires the editor marks (and how to avoid them)
+
+A flow that loads is not a flow that works. The Flow editor checks every flow without running it and draws a wire
+that cannot work **red**, one that is probably a mistake **amber**. Nothing is refused, but **a red wire is a flow
+that will not do what the wire says**, so do not hand one to a person. Check these before you answer:
+
+| Mark | The mistake | Write it like this instead |
+|---|---|---|
+| red | A block uses `{{name}}`, or compares or calculates with the bare `name`, and **no block on the way sets it** (a run starts with no variables, so `{{name}}` stays as typed) | Put a `Set`, `Ask`, `Run`, `Calc`, `Logic` or a `Native` that returns a value (`ClipboardGet`, `ReadFile`, `Env`...) **before** the block, on every wire that leads to it. A variable set at the end of a loop body and read at its start is fine |
+| red | The `next` (body) of a `Repeat` of 2 or more, or of a `While`, never leads back to it | Wire the last block of the body to the loop block's input. The loop leaves through `alt` |
+| red | A cycle with no `Branch`, `Repeat` or `While` in it | Add one that can leave the cycle. Only the 10000-block limit would stop it |
+| red | `Call` names an id that is not in the config's `flows` (or is empty) | Use the `id` of a flow that exists, or ship it in the same file |
+| red | `Calc` with a text that is not a number, an empty operand, or `Div` / `Rem` by the number 0 | Numbers, or the names of variables that hold numbers |
+| red | `Set`, `Calc`, `Logic`, or a `Native` that returns a value, with no valid variable name | Letters, digits and `_`, not starting with a digit |
+| amber | `OpenApp` / `OpenUrl` and then a `Key` straight away | Put a `Wait` of 300 to 800 between them |
+| amber | A `Command` followed by a block that needs its result (a `Key`, `ClipboardGet`, `ReadFile`, `FileExists`) | Use `Run`, which waits |
+| amber | Both outputs of a `Branch` go to the same block | One of them was meant to go somewhere else |
+| red | A `List` (other than `Split`) or a `ForEach` works on a variable that **no block before it sets** | Make the list first: `List` with `Split`, or a `Native` that returns one (`ListDir`) |
+| red | The body of a `ForEach` never leads back to it (like `Repeat` and `While`) | Wire the last block of the body to the `ForEach` |
+| red | A position (`Get`, `SetItem`, `Remove`) that is not a number, or a `VolumeSet` that is not 0 to 100 | A number, or `{{variable}}` |
+| red | A `Browser` whose command, written out, is empty, is not a command of the extension, or lacks the text it needs | A command from `docs/BROWSER_EXTENSION.md` |
+| amber | A wire out of a block that no run reaches; an empty `OpenApp`, `OpenUrl`, `Command` or `Run`; `Repeat` 0; `Call` to itself; `{{name\|filter}}` with a filter that does not exist | Remove it, or fill it in |
+
+The check follows variables along the wires and is lenient: a variable set on *any* path that reaches the wire counts,
+and after a `Call` anything may be set. It does not know **values**, so a `Calc` on a variable that holds text is
+not caught.
+
+### What happens when a block fails at run time
+
+A block that cannot do its work (`Run` ends with a code other than 0, a file cannot be read or written, the
+clipboard does not answer, a `Call` to a missing flow, a `Calc` on text...) does not stop the run: it sets `ok` to
+0 and the flow goes on. The person is **told** (desktop notification, a red outline in the editor, a sheet with the
+reason) unless the flow **looked at it**: a later `Branch` or `While` whose condition reads `ok` or `code` (the bare
+name, or `{{ok}}` / `{{code}}` in a text) counts as handling the **last** failure. So:
+
+- when a step can fail and the flow can carry on, **put a `Branch` on `ok` (or `code`) right after it**, and let the
+  `else` path say something (`Notify`) or end with `Stop`. That is both better for the person and quiet when all is well;
+- when a step failing means the flow is pointless, still put the `Branch`: its `else` should explain *what* failed in
+  words that fit the task, which is better than the generic sentence the app writes;
+- a cancelled `Ask` is not a failure (`ok` is 0, nothing is reported);
+- `Command`, `OpenApp` and `OpenUrl` have no result the flow can see, so their failures cannot be reported: use
+  `Run` when it matters.
 
 ## Attaching a flow to a slice
 
@@ -360,6 +612,34 @@ rows: `Key Cmd+C`, `Wait 150`, `Key Cmd+Tab` (`key` 48), `Wait 250`, `Key Cmd+V`
 then counts `i` from 0 with a `While` whose body is a notification (`Native` `Notify`, with `{{index}}` and `{{n}}`)
 and `Calc` `i = i + 1` wired back to the `While`; when it is done a last notification says so.
 
+**6. A file on the clipboard, then paste** (macOS): `copy-newest-file-and-paste.cursorpie-flow.json`. Finds the newest
+export in `Downloads`, `Desktop` or `Documents`, puts it on the clipboard **as a file** (`Run`), remembers the app in
+front (`FrontApp`), asks the person to put the cursor where the file goes (`Ask`), brings the app back
+(`ActivateApp`, `Wait`) and presses Cmd+V (`Key`). Every way it can fail ends in a `Notify` and a `Stop`.
+
+**7. Quick reply to every unread chat, with a person confirming** (needs *Allow reading messages*):
+`quick-reply-unread-chats.cursorpie-flow.json`. `chat.unread_names` into `names` (a `Branch` on `ok` says why when reading
+is off, one on `IsEmpty` says that nothing waits), `List` `Split` into `chats`, then a `ForEach`: `chat.open {{chat}}`,
+`chat.last` into `last`, an `Ask` `Text` that shows what came and starts with a quick reply (Cancel skips the chat), an
+`Ask` `YesNo` that shows exactly what will be sent, and only then `chat.send_to {{chat}} :: {{reply}}`. Every path ends
+back at the `ForEach`.
+
+**8. Send, then wait for the answer**: `send-then-wait-for-answer.cursorpie-flow.json`. Asks for the name and the message
+(`Ask`), asks to confirm (`Ask` `YesNo`), `chat.send_to`, then `chat.wait {{secs}}` into `answer` and a `Notify` that says
+the answer or that nobody answered in time. The wait does not count against the run.
+
+**9. Telegram, one folder at a time** (needs *Allow reading messages*): `telegram-folder-triage.cursorpie-flow.json`. Asks for
+a folder name or number (`Ask`; Cancel or an empty answer ends the flow), `chat.folder {{folder}}` into `said`,
+`chat.unread_names` into `names`, and a `Notify` that lists the unread chats of that folder (or says that none waits).
+A last `Ask` `YesNo` offers `chat.next_unread`. Every `chat.*` block is followed by a `Branch` on `ok` that notifies the
+reason on failure. Muted chats are left out by the extension option *Skip muted chats*.
+
+**10. Send a saved reply** (WhatsApp Web or Telegram Web): `telegram-saved-reply.cursorpie-flow.json`. `chat.templates`
+into `names` shows what the person saved, an `Ask` `Text` takes the name of one (`key`) and another the chat (`target`,
+empty means the open chat), an `Ask` `YesNo` confirms, and a `Branch` on `target` `IsEmpty` picks `chat.template {{key}}` or
+`chat.template {{key}} :: {{target}}`. A `Branch` on `ok` ends in a `Notify` of the result. Sending still needs *Allow
+sending messages*; without it the reply is only typed and `ok` is `0`.
+
 ## The checklist before you answer
 
 - [ ] The JSON parses (no comments, no trailing commas, double quotes, escaped backslashes and quotes).
@@ -377,6 +657,11 @@ and `Calc` `i = i + 1` wired back to the `While`; when it is done a last notific
 - [ ] A `Wait` sits between a step that opens something and the step that needs it.
 - [ ] If there is a `Command`, a `Run` or a block that writes a file, you have said so and quoted it for the person;
       text from a variable inside a shell command uses `{{name|sh}}` (or the environment variable of `Run`).
+- [ ] A line that can fail prints the reason to **stdout** (stderr is dropped) and the flow shows it.
+- [ ] A file is put on the clipboard with a `Run` ([the table](#putting-a-file-on-the-clipboard)), not with `ClipboardSet`.
+- [ ] A flow that reads `~/Downloads`, `~/Desktop` or `~/Documents`, or presses a key, says which macOS permission it needs.
+- [ ] Opening a web page is followed by a `Wait` and by an `Ask` for what the flow cannot see.
+- [ ] Extra endings use `Stop`, not a second `End`.
 - [ ] The answer tells the person the file name and the import steps.
 
 When you can run code, this check is short (Python):
@@ -391,14 +676,14 @@ name = lambda k: k if isinstance(k, str) else next(iter(k))
 kinds = [name(n["kind"]) for n in nodes]
 assert kinds.count("Start") == 1 and kinds.count("End") == 1
 assert set(kinds) <= {"Start","End","Key","OpenApp","OpenUrl","Command","Wait","Set","Calc","Logic",
-                      "Branch","Repeat","While","Ask","Run","Native","Call","Stop"}
-two_out = {"Branch", "Repeat", "While"}
+                      "Branch","Repeat","While","ForEach","List","Ask","Run","Native","Call","Stop"}
+two_out = {"Branch", "Repeat", "While", "ForEach"}
 no_out = {"End", "Stop"}
 for n in nodes:
     k = name(n["kind"])
     outs = [n.get("next"), n.get("alt")]
     assert all(t is None or t in by_id for t in outs), f"block {n['id']}: a wire to nothing"
-    assert n.get("alt") is None or k in two_out, f"block {n['id']}: only Branch, Repeat, While have alt"
+    assert n.get("alt") is None or k in two_out, f"block {n['id']}: only Branch, Repeat, While, ForEach have alt"
     assert not (k in no_out and n.get("next") is not None), f"block {n['id']}: no outputs"
     assert all(t != 1 for t in outs), "nothing goes into Start"
 seen, todo = [], [next(n["id"] for n in nodes if n["kind"] == "Start")]
@@ -423,5 +708,7 @@ print("ok:", len(seen), "blocks reachable")
 - Keep flows short and every `Wait` purposeful. Prefer several small flows over one with 40 blocks.
 - If the request needs something a flow cannot do (reading the screen, moving or clicking the mouse, a network
   request, a loop over the lines of a file), say so instead of faking it with extra block kinds.
+- Say what you could **not** test. A flow that touches the clipboard, a browser or a permission has only been
+  proven when the person has run it on their system: ask for the result, and for the text of the notification.
 - Explain every loop and every branch in one sentence ("the body repeats until `i` reaches `n`"), and say which
   variables the flow uses.

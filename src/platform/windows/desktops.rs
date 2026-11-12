@@ -232,8 +232,55 @@ impl Desktops for Row<'_> {
 /// [`Os::desktop_modes`](crate::platform::Os::desktop_modes)), so `_mode` is not looked at: the
 /// caller has already turned any other mode into it with [`DesktopMode::effective`].
 pub fn reveal_app(app: &str, _mode: DesktopMode) {
-    if !switch_to_apps_desktop(app) {
+    if switch_to_apps_desktop(app) {
+        return;
+    }
+    // Not on another desktop. If the app already has a window, that window is what was asked for:
+    // start the program again only when there is none. Starting it again is what a *new window*
+    // does (Chrome, Explorer, terminals and editors answer a second start with one), so doing it
+    // here made the yellow badge of "Open app" (go to the app that is open) open a new window.
+    if !front_existing(app) {
         open_app(app);
+    }
+}
+
+/// What [`reveal_app`] does when the app is not on another desktop.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Reveal {
+    /// Put this window in front.
+    Front(usize),
+    /// The app has no window: start it.
+    Start,
+}
+
+/// Which of `windows` (top-most first) to put in front. One on the desktop that is shown wins,
+/// `on_here` says which those are; else the top-most one (Windows takes the user to its desktop).
+fn pick_window(windows: &[bool]) -> Reveal {
+    match windows.iter().position(|&here| here) {
+        Some(i) => Reveal::Front(i),
+        None if windows.is_empty() => Reveal::Start,
+        None => Reveal::Front(0),
+    }
+}
+
+/// Puts an existing window of `app` in front (restoring it if minimized). `false` when the app has
+/// no window, so the caller starts it.
+fn front_existing(app: &str) -> bool {
+    let Some(id) = app_id_for_open(app) else {
+        return false;
+    };
+    let windows = windows_of(&id);
+    let manager = Manager::new();
+    let here: Vec<bool> = windows
+        .iter()
+        .map(|&w| manager.as_ref().is_some_and(|m| m.on_current_desktop(w)))
+        .collect();
+    match pick_window(&here) {
+        Reveal::Front(i) => {
+            bring_to_front(&id, windows[i]);
+            true
+        }
+        Reveal::Start => false,
     }
 }
 
@@ -291,6 +338,16 @@ mod tests {
             std::mem::offset_of!(ManagerVtbl, move_window_to_desktop),
             5 * slot
         );
+    }
+
+    #[test]
+    fn an_app_with_a_window_is_fronted_not_started_again() {
+        assert_eq!(pick_window(&[]), Reveal::Start, "no window: start it");
+        assert_eq!(pick_window(&[true]), Reveal::Front(0));
+        // the top-most window is on another desktop, the second one is here: that one
+        assert_eq!(pick_window(&[false, true, true]), Reveal::Front(1));
+        // none here (no virtual desktops reported): the top-most one
+        assert_eq!(pick_window(&[false, false]), Reveal::Front(0));
     }
 
     #[test]

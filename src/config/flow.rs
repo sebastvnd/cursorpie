@@ -60,6 +60,8 @@ pub const NODE_W: f32 = 280.0;
 pub const START_W: f32 = 150.0;
 /// Longest name of a flow, in characters.
 pub const MAX_NAME_CHARS: usize = 60;
+/// Longest description of a panel in an *Ask* block (JSON text), in characters.
+pub const MAX_PANEL_CHARS: usize = 16 * 1024;
 /// How long a *Run* block waits for its command when the file does not say.
 const DEFAULT_RUN_SECS: u32 = 10;
 
@@ -147,6 +149,111 @@ pub struct Cond {
     pub op: CmpOp,
     #[serde(default)]
     pub b: String,
+}
+
+/// What a *List* block does with the list in its variable.
+///
+/// A list is a variable that holds a JSON array of texts, like `["a","b"]`, so it can be written,
+/// shown, saved in a file and read by a shell command like any other text. Positions count from 1;
+/// a negative position counts from the end (`-1` is the last item).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ListOp {
+    /// Cuts the text `a` at every `b` and puts the pieces in the list. An empty `b` cuts at every
+    /// line. `\n` and `\t` in `b` mean a line break and a tab.
+    #[default]
+    Split,
+    /// Adds the text `a` at the end.
+    Push,
+    /// Takes the last item out and puts it in `out`.
+    Pop,
+    /// Puts the item at position `a` in `out`.
+    Get,
+    /// Replaces the item at position `a` with `b`.
+    SetItem,
+    /// Removes the item at position `a`.
+    Remove,
+    /// Puts how many items there are in `out`.
+    Length,
+    /// Puts the items, with `a` between them, in `out` as one text. `\n` and `\t` mean a line
+    /// break and a tab.
+    Join,
+    /// Puts the position of the first item equal to `a` in `out` (0 when there is none).
+    IndexOf,
+    /// Sorts the items: as numbers when all of them are numbers, as text otherwise.
+    Sort,
+    /// Reverses the order of the items.
+    Reverse,
+    /// Keeps the first of every item that appears more than once.
+    Unique,
+    /// Puts the items in a random order.
+    Shuffle,
+    /// Puts the sum of the items, as numbers, in `out`.
+    Sum,
+    /// Removes every item.
+    Clear,
+}
+
+impl ListOp {
+    /// Every operation, in the order the editor lists them.
+    pub const ALL: [ListOp; 15] = [
+        ListOp::Split,
+        ListOp::Push,
+        ListOp::Pop,
+        ListOp::Get,
+        ListOp::SetItem,
+        ListOp::Remove,
+        ListOp::Length,
+        ListOp::Join,
+        ListOp::IndexOf,
+        ListOp::Sort,
+        ListOp::Reverse,
+        ListOp::Unique,
+        ListOp::Shuffle,
+        ListOp::Sum,
+        ListOp::Clear,
+    ];
+
+    /// What the editor shows for it.
+    pub const fn label(self) -> &'static str {
+        match self {
+            ListOp::Split => "Make from text",
+            ListOp::Push => "Add item",
+            ListOp::Pop => "Take last item",
+            ListOp::Get => "Get item",
+            ListOp::SetItem => "Change item",
+            ListOp::Remove => "Remove item",
+            ListOp::Length => "Count items",
+            ListOp::Join => "Join into text",
+            ListOp::IndexOf => "Find item",
+            ListOp::Sort => "Sort",
+            ListOp::Reverse => "Reverse",
+            ListOp::Unique => "Remove duplicates",
+            ListOp::Shuffle => "Shuffle",
+            ListOp::Sum => "Sum of numbers",
+            ListOp::Clear => "Empty the list",
+        }
+    }
+
+    /// What the three extra fields are for, as the hints the editor shows: `a`, `b` and `out`
+    /// (the variable that gets the result). An empty hint means the operation does not use that
+    /// field and the editor leaves it out.
+    pub const fn hints(self) -> (&'static str, &'static str, &'static str) {
+        match self {
+            ListOp::Split => ("text to cut", "cut at (empty: every line)", ""),
+            ListOp::Push => ("item to add", "", ""),
+            ListOp::Pop => ("", "", "variable for the item"),
+            ListOp::Get => ("position (1 = first, -1 = last)", "", "variable"),
+            ListOp::SetItem => ("position", "new value", ""),
+            ListOp::Remove => ("position", "", ""),
+            ListOp::Length => ("", "", "variable"),
+            ListOp::Join => ("put between items", "", "variable"),
+            ListOp::IndexOf => ("item to find", "", "variable (0: not there)"),
+            ListOp::Sort | ListOp::Reverse | ListOp::Unique | ListOp::Shuffle | ListOp::Clear => {
+                ("", "", "")
+            }
+            ListOp::Sum => ("", "", "variable"),
+        }
+    }
 }
 
 /// The arithmetic of a *Calc* block.
@@ -239,17 +346,22 @@ pub enum AskMode {
     Text,
     /// A question with Yes and No.
     YesNo,
+    /// A **panel**: a small window of CursorPie's own with the fields, lists and buttons that
+    /// `message` describes (JSON, see `docs/PANELS.md` and [`crate::panel`]). Each field's value
+    /// goes in the variable named by its `id`, and `out` gets the id of the button that was pressed.
+    Panel,
 }
 
 impl AskMode {
     /// Every mode, in the order the editor lists them.
-    pub const ALL: [AskMode; 2] = [AskMode::Text, AskMode::YesNo];
+    pub const ALL: [AskMode; 3] = [AskMode::Text, AskMode::YesNo, AskMode::Panel];
 
     /// What the editor shows for it.
     pub const fn label(self) -> &'static str {
         match self {
             AskMode::Text => "Text",
             AskMode::YesNo => "Yes / No",
+            AskMode::Panel => "Panel (form)",
         }
     }
 }
@@ -291,11 +403,54 @@ pub enum NativeOp {
     UnixTime,
     /// Shows the file or folder `a` in the file manager.
     Reveal,
+    /// Puts the names of what is in the folder `a` (sorted, without the path) in the variable `b`,
+    /// as a list.
+    ListDir,
+    /// Makes the folder `a`, and the folders above it that are missing.
+    MakeDir,
+    /// Copies the file `a` to the path `b` (replacing what is there).
+    CopyFile,
+    /// Moves (renames) the file or folder `a` to the path `b`.
+    MoveFile,
+    /// Deletes the file `a`. A folder is never deleted.
+    DeleteFile,
+    /// Puts the size of the file `a`, in bytes, in the variable `b`.
+    FileSize,
+    /// Puts the time the file or folder `a` was last changed, in Unix seconds, in the variable `b`.
+    FileTime,
+    /// Puts a fact about this computer in the variable `b`: `os`, `arch`, `user`, `host`, `home`
+    /// or `temp`, as named in `a`.
+    SystemInfo,
+    /// Speaks the text `a` aloud with the voice of the system.
+    Say,
+    /// Takes a picture of the whole screen and saves it as the PNG file `a`.
+    Screenshot,
+    /// Puts the volume of the speakers (0 to 100) in the variable `b`.
+    VolumeGet,
+    /// Sets the volume of the speakers to the number `a` (0 to 100).
+    VolumeSet,
+    /// Sends the command `a` to the browser extension (`media.next`, `tab.find {{word}}`,
+    /// `chat.draft_to Anna :: hi`; the commands of `docs/BROWSER_EXTENSION.md`), **waits** for the
+    /// browser to say how it went and puts its words in the variable `b` (optional). `ok` says
+    /// whether it worked, so a flow can decide what to do next.
+    Browser,
+    /// Opens the app `a` the way `b` says: `smart` (the default: go to it when it is open, start
+    /// it when it is not), `existing` (only go to it when it is open: `ok` is 0 when it is not),
+    /// `new` (a new window of it) or `plain` (start it as the plain *Open app* block does).
+    OpenAppSmart,
+    /// Opens the link or file `a` the way `b` says: `smart` (go to the tab that has the page when
+    /// the browser extension reports it open, else open it), `existing` (only go to that tab: `ok`
+    /// is 0 when no tab has it), `new` (a new browser window) or `plain` (as *Open URL* does).
+    OpenUrlSmart,
+    /// Hides (`a` = `on`, or empty) or shows again (`a` = `off`) the notices of the rest of the run:
+    /// the pill that announces keys, apps and links, and the *Notification* blocks. A flow that
+    /// asks again and again (a remote control in a panel) puts it right after *Start*.
+    Quiet,
 }
 
 impl NativeOp {
     /// Every operation, in the order the editor lists them.
-    pub const ALL: [NativeOp; 16] = [
+    pub const ALL: [NativeOp; 32] = [
         NativeOp::ClipboardSet,
         NativeOp::ClipboardGet,
         NativeOp::TypeText,
@@ -312,6 +467,22 @@ impl NativeOp {
         NativeOp::Random,
         NativeOp::UnixTime,
         NativeOp::Reveal,
+        NativeOp::ListDir,
+        NativeOp::MakeDir,
+        NativeOp::CopyFile,
+        NativeOp::MoveFile,
+        NativeOp::DeleteFile,
+        NativeOp::FileSize,
+        NativeOp::FileTime,
+        NativeOp::SystemInfo,
+        NativeOp::Say,
+        NativeOp::Screenshot,
+        NativeOp::VolumeGet,
+        NativeOp::VolumeSet,
+        NativeOp::Browser,
+        NativeOp::OpenAppSmart,
+        NativeOp::OpenUrlSmart,
+        NativeOp::Quiet,
     ];
 
     /// What the editor shows for it.
@@ -333,6 +504,22 @@ impl NativeOp {
             NativeOp::Random => "Random number",
             NativeOp::UnixTime => "Time (Unix seconds)",
             NativeOp::Reveal => "Show in file manager",
+            NativeOp::ListDir => "List a folder",
+            NativeOp::MakeDir => "Make a folder",
+            NativeOp::CopyFile => "Copy a file",
+            NativeOp::MoveFile => "Move or rename",
+            NativeOp::DeleteFile => "Delete a file",
+            NativeOp::FileSize => "File size (bytes)",
+            NativeOp::FileTime => "File changed at (Unix seconds)",
+            NativeOp::SystemInfo => "About this computer",
+            NativeOp::Say => "Speak text aloud",
+            NativeOp::Screenshot => "Screenshot to a file",
+            NativeOp::VolumeGet => "Read the volume",
+            NativeOp::VolumeSet => "Set the volume",
+            NativeOp::Browser => "Browser command",
+            NativeOp::OpenAppSmart => "Open app (smart)",
+            NativeOp::OpenUrlSmart => "Open link (smart)",
+            NativeOp::Quiet => "Hide notices",
         }
     }
 
@@ -354,6 +541,21 @@ impl NativeOp {
             NativeOp::CursorPos => ("x variable", "y variable"),
             NativeOp::Random => ("below (e.g. 100)", "variable"),
             NativeOp::Reveal => ("file or folder path", ""),
+            NativeOp::ListDir => ("folder path", "list variable"),
+            NativeOp::MakeDir => ("folder path", ""),
+            NativeOp::CopyFile => ("from file", "to file"),
+            NativeOp::MoveFile => ("from path", "to path"),
+            NativeOp::DeleteFile => ("file path", ""),
+            NativeOp::FileSize | NativeOp::FileTime => ("file path", "variable"),
+            NativeOp::SystemInfo => ("os, arch, user, host, home or temp", "variable"),
+            NativeOp::Say => ("text to speak", ""),
+            NativeOp::Screenshot => ("png file path", ""),
+            NativeOp::VolumeGet => ("", "variable"),
+            NativeOp::VolumeSet => ("0 to 100", ""),
+            NativeOp::Browser => ("command, e.g. media.next", "reply variable (optional)"),
+            NativeOp::OpenAppSmart => ("app name or id", "smart, existing, new or plain"),
+            NativeOp::OpenUrlSmart => ("link or file", "smart, existing, new or plain"),
+            NativeOp::Quiet => ("on (or empty) or off", ""),
         }
     }
 
@@ -375,6 +577,12 @@ impl NativeOp {
                 | NativeOp::CursorPos
                 | NativeOp::Random
                 | NativeOp::UnixTime
+                | NativeOp::ListDir
+                | NativeOp::FileSize
+                | NativeOp::FileTime
+                | NativeOp::SystemInfo
+                | NativeOp::VolumeGet
+                | NativeOp::Browser
         )
     }
 }
@@ -433,8 +641,8 @@ pub enum NodeKind {
     Repeat(u32),
     /// Goes through `next` (the body) as long as the condition holds, then follows `alt`.
     While(Cond),
-    /// Asks the person, in a window of the system, and puts the answer in `out`. `ok` says whether
-    /// there was one.
+    /// Asks the person, in a window of the system (or, in [`AskMode::Panel`], in a panel of
+    /// CursorPie), and puts the answer in `out`. `ok` says whether there was one.
     Ask {
         #[serde(default)]
         mode: AskMode,
@@ -464,6 +672,29 @@ pub enum NodeKind {
         a: String,
         #[serde(default)]
         b: String,
+    },
+    /// Works on the list in the variable `list` (see [`ListOp`]): makes it from a text, adds,
+    /// takes, finds, sorts... What a result goes in is the variable `out`.
+    List {
+        #[serde(default)]
+        op: ListOp,
+        /// The variable that holds the list.
+        #[serde(default)]
+        list: String,
+        #[serde(default)]
+        a: String,
+        #[serde(default)]
+        b: String,
+        #[serde(default)]
+        out: String,
+    },
+    /// Goes through `next` (the body) once for every item of the list in the variable `list`, with
+    /// the item in the variable `item` and its position (from 1) in `index`, then follows `alt`.
+    ForEach {
+        #[serde(default)]
+        list: String,
+        #[serde(default)]
+        item: String,
     },
     /// Runs the flow with this id, with the same variables, then goes on.
     Call(String),
@@ -499,9 +730,10 @@ impl NodeKind {
     pub fn outputs(&self) -> &'static [Port] {
         match self {
             NodeKind::End | NodeKind::Stop => &[],
-            NodeKind::Branch(_) | NodeKind::Repeat(_) | NodeKind::While(_) => {
-                &[Port::Next, Port::Alt]
-            }
+            NodeKind::Branch(_)
+            | NodeKind::Repeat(_)
+            | NodeKind::While(_)
+            | NodeKind::ForEach { .. } => &[Port::Next, Port::Alt],
             _ => &[Port::Next],
         }
     }
@@ -511,7 +743,7 @@ impl NodeKind {
     pub fn output_names(&self) -> [&'static str; 2] {
         match self {
             NodeKind::Branch(_) => ["then", "else"],
-            NodeKind::Repeat(_) | NodeKind::While(_) => ["body", "done"],
+            NodeKind::Repeat(_) | NodeKind::While(_) | NodeKind::ForEach { .. } => ["body", "done"],
             _ => ["", ""],
         }
     }
@@ -534,8 +766,23 @@ impl NodeKind {
     pub fn is_sensitive(&self) -> bool {
         match self {
             NodeKind::Command(_) | NodeKind::Run { .. } => true,
+            // a browser command that sends a message or closes a window speaks for the person
+            NodeKind::Native {
+                op: NativeOp::Browser,
+                a,
+                ..
+            } => crate::bridge::commands::is_sensitive_in_flow(a),
             NodeKind::Native { op, .. } => {
-                matches!(op, NativeOp::WriteFile | NativeOp::AppendFile)
+                matches!(
+                    op,
+                    NativeOp::WriteFile
+                        | NativeOp::AppendFile
+                        | NativeOp::MakeDir
+                        | NativeOp::CopyFile
+                        | NativeOp::MoveFile
+                        | NativeOp::DeleteFile
+                        | NativeOp::Screenshot
+                )
             }
             _ => false,
         }
@@ -584,12 +831,19 @@ impl NodeKind {
                 text(&mut c.b);
             }
             NodeKind::Ask {
+                mode,
                 message,
                 preset,
                 out,
-                ..
             } => {
-                text(message);
+                if *mode == AskMode::Panel {
+                    // a panel is a JSON text: cut in the middle it would not be a panel at all
+                    if message.chars().count() > MAX_PANEL_CHARS {
+                        *message = message.chars().take(MAX_PANEL_CHARS).collect();
+                    }
+                } else {
+                    text(message);
+                }
                 text(preset);
                 var(out);
             }
@@ -613,6 +867,18 @@ impl NodeKind {
                 } else {
                     text(b);
                 }
+            }
+            NodeKind::List {
+                list, a, b, out, ..
+            } => {
+                var(list);
+                text(a);
+                text(b);
+                var(out);
+            }
+            NodeKind::ForEach { list, item } => {
+                var(list);
+                var(item);
             }
         }
     }
@@ -866,7 +1132,7 @@ impl Flow {
             (ax + aw + 50.0, ay)
         };
         let (own_next, own_alt) = match &kind {
-            NodeKind::Repeat(_) | NodeKind::While(_) => (None, anext),
+            NodeKind::Repeat(_) | NodeKind::While(_) | NodeKind::ForEach { .. } => (None, anext),
             NodeKind::Branch(_) => (anext, anext),
             NodeKind::Stop => (None, None),
             _ => (anext, None),
@@ -1288,32 +1554,293 @@ pub fn export_flow_to_downloads(flow: &Flow) -> Result<PathBuf, String> {
     Ok(p)
 }
 
+/// A flow read from a file, with what the import found out about it: the repairs it had to make
+/// and the things that will probably not work. Shown to the person after an import (the notes are
+/// empty for a clean file).
+#[derive(Clone, Debug)]
+pub struct ImportReport {
+    pub flow: Flow,
+    pub notes: Vec<String>,
+}
+
+/// Cuts a library error message to something a sheet can show.
+fn short(s: &str) -> String {
+    const MAX: usize = 220;
+    let s = s.trim();
+    if s.chars().count() <= MAX {
+        s.to_string()
+    } else {
+        let cut: String = s.chars().take(MAX).collect();
+        format!("{cut}...")
+    }
+}
+
+/// How many wires of the blocks (as read from a file, before cleaning) cannot be kept: to a block
+/// that does not exist, to the block itself, into a *Start*, or out of an output the block lacks.
+fn broken_wires(nodes: &[FlowNode]) -> usize {
+    let ids: BTreeSet<u32> = nodes.iter().map(|n| n.id).collect();
+    let starts: BTreeSet<u32> = nodes
+        .iter()
+        .filter(|n| matches!(n.kind, NodeKind::Start))
+        .map(|n| n.id)
+        .collect();
+    let bad = |from: &FlowNode, to: Option<u32>, port: Port| {
+        to.is_some_and(|t| {
+            !ids.contains(&t)
+                || t == from.id
+                || starts.contains(&t)
+                || !from.kind.outputs().contains(&port)
+        })
+    };
+    nodes
+        .iter()
+        .map(|n| usize::from(bad(n, n.next, Port::Next)) + usize::from(bad(n, n.alt, Port::Alt)))
+        .sum()
+}
+
+/// The shell text of a block that runs one.
+fn shell_text(kind: &NodeKind) -> Option<&str> {
+    match kind {
+        NodeKind::Command(s) => Some(s),
+        NodeKind::Run { command, .. } => Some(command),
+        _ => None,
+    }
+}
+
+/// Things that look wrong in a flow that is already clean. Each note is a sentence that says what
+/// will happen and why.
+fn lint(flow: &Flow, notes: &mut Vec<String>) {
+    let by_id: BTreeMap<u32, &FlowNode> = flow.nodes.iter().map(|n| (n.id, n)).collect();
+    let next_kind = |n: &FlowNode| n.next.and_then(|id| by_id.get(&id)).map(|m| &m.kind);
+    for n in &flow.nodes {
+        let at = format!("Block {}", n.id);
+        // an empty block does nothing
+        let empty = match &n.kind {
+            NodeKind::OpenApp(s) | NodeKind::OpenUrl(s) | NodeKind::Command(s) => {
+                s.trim().is_empty()
+            }
+            NodeKind::Run { command, .. } => command.trim().is_empty(),
+            _ => false,
+        };
+        if empty {
+            notes.push(format!("{at} is empty, so it does nothing."));
+        }
+        // a command is started and not waited for
+        if matches!(n.kind, NodeKind::Command(_))
+            && matches!(
+                next_kind(n),
+                Some(NodeKind::Key(_))
+                    | Some(NodeKind::Native {
+                        op: NativeOp::ClipboardGet | NativeOp::ReadFile | NativeOp::FileExists,
+                        ..
+                    })
+            )
+        {
+            notes.push(format!(
+                "{at} (Command) is not waited for: the next block starts 40 ms later, before the \
+                 command is done. Use a Run block, or add a Wait."
+            ));
+        }
+        // a shortcut straight after opening something goes to the old window
+        if matches!(n.kind, NodeKind::OpenApp(_) | NodeKind::OpenUrl(_))
+            && matches!(next_kind(n), Some(NodeKind::Key(_)))
+        {
+            notes.push(format!(
+                "{at} opens something and the next block presses a shortcut at once. Add a Wait \
+                 (300 to 800 ms) between them, or the shortcut goes to the app that was in front."
+            ));
+        }
+        if let Some(text) = shell_text(&n.kind) {
+            let low = text.to_lowercase();
+            // the failure that put a path, not a file, on the clipboard
+            if low.contains("class furl") && !low.contains("posix file") {
+                notes.push(format!(
+                    "{at} puts a path on the clipboard as text, not a file: AppleScript needs \
+                     `POSIX file` before `as alias`. Pasting would paste text or nothing."
+                ));
+            }
+            let mac_only = [
+                "osascript",
+                "pbcopy",
+                "pbpaste",
+                "stat -f",
+                "open -a",
+                "mdfind",
+                "defaults write",
+            ];
+            let win_only = [
+                "powershell",
+                "%userprofile%",
+                "cmd /c",
+                "cmd.exe",
+                "-encodedcommand",
+            ];
+            if !cfg!(target_os = "macos") && mac_only.iter().any(|w| low.contains(w)) {
+                notes.push(format!(
+                    "{at} uses commands that exist only on a Mac (osascript, pbcopy, stat -f...) \
+                     and this computer is not a Mac: the flow was probably made for another system."
+                ));
+            }
+            if !cfg!(target_os = "windows") && win_only.iter().any(|w| low.contains(w)) {
+                notes.push(format!(
+                    "{at} uses Windows commands (PowerShell, %USERPROFILE%...) and this computer \
+                     is not running Windows: the flow was probably made for another system."
+                ));
+            }
+        }
+    }
+    // a decision on `ok` before anything has set it always sees "true" or an empty value
+    let sets_ok = |k: &NodeKind| {
+        matches!(
+            k,
+            NodeKind::Calc { .. }
+                | NodeKind::Ask { .. }
+                | NodeKind::Run { .. }
+                | NodeKind::Native { .. }
+        )
+    };
+    if let Some(first) = flow
+        .reachable()
+        .into_iter()
+        .find(|n| matches!(n.kind, NodeKind::Branch(_)))
+        && let NodeKind::Branch(c) = &first.kind
+    {
+        let any_before = flow
+            .reachable()
+            .iter()
+            .any(|n| n.id != first.id && sets_ok(&n.kind));
+        if c.a.trim() == "ok" && !any_before {
+            notes.push(format!(
+                "Block {} decides on `ok`, but no Run, Calc, Ask or Native block can set it.",
+                first.id
+            ));
+        }
+    }
+}
+
+/// Parses a flow file and cleans the flow. The error says what is wrong with the file and what
+/// to do about it; the notes of the report say what was repaired or looks wrong.
+pub fn parse_flow_report(text: &str) -> Result<ImportReport, String> {
+    let v: serde_json::Value = serde_json::from_str(text).map_err(|e| {
+        format!(
+            "That file is not valid JSON (line {}, column {}: {}). A flow file is plain JSON: \
+             no comments, no trailing commas, double quotes only.",
+            e.line(),
+            e.column(),
+            short(&e.to_string())
+        )
+    })?;
+    let file_format = match v.get("cursorpie_flow").and_then(|x| x.as_u64()) {
+        None if v.get("cursorpie_profile").is_some() => {
+            return Err(
+                "That is a profile file, not a flow file. Import it with the Import button of the \
+                 profiles, not the one of the Flow tab."
+                    .into(),
+            );
+        }
+        None => {
+            return Err(
+                "That file is not a CursorPie flow: it has no \"cursorpie_flow\" number at the top."
+                    .into(),
+            );
+        }
+        Some(n) if n > u64::from(FLOW_FORMAT) => {
+            return Err(format!(
+                "That flow was made by a newer CursorPie (file format {n}; this version reads up \
+                 to {FLOW_FORMAT}). Update the app first."
+            ));
+        }
+        Some(0) => {
+            return Err("That flow file says format 0, which never existed: it is damaged.".into());
+        }
+        Some(n) => n as u32,
+    };
+    let file: FlowFile = serde_json::from_value(v)
+        .map_err(|e| format!("That flow file is damaged: {}.", short(&e.to_string())))?;
+    let mut flow = file.flow;
+
+    let mut notes = Vec::new();
+    let count =
+        |f: &Flow, pick: fn(&NodeKind) -> bool| f.nodes.iter().filter(|n| pick(&n.kind)).count();
+    let starts = count(&flow, |k| matches!(k, NodeKind::Start));
+    let ends = count(&flow, |k| matches!(k, NodeKind::End));
+    let (nodes_before, bad_wires) = (flow.nodes.len(), broken_wires(&flow.nodes));
+    flow.clean();
+
+    if starts == 0 {
+        notes.push(
+            "The file has no Start block. One was added, but it has no wire, so nothing runs \
+             until you wire it to the first block."
+                .into(),
+        );
+    } else if starts > 1 {
+        notes.push(format!(
+            "The file had {starts} Start blocks; only the first was kept."
+        ));
+    }
+    if ends == 0 {
+        notes.push("The file had no End block. One was added after the last block.".into());
+    } else if ends > 1 {
+        notes.push(format!(
+            "The file had {ends} End blocks; only the first was kept."
+        ));
+    }
+    let dropped = nodes_before.saturating_sub(flow.nodes.len());
+    if dropped > 0 {
+        notes.push(format!(
+            "{dropped} block(s) were dropped: a repeated id, a repeated Start or End, or more than \
+             {MAX_FLOW_NODES} blocks."
+        ));
+    }
+    let lost = bad_wires;
+    if lost > 0 {
+        notes.push(format!(
+            "{lost} wire(s) were removed: they led to a block that does not exist, to the block \
+             itself, into Start, or came out of a block that has no such output. The run stops where \
+             a wire is missing."
+        ));
+    }
+    let unreachable = flow.nodes.len().saturating_sub(flow.reachable().len());
+    if unreachable > 0 {
+        notes.push(format!(
+            "{unreachable} block(s) cannot be reached from Start and will never run."
+        ));
+    }
+    if file_format < flow.format() {
+        notes.push(format!(
+            "The file says format {file_format}, but it uses blocks or wires that need format {}. \
+             It was written by an older or hand-made exporter; it loads, but an older CursorPie \
+             would refuse it.",
+            flow.format()
+        ));
+    }
+    lint(&flow, &mut notes);
+    Ok(ImportReport { flow, notes })
+}
+
 /// Parses a flow file and cleans the flow. The error is a sentence for the status bar.
 pub fn parse_flow(text: &str) -> Result<Flow, String> {
-    let v: serde_json::Value =
-        serde_json::from_str(text).map_err(|_| "That file is not a CursorPie flow.".to_string())?;
-    match v.get("cursorpie_flow").and_then(|x| x.as_u64()) {
-        None => return Err("That file is not a CursorPie flow.".into()),
-        Some(n) if n > u64::from(FLOW_FORMAT) => {
-            return Err("That flow was made by a newer CursorPie. Update the app first.".into());
-        }
-        Some(_) => {}
+    parse_flow_report(text).map(|r| r.flow)
+}
+
+/// Reads a flow file with the report of what the import found. The error is a sentence.
+pub fn import_flow_report(path: &str) -> Result<ImportReport, String> {
+    let meta = fs::metadata(path).map_err(|e| format!("Could not read that file: {e}."))?;
+    if meta.len() > MAX_FLOW_FILE_BYTES {
+        return Err(format!(
+            "That file is too large to be a flow ({} KB; the limit is {} KB).",
+            meta.len() / 1024,
+            MAX_FLOW_FILE_BYTES / 1024
+        ));
     }
-    let file: FlowFile =
-        serde_json::from_value(v).map_err(|_| "That flow file is damaged.".to_string())?;
-    let mut flow = file.flow;
-    flow.clean();
-    Ok(flow)
+    let text = fs::read_to_string(path)
+        .map_err(|e| format!("Could not read that file as UTF-8 text: {e}."))?;
+    parse_flow_report(&text)
 }
 
 /// Reads a flow file. The error is a sentence for the status bar.
 pub fn import_flow_file(path: &str) -> Result<Flow, String> {
-    let meta = fs::metadata(path).map_err(|_| "Could not read that file.".to_string())?;
-    if meta.len() > MAX_FLOW_FILE_BYTES {
-        return Err("That file is too large to be a flow.".into());
-    }
-    let text = fs::read_to_string(path).map_err(|_| "Could not read that file.".to_string())?;
-    parse_flow(&text)
+    import_flow_report(path).map(|r| r.flow)
 }
 
 #[cfg(test)]
@@ -1345,6 +1872,13 @@ mod tests {
     const EX_CONFIG: &str = include_str!("../../docs/examples/flows/config-with-flow.json");
     const EX_LOOP: &str =
         include_str!("../../docs/examples/flows/ask-and-loop.cursorpie-flow.json");
+    const EX_PANEL: &str = include_str!("../../docs/examples/flows/panel-form.cursorpie-flow.json");
+    const EX_FILE_PASTE: &str =
+        include_str!("../../docs/examples/flows/copy-newest-file-and-paste.cursorpie-flow.json");
+    const EX_QUICK_REPLY: &str =
+        include_str!("../../docs/examples/flows/quick-reply-unread-chats.cursorpie-flow.json");
+    const EX_SEND_WAIT: &str =
+        include_str!("../../docs/examples/flows/send-then-wait-for-answer.cursorpie-flow.json");
 
     /// A flow loads "as written" when cleaning it changes nothing: every block is on the chain, in
     /// the order of the file's ids, and the chain runs from Start to End.
@@ -1361,6 +1895,130 @@ mod tests {
         assert!(matches!(chain.first().unwrap().kind, NodeKind::Start));
         assert!(matches!(chain.last().unwrap().kind, NodeKind::End));
         flow
+    }
+
+    #[test]
+    fn the_panel_example_loads_and_its_panel_is_a_valid_one_that_names_its_variables() {
+        let flow = parse_flow(EX_PANEL).expect("a valid flow file");
+        assert_eq!(
+            flow.reachable().len(),
+            flow.nodes.len(),
+            "an unreachable block"
+        );
+        let (mode, message) = flow
+            .nodes
+            .iter()
+            .find_map(|n| match &n.kind {
+                NodeKind::Ask { mode, message, .. } => Some((*mode, message.clone())),
+                _ => None,
+            })
+            .expect("an Ask block");
+        assert_eq!(mode, AskMode::Panel);
+        let spec = crate::panel::PanelSpec::parse(&message).expect("the panel is valid");
+        assert_eq!(spec.id, "greeting");
+        assert_eq!(
+            crate::panel::declared_vars(&message),
+            ["name", "size", "loud"]
+        );
+        // the variables the panel sets are known to the checks, so {{name}} is not reported
+        let issues = crate::config::flow_check::check_flow(&flow, &[]);
+        assert!(
+            issues
+                .iter()
+                .all(|i| !i.message.contains("{{name}}") && !i.message.contains("`name`")),
+            "{issues:?}"
+        );
+    }
+
+    #[test]
+    fn the_chat_examples_load_use_only_commands_of_the_extension_and_are_flagged_as_sensitive() {
+        for (name, text) in [("quick-reply", EX_QUICK_REPLY), ("send-wait", EX_SEND_WAIT)] {
+            let flow = parse_flow(text).expect("a valid flow file");
+            assert_eq!(flow.format(), FLOW_FORMAT, "{name}");
+            assert_eq!(
+                flow.reachable().len(),
+                flow.nodes.len(),
+                "{name}: an unreachable block"
+            );
+            let mut browser = 0;
+            for n in &flow.nodes {
+                if let NodeKind::Native {
+                    op: NativeOp::Browser,
+                    a,
+                    ..
+                } = &n.kind
+                {
+                    browser += 1;
+                    let id = a.split_whitespace().next().unwrap_or("");
+                    assert!(
+                        crate::bridge::commands::find(id).is_some(),
+                        "{name}: `{id}` is not a command of the extension"
+                    );
+                }
+            }
+            assert!(browser >= 2, "{name}: it talks to the browser");
+            // they send messages and read chats: an import warns about them
+            assert!(flow.has_commands(), "{name}");
+            assert!(flow.runs_commands(), "{name}");
+        }
+        // the first reads the chats and sends; the second waits for an answer
+        assert!(EX_QUICK_REPLY.contains("chat.unread_names"));
+        assert!(EX_QUICK_REPLY.contains("chat.last"));
+        assert!(EX_QUICK_REPLY.contains("chat.send_to"));
+        assert!(EX_SEND_WAIT.contains("chat.send_to"));
+        assert!(EX_SEND_WAIT.contains("chat.wait"));
+    }
+
+    #[test]
+    fn a_panel_description_longer_than_a_field_is_kept_whole() {
+        let long = format!(r#"{{"title":"{}"}}"#, "x".repeat(MAX_FIELD_CHARS + 100));
+        let mut f = Flow::new("f", "F");
+        f.add_after(
+            None,
+            NodeKind::Ask {
+                mode: AskMode::Panel,
+                message: long.clone(),
+                preset: String::new(),
+                out: "b".into(),
+            },
+        );
+        for n in &mut f.nodes {
+            n.kind.clean();
+        }
+        let kept = f.nodes.iter().find_map(|n| match &n.kind {
+            NodeKind::Ask { message, .. } => Some(message.clone()),
+            _ => None,
+        });
+        assert_eq!(kept.as_deref(), Some(long.as_str()));
+    }
+
+    #[test]
+    fn the_file_on_the_clipboard_example_loads_untouched_and_every_block_can_run() {
+        let flow = parse_flow(EX_FILE_PASTE).expect("a valid flow file");
+        assert_eq!(flow.format(), FLOW_FORMAT);
+        assert_eq!(
+            flow.reachable().len(),
+            flow.nodes.len(),
+            "an unreachable block"
+        );
+        let kinds =
+            |pick: fn(&NodeKind) -> bool| flow.nodes.iter().filter(|n| pick(&n.kind)).count();
+        assert_eq!(
+            kinds(|k| matches!(k, NodeKind::End)),
+            1,
+            "one End; the others are Stop"
+        );
+        assert_eq!(kinds(|k| matches!(k, NodeKind::Stop)), 2);
+        // the clipboard file is made with a Run that names a file reference, never as text
+        let line = flow
+            .nodes
+            .iter()
+            .find_map(|n| match &n.kind {
+                NodeKind::Run { command, .. } => Some(command.as_str()),
+                _ => None,
+            })
+            .expect("a Run block");
+        assert!(line.contains("POSIX file") && !line.contains("class furl"));
     }
 
     #[test]
@@ -1762,6 +2420,62 @@ mod tests {
     }
 
     #[test]
+    fn import_explains_why_a_file_fails() {
+        let e = parse_flow("{ not json").unwrap_err();
+        assert!(e.contains("not valid JSON") && e.contains("line 1"), "{e}");
+        let e = parse_flow(r#"{"cursorpie_profile": 1}"#).unwrap_err();
+        assert!(e.contains("profile file"), "{e}");
+        let e = parse_flow(r#"{"cursorpie_flow": 99}"#).unwrap_err();
+        assert!(e.contains("newer") && e.contains("99"), "{e}");
+        let e = parse_flow(
+            r#"{"cursorpie_flow": 2, "flow": {"id":"a","name":"a","nodes":[{"id":1,"x":0,"y":0,"kind":"Nope"}]}}"#,
+        )
+        .unwrap_err();
+        assert!(e.contains("damaged") && e.contains("Nope"), "{e}");
+    }
+
+    #[test]
+    fn import_notes_name_the_repairs_and_the_old_format() {
+        // format 1 on a flow that needs 2, a wire to nothing, no End
+        let text = r#"{"cursorpie_flow": 1, "flow": {"id":"a","name":"a","nodes":[
+            {"id":1,"x":0,"y":0,"kind":"Start","next":2},
+            {"id":2,"x":0,"y":0,"kind":{"Branch":{"a":"x","op":"IsTrue","b":""}},"next":9,"alt":null}
+        ]}}"#;
+        let r = parse_flow_report(text).unwrap();
+        let all = r.notes.join("\n");
+        assert!(all.contains("no End block"), "{all}");
+        assert!(all.contains("wire(s) were removed"), "{all}");
+        assert!(
+            all.contains("format 1, but it uses blocks or wires that need format 2"),
+            "{all}"
+        );
+        // a clean file has no notes
+        let clean = export_flow(&sample()).unwrap();
+        let n = parse_flow_report(&clean).unwrap().notes;
+        assert!(n.is_empty(), "{n:?}");
+    }
+
+    #[test]
+    fn import_lints_the_clipboard_mistake_that_pastes_text() {
+        let mut f = sample();
+        f.nodes.push(FlowNode {
+            id: 60,
+            x: 0.0,
+            y: 0.0,
+            kind: NodeKind::Run {
+                command: "osascript -e 'set the clipboard to (item 1 of argv) as \u{ab}class furl\u{bb}' \"$f\"".into(),
+                out: String::new(),
+                timeout_s: 5,
+            },
+            next: None,
+            alt: None,
+        });
+        let mut notes = Vec::new();
+        lint(&f, &mut notes);
+        assert!(notes.iter().any(|n| n.contains("POSIX file")), "{notes:?}");
+    }
+
+    #[test]
     fn commands_are_found_even_when_unplugged() {
         let mut f = sample();
         assert!(!f.has_commands() && !f.runs_commands());
@@ -1995,6 +2709,132 @@ mod tests {
     }
 
     #[test]
+    fn list_blocks_have_labels_hints_two_outputs_for_the_loop_and_survive_a_file() {
+        assert_eq!(ListOp::ALL.len(), 15);
+        for op in ListOp::ALL {
+            assert!(!op.label().is_empty());
+            let (a, b, out) = op.hints();
+            // a hint is a short phrase, or empty when the operation does not use the field
+            assert!([a, b, out].iter().all(|h| h.chars().count() < 40), "{op:?}");
+        }
+        // what an operation returns it says so in a hint for `out`
+        assert!(!ListOp::Get.hints().2.is_empty() && ListOp::Sort.hints().2.is_empty());
+
+        let mut f = Flow::new("f", "F");
+        let l = f.add_after(
+            None,
+            NodeKind::List {
+                op: ListOp::Get,
+                list: "xs".into(),
+                a: "-1".into(),
+                b: String::new(),
+                out: "last".into(),
+            },
+        );
+        let e = f.add_after(
+            Some(l),
+            NodeKind::ForEach {
+                list: "xs".into(),
+                item: "it".into(),
+            },
+        );
+        let each = f.node(e).expect("the loop is there");
+        assert_eq!(each.kind.outputs().len(), 2);
+        assert_eq!(each.kind.output_names(), ["body", "done"]);
+        assert!(each.alt.is_some(), "a loop gets a way out");
+        assert!(!each.kind.is_legacy());
+        assert_eq!(f.format(), FLOW_FORMAT);
+        // the file keeps every field, and a block that came without some still loads
+        let back = parse_flow(&export_flow(&f).unwrap()).unwrap();
+        assert_eq!(back, f);
+        let sparse = r#"{"cursorpie_flow": 2, "flow": {"id":"a","name":"a","nodes":[
+            {"id":1,"x":0,"y":0,"kind":"Start","next":2},
+            {"id":2,"x":0,"y":0,"kind":{"List":{"op":"Push","list":"xs"}},"next":3},
+            {"id":3,"x":0,"y":0,"kind":{"ForEach":{"list":"xs","item":"it"}},"next":null,"alt":null}]}}"#;
+        let loaded = parse_flow(sparse).unwrap();
+        assert!(matches!(
+            loaded.node(2).map(|n| &n.kind),
+            Some(NodeKind::List { op: ListOp::Push, a, out, .. }) if a.is_empty() && out.is_empty()
+        ));
+    }
+
+    #[test]
+    fn the_blocks_that_write_files_or_change_the_system_stand_out() {
+        let native = |op| NodeKind::Native {
+            op,
+            a: String::new(),
+            b: String::new(),
+        };
+        for op in [
+            NativeOp::WriteFile,
+            NativeOp::AppendFile,
+            NativeOp::MakeDir,
+            NativeOp::CopyFile,
+            NativeOp::MoveFile,
+            NativeOp::DeleteFile,
+            NativeOp::Screenshot,
+        ] {
+            assert!(native(op).is_sensitive(), "{op:?}");
+        }
+        for op in [
+            NativeOp::ListDir,
+            NativeOp::FileSize,
+            NativeOp::FileTime,
+            NativeOp::SystemInfo,
+            NativeOp::VolumeGet,
+            NativeOp::ReadFile,
+        ] {
+            assert!(!native(op).is_sensitive(), "{op:?}");
+            assert!(op.b_is_variable(), "{op:?} puts its result in a variable");
+        }
+    }
+
+    #[test]
+    fn a_browser_block_stands_out_only_when_it_can_speak_for_you_or_close_things() {
+        let browser = |line: &str| NodeKind::Native {
+            op: NativeOp::Browser,
+            a: line.into(),
+            b: String::new(),
+        };
+        assert!(browser("chat.send_to Mom :: hi").is_sensitive());
+        assert!(browser("chat.send ok").is_sensitive());
+        assert!(browser("window.close").is_sensitive());
+        // the command is only known when the flow runs: it could be any of them
+        assert!(browser("{{cmd}}").is_sensitive());
+        assert!(!browser("media.next").is_sensitive());
+        assert!(!browser("chat.draft_to Mom :: hi").is_sensitive());
+        assert!(!browser("tab.find {{word}}").is_sensitive());
+    }
+
+    #[test]
+    fn a_browser_block_that_reads_a_chat_stands_out_too() {
+        let browser = |line: &str| NodeKind::Native {
+            op: NativeOp::Browser,
+            a: line.into(),
+            b: "reply".into(),
+        };
+        // what it reads can be given away by the blocks after it, so an import warns about it
+        for line in [
+            "chat.who",
+            "chat.unread_names",
+            "chat.last",
+            "chat.read",
+            "chat.read 3",
+            "chat.wait",
+            "chat.wait 90",
+        ] {
+            assert!(browser(line).is_sensitive(), "{line}");
+        }
+        // the number of chats that wait is not what anybody wrote
+        assert!(!browser("chat.unread").is_sensitive());
+        assert!(!browser("chat.unread @telegram").is_sensitive());
+        // a flow that only reads is flagged as a whole
+        let mut f = Flow::new("f1", "Reply");
+        f.add_after(None, browser("chat.last"));
+        assert!(f.has_commands());
+    }
+
+    #[test]
     fn every_native_operation_has_a_label_and_a_hint_for_the_field_it_uses() {
         for op in NativeOp::ALL {
             assert!(!op.label().is_empty());
@@ -2004,6 +2844,7 @@ mod tests {
             assert!(!op.b_is_variable() || !b.is_empty());
         }
         assert_eq!(CmpOp::ALL.len(), 11);
+        assert_eq!(NativeOp::ALL.len(), 32);
         assert!(CmpOp::ALL.iter().all(|c| !c.label().is_empty()));
         assert!(CalcOp::ALL.iter().all(|c| !c.label().is_empty()));
         assert!(LogicOp::ALL.iter().all(|c| !c.label().is_empty()));

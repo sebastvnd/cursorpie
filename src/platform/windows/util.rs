@@ -204,8 +204,13 @@ pub fn select_params(path: &str) -> String {
 /// The file-type filter of the open dialog: pairs of `description\0pattern\0`, ended by a double
 /// zero, as `OPENFILENAMEW::lpstrFilter` wants it.
 pub fn filter_for(kind: FileKind) -> Vec<u16> {
+    let images = crate::platform::IMAGE_EXTENSIONS
+        .iter()
+        .map(|e| format!("*.{e}"))
+        .collect::<Vec<_>>()
+        .join(";");
     let (desc, pattern) = match kind {
-        FileKind::Image => ("Images", "*.png;*.jpg;*.jpeg;*.webp"),
+        FileKind::Image => ("Images", images.as_str()),
         FileKind::Json => ("JSON files", "*.json"),
         FileKind::App => ("Programs", "*.exe"),
     };

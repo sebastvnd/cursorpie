@@ -1,0 +1,252 @@
+{
+  "cursorpie_flow": 2,
+  "flow": {
+    "id": "send-then-wait-for-answer",
+    "name": "Send a message, then wait for the answer",
+    "nodes": [
+      {
+        "id": 1,
+        "x": 40.0,
+        "y": 60.0,
+        "kind": "Start",
+        "next": 2
+      },
+      {
+        "id": 2,
+        "x": 340.0,
+        "y": 60.0,
+        "kind": {
+          "Ask": {
+            "mode": "Text",
+            "message": "Who do you want to write to? Type the name as it shows in your chat list.",
+            "preset": "",
+            "out": "who"
+          }
+        },
+        "next": 3
+      },
+      {
+        "id": 3,
+        "x": 640.0,
+        "y": 60.0,
+        "kind": {
+          "Branch": {
+            "a": "ok",
+            "op": "IsTrue",
+            "b": ""
+          }
+        },
+        "next": 4,
+        "alt": 13
+      },
+      {
+        "id": 4,
+        "x": 40.0,
+        "y": 190.0,
+        "kind": {
+          "Ask": {
+            "mode": "Text",
+            "message": "Message to {{who}}:",
+            "preset": "",
+            "out": "text"
+          }
+        },
+        "next": 5
+      },
+      {
+        "id": 5,
+        "x": 340.0,
+        "y": 190.0,
+        "kind": {
+          "Branch": {
+            "a": "ok",
+            "op": "IsTrue",
+            "b": ""
+          }
+        },
+        "next": 6,
+        "alt": 13
+      },
+      {
+        "id": 6,
+        "x": 640.0,
+        "y": 190.0,
+        "kind": {
+          "Branch": {
+            "a": "text",
+            "op": "IsEmpty",
+            "b": ""
+          }
+        },
+        "next": 13,
+        "alt": 7
+      },
+      {
+        "id": 7,
+        "x": 40.0,
+        "y": 320.0,
+        "kind": {
+          "Ask": {
+            "mode": "YesNo",
+            "message": "Send this to {{who}} and then wait for the answer?\n\n{{text}}",
+            "preset": "",
+            "out": "sure"
+          }
+        },
+        "next": 8
+      },
+      {
+        "id": 8,
+        "x": 340.0,
+        "y": 320.0,
+        "kind": {
+          "Branch": {
+            "a": "sure",
+            "op": "IsTrue",
+            "b": ""
+          }
+        },
+        "next": 9,
+        "alt": 13
+      },
+      {
+        "id": 9,
+        "x": 640.0,
+        "y": 320.0,
+        "kind": {
+          "Native": {
+            "op": "Browser",
+            "a": "chat.send_to {{who}} :: {{text}}",
+            "b": "said"
+          }
+        },
+        "next": 10
+      },
+      {
+        "id": 10,
+        "x": 40.0,
+        "y": 450.0,
+        "kind": {
+          "Branch": {
+            "a": "ok",
+            "op": "IsTrue",
+            "b": ""
+          }
+        },
+        "next": 11,
+        "alt": 14
+      },
+      {
+        "id": 11,
+        "x": 340.0,
+        "y": 450.0,
+        "kind": {
+          "Set": {
+            "name": "secs",
+            "value": "120"
+          }
+        },
+        "next": 12
+      },
+      {
+        "id": 12,
+        "x": 640.0,
+        "y": 450.0,
+        "kind": {
+          "Native": {
+            "op": "Browser",
+            "a": "chat.wait {{secs}}",
+            "b": "answer"
+          }
+        },
+        "next": 15
+      },
+      {
+        "id": 13,
+        "x": 340.0,
+        "y": 840.0,
+        "kind": "End"
+      },
+      {
+        "id": 14,
+        "x": 640.0,
+        "y": 580.0,
+        "kind": {
+          "Native": {
+            "op": "Notify",
+            "a": "Not sent to {{who}}",
+            "b": "{{said}}"
+          }
+        },
+        "next": 13
+      },
+      {
+        "id": 15,
+        "x": 40.0,
+        "y": 580.0,
+        "kind": {
+          "Branch": {
+            "a": "ok",
+            "op": "IsTrue",
+            "b": ""
+          }
+        },
+        "next": 16,
+        "alt": 17
+      },
+      {
+        "id": 16,
+        "x": 340.0,
+        "y": 580.0,
+        "kind": {
+          "Branch": {
+            "a": "answer",
+            "op": "IsEmpty",
+            "b": ""
+          }
+        },
+        "next": 18,
+        "alt": 19
+      },
+      {
+        "id": 17,
+        "x": 40.0,
+        "y": 710.0,
+        "kind": {
+          "Native": {
+            "op": "Notify",
+            "a": "Could not wait for the answer",
+            "b": "{{answer}}"
+          }
+        },
+        "next": 13
+      },
+      {
+        "id": 18,
+        "x": 340.0,
+        "y": 710.0,
+        "kind": {
+          "Native": {
+            "op": "Notify",
+            "a": "No answer yet",
+            "b": "{{who}} did not answer in {{secs}} seconds"
+          }
+        },
+        "next": 13
+      },
+      {
+        "id": 19,
+        "x": 640.0,
+        "y": 710.0,
+        "kind": {
+          "Native": {
+            "op": "Notify",
+            "a": "{{who}} answered",
+            "b": "{{answer}}"
+          }
+        },
+        "next": 13
+      }
+    ]
+  }
+}

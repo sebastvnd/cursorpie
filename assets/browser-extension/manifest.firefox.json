@@ -1,11 +1,58 @@
 {
   "manifest_version": 2,
   "name": "CursorPie Bridge",
-  "description": "Tells the CursorPie app on this computer which web pages are open, so its Open URL slice can go to a page that is already open. Nothing leaves your computer.",
+  "description": "Lets the CursorPie app on this computer control the browser: go to a page that is already open, play/pause/next on players, switch and close tabs, and move around WhatsApp Web and Telegram Web. Nothing leaves your computer.",
   "version": "{{VERSION}}",
   "browser_specific_settings": {
-    "gecko": { "id": "browser-bridge@cursorpie", "strict_min_version": "91.0" }
+    "gecko": {
+      "id": "browser-bridge@cursorpie",
+      "strict_min_version": "91.0",
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ]
+      }
+    }
   },
-  "permissions": ["tabs", "nativeMessaging", "alarms"],
-  "background": { "scripts": ["background.js"] }
+  "permissions": [
+    "tabs",
+    "nativeMessaging",
+    "alarms",
+    "storage",
+    "sessions",
+    "https://*.youtube.com/*",
+    "https://open.spotify.com/*",
+    "https://soundcloud.com/*",
+    "https://music.apple.com/*",
+    "https://*.deezer.com/*",
+    "https://*.tidal.com/*",
+    "https://*.bandcamp.com/*",
+    "https://*.twitch.tv/*",
+    "https://vimeo.com/*",
+    "https://*.netflix.com/*",
+    "https://*.primevideo.com/*",
+    "https://*.dailymotion.com/*",
+    "https://web.whatsapp.com/*",
+    "https://web.telegram.org/*"
+  ],
+  "optional_permissions": [
+    "<all_urls>"
+  ],
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "background": {
+    "scripts": [
+      "util.js",
+      "page-media.js",
+      "page-chat.js",
+      "ui.js",
+      "cmd-tab.js",
+      "cmd-media.js",
+      "cmd-chat.js",
+      "cmd-ui.js",
+      "background.js"
+    ]
+  }
 }

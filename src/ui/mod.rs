@@ -5,6 +5,7 @@
 //! | [`app`] | the eframe app: state, message handling, window management |
 //! | [`pie`] | drawing the pie |
 //! | [`settings`] | the Settings window (tabs, editors, icon picker) |
+//! | [`hud`] | the notice of what CursorPie is doing: a pill at the edge of the screen |
 //! | [`tray`] | the menu bar icon and menu |
 //! | [`appicon`] | real app icons, reduced to white glyphs |
 //! | [`icons`] | the bounded texture cache for icons, shared by the pie and Settings |
@@ -21,6 +22,7 @@ pub mod app;
 pub mod appicon;
 pub mod draw;
 pub mod fonts;
+pub mod hud;
 pub mod iconfit;
 pub mod icons;
 pub mod pie;

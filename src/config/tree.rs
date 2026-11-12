@@ -41,6 +41,8 @@ pub fn item_at_mut<'a>(items: &'a mut [Item], path: &[usize]) -> Option<&'a mut 
 fn action_runs_command(a: &Action) -> bool {
     match a {
         Action::Command(_) => true,
+        // a browser command that can send a message or close a window speaks for the person
+        Action::Browser(spec) => crate::bridge::commands::is_sensitive(spec),
         Action::Sequence(v) => v.iter().any(action_runs_command),
         _ => false,
     }

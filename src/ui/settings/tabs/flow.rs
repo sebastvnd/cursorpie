@@ -12,7 +12,17 @@
 //! Click a block and press Delete or Backspace to remove it (not while typing in a field).
 //!
 //! *Add block* opens a list of every kind of block in groups (Steps, Variables and logic, Ask and
-//! system); the right button on the empty canvas opens the same list at the pointer.
+//! system); the right button anywhere on the canvas (on the empty background, on a block or on
+//! one of its fields) opens the same list at the pointer. It opens on the press, not on the
+//! release, so a slow click or a trackpad that moves a little still opens it ([`canvas_menu`]).
+//! *Tidy* lines the blocks up in columns, left to right, without any of them covering another.
+//!
+//! A wire that cannot work is **red**, one that probably is a mistake **amber**, each with a `!`
+//! in the middle whose tooltip says why, and the block it leads to has the same mark on its
+//! corner ([`crate::config::flow_check`]; the rules are in
+//! [`guides::flow_checks`](crate::guides::flow_checks)). A block that could not do its work in
+//! the last real run of the flow is outlined in red too, with the reason in the tooltip
+//! (`Ed::flow_marks`, set by the report of the run). The strip under the canvas counts both.
 //!
 //! Every block has a dot on the right for each output (one; two for *If*, *Repeat* and *While*:
 //! `then` / `else`, `body` / `done`; none for *End* and *Stop*) and, except *Start*, one on the left
@@ -21,15 +31,27 @@
 //! loop. Click a wired output dot to unplug that wire, a wired input dot to unplug every wire into
 //! it; drag the header of a block to move it. The canvas moves with a drag on its
 //! background, the middle button or the scroll of a trackpad or wheel, and zooms with Alt + scroll
-//! or a pinch ([`view_input`]). The number in each header is the order a walk from *Start* finds
+//! or a pinch ([`view_input`]); the text is laid out again at every zoom so it stays sharp
+//! ([`crisp_text`]). The number in each header is the order a walk from *Start* finds
 //! the blocks in; a block no wire leads to is marked *not wired* and never runs. The data model,
 //! the rules that keep a flow valid and the share file are in [`crate::config::flow`], the
 //! interpreter in [`crate::flowrun`]; this file only draws and edits.
 //!
 //! A slice runs a flow through its action: Menu > a slice > **Flow**.
+//!
+//! **New flow** does not add a flow at once: it opens the sheet of [`flow_new`](super::flow_new),
+//! which asks whether to build the flow by hand or with an AI agent (`Do::NewMenu`; `Do::New` is
+//! the empty flow itself).
 
+use super::flow_inspect::{self, READS_C, SETS_C};
+use super::flow_list as list_ui;
+use super::flow_new::flow_new_sheet;
 use crate::config::flow::{COORD_LIMIT, export_flow_to_downloads, fresh_id, unique_name};
+use crate::config::flow_check::{
+    block_issues, block_reads, block_severity, block_writes, data_edges, wire_severity,
+};
 use crate::config::*;
+#[cfg(test)]
 use crate::keys::{Shortcut, key};
 use crate::msg::Msg;
 use crate::platform;
@@ -37,15 +59,16 @@ use crate::tap::{RECORDING, SWALLOW_KEY};
 use crate::ui::app::App;
 use crate::ui::draw::rgb;
 use crate::ui::fonts;
+use crate::ui::settings::panel_designer;
 use crate::ui::settings::picker::spawn_file_picker;
-use crate::ui::settings::state::{Ed, PickFor, Rec, Slot};
+use crate::ui::settings::state::{Ed, FlowMenu, FlowNew, FlowView, KitStatus, PickFor, Rec, Slot};
 use crate::ui::settings::tabs::profile_toolbar::{flow_app_sheet, open_picker};
 use crate::ui::settings::theme::*;
 use crate::ui::settings::widgets::*;
 use crate::ui::symbols;
 use eframe::egui::{
     self, Align2, Color32, FontId, PointerButton, Pos2, Rect, RichText, Sense, Shape, Stroke,
-    StrokeKind, UiBuilder, Vec2, emath::TSTransform, pos2, vec2,
+    StrokeKind, UiBuilder, Vec2, emath::TSTransform, layers::ShapeIdx, pos2, vec2,
 };
 use std::collections::BTreeMap;
 use std::sync::atomic::Ordering;
@@ -64,58 +87,84 @@ const DROP_R: f32 = 18.0;
 /// How much taller a block gets for each control row after the first (a control is 32 high, the gap 8).
 const ROW_STEP: f32 = 40.0;
 /// Width of the pill that picks an operation in a row of three controls.
-const OP_W: f32 = 96.0;
+pub(super) const OP_W: f32 = 96.0;
+/// The color of a wire or a block with a warning: probably a mistake, but it can still work. An
+/// error is `pal().bad` (red). Not part of the palette: the two have to read on both appearances.
+pub(super) const AMBER: Color32 = Color32::from_rgb(201, 138, 28);
+/// Height of the strip under the canvas that holds the hint line, so no block ever covers it.
+const STATUS_H: f32 = 30.0;
+/// Space between two columns of blocks, and between two blocks of a column, after *Tidy*.
+const TIDY_COL_GAP: f32 = 90.0;
+const TIDY_ROW_GAP: f32 = 28.0;
+/// Where the first column of blocks starts after *Tidy*.
+const TIDY_ORIGIN: f32 = 40.0;
 
 /// What the toolbar (or the empty page) asked for this frame.
-enum Do {
+pub(super) enum Do {
+    /// Add an empty flow
     New,
+    /// Open the sheet that asks how the new flow is to be made (by hand, or with an AI agent)
+    NewMenu,
     Duplicate,
     Delete,
     Import,
     Export,
     Pick(usize),
     ResetView,
+    /// Line the blocks up in columns so none covers another
+    Tidy,
     Add(NodeKind),
+    /// Add a step at the end of the list of steps
+    AddStep(NodeKind),
+    /// Show the flow as a list of steps or on the canvas
+    View(FlowView),
+    /// Fill the whole display with the Flow tab, or go back to the window
+    ToggleFull,
+    /// Open or close the inspector of the canvas (the selected block, the variables)
+    ToggleInspector,
 }
 
 /// What the canvas asked for this frame. They are applied after the blocks are drawn, so the flow
 /// is not changed while it is being walked.
-enum Op {
+pub(super) enum Op {
     Connect(u32, Port, u32),
     Unplug(u32),
     UnplugOut(u32, Port),
     Remove(u32),
     Record(u32),
     PickApp(u32),
+    /// Open the panel designer for this *Ask* block
+    DesignPanel(u32),
     /// Add a block with no wires at this place of the canvas
     AddAt(NodeKind, Pos2),
+    /// Add a block at this place and wire the output (block, port) that had nothing to it
+    AddFrom(NodeKind, Pos2, (u32, Port)),
 }
 
-/// How far the canvas can be zoomed out and in. The text is drawn once at its normal size and
-/// then scaled, so it is only sharp up to a little over 100%: further in it turns blurry.
+/// How far the canvas can be zoomed out and in. The text is laid out again at the size it is shown
+/// at (see [`crisp_text`]), so it stays sharp over the whole range, like a vector drawing.
 const ZOOM_MIN: f32 = 0.3;
-const ZOOM_MAX: f32 = 1.25;
+const ZOOM_MAX: f32 = 4.0;
 
 impl App {
-    /// Draws the Flow tab into `ui`: the toolbar and, under it, the canvas of the selected flow.
+    /// Draws the Flow tab into `ui`: the list of flows on the left and, beside it, the selected
+    /// flow as a list of steps (or, on request, as a canvas of blocks and wires).
     pub(in crate::ui::settings) fn flow_tab(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let App { edit, ed, tx, .. } = self;
         let tx_ref: &Sender<Msg> = tx;
         let accent = rgb(edit.accent);
         ed.flow = ed.flow.min(edit.flows.len().saturating_sub(1));
 
-        let todo = if edit.flows.is_empty() {
-            empty_page(ui, accent)
-        } else {
-            toolbar(ui, edit, ed, accent)
-        };
-        if let Some(todo) = todo {
-            run(todo, ctx, edit, ed, tx_ref);
-        }
         if edit.flows.is_empty() {
+            if let Some(todo) = empty_page(ui, accent) {
+                run(todo, ctx, edit, ed, tx_ref);
+            }
+            flow_new_sheet(ctx, edit, ed, tx_ref, accent);
             return;
         }
-        ui.add_space(GAP);
+        let full = ui.available_rect_before_wrap();
+        let main = full;
+        let mut todo = None;
         let fi = ed.flow;
         // the other flows a *Call* block can pick
         let others: Vec<(String, String)> = edit
@@ -125,21 +174,114 @@ impl App {
             .filter(|(i, _)| *i != fi)
             .map(|(_, f)| (f.id.clone(), f.name.clone()))
             .collect();
-        canvas(ui, ctx, &mut edit.flows[fi], ed, accent, &others, tx_ref);
+        ui.scope_builder(UiBuilder::new().max_rect(main), |ui| {
+            if let Some(t) = list_ui::header(ui, edit, ed, accent) {
+                todo = Some(t);
+            }
+            ui.add_space(GAP);
+            match ed.flow_view {
+                FlowView::Steps => {
+                    crate::tap::FLOW_CANVAS_HOVER.store(false, Ordering::SeqCst);
+                    let avail = ui.available_rect_before_wrap();
+                    list_ui::steps(ui, ctx, &mut edit.flows[fi], ed, accent, &others, tx_ref);
+                    // the button to add a step floats over the bottom of the page (a flow that
+                    // is wired freely is not a list: there is nothing to add to)
+                    if crate::config::flow_list::outline(&edit.flows[fi]).is_some()
+                        && let Some(t) = list_ui::steps_bar(
+                            ctx,
+                            avail,
+                            &edit.flows[fi],
+                            &mut ed.flow_search,
+                            accent,
+                            ed.flow_full.is_some(),
+                        )
+                    {
+                        todo = Some(t);
+                    }
+                }
+                FlowView::Canvas => {
+                    // blocks added from the list have no place yet: line them up once
+                    if ed.flow_untidy.remove(&edit.flows[fi].id) {
+                        tidy(&mut edit.flows[fi]);
+                        ed.flow_zoom = 1.0;
+                        ed.flow_pan = Vec2::ZERO;
+                    }
+                    // the canvas takes all the room; the bar with the buttons floats over its
+                    // bottom, above the strip with the hint line
+                    let avail = ui.available_rect_before_wrap();
+                    let whole = Rect::from_min_size(
+                        avail.min,
+                        vec2(avail.width(), avail.height().max(220.0)),
+                    );
+                    // a selected block (or the button of the bar) opens the inspector at the
+                    // right: the canvas keeps the rest
+                    let insp_on = flow_inspect::visible(ed, &edit.flows[fi]);
+                    let insp_w = flow_inspect::SIDE_W.min(whole.width() * 0.5);
+                    let canvas_rect = if insp_on {
+                        Rect::from_min_max(whole.min, pos2(whole.max.x - insp_w - GAP, whole.max.y))
+                    } else {
+                        whole
+                    };
+                    ui.scope_builder(UiBuilder::new().max_rect(canvas_rect), |ui| {
+                        canvas(ui, ctx, &mut edit.flows[fi], ed, accent, &others, tx_ref);
+                    });
+                    if insp_on {
+                        let insp_rect =
+                            Rect::from_min_max(pos2(whole.max.x - insp_w, whole.min.y), whole.max);
+                        flow_inspect::panel(
+                            ui,
+                            ctx,
+                            insp_rect,
+                            &mut edit.flows[fi],
+                            ed,
+                            accent,
+                            &others,
+                            tx_ref,
+                        );
+                    }
+                    // the bar stays where it was, in the middle of the whole width, whether or not
+                    // the inspector is open (it never moves under the pointer)
+                    let view =
+                        Rect::from_min_max(whole.min, pos2(whole.max.x, whole.max.y - STATUS_H));
+                    if let Some(t) = list_ui::canvas_bar(
+                        ctx,
+                        view,
+                        &edit.flows[fi],
+                        &mut ed.flow_search,
+                        accent,
+                        ed.flow_full.is_some(),
+                        insp_on,
+                    ) {
+                        todo = Some(t);
+                    }
+                }
+            }
+        });
+        // the list of flows slides over the page from the left edge; drawn last, so it is on top
+        if let Some(t) = list_ui::sidebar(ctx, full, edit, ed, accent) {
+            todo = Some(t);
+        }
+        if let Some(todo) = todo {
+            run(todo, ctx, edit, ed, tx_ref);
+        }
         flow_app_sheet(ctx, edit, ed, tx_ref, accent);
+        flow_new_sheet(ctx, edit, ed, tx_ref, accent);
+        panel_designer::panel_design_sheet(ctx, edit, ed, accent);
     }
 }
 
 /// A short message in the status bar (works from anywhere that has the channel).
-fn notice(tx: &Sender<Msg>, ctx: &egui::Context, text: impl Into<String>) {
+pub(super) fn notice(tx: &Sender<Msg>, ctx: &egui::Context, text: impl Into<String>) {
     let _ = tx.send(Msg::Notice(text.into()));
     ctx.request_repaint();
 }
 
 /// Makes flow `i` the one on the canvas, with a fresh view.
-fn select_flow(ed: &mut Ed, i: usize) {
+pub(super) fn select_flow(ed: &mut Ed, i: usize) {
     ed.flow = i;
     ed.flow_sel = None;
+    ed.flow_var = None;
+    ed.flow_focus = None;
     ed.flow_wire = None;
     ed.flow_pan = Vec2::ZERO;
     ed.flow_zoom = 1.0;
@@ -147,7 +289,7 @@ fn select_flow(ed: &mut Ed, i: usize) {
 }
 
 /// What there is to say when no flow exists yet.
-fn empty_page(ui: &mut egui::Ui, accent: Color32) -> Option<Do> {
+pub(super) fn empty_page(ui: &mut egui::Ui, accent: Color32) -> Option<Do> {
     let mut todo = None;
     panel(ui, "Flows", |ui| {
         note(
@@ -160,7 +302,7 @@ fn empty_page(ui: &mut egui::Ui, accent: Color32) -> Option<Do> {
         );
         actions(ui, |ui| {
             if button(ui, Look::Primary(accent), Some(symbols::PLUS), "New flow").clicked() {
-                todo = Some(Do::New);
+                todo = Some(Do::NewMenu);
             }
             if button(
                 ui,
@@ -177,88 +319,10 @@ fn empty_page(ui: &mut egui::Ui, accent: Color32) -> Option<Do> {
     todo
 }
 
-/// The two rows above the canvas: the flow (pick, name, new, copy, delete, share) and the blocks
-/// that can be added.
-fn toolbar(ui: &mut egui::Ui, edit: &mut Config, ed: &Ed, accent: Color32) -> Option<Do> {
-    let mut todo = None;
-    let fi = ed.flow;
-    let names: Vec<String> = edit.flows.iter().map(|f| f.name.clone()).collect();
-    let can_add = edit.flows[fi].nodes.len() < MAX_FLOW_NODES;
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-        let labels: Vec<&str> = names.iter().map(String::as_str).collect();
-        if let Some(i) = select(ui, 200.0, labels[fi], &labels, fi)
-            && i != fi
-        {
-            todo = Some(Do::Pick(i));
-        }
-        ui.add(
-            text_field(&mut edit.flows[fi].name)
-                .desired_width(190.0)
-                .hint_text("Name"),
-        );
-        if icon_button_look(ui, Look::Soft, symbols::PLUS, "New flow", true).clicked() {
-            todo = Some(Do::New);
-        }
-        if icon_button_look(ui, Look::Soft, symbols::COPY, "Duplicate this flow", true).clicked() {
-            todo = Some(Do::Duplicate);
-        }
-        if icon_button_look(ui, Look::Danger, symbols::TRASH, "Delete this flow", true).clicked() {
-            todo = Some(Do::Delete);
-        }
-        if icon_button_look(
-            ui,
-            Look::Soft,
-            symbols::UPLOAD_SIMPLE,
-            "Export this flow\u{2026}",
-            true,
-        )
-        .clicked()
-        {
-            todo = Some(Do::Export);
-        }
-        if icon_button_look(
-            ui,
-            Look::Soft,
-            symbols::DOWNLOAD_SIMPLE,
-            "Import a flow\u{2026}",
-            true,
-        )
-        .clicked()
-        {
-            todo = Some(Do::Import);
-        }
-        ui.add_space(8.0);
-        // one button for every kind of block, in a list with headings (the canvas has the same
-        // list under the right button)
-        let add = button_if(
-            ui,
-            can_add,
-            Look::Primary(accent),
-            Some(symbols::PLUS),
-            "Add block",
-        );
-        if can_add && let Some(kind) = add_popup(&add) {
-            todo = Some(Do::Add(kind));
-        }
-        if icon_button_look(
-            ui,
-            Look::Plain,
-            symbols::ARROWS_IN,
-            "Bring the blocks back into view",
-            true,
-        )
-        .clicked()
-        {
-            todo = Some(Do::ResetView);
-        }
-    });
-    todo
-}
-
 /// Every block the person can add, in groups, each with a line saying what it is for. The icon
 /// and the name come from [`kind_info`]. The toolbar button and the right-click menu of the canvas
 /// both list this.
+#[cfg(test)]
 fn catalog() -> Vec<(&'static str, Vec<(&'static str, NodeKind)>)> {
     let var = |name: &str| name.to_string();
     vec![
@@ -327,6 +391,23 @@ fn catalog() -> Vec<(&'static str, Vec<(&'static str, NodeKind)>)> {
                     }),
                 ),
                 (
+                    "Make, change and read a list (array)",
+                    NodeKind::List {
+                        op: ListOp::Split,
+                        list: var("items"),
+                        a: String::new(),
+                        b: String::new(),
+                        out: String::new(),
+                    },
+                ),
+                (
+                    "Go through every item of a list",
+                    NodeKind::ForEach {
+                        list: var("items"),
+                        item: var("item"),
+                    },
+                ),
+                (
                     "Run another flow, then go on",
                     NodeKind::Call(String::new()),
                 ),
@@ -366,64 +447,122 @@ fn catalog() -> Vec<(&'static str, Vec<(&'static str, NodeKind)>)> {
     ]
 }
 
-/// How wide and how tall (at most) the list of blocks is.
-const MENU_W: f32 = 270.0;
-const MENU_H: f32 = 400.0;
+/// A block picked from the list of the canvas: what, where on the canvas, and the output it is
+/// wired from (`None`: a block that stands alone).
+type Picked = (NodeKind, Pos2, Option<(u32, Port)>);
 
-/// The list of blocks to add, with a heading per group. Returns the one that was clicked.
-fn add_menu_items(ui: &mut egui::Ui) -> Option<NodeKind> {
-    let mut picked = None;
-    ui.set_width(MENU_W);
-    ui.spacing_mut().item_spacing.y = 2.0;
-    egui::ScrollArea::vertical()
-        .max_height(MENU_H)
-        .show(ui, |ui| {
-            for (group, items) in catalog() {
-                ui.add_space(6.0);
-                ui.label(
-                    RichText::new(group.to_uppercase())
-                        .size(11.0)
-                        .color(pal().muted),
-                );
-                for (hint, kind) in items {
-                    let (icon, title) = kind_info(&kind);
-                    if select_item(ui, Some(icon), title, false)
-                        .on_hover_text(hint)
-                        .clicked()
-                    {
-                        picked = Some(kind);
-                    }
-                }
-            }
+/// The list of blocks that the right button opens on the canvas, at the pointer.
+///
+/// It is not an `egui::Popup::context_menu` of the background, because that one needs a *click*
+/// on the background itself: the button let go within a short time and a few points from where
+/// it went down, and with nothing else under the pointer. So a slow press, a trackpad that moves
+/// a little, a press on a block or on one of its fields did nothing, and a press while another
+/// list was open only closed that list. Here the press itself opens the list, wherever on the
+/// canvas it lands; a press outside the list, or Esc (see `window.rs`), closes it.
+///
+/// Returns the block that was picked and the place of the canvas where it goes.
+fn canvas_menu(
+    ctx: &egui::Context,
+    ed: &mut Ed,
+    view: Rect,
+    from_global: TSTransform,
+    can_add: bool,
+) -> Option<Picked> {
+    let (secondary, press, pos, ctrl_click) = ctx.input(|i| {
+        (
+            i.pointer.button_pressed(PointerButton::Secondary),
+            i.pointer.any_pressed(),
+            i.pointer.interact_pos(),
+            // on a Mac, Control + click is the right button
+            i.pointer.button_pressed(PointerButton::Primary)
+                && i.modifiers.ctrl
+                && cfg!(target_os = "macos"),
+        )
+    });
+
+    // a press outside the list closes it (and goes on to whatever is under it)
+    if press
+        && let Some(p) = pos
+        && let Some(m) = ed.flow_menu
+        && !m.rect.contains(p)
+    {
+        ed.flow_menu = None;
+        ctx.request_repaint();
+    }
+
+    // a right press on the canvas opens it there (again, if it was open somewhere else)
+    if (secondary || ctrl_click)
+        && let Some(p) = pos
+        && can_add
+        && view.contains(p)
+        && !ed.sheet_open()
+        && ed.recording.is_none()
+        && !egui::Popup::is_any_open(ctx)
+        && !ed.flow_menu.is_some_and(|m| m.rect.contains(p))
+    {
+        ed.flow_menu = Some(FlowMenu {
+            at: p,
+            scene: from_global * p,
+            rect: Rect::NOTHING,
+            from: None,
         });
-    picked
-}
+        ed.flow_search.clear();
+        ctx.request_repaint();
+    }
 
-/// The list of blocks as a popup under `trigger` (a click on it opens and closes it).
-fn add_popup(trigger: &egui::Response) -> Option<NodeKind> {
-    let mut picked = None;
-    egui::Popup::from_toggle_button_response(trigger)
-        .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
-        .align(egui::RectAlign::BOTTOM_END)
-        .gap(6.0)
-        .frame(popup_frame().inner_margin(egui::Margin::same(6)))
-        .show(|ui| picked = add_menu_items(ui));
-    picked
-}
+    let m = ed.flow_menu?;
+    if !can_add || ed.sheet_open() {
+        ed.flow_menu = None;
+        return None;
+    }
 
-/// The list of blocks as the menu of the right button on `area`, at the pointer.
-fn add_context_menu(area: &egui::Response) -> Option<NodeKind> {
-    let mut picked = None;
-    egui::Popup::context_menu(area)
-        .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
-        .frame(popup_frame().inner_margin(egui::Margin::same(6)))
-        .show(|ui| picked = add_menu_items(ui));
-    picked
+    // keep the list inside the window: it is as wide as MENU_W and at most MENU_H tall, plus the
+    // margins of its frame
+    let mut at = m.at;
+    let room = ed.card;
+    let (w, h) = (list_ui::MENU_W + 16.0, list_ui::MENU_H + 20.0);
+    if room.width() > 0.0 && room.height() > 0.0 {
+        at.x = at.x.min(room.max.x - w - 8.0).max(room.min.x + 8.0);
+        at.y = at.y.min(room.max.y - h - 8.0).max(room.min.y + 8.0);
+    }
+    let mut search = std::mem::take(&mut ed.flow_search);
+    let out = egui::Area::new(egui::Id::new("flow_canvas_menu"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(at)
+        .constrain(false)
+        .show(ctx, |ui| {
+            popup_frame()
+                .inner_margin(egui::Margin::same(6))
+                .show(ui, |ui| list_ui::add_menu(ui, &mut search, true))
+                .inner
+        });
+    ed.flow_search = search;
+    if let Some(open) = ed.flow_menu.as_mut() {
+        open.rect = out.response.rect;
+    }
+    if let Some(kind) = out.inner {
+        ed.flow_menu = None;
+        ctx.request_repaint();
+        return Some((kind, m.scene, m.from));
+    }
+    None
 }
 
 /// Carries out what the toolbar asked for.
-fn run(todo: Do, ctx: &egui::Context, edit: &mut Config, ed: &mut Ed, tx: &Sender<Msg>) {
+pub(super) fn run(todo: Do, ctx: &egui::Context, edit: &mut Config, ed: &mut Ed, tx: &Sender<Msg>) {
     match todo {
+        Do::NewMenu => {
+            if edit.flows.len() >= MAX_FLOWS {
+                notice(
+                    tx,
+                    ctx,
+                    format!("There are already {MAX_FLOWS} flows. Delete one first."),
+                );
+                return;
+            }
+            ed.flow_new = Some(FlowNew::Choose);
+            ed.flow_kit = KitStatus::Idle;
+        }
         Do::New => {
             if edit.flows.len() >= MAX_FLOWS {
                 notice(
@@ -504,6 +643,46 @@ fn run(todo: Do, ctx: &egui::Context, edit: &mut Config, ed: &mut Ed, tx: &Sende
             ed.flow_zoom = 1.0;
             ed.flow_pan = vec2(40.0 - mx, 40.0 - my);
         }
+        Do::ToggleFull => ed.flow_full_req = true,
+        Do::ToggleInspector => {
+            if ed.flow_insp || ed.flow_sel.is_some() {
+                // closing: nothing selected and nothing followed
+                ed.flow_insp = false;
+                ed.flow_sel = None;
+                ed.flow_var = None;
+            } else {
+                ed.flow_insp = true;
+                ed.flow_insp_vars = true;
+            }
+        }
+        Do::Tidy => {
+            if let Some(flow) = edit.flows.get_mut(ed.flow) {
+                tidy(flow);
+            }
+            ed.flow_menu = None;
+            ed.flow_zoom = 1.0;
+            ed.flow_pan = Vec2::ZERO;
+        }
+        Do::View(view) => {
+            ed.flow_view = view;
+            ed.flow_menu = None;
+            ed.flow_wire = None;
+            ed.stop_recording();
+        }
+        Do::AddStep(kind) => {
+            if let Some(flow) = edit.flows.get_mut(ed.flow) {
+                let at = crate::config::flow_list::Spot::END;
+                if crate::config::flow_list::insert_block(flow, at, kind).is_some() {
+                    ed.flow_untidy.insert(flow.id.clone());
+                } else if flow.nodes.len() >= MAX_FLOW_NODES {
+                    notice(
+                        tx,
+                        ctx,
+                        format!("A flow can have {MAX_FLOW_NODES} blocks at most."),
+                    );
+                }
+            }
+        }
         Do::Add(kind) => {
             let sel = ed.flow_sel;
             if let Some(flow) = edit.flows.get_mut(ed.flow)
@@ -522,7 +701,7 @@ fn run(todo: Do, ctx: &egui::Context, edit: &mut Config, ed: &mut Ed, tx: &Sende
 // ------------------------------------------------------------------ drawing
 
 /// The icon and the title of a block.
-fn kind_info(kind: &NodeKind) -> (char, &'static str) {
+pub(super) fn kind_info(kind: &NodeKind) -> (char, &'static str) {
     match kind {
         NodeKind::Start => (symbols::PLAY, "Start"),
         NodeKind::End => (symbols::FLAG, "End"),
@@ -540,13 +719,15 @@ fn kind_info(kind: &NodeKind) -> (char, &'static str) {
         NodeKind::Ask { .. } => (symbols::BELL, "Ask"),
         NodeKind::Run { .. } => (symbols::TERMINAL_WINDOW, "Run and wait"),
         NodeKind::Native { .. } => (symbols::CPU, "System"),
+        NodeKind::List { .. } => (symbols::STACK, "List"),
+        NodeKind::ForEach { .. } => (symbols::ARROWS_CLOCKWISE, "For each item"),
         NodeKind::Call(_) => (symbols::FILE_TEXT, "Call flow"),
         NodeKind::Stop => (symbols::STOP, "Stop"),
     }
 }
 
 /// The color of the header of a block: one that runs a command or writes a file stands out in red.
-fn tint(kind: &NodeKind, accent: Color32) -> Color32 {
+pub(super) fn tint(kind: &NodeKind, accent: Color32) -> Color32 {
     if kind.is_sensitive() {
         pal().bad
     } else if matches!(kind, NodeKind::Wait(_)) {
@@ -573,6 +754,13 @@ fn rows(kind: &NodeKind) -> usize {
             let (a, b) = op.hints();
             1 + usize::from(!a.is_empty()) + usize::from(!b.is_empty())
         }
+        NodeKind::List { op, .. } => {
+            let (a, b, out) = op.hints();
+            1 + usize::from(!a.is_empty())
+                + usize::from(!b.is_empty())
+                + usize::from(!out.is_empty())
+        }
+        NodeKind::ForEach { .. } => 2,
         _ => 1,
     }
 }
@@ -582,6 +770,81 @@ fn node_h(kind: &NodeKind) -> f32 {
     match rows(kind) {
         0 => HEAD_H,
         n => NODE_H + (n - 1) as f32 * ROW_STEP,
+    }
+}
+
+/// Lines the blocks of `flow` up, left to right: one column per step of the walk from *Start*
+/// (a wire that leads back to an earlier block, as in a loop, does not move that block), *End* in
+/// the last column of the walk, the blocks no wire reaches in a column of their own after it. In
+/// a column the blocks sit one under another, in the order the walk found them, with a gap, so
+/// none covers another and the same flow always looks the same.
+pub(super) fn tidy(flow: &mut Flow) {
+    let mut depth: BTreeMap<u32, usize> = BTreeMap::new();
+    let mut order: Vec<u32> = Vec::new();
+    let mut queue: std::collections::VecDeque<u32> = std::collections::VecDeque::new();
+    if let Some(s) = flow.start() {
+        depth.insert(s.id, 0);
+        queue.push_back(s.id);
+    }
+    while let Some(id) = queue.pop_front() {
+        order.push(id);
+        let d = depth.get(&id).copied().unwrap_or(0);
+        if let Some(n) = flow.node(id) {
+            for t in n.wires().into_iter().flatten() {
+                if flow.node(t).is_some() && !depth.contains_key(&t) {
+                    depth.insert(t, d + 1);
+                    queue.push_back(t);
+                }
+            }
+        }
+    }
+    // everything leads to End: it goes after the deepest of the others
+    let end_id = flow.end().map(|n| n.id);
+    let body_last = depth
+        .iter()
+        .filter(|(id, _)| Some(**id) != end_id)
+        .map(|(_, d)| *d)
+        .max()
+        .unwrap_or(0);
+    if let Some(e) = end_id
+        && depth.contains_key(&e)
+    {
+        depth.insert(e, body_last + 1);
+    }
+    // the blocks no wire reaches
+    let last = depth.values().copied().max().unwrap_or(0);
+    for n in &flow.nodes {
+        if let std::collections::btree_map::Entry::Vacant(e) = depth.entry(n.id) {
+            e.insert(last + 1);
+            order.push(n.id);
+        }
+    }
+
+    let count = depth.values().copied().max().map_or(0, |d| d + 1);
+    let mut columns: Vec<Vec<u32>> = vec![Vec::new(); count];
+    for id in &order {
+        if let Some(d) = depth.get(id) {
+            columns[*d].push(*id);
+        }
+    }
+    let mut spot: BTreeMap<u32, (f32, f32)> = BTreeMap::new();
+    let mut x = TIDY_ORIGIN;
+    for col in &columns {
+        let mut y = TIDY_ORIGIN;
+        let mut wide: f32 = 0.0;
+        for id in col {
+            let Some(n) = flow.node(*id) else { continue };
+            spot.insert(*id, (x, y));
+            y += node_h(&n.kind) + TIDY_ROW_GAP;
+            wide = wide.max(n.kind.width());
+        }
+        x += wide + TIDY_COL_GAP;
+    }
+    for n in &mut flow.nodes {
+        if let Some((px, py)) = spot.get(&n.id) {
+            n.x = *px;
+            n.y = *py;
+        }
     }
 }
 
@@ -595,17 +858,51 @@ fn out_pos(top: Pos2, size: Vec2, port: Port) -> Pos2 {
     pos2(top.x + size.x, y)
 }
 
+/// The text of a one-line field as the field can draw it: a line break or a tab (a message
+/// written with several lines, a flow that was imported) is a character no font has a picture
+/// for, so it showed as an empty box. A pilcrow and an arrow stand for them instead.
+fn show_breaks(s: &str) -> String {
+    s.chars()
+        .filter(|c| *c != '\r')
+        .map(|c| match c {
+            '\n' => '\u{b6}',
+            '\t' => '\u{2192}',
+            c if c.is_control() => ' ',
+            c => c,
+        })
+        .collect()
+}
+
+/// The reverse of [`show_breaks`], for what the person edited.
+fn hide_breaks(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            '\u{b6}' => '\n',
+            '\u{2192}' => '\t',
+            c => c,
+        })
+        .collect()
+}
+
 /// A text field that fills the row.
-fn field(ui: &mut egui::Ui, text: &mut String, hint: &str) {
-    ui.add(
-        text_field(text)
-            .desired_width(ui.available_width())
-            .hint_text(hint),
-    );
+pub(super) fn field(ui: &mut egui::Ui, text: &mut String, hint: &str) {
+    let width = ui.available_width();
+    if text.chars().any(char::is_control) {
+        // edit a copy that can be drawn; the text only changes when the person types
+        let mut shown = show_breaks(text);
+        if ui
+            .add(text_field(&mut shown).desired_width(width).hint_text(hint))
+            .changed()
+        {
+            *text = hide_breaks(&shown);
+        }
+    } else {
+        ui.add(text_field(text).desired_width(width).hint_text(hint));
+    }
 }
 
 /// A pill that picks one of `all`.
-fn pick<T: Copy + PartialEq>(
+pub(super) fn pick<T: Copy + PartialEq>(
     ui: &mut egui::Ui,
     width: f32,
     all: &[T],
@@ -626,7 +923,7 @@ fn pick<T: Copy + PartialEq>(
 }
 
 /// `a op b` in one row, as the blocks that decide have it.
-fn cond_row(ui: &mut egui::Ui, c: &mut Cond) {
+pub(super) fn cond_row(ui: &mut egui::Ui, c: &mut Cond) {
     ui.horizontal(|ui| {
         let w = (ui.available_width() - OP_W - 12.0) / 2.0;
         let unary = c.op.is_unary();
@@ -643,7 +940,7 @@ fn cond_row(ui: &mut egui::Ui, c: &mut Cond) {
 }
 
 /// `a op b` in one row, as the blocks that calculate have it.
-fn operands_row<T: Copy + PartialEq>(
+pub(super) fn operands_row<T: Copy + PartialEq>(
     ui: &mut egui::Ui,
     a: &mut String,
     all: &[T],
@@ -668,7 +965,7 @@ fn operands_row<T: Copy + PartialEq>(
 
 /// The controls of one block. What a control needs from the canvas (recording a shortcut, the app
 /// list) is asked for through `ops`.
-fn controls(
+pub(super) fn controls(
     ui: &mut egui::Ui,
     kind: &mut NodeKind,
     others: &[(String, String)],
@@ -711,10 +1008,13 @@ fn controls(
                         .speed(10.0)
                         .suffix(" ms"),
                 );
-                ui.label(
-                    RichText::new("then the next step")
-                        .size(12.0)
-                        .color(pal().muted),
+                ui.add(
+                    egui::Label::new(
+                        RichText::new("then the next step")
+                            .size(12.0)
+                            .color(pal().muted),
+                    )
+                    .truncate(),
                 );
             });
         }
@@ -740,10 +1040,13 @@ fn controls(
                         .speed(0.2)
                         .suffix(" times"),
                 );
-                ui.label(
-                    RichText::new("body, then done")
-                        .size(12.0)
-                        .color(pal().muted),
+                ui.add(
+                    egui::Label::new(
+                        RichText::new("body, then done")
+                            .size(12.0)
+                            .color(pal().muted),
+                    )
+                    .truncate(),
                 );
             });
         }
@@ -757,7 +1060,27 @@ fn controls(
                 pick(ui, 112.0, &AskMode::ALL, AskMode::label, mode);
                 field(ui, out, "answer variable");
             });
-            field(ui, message, "question");
+            field(
+                ui,
+                message,
+                if matches!(mode, AskMode::Panel) {
+                    "panel (JSON, see docs/PANELS.md)"
+                } else {
+                    "question"
+                },
+            );
+            if matches!(mode, AskMode::Panel)
+                && button(
+                    ui,
+                    Look::Soft,
+                    Some(symbols::PENCIL_SIMPLE),
+                    "Design panel\u{2026}",
+                )
+                .on_hover_text("Build the panel with the mouse and see it as it will look")
+                .clicked()
+            {
+                ops.push(Op::DesignPanel(id));
+            }
             if matches!(mode, AskMode::Text) {
                 field(ui, preset, "starts with");
             }
@@ -793,6 +1116,32 @@ fn controls(
                 field(ui, b, hb);
             }
         }
+        NodeKind::List {
+            op,
+            list,
+            a,
+            b,
+            out,
+        } => {
+            ui.horizontal(|ui| {
+                pick(ui, 136.0, &ListOp::ALL, ListOp::label, op);
+                field(ui, list, "list variable");
+            });
+            let (ha, hb, ho) = op.hints();
+            if !ha.is_empty() {
+                field(ui, a, ha);
+            }
+            if !hb.is_empty() {
+                field(ui, b, hb);
+            }
+            if !ho.is_empty() {
+                field(ui, out, ho);
+            }
+        }
+        NodeKind::ForEach { list, item } => {
+            field(ui, list, "list variable");
+            field(ui, item, "variable for each item");
+        }
         NodeKind::Call(s) => {
             let labels: Vec<&str> = others.iter().map(|(_, n)| n.as_str()).collect();
             let at = others.iter().position(|(i, _)| i == s);
@@ -801,10 +1150,13 @@ fn controls(
                 .unwrap_or("choose a flow");
             let w = ui.available_width();
             if labels.is_empty() {
-                ui.label(
-                    RichText::new("no other flow yet")
-                        .size(12.0)
-                        .color(pal().muted),
+                ui.add(
+                    egui::Label::new(
+                        RichText::new("no other flow yet")
+                            .size(12.0)
+                            .color(pal().muted),
+                    )
+                    .truncate(),
                 );
             } else if let Some(i) = select(ui, w, current, &labels, at.unwrap_or(0))
                 && let Some((fid, _)) = others.get(i)
@@ -837,6 +1189,103 @@ fn wire_points(a: Pos2, b: Pos2) -> Vec<Pos2> {
 /// Draws a wire.
 fn draw_wire(painter: &egui::Painter, a: Pos2, b: Pos2, color: Color32, width: f32) {
     painter.add(Shape::line(wire_points(a, b), Stroke::new(width, color)));
+}
+
+/// Whether `shape` is, or holds, a text.
+fn holds_text(shape: &Shape) -> bool {
+    match shape {
+        Shape::Text(_) => true,
+        Shape::Vec(list) => list.iter().any(holds_text),
+        _ => false,
+    }
+}
+
+/// Lays one text out again at `zoom` times its size, and shrinks the result by the same factor.
+///
+/// The layer of the blocks is scaled by `zoom` when the frame ends, so the text comes out at
+/// its normal size on screen, but its glyphs were cut for `zoom` times that size and are mapped
+/// one texel to one pixel: sharp, not a small picture stretched.
+fn crisp_text_shape(painter: &egui::Painter, text: &mut egui::epaint::TextShape, zoom: f32) {
+    // a turned text keeps what it has
+    if text.angle != 0.0 {
+        return;
+    }
+    let mut job = (*text.galley.job).clone();
+    for section in &mut job.sections {
+        section.leading_space *= zoom;
+        section.format.font_id.size *= zoom;
+        section.format.extra_letter_spacing *= zoom;
+        if let Some(h) = section.format.line_height.as_mut() {
+            *h *= zoom;
+        }
+        section.format.underline.width *= zoom;
+        section.format.strikethrough.width *= zoom;
+    }
+    // an infinite width stays infinite
+    job.wrap.max_width *= zoom;
+    job.first_row_min_height *= zoom;
+    text.galley = painter.layout_job(job);
+    text.pos = pos2(text.pos.x * zoom, text.pos.y * zoom);
+    text.underline.width *= zoom;
+    text.transform(TSTransform::from_scaling(1.0 / zoom));
+}
+
+fn crisp_shape(painter: &egui::Painter, shape: &mut Shape, zoom: f32) {
+    match shape {
+        Shape::Text(text) => crisp_text_shape(painter, text, zoom),
+        Shape::Vec(list) => {
+            for inner in list {
+                crisp_shape(painter, inner, zoom);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Keeps the text of the canvas sharp when it is zoomed.
+///
+/// The blocks and wires live in a layer that egui scales as a whole (`set_transform_layer`).
+/// Lines, circles and rectangles are cut into triangles *after* that, so they are sharp at any
+/// zoom, but a text is a set of pictures of glyphs cut for its own size: scaled with the layer
+/// it turns blurry when zoomed in and rough when zoomed out. So, once the blocks are drawn and
+/// before the frame is cut into triangles, every text of the layer is laid out again at `zoom`
+/// times its size (see [`crisp_text_shape`]); the layer then scales it back to the size the
+/// block has. This covers every widget in a block (fields, pills, buttons, icons) without
+/// changing them. Nothing is laid out again at 100%, where the text already is what it should be.
+pub(in crate::ui::settings) fn crisp_text(
+    ctx: &egui::Context,
+    painter: &egui::Painter,
+    layer: egui::LayerId,
+    zoom: f32,
+) {
+    if !zoom.is_finite() || zoom <= 0.0 || (zoom - 1.0).abs() < 0.001 {
+        return;
+    }
+    // Copy the shapes that hold text out of the layer. `graphics_mut` keeps the context locked,
+    // and laying text out needs the fonts through that same context, so it cannot be done inside.
+    let mut found: Vec<(usize, Shape)> = Vec::new();
+    ctx.graphics_mut(|g| {
+        let list = g.entry(layer);
+        for i in 0..list.next_idx().0 {
+            list.mutate_shape(ShapeIdx(i), |clipped| {
+                if holds_text(&clipped.shape) {
+                    found.push((i, clipped.shape.clone()));
+                }
+            });
+        }
+    });
+    if found.is_empty() {
+        return;
+    }
+    for (_, shape) in &mut found {
+        crisp_shape(painter, shape, zoom);
+    }
+    ctx.graphics_mut(|g| {
+        let list = g.entry(layer);
+        for (i, shape) in found {
+            list.mutate_shape(ShapeIdx(i), |clipped| clipped.shape = shape);
+        }
+    });
 }
 
 /// Moves and zooms the canvas the way a node editor does:
@@ -884,7 +1333,7 @@ fn view_input(ctx: &egui::Context, ed: &mut Ed, rect: Rect, bg: &egui::Response)
     // A list that is open (the blocks to add, a pick list) takes the wheel and the trackpad: its
     // own scrolling reads them later in the frame, so the canvas has to leave them alone here,
     // or it moves under the list.
-    if !over || egui::Popup::is_any_open(ctx) {
+    if !over || egui::Popup::is_any_open(ctx) || ed.flow_menu.is_some() {
         return;
     }
     let mut factor = 1.0;
@@ -919,14 +1368,40 @@ fn canvas(
     tx: &Sender<Msg>,
 ) {
     let fi = ed.flow;
+    // what cannot work in this flow, found without running it, and what could not work in its
+    // last run
+    let issues = {
+        let known: Vec<&str> = others
+            .iter()
+            .map(|(id, _)| id.as_str())
+            .chain(std::iter::once(flow.id.as_str()))
+            .collect();
+        check_flow(flow, &known)
+    };
+    let marks: Vec<(u32, String)> = ed.flow_marks.get(&flow.id).cloned().unwrap_or_default();
     let avail = ui.available_rect_before_wrap();
     let rect = Rect::from_min_size(avail.min, vec2(avail.width(), avail.height().max(220.0)));
+    // the blocks live above this; under it is a strip for the hint line, which no block covers
+    let view = Rect::from_min_max(rect.min, pos2(rect.max.x, rect.max.y - STATUS_H));
     let mut ops: Vec<Op> = Vec::new();
 
     ui.scope_builder(UiBuilder::new().max_rect(rect), |ui| {
         ui.set_clip_rect(ui.clip_rect().intersect(rect));
         // the background takes the dragging; the blocks live in a layer above it and win
-        let (_, bg) = ui.allocate_exact_size(rect.size(), Sense::click_and_drag());
+        let (_, bg) = ui.allocate_exact_size(view.size(), Sense::click_and_drag());
+        // the count of problems at the right of the strip: its tooltip lists them
+        let tally_area = Rect::from_min_max(pos2(rect.max.x - 260.0, view.max.y), rect.max);
+        if !issues.is_empty() {
+            let list: Vec<&str> = issues.iter().take(8).map(|i| i.message.as_str()).collect();
+            let more = issues.len().saturating_sub(list.len());
+            let mut text = list.join("\n\n");
+            if more > 0 {
+                text.push_str(&format!("\n\n(and {more} more: hover the red marks)"));
+            }
+            let _ = ui
+                .interact(tally_area, egui::Id::new(("flow_tally", fi)), Sense::hover())
+                .on_hover_text(text);
+        }
         // `screen` paints in the window's own coordinates (background, grid, texts that do not
         // zoom); `painter` below paints in the coordinates of the blocks
         let screen = ui.painter_at(rect);
@@ -937,21 +1412,31 @@ fn canvas(
             Stroke::new(1.0, pal().border),
             StrokeKind::Inside,
         );
-        view_input(ctx, ed, rect, &bg);
+        screen.line_segment(
+            [
+                pos2(rect.min.x + 1.0, view.max.y),
+                pos2(rect.max.x - 1.0, view.max.y),
+            ],
+            Stroke::new(1.0, pal().border),
+        );
+        view_input(ctx, ed, view, &bg);
+        // a click on the empty canvas lets go of the block and closes the inspector (and stops
+        // following a variable, which is only drawn while the inspector is there)
         if bg.clicked() {
             ed.flow_sel = None;
+            ed.flow_insp = false;
+            ed.flow_var = None;
+        }
+        // a block the inspector asked to see goes to the middle of the view
+        if let Some(id) = ed.flow_focus.take()
+            && let Some(n) = flow.node(id)
+        {
+            let c = vec2(n.x + n.kind.width() / 2.0, n.y + node_h(&n.kind) / 2.0);
+            ed.flow_pan = view.center() - rect.min - c * ed.flow_zoom;
         }
         let to_global = TSTransform::new(rect.min.to_vec2() + ed.flow_pan, ed.flow_zoom);
         let from_global = to_global.inverse();
 
-        // the right button on the background: the list of blocks to add, and the new block goes
-        // where the pointer was
-        let menu_at = egui::Id::new(("flow_menu_at", fi));
-        if bg.secondary_clicked()
-            && let Some(p) = ctx.input(|i| i.pointer.interact_pos())
-        {
-            ctx.data_mut(|d| d.insert_temp(menu_at, from_global * p));
-        }
         // Delete or Backspace removes the selected block, unless a field is being typed in, a
         // shortcut is being recorded or a list is open (Start and End stay: remove_node refuses)
         if let Some(id) = ed.flow_sel
@@ -959,6 +1444,7 @@ fn canvas(
             && ed.recording.is_none()
             && !ed.sheet_open()
             && !egui::Popup::is_any_open(ctx)
+            && ed.flow_menu.is_none()
             && ctx.input_mut(|i| {
                 i.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
                     || i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
@@ -966,13 +1452,20 @@ fn canvas(
         {
             ops.push(Op::Remove(id));
         }
-        if flow.nodes.len() < MAX_FLOW_NODES
-            && let Some(kind) = add_context_menu(&bg)
-        {
-            let at = ctx
-                .data(|d| d.get_temp::<Pos2>(menu_at))
-                .unwrap_or(Pos2::ZERO);
-            ops.push(Op::AddAt(kind, at - vec2(20.0, HEAD_H / 2.0)));
+        // the right button anywhere on the canvas: the list of blocks to add, and the new block
+        // goes where the pointer was
+        if let Some((kind, at, from)) = canvas_menu(
+            ctx,
+            ed,
+            view,
+            from_global,
+            flow.nodes.len() < MAX_FLOW_NODES,
+        ) {
+            match from {
+                // from the "+" of an output: the block goes beside it and is wired to it
+                Some(from) => ops.push(Op::AddFrom(kind, at, from)),
+                None => ops.push(Op::AddAt(kind, at - vec2(20.0, HEAD_H / 2.0))),
+            }
         }
 
         // a grid of dots that moves and zooms with the canvas (every second dot, and so on, when
@@ -983,10 +1476,10 @@ fn canvas(
         }
         let (ox, oy) = (ed.flow_pan.x.rem_euclid(step), ed.flow_pan.y.rem_euclid(step));
         let dot = pal().muted.gamma_multiply(0.55);
-        let mut y = rect.min.y + oy;
-        while y < rect.max.y {
-            let mut x = rect.min.x + ox;
-            while x < rect.max.x {
+        let mut y = view.min.y + oy;
+        while y < view.max.y {
+            let mut x = view.min.x + ox;
+            while x < view.max.x {
                 screen.circle_filled(pos2(x, y), 1.5, dot);
                 x += step;
             }
@@ -995,6 +1488,7 @@ fn canvas(
 
         // the blocks and wires: a layer of their own that is zoomed and moved as a whole, so text,
         // fields and hit areas all follow
+        let base_layer = ui.layer_id();
         let layer = egui::LayerId::new(ui.layer_id().order, ui.id().with(("flow_scene", fi)));
         ctx.set_sublayer(ui.layer_id(), layer);
         ctx.set_transform_layer(layer, to_global);
@@ -1003,7 +1497,7 @@ fn canvas(
                 .layer_id(layer)
                 .max_rect(Rect::from_center_size(Pos2::ZERO, Vec2::splat(400_000.0))),
         );
-        scene.set_clip_rect(from_global * rect);
+        scene.set_clip_rect(from_global * view);
         let ui = &mut scene;
         let painter = ui.painter().clone();
         let origin = Pos2::ZERO;
@@ -1041,19 +1535,89 @@ fn canvas(
                         (true, Port::Next) => accent,
                         (true, Port::Alt) => accent.gamma_multiply(0.6),
                     };
-                    draw_wire(&painter, *a, *b, color, 2.5);
+                    // a wire that cannot work is red, one that is probably a mistake amber, with
+                    // a mark in the middle that says why
+                    let sev = wire_severity(&issues, n.id, port);
+                    let (color, width) = match sev {
+                        Some(Severity::Error) => (pal().bad, 3.2),
+                        Some(Severity::Warning) => (AMBER, 3.0),
+                        None => (color, 2.5),
+                    };
+                    draw_wire(&painter, *a, *b, color, width);
+                    if sev.is_some() {
+                        let pts = wire_points(*a, *b);
+                        if let Some(&mid) = pts.get(pts.len() / 2) {
+                            painter.circle_filled(mid, 8.0, color);
+                            painter.text(
+                                mid,
+                                Align2::CENTER_CENTER,
+                                "!",
+                                FontId::new(11.0, fonts::semibold()),
+                                Color32::WHITE,
+                            );
+                            let why: Vec<&str> = issues
+                                .iter()
+                                .filter(|i| i.wire == Some((n.id, port)))
+                                .map(|i| i.message.as_str())
+                                .collect();
+                            let _ = ui
+                                .interact(
+                                    Rect::from_center_size(mid, Vec2::splat(18.0)),
+                                    egui::Id::new((
+                                        "flow_wire_note",
+                                        fi,
+                                        n.id,
+                                        matches!(port, Port::Alt),
+                                    )),
+                                    Sense::hover(),
+                                )
+                                .on_hover_text(why.join("\n\n"));
+                        }
+                    }
                 }
             }
         }
 
         if flow.nodes.len() <= 2 {
             screen.text(
-                rect.center() + vec2(0.0, 30.0),
+                view.center() + vec2(0.0, 30.0),
                 Align2::CENTER_CENTER,
                 "Right-click here, or press Add block, to add steps.\nThen drag from the dot on the right of a block\nto the dot on the left of the next one.",
                 FontId::proportional(13.5),
                 pal().muted,
             );
+        }
+
+        // the variable being followed: which blocks set it and read it, and where its value goes
+        let trace = ed.flow_var.clone().map(|v| {
+            let edges = data_edges(flow, &v);
+            let sets: Vec<u32> = flow
+                .nodes
+                .iter()
+                .filter(|n| block_writes(&n.kind).contains(&v))
+                .map(|n| n.id)
+                .collect();
+            let gets: Vec<u32> = flow
+                .nodes
+                .iter()
+                .filter(|n| block_reads(&n.kind).contains(&v))
+                .map(|n| n.id)
+                .collect();
+            (v, edges, sets, gets)
+        });
+        if let Some((_, edges, ..)) = &trace {
+            for &(w, r) in edges {
+                let (Some(a), Some(b)) = (flow.node(w), flow.node(r)) else {
+                    continue;
+                };
+                let p = origin + vec2(a.x + a.kind.width(), a.y + 6.0);
+                let q = origin + vec2(b.x, b.y + 6.0);
+                let pts = wire_points(p, q);
+                for s in Shape::dashed_line(&pts, Stroke::new(2.5, READS_C), 7.0, 5.0) {
+                    painter.add(s);
+                }
+                painter.circle_filled(q, 4.0, READS_C);
+            }
         }
 
         // the blocks; the selected one last, so it is on top
@@ -1103,16 +1667,66 @@ fn canvas(
                 },
                 wash(color, 0.16),
             );
+            // a block that cannot work as it is, or did not in the last run, has a colored edge
+            let worst = block_severity(&issues, id);
+            let ran_badly = marks.iter().any(|(b, _)| *b == id);
+            let flagged = if ran_badly || worst == Some(Severity::Error) {
+                Some(pal().bad)
+            } else if worst == Some(Severity::Warning) {
+                Some(AMBER)
+            } else {
+                None
+            };
             painter.rect_stroke(
                 body_rect,
                 CONTROL_R,
                 if selected {
                     Stroke::new(2.0, accent)
+                } else if let Some(c) = flagged {
+                    Stroke::new(1.6, c)
                 } else {
                     Stroke::new(1.0, pal().border)
                 },
                 StrokeKind::Inside,
             );
+            // the blocks that set or read the variable being followed
+            if let Some((v, _, sets, gets)) = &trace {
+                let (w, r) = (sets.contains(&id), gets.contains(&id));
+                if r {
+                    painter.rect_stroke(
+                        body_rect.expand(3.0),
+                        CONTROL_R,
+                        Stroke::new(2.5, READS_C),
+                        StrokeKind::Middle,
+                    );
+                }
+                if w {
+                    painter.rect_stroke(
+                        body_rect.expand(if r { 7.0 } else { 3.0 }),
+                        CONTROL_R,
+                        Stroke::new(2.5, SETS_C),
+                        StrokeKind::Middle,
+                    );
+                }
+                if w || r {
+                    let text = match (w, r) {
+                        (true, true) => format!("reads and sets {v}"),
+                        (true, false) => format!("sets {v}"),
+                        _ => format!("reads {v}"),
+                    };
+                    let g = painter.layout_no_wrap(
+                        text,
+                        FontId::new(11.5, fonts::semibold()),
+                        Color32::WHITE,
+                    );
+                    let pill = Rect::from_min_size(
+                        pos2(body_rect.min.x, body_rect.min.y - g.size().y - 12.0),
+                        g.size() + vec2(12.0, 4.0),
+                    );
+                    painter.rect_filled(pill, 6.0, if w { SETS_C } else { READS_C });
+                    painter.galley(pill.min + vec2(6.0, 2.0), g, Color32::WHITE);
+                }
+            }
             fonts::paint_icon(
                 &painter,
                 pos2(head.min.x + 24.0, head.center().y),
@@ -1132,6 +1746,37 @@ fn canvas(
                 FontId::new(13.5, fonts::semibold()),
                 pal().text,
             );
+
+            // the mark on the corner: what is wrong here, and what went wrong in the last run
+            if let Some(c) = flagged {
+                let mut notes: Vec<String> = block_issues(&issues, id)
+                    .iter()
+                    .map(|i| i.message.clone())
+                    .collect();
+                for (b, why) in &marks {
+                    if *b == id {
+                        notes.push(format!(
+                            "In the last run this block could not do its work: {why}."
+                        ));
+                    }
+                }
+                let at = pos2(body_rect.min.x + 2.0, body_rect.min.y + 2.0);
+                painter.circle_filled(at, 8.5, c);
+                painter.text(
+                    at,
+                    Align2::CENTER_CENTER,
+                    "!",
+                    FontId::new(11.5, fonts::semibold()),
+                    Color32::WHITE,
+                );
+                let _ = ui
+                    .interact(
+                        Rect::from_center_size(at, Vec2::splat(20.0)),
+                        egui::Id::new(("flow_note", fi, id)),
+                        Sense::hover(),
+                    )
+                    .on_hover_text(notes.join("\n\n"));
+            }
 
             if !is_start {
                 // the step number, or a hint that the block is not wired in
@@ -1204,9 +1849,50 @@ fn canvas(
                 let wired_out = wired || wiring == Some((id, port));
                 painter.circle_filled(out_c, PORT_R, if wired_out { accent } else { pal().card });
                 painter.circle_stroke(out_c, PORT_R, Stroke::new(2.0, accent));
+                // an output with nothing plugged in: a "+" that adds a block already wired to it
+                if !wired && wiring.is_none() && flow.nodes.len() < MAX_FLOW_NODES {
+                    // on the same line as the dot, so the wire out of it is straight, and the
+                    // block it adds (see `scene` below) lands right at the end of that line
+                    let plus_c = out_c + vec2(34.0, 0.0);
+                    let pr = ui.interact(
+                        Rect::from_center_size(plus_c, Vec2::splat(24.0)),
+                        egui::Id::new(("flow_plus", fi, id, k)),
+                        Sense::click(),
+                    );
+                    let hot = pr.hovered();
+                    painter.line_segment(
+                        [out_c + vec2(PORT_R, 0.0), plus_c - vec2(9.0, 0.0)],
+                        Stroke::new(1.5, accent.gamma_multiply(0.5)),
+                    );
+                    painter.circle_filled(plus_c, 9.0, if hot { accent } else { pal().card });
+                    painter.circle_stroke(plus_c, 9.0, Stroke::new(1.5, accent));
+                    fonts::paint_icon(
+                        &painter,
+                        plus_c,
+                        symbols::PLUS,
+                        12.0,
+                        if hot { Color32::WHITE } else { accent },
+                        true,
+                    );
+                    if pr
+                        .on_hover_text("Add a block here, already wired to this output")
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                    {
+                        let at = ctx.input(|i| i.pointer.interact_pos()).unwrap_or(view.center());
+                        ed.flow_search.clear();
+                        ed.flow_menu = Some(FlowMenu {
+                            at,
+                            scene: out_c + vec2(56.0, -HEAD_H / 2.0),
+                            rect: Rect::NOTHING,
+                            from: Some((id, port)),
+                        });
+                    }
+                }
                 if !names[k].is_empty() {
                     painter.text(
-                        out_c + vec2(10.0, -9.0),
+                        // above the line out of the dot, clear of the "+" on it
+                        out_c + vec2(10.0, -15.0),
                         Align2::LEFT_CENTER,
                         names[k],
                         FontId::proportional(11.0),
@@ -1256,6 +1942,18 @@ fn canvas(
                 ui.scope_builder(UiBuilder::new().max_rect(area), |ui| {
                     controls(ui, kind, others, recording, accent, id, &mut ops);
                 });
+                // a press anywhere in the body (a field too) selects the block
+                // (not when something floats over it there: the bar under the canvas, a list)
+                let covered = ctx
+                    .input(|i| i.pointer.latest_pos())
+                    .and_then(|p| ctx.layer_id_at(p))
+                    .is_some_and(|l| l != layer && l != base_layer && l.order >= base_layer.order);
+                if !covered
+                    && ctx.input(|i| i.pointer.primary_pressed())
+                    && pointer.is_some_and(|p| body_rect.contains(p))
+                {
+                    ed.flow_sel = Some(id);
+                }
             }
         }
 
@@ -1281,19 +1979,92 @@ fn canvas(
             .iter()
             .filter(|n| !matches!(n.kind, NodeKind::Start | NodeKind::End))
             .count();
-        screen.text(
-            rect.left_bottom() + vec2(14.0, -14.0),
-            Align2::LEFT_CENTER,
-            format!(
-                "{steps} step{} \u{b7} {}% \u{b7} right-click adds a block \u{b7} Alt + scroll or pinch zooms \u{b7} middle button or two fingers moves",
-                if steps == 1 { "" } else { "s" },
-                (ed.flow_zoom * 100.0).round()
-            ),
-            FontId::proportional(12.0),
-            pal().muted,
+        // the hint line, in the strip under the blocks; the longest of these that fits the width
+        // is the one shown, so it never runs out of the canvas
+        let head = format!(
+            "{steps} step{} \u{b7} {}%",
+            if steps == 1 { "" } else { "s" },
+            (ed.flow_zoom * 100.0).round()
         );
+        let hints = [
+            format!(
+                "{head} \u{b7} right-click adds a block \u{b7} Alt + scroll or pinch zooms \u{b7} middle button or two fingers moves"
+            ),
+            format!("{head} \u{b7} right-click adds a block \u{b7} Alt + scroll zooms"),
+            head,
+        ];
+        // the count of problems, at the right of the strip
+        let errors = issues
+            .iter()
+            .filter(|i| i.severity == Severity::Error)
+            .count();
+        let warnings = issues.len() - errors;
+        let mut parts: Vec<String> = Vec::new();
+        if errors > 0 {
+            parts.push(format!("{errors} error{}", if errors == 1 { "" } else { "s" }));
+        }
+        if warnings > 0 {
+            parts.push(format!(
+                "{warnings} warning{}",
+                if warnings == 1 { "" } else { "s" }
+            ));
+        }
+        if !marks.is_empty() {
+            parts.push(format!(
+                "{} failed in the last run",
+                marks.len()
+            ));
+        }
+        let mut taken = 0.0;
+        if !parts.is_empty() {
+            let color = if errors > 0 || !marks.is_empty() {
+                pal().bad
+            } else {
+                AMBER
+            };
+            let g = screen.layout_no_wrap(
+                parts.join(" \u{b7} "),
+                FontId::new(12.0, fonts::semibold()),
+                color,
+            );
+            taken = g.size().x + 24.0;
+            let at = pos2(
+                rect.max.x - 14.0 - g.size().x,
+                rect.max.y - STATUS_H / 2.0 - g.size().y / 2.0,
+            );
+            screen.galley(at, g, Color32::PLACEHOLDER);
+        }
+        let room = rect.width() - 28.0 - taken;
+        let mut shown = None;
+        for text in hints {
+            let g = screen.layout_no_wrap(text, FontId::proportional(12.0), pal().muted);
+            let fits = g.size().x <= room;
+            shown = Some(g);
+            if fits {
+                break;
+            }
+        }
+        if let Some(g) = shown {
+            let at = pos2(rect.min.x + 14.0, rect.max.y - STATUS_H / 2.0 - g.size().y / 2.0);
+            screen.galley(at, g, Color32::PLACEHOLDER);
+        }
+
+        // everything of the blocks is drawn: lay their text out again at the zoomed size
+        crisp_text(ctx, &painter, layer, ed.flow_zoom);
     });
 
+    apply_ops(ops, ctx, flow, ed, tx);
+}
+
+/// Carries out what the blocks (on the canvas or in the inspector) asked for.
+pub(super) fn apply_ops(
+    ops: Vec<Op>,
+    ctx: &egui::Context,
+    flow: &mut Flow,
+    ed: &mut Ed,
+    tx: &Sender<Msg>,
+) {
+    let fi = ed.flow;
     for op in ops {
         match op {
             Op::Connect(from, port, to) => {
@@ -1302,6 +2073,15 @@ fn canvas(
             Op::AddAt(kind, at) => {
                 if flow.nodes.len() < MAX_FLOW_NODES {
                     let id = flow.add_at(kind, at.x, at.y);
+                    ed.flow_sel = Some(id);
+                }
+            }
+            Op::AddFrom(kind, at, (from, port)) => {
+                if flow.nodes.len() < MAX_FLOW_NODES
+                    && flow.node(from).is_some_and(|n| n.wire(port).is_none())
+                {
+                    let id = flow.add_at(kind, at.x, at.y);
+                    flow.connect(from, port, id);
                     ed.flow_sel = Some(id);
                 }
             }
@@ -1315,28 +2095,36 @@ fn canvas(
                     ed.stop_recording();
                 }
             }
-            Op::PickApp(id) => {
-                ed.flow_target = Some((fi, id));
-                open_picker(ctx, ed, tx, PickFor::Flow);
-            }
-            Op::Record(id) => {
-                let on = ed
-                    .recording
-                    .as_ref()
-                    .is_some_and(|r| r.profile == fi && r.slot == Slot::Node(id));
-                if on {
-                    ed.stop_recording();
-                } else {
-                    SWALLOW_KEY.store(-1, Ordering::SeqCst);
-                    RECORDING.store(true, Ordering::SeqCst);
-                    ed.recording = Some(Rec {
-                        profile: fi,
-                        path: Vec::new(),
-                        slot: Slot::Node(id),
-                    });
-                }
-            }
+            Op::PickApp(id) => pick_app(ctx, ed, tx, fi, id),
+            Op::DesignPanel(id) => panel_designer::open(ed, fi, flow, id),
+            Op::Record(id) => toggle_recording(ed, fi, id),
         }
+    }
+}
+
+/// Opens the list of installed apps for the *Open app* block `id` of flow `fi`.
+pub(super) fn pick_app(ctx: &egui::Context, ed: &mut Ed, tx: &Sender<Msg>, fi: usize, id: u32) {
+    ed.flow_target = Some((fi, id));
+    open_picker(ctx, ed, tx, PickFor::Flow);
+}
+
+/// Starts recording a shortcut for the *Shortcut* block `id` of flow `fi`, or stops when it is
+/// already being recorded.
+pub(super) fn toggle_recording(ed: &mut Ed, fi: usize, id: u32) {
+    let on = ed
+        .recording
+        .as_ref()
+        .is_some_and(|r| r.profile == fi && r.slot == Slot::Node(id));
+    if on {
+        ed.stop_recording();
+    } else {
+        SWALLOW_KEY.store(-1, Ordering::SeqCst);
+        RECORDING.store(true, Ordering::SeqCst);
+        ed.recording = Some(Rec {
+            profile: fi,
+            path: Vec::new(),
+            slot: Slot::Node(id),
+        });
     }
 }
 
@@ -1414,6 +2202,24 @@ mod tests {
                 a: String::new(),
                 b: "app".into(),
             },
+            NodeKind::List {
+                op: ListOp::Get,
+                list: "xs".into(),
+                a: "1".into(),
+                b: String::new(),
+                out: "x".into(),
+            },
+            NodeKind::List {
+                op: ListOp::Split,
+                list: "xs".into(),
+                a: "a,b".into(),
+                b: ",".into(),
+                out: String::new(),
+            },
+            NodeKind::ForEach {
+                list: "xs".into(),
+                item: "x".into(),
+            },
             NodeKind::Call(String::new()),
             NodeKind::Stop,
         ]
@@ -1480,6 +2286,28 @@ mod tests {
             "the pill and one field"
         );
         assert_eq!(rows(&native(NativeOp::Notify)), 3);
+        let list = |op| NodeKind::List {
+            op,
+            list: String::new(),
+            a: String::new(),
+            b: String::new(),
+            out: String::new(),
+        };
+        assert_eq!(
+            rows(&list(ListOp::Sort)),
+            1,
+            "the pill and the list name share a row"
+        );
+        assert_eq!(rows(&list(ListOp::Get)), 3);
+        assert_eq!(rows(&list(ListOp::Split)), 3);
+        assert_eq!(rows(&list(ListOp::Push)), 2);
+        assert_eq!(
+            rows(&NodeKind::ForEach {
+                list: String::new(),
+                item: String::new()
+            }),
+            2
+        );
         let top = pos2(10.0, 20.0);
         for k in every_kind() {
             let size = vec2(k.width(), node_h(&k));
@@ -1492,6 +2320,57 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn tidy_leaves_no_block_over_another_and_is_stable() {
+        let mut flow = Flow::new("flow-1", "Demo");
+        let mut last = None;
+        for kind in every_kind()
+            .into_iter()
+            .filter(|k| !matches!(k, NodeKind::Start | NodeKind::End | NodeKind::Stop))
+        {
+            last = Some(flow.add_after(last, kind));
+        }
+        // every block on one spot, as a messy import can leave them
+        for n in &mut flow.nodes {
+            n.x = 0.0;
+            n.y = 0.0;
+        }
+        tidy(&mut flow);
+        let rect = |n: &FlowNode| {
+            Rect::from_min_size(pos2(n.x, n.y), vec2(n.kind.width(), node_h(&n.kind)))
+        };
+        for (i, a) in flow.nodes.iter().enumerate() {
+            assert!(a.x >= TIDY_ORIGIN && a.y >= TIDY_ORIGIN, "{a:?}");
+            for b in flow.nodes.iter().skip(i + 1) {
+                assert!(
+                    !rect(a).intersects(rect(b)),
+                    "{:?} covers {:?}",
+                    a.kind,
+                    b.kind
+                );
+            }
+        }
+        // the same flow always gets the same places
+        let once = flow.clone();
+        tidy(&mut flow);
+        assert_eq!(flow, once);
+        // Start is the first column, End the last of the walk
+        let start = flow.start().expect("a flow has a start");
+        let end = flow.end().expect("a flow has an end");
+        assert_eq!(start.x, TIDY_ORIGIN);
+        assert!(end.x > start.x);
+    }
+
+    #[test]
+    fn a_line_break_in_a_field_is_shown_as_a_sign_and_comes_back_unchanged() {
+        let text = "File:\n{{file}}\n\nGo?";
+        let shown = show_breaks(text);
+        assert!(!shown.chars().any(char::is_control), "{shown:?}");
+        assert_eq!(hide_breaks(&shown), text);
+        assert_eq!(show_breaks("plain"), "plain");
+        assert_eq!(show_breaks("a\r\nb"), "a\u{b6}b");
     }
 
     #[test]
@@ -1530,5 +2409,48 @@ mod tests {
                 .drop_without_applying_deltas();
         }
         assert_eq!(app.edit, before, "drawing alone never edits the flow");
+    }
+
+    #[test]
+    fn the_canvas_draws_at_every_zoom_without_changing_the_flow() {
+        // laying the text out again at the zoomed size must neither hang (the shapes are copied
+        // out of the layer first) nor touch the flow
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut app = App::new(rx, tx, 200.0, None);
+        app.settings_open = true;
+        let mut flow = Flow::new("flow-1", "Demo");
+        let mut last = None;
+        for kind in every_kind()
+            .into_iter()
+            .filter(|k| !matches!(k, NodeKind::Start | NodeKind::End | NodeKind::Stop))
+        {
+            last = Some(flow.add_after(last, kind));
+        }
+        app.edit = Config {
+            flows: vec![flow],
+            ..Config::default()
+        };
+        let before = app.edit.clone();
+        app.ed.tab = Tab::Flow;
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        for zoom in [ZOOM_MIN, 0.5, 1.0, 2.0, ZOOM_MAX] {
+            for _ in 0..2 {
+                app.ed.flow_zoom = zoom;
+                let input = egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(
+                        Pos2::ZERO,
+                        vec2(
+                            CARD_SIZE[0] + 2.0 * WIN_MARGIN,
+                            CARD_SIZE[1] + 2.0 * WIN_MARGIN,
+                        ),
+                    )),
+                    ..Default::default()
+                };
+                ctx.run_ui(input, |ui| app.settings_ui(ui))
+                    .drop_without_applying_deltas();
+            }
+        }
+        assert_eq!(app.edit, before, "zooming never edits the flow");
     }
 }

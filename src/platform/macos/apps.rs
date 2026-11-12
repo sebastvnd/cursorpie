@@ -138,6 +138,10 @@ pub fn set_accessory_policy() {
 /// macOS windows have no DWM-style frame to remove: the window is already transparent and borderless.
 pub fn clear_window_frame(_handle: isize) {}
 
+/// The window of the notice on the screen (`ui::hud`) must not take the keyboard from the app the
+/// action is for. Nothing to ask here: the app has the accessory policy, so a window that is shown does not make it the active app.
+pub fn set_window_passive(_on: bool) {}
+
 /// macOS keeps the position a hidden window was given.
 pub fn window_manager_may_recenter() -> bool {
     false
@@ -146,6 +150,11 @@ pub fn window_manager_may_recenter() -> bool {
 /// A window is placed in the same points the pointer is in.
 pub fn window_point(x: f64, y: f64) -> (f64, f64) {
     (x, y)
+}
+
+/// The pie is drawn in the same points the pointer moves in.
+pub fn window_scale(_x: f64, _y: f64) -> f64 {
+    1.0
 }
 
 /// The toolkit's focus request activates the app, also from another Space, so there is nothing more to ask.

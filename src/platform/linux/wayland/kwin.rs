@@ -37,6 +37,7 @@ use crate::windowing::Windows;
 use serde::Deserialize;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, Instant};
 
 /// The D-Bus name CursorPie owns, the path and the interface of its object.
 pub(crate) const SERVICE: &str = "org.cursorpie.Wayland";
@@ -536,6 +537,55 @@ pub(crate) fn pointer() -> Option<(u64, Point)> {
     p.map(|p| (seq, p))
 }
 
+/// How long a press waits for the compositor to answer the question "where is the pointer now"
+/// (see [`sample_pointer`]). A round trip through the script or the extension takes a few
+/// milliseconds; the wait is a ceiling for a busy desktop, and it ends the moment the answer is
+/// there. The hold that opens the pie lasts far longer, so nobody notices it.
+const SAMPLE_WAIT: Duration = Duration::from_millis(25);
+
+/// How often [`sample_pointer`] looks for the answer while it waits.
+const SAMPLE_STEP: Duration = Duration::from_millis(1);
+
+/// The first answer of `read` that is newer than `before` (its number is higher), looked for every
+/// `step` until `wait` is over. When none came in time it is the latest answer there is, or `None`
+/// when there never was one. Only the clock is not pure, so the tests drive it with a fake `read`.
+fn newer_pointer(
+    read: impl Fn() -> Option<(u64, Point)>,
+    before: u64,
+    wait: Duration,
+    step: Duration,
+) -> Option<(u64, Point)> {
+    let deadline = Instant::now() + wait;
+    loop {
+        let latest = read();
+        if latest.is_some_and(|(seq, _)| seq > before) || Instant::now() >= deadline {
+            return latest;
+        }
+        std::thread::sleep(step);
+    }
+}
+
+/// Where the pointer is right now, asked of the compositor: for the moment a button is pressed.
+///
+/// The latest answer is not good enough there. The script reports on its own only while the
+/// pointer moves, at most every 100 ms and without a last report when it stops, and the mouse layer
+/// knows only the motion of its own mouse: a pointer moved by another device (a touchpad, a second
+/// mouse) or by fast motion before the press would put the pie where the pointer was, not where it
+/// is. So the compositor is asked to report now and the answer is awaited for [`SAMPLE_WAIT`] at
+/// most.
+///
+/// Never waits when the adapter is not running or cannot say where the pointer is (Sway): there
+/// would be no answer to wait for. In that case, and when the answer is late, this is the latest
+/// answer, as [`pointer()`] gives it.
+pub(crate) fn sample_pointer() -> Option<(u64, Point)> {
+    if !running() || !knows_pointer() {
+        return pointer();
+    }
+    let before = pointer().map_or(0, |(seq, _)| seq);
+    request_sync();
+    newer_pointer(pointer, before, SAMPLE_WAIT, SAMPLE_STEP)
+}
+
 /// Queues a command for the script. The queue is short: a command that nobody collected is
 /// dropped when more arrive.
 pub(crate) fn queue(command: &str) {
@@ -1013,5 +1063,54 @@ mod tests {
             Point::new(10.0, 20.0),
             "a bad one changes nothing"
         );
+    }
+
+    const NO_WAIT: Duration = Duration::ZERO;
+    const SOME_WAIT: Duration = Duration::from_millis(200);
+    const STEP: Duration = Duration::from_millis(1);
+
+    #[test]
+    fn a_newer_answer_is_returned_at_once() {
+        let at = Instant::now();
+        let got = newer_pointer(|| Some((8, Point::new(3.0, 4.0))), 7, SOME_WAIT, STEP);
+        assert_eq!(got, Some((8, Point::new(3.0, 4.0))));
+        assert!(at.elapsed() < SOME_WAIT, "it did not wait for the clock");
+    }
+
+    #[test]
+    fn the_answer_that_arrives_while_waiting_is_the_one_returned() {
+        // the answer of the compositor comes on the third look
+        let looks = std::cell::Cell::new(0);
+        let read = || {
+            looks.set(looks.get() + 1);
+            if looks.get() < 3 {
+                Some((7, Point::new(1.0, 1.0)))
+            } else {
+                Some((8, Point::new(2.0, 2.0)))
+            }
+        };
+        assert_eq!(
+            newer_pointer(read, 7, SOME_WAIT, STEP),
+            Some((8, Point::new(2.0, 2.0)))
+        );
+        assert_eq!(looks.get(), 3);
+    }
+
+    #[test]
+    fn a_late_answer_gives_the_latest_one_there_is() {
+        let old = Some((7, Point::new(1.0, 1.0)));
+        assert_eq!(newer_pointer(|| old, 7, NO_WAIT, STEP), old);
+        assert_eq!(newer_pointer(|| None, 0, NO_WAIT, STEP), None);
+    }
+
+    #[test]
+    fn without_a_running_adapter_nothing_is_waited_for() {
+        let _g = TEST_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        set_loaded(false);
+        on_pointer("5,6");
+        let at = Instant::now();
+        let (_, p) = sample_pointer().unwrap();
+        assert_eq!(p, Point::new(5.0, 6.0), "the latest answer, as it is");
+        assert!(at.elapsed() < SAMPLE_WAIT, "no adapter, so no waiting");
     }
 }
