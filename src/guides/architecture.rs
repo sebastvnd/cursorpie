@@ -231,7 +231,13 @@
 //! | `App::edit` (config copy), undo history, picker lists, backup list, `Ed::add_catalog` | yes | yes | |
 //! | icon textures | no (only changed files are re-read) | all but the general pie's (`icons_to_keep_asleep`) | the general pie's |
 //! | the live config, side-button state, gesture state | | | yes |
-//! | egui font atlas, GPU surface | | | yes |
+//! | egui font atlas | rebuilt, but only if zoomed text was drawn (`fonts::reset_atlas`) | rebuilt, same condition | the glyphs of the normal sizes |
+//! | GPU surface | | | yes |
+//! | `App::edit.flows`, `App::run_report`, the Flow tab's selection and sheets | yes | yes | |
+//!
+//! egui never evicts a glyph from its atlas, so **never lay text out at a size taken from user input**
+//! (a zoom, a slider) without snapping it to a short ladder: the Flow canvas uses `crisp_scale`, 4 sizes per
+//! doubling. A size that comes from a continuous value cuts a whole new set of glyphs per value.
 //!
 //! `Config::sleep_after_s` sets the idle time (0 = never sleep). Rules for new code: a cache must
 //! be bounded, must be cleared (or trimmed to what the next press needs) in `enter_sleep`, and must never be filled on the frame that opens

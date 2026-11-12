@@ -1132,6 +1132,7 @@ mod tests {
             .map(|i| platform::installed::InstalledApp {
                 id: format!("app{i}"),
                 name: format!("App number {i}"),
+                ..Default::default()
             })
             .collect();
         ed.installed_scan = AppScan::Done;

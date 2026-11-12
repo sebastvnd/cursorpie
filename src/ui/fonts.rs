@@ -15,6 +15,7 @@
 
 use eframe::egui::{self, Color32, FontData, FontDefinitions, FontFamily, FontId, RichText};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 static INTER_REGULAR: &[u8] = include_bytes!("../../assets/fonts/Inter-Regular.ttf");
 static INTER_SEMIBOLD: &[u8] = include_bytes!("../../assets/fonts/Inter-SemiBold.ttf");
@@ -99,7 +100,21 @@ pub fn paint_icon(
 ///
 /// Kept apart from [`install`] so a test can build them without a window.
 pub fn definitions() -> FontDefinitions {
+    definitions_for(false)
+}
+
+/// [`definitions`], with `odd` telling which of two otherwise identical sets to build. The odd
+/// one holds one more font file that no family uses. egui compares a new set of definitions with
+/// the current one and ignores an equal one, so this is how [`reset_atlas`] makes it really
+/// rebuild the atlas: it asks for the set that is not the current one.
+fn definitions_for(odd: bool) -> FontDefinitions {
     let mut defs = FontDefinitions::default();
+    if odd {
+        defs.font_data.insert(
+            "Atlas-Epoch".to_owned(),
+            Arc::new(FontData::from_static(ICONS_REGULAR)),
+        );
+    }
     for (name, bytes) in [
         ("Inter", INTER_REGULAR),
         ("Inter-SemiBold", INTER_SEMIBOLD),
@@ -135,9 +150,26 @@ pub fn definitions() -> FontDefinitions {
     defs
 }
 
+/// Which of the two sets of definitions the context was given last (see [`definitions_for`]).
+static ATLAS_ODD: AtomicBool = AtomicBool::new(false);
+
 /// Registers the fonts. Call once, when the egui context is created.
 pub fn install(ctx: &egui::Context) {
+    ATLAS_ODD.store(false, Ordering::Relaxed);
     ctx.set_fonts(definitions());
+}
+
+/// Throws away every glyph cut so far and starts the font atlas again from nothing.
+///
+/// egui cuts each glyph once per size and never gives one back, so a size used once (the zoomed
+/// text of the Flow canvas or the panel designer) would stay in memory, on the CPU and on the
+/// GPU, until the program ends. Call it when what used those sizes is gone: the glyphs the pie
+/// needs are cut again the next time it is drawn (a few small ones, so nothing is felt). The new
+/// atlas is built by the next frame, which this asks for.
+pub fn reset_atlas(ctx: &egui::Context) {
+    let odd = !ATLAS_ODD.fetch_xor(true, Ordering::Relaxed);
+    ctx.set_fonts(definitions_for(odd));
+    ctx.request_repaint();
 }
 
 #[cfg(test)]

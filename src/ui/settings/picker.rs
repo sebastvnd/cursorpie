@@ -91,6 +91,12 @@ pub(super) fn spawn_file_picker(
         diag::log!("ui", "chooser_closed", waited_ms = started.elapsed());
         let _ = tx.send(Msg::Refocus);
         ctx.request_repaint();
+        // After Cancel the system may hand the focus to the window below Settings a moment *after*
+        // the first request (macOS does so when `osascript` quits). `Msg::Refocus` does nothing
+        // when Settings has the focus already, so a second one is free when it is not needed.
+        std::thread::sleep(Duration::from_millis(250));
+        let _ = tx.send(Msg::Refocus);
+        ctx.request_repaint();
     });
 }
 

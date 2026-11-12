@@ -71,7 +71,7 @@ use eframe::egui::{
     StrokeKind, UiBuilder, Vec2, emath::TSTransform, layers::ShapeIdx, pos2, vec2,
 };
 use std::collections::BTreeMap;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 
 /// Height of the header of a block (title, step number, remove button; the dots sit in it).
@@ -1200,6 +1200,35 @@ fn holds_text(shape: &Shape) -> bool {
     }
 }
 
+/// How many text sizes the canvas cuts per doubling of the zoom (see [`crisp_scale`]).
+const CRISP_STEPS_PER_OCTAVE: f32 = 4.0;
+
+/// Set once a text was laid out at a size other than its own, so the glyphs of those sizes are in
+/// the font atlas. [`take_crisp_used`] reads and clears it when Settings closes.
+static CRISP_USED: AtomicBool = AtomicBool::new(false);
+
+/// Whether the canvas cut glyphs at zoomed sizes since the last call (and forgets it). egui never
+/// evicts glyphs from its font atlas, so the caller rebuilds the atlas when this is true.
+pub(crate) fn take_crisp_used() -> bool {
+    CRISP_USED.swap(false, Ordering::Relaxed)
+}
+
+/// The size factor the text of a zoomed layer is cut at: `zoom` snapped to a ladder of
+/// [`CRISP_STEPS_PER_OCTAVE`] steps per doubling (1.0, 1.19, 1.41, ...).
+///
+/// The factor only picks the resolution of the glyphs; the layer still scales them by the real
+/// `zoom`, so the text keeps its exact size on screen and is at most about 9% off one texel to
+/// one pixel. Using `zoom` itself cut a new set of glyphs for every value a pinch or a wheel
+/// passed through, and the font atlas keeps every glyph it ever cut: memory grew by tens of MB per
+/// zoom gesture. The ladder bounds it to a few sizes (16 over the whole range 0.3 to 4).
+pub(in crate::ui::settings) fn crisp_scale(zoom: f32) -> f32 {
+    if !zoom.is_finite() || zoom <= 0.0 {
+        return 1.0;
+    }
+    let step = (zoom.log2() * CRISP_STEPS_PER_OCTAVE).round();
+    (step / CRISP_STEPS_PER_OCTAVE).exp2()
+}
+
 /// Lays one text out again at `zoom` times its size, and shrinks the result by the same factor.
 ///
 /// The layer of the blocks is scaled by `zoom` when the frame ends, so the text comes out at
@@ -1258,7 +1287,9 @@ pub(in crate::ui::settings) fn crisp_text(
     layer: egui::LayerId,
     zoom: f32,
 ) {
-    if !zoom.is_finite() || zoom <= 0.0 || (zoom - 1.0).abs() < 0.001 {
+    // cut the glyphs at a size from a short ladder, not at every zoom the user passes through
+    let zoom = crisp_scale(zoom);
+    if (zoom - 1.0).abs() < 0.001 {
         return;
     }
     // Copy the shapes that hold text out of the layer. `graphics_mut` keeps the context locked,
@@ -1277,6 +1308,7 @@ pub(in crate::ui::settings) fn crisp_text(
     if found.is_empty() {
         return;
     }
+    CRISP_USED.store(true, Ordering::Relaxed);
     for (_, shape) in &mut found {
         crisp_shape(painter, shape, zoom);
     }
@@ -2133,6 +2165,39 @@ mod tests {
     use super::*;
     use crate::ui::app::{CARD_SIZE, WIN_MARGIN};
     use crate::ui::settings::Tab;
+
+    #[test]
+    fn the_crisp_scale_is_a_short_ladder() {
+        // every zoom of a gesture lands on one of a few sizes, so the font atlas stays small
+        let mut sizes: Vec<u32> = Vec::new();
+        let mut z = ZOOM_MIN;
+        while z <= ZOOM_MAX {
+            let q = crisp_scale(z);
+            assert!(
+                (q / z).max(z / q) < 1.1,
+                "{z} is cut at {q}: more than 10% off"
+            );
+            sizes.push(q.to_bits());
+            z *= 1.003;
+        }
+        sizes.sort_unstable();
+        sizes.dedup();
+        assert!(
+            sizes.len() <= 16,
+            "{} sizes for the whole range",
+            sizes.len()
+        );
+        assert_eq!(crisp_scale(1.0), 1.0, "100% is cut at its own size");
+        assert_eq!(crisp_scale(0.97), 1.0);
+        assert_eq!(crisp_scale(2.0), 2.0);
+    }
+
+    #[test]
+    fn the_crisp_scale_survives_odd_input() {
+        for z in [0.0, -1.0, f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert_eq!(crisp_scale(z), 1.0);
+        }
+    }
 
     #[test]
     fn a_wire_runs_from_one_dot_to_the_other() {

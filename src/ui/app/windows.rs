@@ -80,6 +80,7 @@ impl App {
         }
         self.ed.icons.revalidate(); // re-read only the images that changed on disk
         self.release_editor(); // the next open copies the config again
+        self.release_font_atlas(ctx); // the glyphs the canvas cut at zoomed sizes
         self.win = cfg().pie_size;
         self.set_settings_open(false);
         self.welcome = None;
@@ -177,7 +178,11 @@ impl App {
             visible = self.visible,
             welcome = self.welcome.is_some()
         );
-        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+        // Only a window that is minimized (or whose state is not known) is restored: the command
+        // sent to a window that is already on screen makes the system re-order it for nothing.
+        if ctx.input(|i| i.viewport().minimized) != Some(false) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+        }
         request_focus(ctx);
         platform::raise_own_window();
     }

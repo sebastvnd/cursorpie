@@ -55,3 +55,9 @@ mod window;
 pub use picker::choosing;
 pub use state::{AppScan, BehaviorPage, Ed, FlowFull, FlowNew, FlowView, KitStatus, Slot, Tab};
 pub use welcome::Welcome;
+
+/// Whether zoomed text was cut into the font atlas since the last call; see
+/// [`App::release_font_atlas`](crate::ui::app::App).
+pub(crate) fn take_crisp_used() -> bool {
+    tabs::flow::take_crisp_used()
+}

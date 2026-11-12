@@ -26,6 +26,10 @@ pub struct Entry {
     /// `SingleMainWindow=true` (desktop entry spec 1.5): the app says it has one main window, so
     /// starting it again cannot give a new one.
     pub single_window: bool,
+    /// The other names the entry has, lower case, one per line: `Name` in every language
+    /// (`Name[id]=Berkas`), `GenericName` (`Web Browser`) and `Keywords`. Only the search box of the
+    /// app list reads it: a menu finds `Files` as `Berkas` on an Indonesian desktop, so must this.
+    pub search: String,
 }
 
 /// An app id in canonical form: trimmed, lower case, without a `.desktop` suffix.
@@ -93,6 +97,7 @@ pub fn parse(file_name: &str, path: &str, text: &str) -> Option<Entry> {
     let mut hidden = false;
     let mut no_display = false;
     let mut single_window = false;
+    let mut search: Vec<String> = Vec::new();
     for line in text.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -118,6 +123,18 @@ pub fn parse(file_name: &str, path: &str, text: &str) -> Option<Entry> {
             "Hidden" => hidden = value.eq_ignore_ascii_case("true"),
             "NoDisplay" => no_display = value.eq_ignore_ascii_case("true"),
             "SingleMainWindow" => single_window = value.eq_ignore_ascii_case("true"),
+            k if k.starts_with("Name[") || k == "GenericName" || k.starts_with("GenericName[") => {
+                if !value.is_empty() {
+                    search.push(value.to_lowercase());
+                }
+            }
+            k if k == "Keywords" || k.starts_with("Keywords[") => search.extend(
+                value
+                    .split(';')
+                    .map(str::trim)
+                    .filter(|w| !w.is_empty())
+                    .map(str::to_lowercase),
+            ),
             _ => {}
         }
     }
@@ -137,6 +154,7 @@ pub fn parse(file_name: &str, path: &str, text: &str) -> Option<Entry> {
         icon,
         no_display,
         single_window,
+        search: search.join("\n"),
     })
 }
 
@@ -239,43 +257,64 @@ impl Index {
     }
 }
 
-/// Reads the `*.desktop` files of the given `applications` directories (not recursively). A
-/// directory listed earlier wins over a later one with the same id, so a user's own entry overrides
-/// the system's.
+/// How many folders below an `applications` directory are read (`kde4/`, `wine/Programs/`...).
+const SCAN_DEPTH: u32 = 3;
+
+/// Reads the `*.desktop` files of the given `applications` directories and of the folders below
+/// them, which the desktop entry spec allows: the id of `kde4/konsole.desktop` is
+/// `kde4-konsole.desktop`. A directory listed earlier wins over a later one with the same id, so a
+/// user's own entry overrides the system's.
 pub fn scan(dirs: &[PathBuf]) -> Index {
     let mut entries: Vec<Entry> = Vec::new();
     for dir in dirs {
-        let Ok(read) = std::fs::read_dir(dir) else {
-            continue;
-        };
-        for file in read.flatten() {
-            let path = file.path();
-            let Some(file_name) = path.file_name().and_then(|n| n.to_str()) else {
-                continue;
-            };
-            if !file_name.ends_with(".desktop") {
-                continue;
-            }
-            let Some(text) = read_small(&path) else {
-                continue;
-            };
-            if let Some(e) = parse(file_name, &path.to_string_lossy(), &text)
-                && !entries.iter().any(|x| x.id == e.id)
-            {
-                entries.push(e);
-            }
-        }
+        scan_dir(dir, "", 0, &mut entries);
     }
     Index::new(entries)
 }
 
-/// The text of a file, if it is valid UTF-8 and smaller than 64 KiB (desktop files are tiny).
+/// Reads one directory: its own files first, then the folders in it. `prefix` is what the id of a
+/// file in it starts with (the folder names joined with `-`).
+fn scan_dir(dir: &Path, prefix: &str, depth: u32, entries: &mut Vec<Entry>) {
+    let Ok(read) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut folders: Vec<(PathBuf, String)> = Vec::new();
+    for file in read.flatten() {
+        let path = file.path();
+        let Some(file_name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if file_name.ends_with(".desktop") {
+            let Some(text) = read_small(&path) else {
+                continue;
+            };
+            if let Some(e) = parse(
+                &format!("{prefix}{file_name}"),
+                &path.to_string_lossy(),
+                &text,
+            ) && !entries.iter().any(|x| x.id == e.id)
+            {
+                entries.push(e);
+            }
+        } else if depth < SCAN_DEPTH && !file_name.starts_with('.') && path.is_dir() {
+            folders.push((path.clone(), format!("{prefix}{file_name}-")));
+        }
+    }
+    for (folder, prefix) in folders {
+        scan_dir(&folder, &prefix, depth + 1, entries);
+    }
+}
+
+/// The text of a file smaller than 64 KiB (desktop files are tiny). A byte that is not UTF-8
+/// (a comment or a name in an old encoding) becomes a replacement character instead of making the
+/// whole entry, and its app, vanish from the list.
 fn read_small(path: &Path) -> Option<String> {
     let meta = std::fs::metadata(path).ok()?;
     if meta.len() > 64 * 1024 {
         return None;
     }
-    std::fs::read_to_string(path).ok()
+    let bytes = std::fs::read(path).ok()?;
+    Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 #[cfg(test)]
@@ -292,6 +331,7 @@ mod tests {
             icon: None,
             no_display: false,
             single_window: false,
+            search: String::new(),
         }
     }
 
@@ -518,6 +558,37 @@ mod tests {
         let idx = scan(&[user.clone(), system.clone(), base.join("missing")]);
         assert_eq!(idx.len(), 1);
         assert_eq!(idx.find("app").unwrap().name, "Mine");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn the_other_names_of_an_entry_are_kept_for_the_search() {
+        let text = "[Desktop Entry]\nType=Application\nName=Files\nName[id]=Berkas\nName[de]=Dateien\nGenericName=File Manager\nKeywords=Folder;Manager;Explore;\nKeywords[id]=Folder;Jelajah;\n";
+        let e = parse("org.gnome.nautilus.desktop", "/p", text).unwrap();
+        assert_eq!(e.name, "Files");
+        let found: Vec<&str> = e.search.lines().collect();
+        for word in ["berkas", "dateien", "file manager", "explore", "jelajah"] {
+            assert!(found.contains(&word), "{word} is searchable: {found:?}");
+        }
+    }
+
+    #[test]
+    fn scan_reads_the_folders_below_and_bytes_that_are_not_utf8() {
+        let base = std::env::temp_dir().join(format!("cursorpie-de-sub-{}", std::process::id()));
+        let sub = base.join("kde4");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(
+            sub.join("konsole.desktop"),
+            "[Desktop Entry]\nType=Application\nName=Konsole\n",
+        )
+        .unwrap();
+        // a Latin-1 byte in a comment: the entry is still there
+        let mut old = b"[Desktop Entry]\nType=Application\nName=Old\n# caf".to_vec();
+        old.push(0xE9);
+        std::fs::write(base.join("old.desktop"), old).unwrap();
+        let idx = scan(std::slice::from_ref(&base));
+        assert!(idx.find("kde4-konsole").is_some(), "{:?}", idx.entries());
+        assert_eq!(idx.find("old").unwrap().name, "Old");
         let _ = std::fs::remove_dir_all(&base);
     }
 }

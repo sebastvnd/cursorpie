@@ -161,6 +161,7 @@ mod tests {
             icon: None,
             no_display: false,
             single_window: false,
+            search: String::new(),
         }
     }
 

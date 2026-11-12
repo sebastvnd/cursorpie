@@ -25,7 +25,7 @@
 //! | `window_manager_may_recenter` | whether the window manager may ignore the position of a hidden window when it is shown again (X11 only) |
 //! | `window_point` | where to ask the toolkit to put a window centered on a point of the pointer's space (identity except on Linux in a Wayland session, where KWin's points and XWayland's differ) |
 //! | `window_scale` | how many of the toolkit's points one point of the pointer's space is, to turn a distance of the pointer into a distance in the pie (1 except on Linux in a Wayland session, where KWin's points and XWayland's differ) |
-//! | `raise_own_window` | bring CursorPie's own window (Settings) to the front, on whichever workspace it is (X11: the toolkit's own request is refused there; Windows: the toolkit's request injects an Alt key press that eats the next click, so this is the only request sent; macOS: the toolkit's is enough) |
+//! | `raise_own_window` | bring CursorPie's own window (Settings) to the front, on whichever workspace it is (X11: the toolkit's own request is refused there; Windows: the toolkit's request injects an Alt key press that eats the next click, so this is the only request sent; macOS: activates the app through `NSRunningApplication`, because the toolkit's request is refused while the app below Settings is in front) |
 //! | `cursor_pos`, `display_rects` | pointer position and display bounds, in logical points |
 //! | `is_trusted_cached`, `open_accessibility_settings`, `open_input_monitoring_settings` | input permission |
 //! | `mouse_devices` | the mice the OS lists and their extra buttons, see [`mouse`](crate::mouse) |

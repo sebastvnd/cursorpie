@@ -482,6 +482,25 @@ impl Ed {
         was
     }
 
+    /// Lets go of what the Flow tab holds for the flows of the working copy, which is dropped when
+    /// Settings closes or the UI sleeps (see `App::release_editor`): the selection, the wire being
+    /// dragged, the variable being followed and the search text. Kept on purpose: the marks of the
+    /// last runs and `flow_untidy` (both belong to the saved flows, not to this session), and the
+    /// kit request, which the person may come back to.
+    pub fn release_flow_state(&mut self) {
+        self.flow_sel = None;
+        self.flow_wire = None;
+        self.flow_focus = None;
+        self.flow_var = None;
+        self.flow_insp = false;
+        self.flow_insp_vars = false;
+        self.flow_insp_seen = None;
+        self.flow_mid = false;
+        self.flow_search = String::new();
+        self.flow_side = false;
+        self.flow_side_leave = None;
+    }
+
     /// Closes the list of blocks of the canvas. Returns whether it was open.
     pub fn close_flow_menu(&mut self) -> bool {
         self.flow_menu.take().is_some()

@@ -608,6 +608,7 @@ mod tests {
         let installed = vec![InstalledApp {
             id: "com.apple.Safari".into(),
             name: "Safari".into(),
+            ..Default::default()
         }];
         assert_eq!(
             app_id_for_action(" safari ", &installed).as_deref(),

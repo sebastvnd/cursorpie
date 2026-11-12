@@ -89,7 +89,12 @@ impl App {
             }
             Msg::Warm { general, app } => self.warm(ctx, general, app),
             Msg::Refocus => {
-                if self.settings_open {
+                // The chooser is gone and the system hands the focus back by itself, often to the
+                // window that was below Settings. Raise only if Settings really does not have it:
+                // a raise on top of a window that has the focus makes it flicker or lose its place.
+                // (The picker sends this twice, so a handover that comes late is caught too.)
+                let focused = ctx.input(|i| i.viewport().focused).unwrap_or(false);
+                if self.settings_open && !focused {
                     self.raise_settings(ctx, "chooser_closed");
                 }
             }

@@ -30,7 +30,7 @@ impl App {
         let now = Instant::now();
         let after = sleep_after(cfg().sleep_after_s);
         if self.sleeper.tick(now, self.is_busy(), after) == Tick::Sleep {
-            self.enter_sleep();
+            self.enter_sleep(ctx);
         }
         if let Some(wait) = self.sleeper.next_check(now, after) {
             ctx.request_repaint_after(wait);
@@ -45,25 +45,42 @@ impl App {
     /// The icons of the general pie are **kept**. They are a few dozen KiB, and dropping them made
     /// the first pie after a long idle time decode them while the hold timer ran (a multi-size TIFF
     /// per app icon on macOS), so the pie opened late.
-    fn enter_sleep(&mut self) {
+    fn enter_sleep(&mut self, ctx: &egui::Context) {
         // how long freeing the caches and handing the pages back to the OS took
         let _t = diag::timed!("ui", "sleep");
         let keep = icons_to_keep_asleep(&cfg());
         self.ed.icons.keep_only(&keep);
         self.release_editor();
+        self.release_font_atlas(ctx);
         self.toast = None;
         platform::release_unused_memory();
+    }
+
+    /// Rebuilds the font atlas if the Flow canvas or the panel designer cut glyphs at zoomed
+    /// sizes since the last time. egui never evicts a glyph, so without this every size a zoom
+    /// passed through stays allocated (CPU and GPU) after Settings is closed. Does nothing, and
+    /// costs nothing, when no zoomed text was drawn, so the pie's own glyphs are not touched.
+    pub(super) fn release_font_atlas(&mut self, ctx: &egui::Context) {
+        if crate::ui::settings::take_crisp_used() {
+            crate::ui::fonts::reset_atlas(ctx);
+        }
     }
 
     /// Drops the Settings working copy and everything derived from it. Called when Settings
     /// closes and when the UI sleeps; `open_settings` makes a fresh copy of the live config.
     pub(super) fn release_editor(&mut self) {
         self.edit.profiles = Vec::new();
+        // the flows are as big as the profiles, and `history.reset` below would keep two more
+        // copies of them (its base and the last seen value) for as long as the app runs
+        self.edit.flows = Vec::new();
         self.opened = None;
+        self.run_report = None;
         self.history.reset(&self.edit);
         self.ed.reset_nav();
-        self.ed.update_offer = None;
-        self.ed.flow_menu = None;
+        // sheets over the page (the new flow sheet, the panel designer with its own copy of a
+        // panel, the update offer) and the Flow tab's per-session state that points into `edit`
+        self.ed.close_sheet();
+        self.ed.release_flow_state();
         self.ed.user_icons = Vec::new();
         self.ed.icons_not_listed = 0;
         self.ed.backups = Vec::new();
@@ -98,5 +115,36 @@ impl App {
         for icon in &icons {
             let _ = self.ed.icons.get(ctx, icon);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{Config, Flow};
+
+    #[test]
+    fn releasing_the_editor_drops_the_flows_and_what_points_into_them() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut app = App::new(rx, tx, 200.0, None);
+        app.edit = Config {
+            flows: vec![Flow::new("flow-1", "Demo")],
+            ..Config::default()
+        };
+        app.ed.flow_sel = Some(3);
+        app.ed.flow_var = Some("x".into());
+        app.ed.flow_search = "wait".into();
+        app.ed.flow_new = Some(crate::ui::settings::FlowNew::Ai);
+        app.release_editor();
+        assert!(
+            app.edit.flows.is_empty(),
+            "the flows of the working copy are dropped"
+        );
+        assert!(app.ed.flow_sel.is_none() && app.ed.flow_var.is_none());
+        assert!(app.ed.flow_search.is_empty());
+        assert!(
+            app.ed.flow_new.is_none(),
+            "a sheet over the page does not outlive Settings"
+        );
     }
 }

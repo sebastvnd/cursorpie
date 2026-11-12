@@ -13,12 +13,16 @@
 use super::linux::desktop_entry;
 
 /// One installed application.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct InstalledApp {
     /// The app id a profile stores.
     pub id: String,
     /// The name to show.
     pub name: String,
+    /// Other names the app goes by, lower case, only for the search box: the bundle's file name,
+    /// the names in the language of the system, a generic name ("Web Browser"), keywords. The
+    /// system's own file manager finds an app by these, so the search here must too.
+    pub alt: String,
 }
 
 /// Sorts by name (case-insensitive) and drops entries with the same id.
@@ -29,14 +33,33 @@ pub fn tidy(mut apps: Vec<InstalledApp>) -> Vec<InstalledApp> {
     apps
 }
 
-/// Whether `app` matches what the user typed: every word of `query` is part of the name or the id.
+/// `text` in lower case with only letters and digits left, so `Whats App`, `whats-app` and
+/// `WhatsApp` are the same.
+fn compact(text: &str) -> String {
+    text.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// Whether `app` matches what the user typed: every word of `query` is part of the name, the id or
+/// another name of the app (see [`InstalledApp::alt`]), or the whole query, with spaces and
+/// punctuation left out, is part of one of them (`vs code` finds `VSCode`).
 pub fn matches(app: &InstalledApp, query: &str) -> bool {
-    let name = app.name.to_lowercase();
-    let id = app.id.to_lowercase();
-    query
-        .split_whitespace()
-        .map(str::to_lowercase)
-        .all(|w| name.contains(&w) || id.contains(&w))
+    let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+    if words.is_empty() {
+        return true;
+    }
+    let hay = [
+        app.name.to_lowercase(),
+        app.id.to_lowercase(),
+        app.alt.to_lowercase(),
+    ];
+    if words.iter().all(|w| hay.iter().any(|h| h.contains(w))) {
+        return true;
+    }
+    let whole = compact(query);
+    !whole.is_empty() && hay.iter().any(|h| compact(h).contains(&whole))
 }
 
 /// What an "Open app" action stores for `app` when it is picked from the list: the name on macOS
@@ -79,53 +102,195 @@ pub fn entries_to_apps(index: &desktop_entry::Index) -> Vec<InstalledApp> {
         .map(|e| InstalledApp {
             id: e.id.clone(),
             name: e.name.clone(),
+            alt: [
+                Some(e.search.as_str()),
+                e.exec_name.as_deref(),
+                e.wm_class.as_deref(),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase(),
         })
         .collect()
 }
 
 // ---------------------------------------------------------------------------------------- macOS
 
-/// The folders whose `.app` bundles are listed (not recursively, except for the system's own).
+/// The folders whose `.app` bundles are listed, with how many levels of plain folders below each
+/// are searched too (Adobe, Setapp and the Chrome apps keep their bundles one folder down), and
+/// whether helper programs without a window (`LSUIElement`) are left out. Finder itself, Screen
+/// Sharing and the other system apps are in `CoreServices`, which the Finder shows as part of the
+/// system although it is not in any "Applications" folder.
 #[cfg(target_os = "macos")]
-fn mac_app_dirs() -> Vec<std::path::PathBuf> {
+fn mac_app_dirs() -> Vec<(std::path::PathBuf, u32, bool)> {
     use std::path::PathBuf;
-    let mut dirs: Vec<PathBuf> = [
-        "/Applications",
-        "/Applications/Utilities",
-        "/System/Applications",
-        "/System/Applications/Utilities",
-    ]
-    .iter()
-    .map(PathBuf::from)
-    .collect();
-    dirs.push(crate::config::home().join("Applications"));
+    let mut dirs: Vec<(PathBuf, u32, bool)> = vec![
+        (PathBuf::from("/Applications"), 2, false),
+        (PathBuf::from("/System/Applications"), 2, false),
+        // Safari and the other apps that the system updates apart from the system volume
+        (
+            PathBuf::from("/System/Cryptexes/App/System/Applications"),
+            1,
+            false,
+        ),
+        (PathBuf::from("/System/Library/CoreServices"), 1, true),
+    ];
+    dirs.push((crate::config::home().join("Applications"), 2, false));
     dirs
 }
 
-/// Every `.app` bundle in the usual folders, with its id and name read from `Info.plist`
-/// (converted to JSON by `plutil`, which reads the XML and the binary form alike).
+/// The `.app` bundles in `dir` and in the plain folders below it (`depth` levels). A bundle is
+/// never entered: what is inside it is not an app of its own.
 #[cfg(target_os = "macos")]
-fn collect() -> Vec<InstalledApp> {
-    use std::process::Command;
-    let mut out = Vec::new();
-    for dir in mac_app_dirs() {
-        let Ok(read) = std::fs::read_dir(&dir) else {
+fn bundles_in(dir: &std::path::Path, depth: u32, out: &mut Vec<std::path::PathBuf>) {
+    let Ok(read) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for file in read.flatten() {
+        if out.len() >= 5000 {
+            return;
+        }
+        if file.file_name().to_string_lossy().starts_with('.') {
             continue;
-        };
-        for file in read.flatten() {
-            let path = file.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("app") {
+        }
+        let path = file.path();
+        if path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("app"))
+        {
+            out.push(path);
+        } else if depth > 0 && path.is_dir() {
+            bundles_in(&path, depth - 1, out);
+        }
+    }
+}
+
+/// An `Info.plist` as JSON, by `plutil`, which reads the XML, the binary and the old-style forms
+/// (and `.strings` files) alike. `None` when the file cannot be read.
+#[cfg(target_os = "macos")]
+fn plist_json(path: &std::path::Path) -> Option<Vec<u8>> {
+    let output = std::process::Command::new("plutil")
+        .args(["-convert", "json", "-o", "-"])
+        .arg(path)
+        .output()
+        .ok()?;
+    output.status.success().then_some(output.stdout)
+}
+
+/// Where the `Info.plist` of a bundle is: normally `Contents/Info.plist`. An iPhone or iPad app
+/// that runs on a Mac is a wrapper whose real bundle is `WrappedBundle`, with the plist at its top.
+#[cfg(target_os = "macos")]
+fn info_plist(bundle: &std::path::Path) -> Option<std::path::PathBuf> {
+    [
+        "Contents/Info.plist",
+        "WrappedBundle/Info.plist",
+        "Info.plist",
+    ]
+    .iter()
+    .map(|rel| bundle.join(rel))
+    .find(|p| p.is_file())
+}
+
+/// The languages the user prefers, most wanted first (`id-ID`, `en-ID`...), from the global
+/// preference `AppleLanguages`. At most three; empty when it cannot be read.
+#[cfg(target_os = "macos")]
+fn preferred_languages() -> Vec<String> {
+    std::process::Command::new("defaults")
+        .args(["read", "-g", "AppleLanguages"])
+        .output()
+        .ok()
+        .map(|o| parse_apple_languages(&String::from_utf8_lossy(&o.stdout)))
+        .unwrap_or_default()
+}
+
+/// The language tags in the output of `defaults read -g AppleLanguages`, which looks like
+/// `(\n    "id-ID",\n    "en-ID"\n)`. At most three.
+pub fn parse_apple_languages(text: &str) -> Vec<String> {
+    text.lines()
+        .map(|l| l.trim().trim_end_matches(',').trim_matches('"').trim())
+        .filter(|l| !l.is_empty() && *l != "(" && *l != ")")
+        .map(str::to_string)
+        .take(3)
+        .collect()
+}
+
+/// The names of the folders (`<name>.lproj`) an app may keep its texts in for the language tag
+/// `lang`: the tag as it is, with `_` for `-`, and with the last parts cut off (`zh-Hans-CN`,
+/// `zh_Hans_CN`, `zh-Hans`, `zh`).
+pub fn lproj_names(lang: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut parts: Vec<&str> = lang.split(['-', '_']).filter(|p| !p.is_empty()).collect();
+    while !parts.is_empty() {
+        for sep in ["-", "_"] {
+            let name = parts.join(sep);
+            if !out.contains(&name) {
+                out.push(name);
+            }
+        }
+        parts.pop();
+    }
+    out
+}
+
+/// The names a bundle has in the user's languages: what Finder shows (`Kalkulator` for
+/// Calculator on an Indonesian system), read from `InfoPlist.strings` of the matching `.lproj`.
+#[cfg(target_os = "macos")]
+fn localized_names(bundle: &std::path::Path, languages: &[String]) -> Vec<String> {
+    let resources = bundle.join("Contents/Resources");
+    let mut out: Vec<String> = Vec::new();
+    for lang in languages {
+        for dir in lproj_names(lang) {
+            let file = resources.join(format!("{dir}.lproj/InfoPlist.strings"));
+            if !file.is_file() {
                 continue;
             }
-            let plist = path.join("Contents/Info.plist");
-            let Ok(output) = Command::new("plutil")
-                .args(["-convert", "json", "-o", "-"])
-                .arg(&plist)
-                .output()
-            else {
+            if let Some(json) = plist_json(&file) {
+                out.extend(names_in_strings_json(&json));
+                break; // the best folder of this language is enough
+            }
+        }
+    }
+    out
+}
+
+/// The display name and the bundle name in the JSON form of an `InfoPlist.strings` file.
+pub fn names_in_strings_json(json: &[u8]) -> Vec<String> {
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(json) else {
+        return Vec::new();
+    };
+    ["CFBundleDisplayName", "CFBundleName"]
+        .iter()
+        .filter_map(|k| v.get(k).and_then(|x| x.as_str()))
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// Every `.app` bundle in the usual folders, with its id and name read from `Info.plist`.
+#[cfg(target_os = "macos")]
+fn collect() -> Vec<InstalledApp> {
+    let languages = preferred_languages();
+    let mut out = Vec::new();
+    for (dir, depth, no_agents) in mac_app_dirs() {
+        let mut bundles = Vec::new();
+        bundles_in(&dir, depth, &mut bundles);
+        for path in bundles {
+            let Some(json) = info_plist(&path).and_then(|p| plist_json(&p)) else {
                 continue;
             };
-            if let Some(app) = app_from_plist_json(&output.stdout, &path) {
+            if no_agents && plist_is_agent(&json) {
+                continue;
+            }
+            if let Some(mut app) = app_from_plist_json(&json, &path) {
+                for name in localized_names(&path, &languages) {
+                    let name = name.to_lowercase();
+                    if !app.alt.split('\n').any(|a| a == name) {
+                        app.alt.push('\n');
+                        app.alt.push_str(&name);
+                    }
+                }
                 out.push(app);
             }
         }
@@ -133,9 +298,25 @@ fn collect() -> Vec<InstalledApp> {
     out
 }
 
+/// Whether the JSON form of an `Info.plist` is that of an agent: a program that runs without a
+/// window or a Dock icon (`LSUIElement`), which is not something to pick from a list of apps.
+pub fn plist_is_agent(json: &[u8]) -> bool {
+    serde_json::from_slice::<serde_json::Value>(json)
+        .ok()
+        .is_some_and(|v| plist_flag(&v, "LSUIElement"))
+}
+
+fn plist_flag(v: &serde_json::Value, key: &str) -> bool {
+    v.get(key).is_some_and(|x| {
+        x.as_bool() == Some(true) || x.as_i64() == Some(1) || x.as_str() == Some("1")
+    })
+}
+
 /// The id and the name of an app from the JSON form of its `Info.plist`. The name is the display
-/// name, then the bundle name, then the bundle's file name. `None` for a bundle without an id, or
-/// one that is not meant to be seen (`LSUIElement` helpers, `LSBackgroundOnly`).
+/// name, then the bundle's file name, which is what Finder shows (`Visual Studio Code`, where
+/// `CFBundleName` says only `Code`). The other names go to [`InstalledApp::alt`], so a search by
+/// any of them finds the app. `None` for a bundle without an id, or one that is not meant to be
+/// seen (`LSBackgroundOnly`).
 pub fn app_from_plist_json(json: &[u8], bundle: &std::path::Path) -> Option<InstalledApp> {
     let v: serde_json::Value = serde_json::from_slice(json).ok()?;
     let text = |key: &str| {
@@ -144,25 +325,35 @@ pub fn app_from_plist_json(json: &[u8], bundle: &std::path::Path) -> Option<Inst
             .map(str::trim)
             .filter(|s| !s.is_empty())
     };
-    let flag = |key: &str| {
-        v.get(key).is_some_and(|x| {
-            x.as_bool() == Some(true) || x.as_i64() == Some(1) || x.as_str() == Some("1")
-        })
-    };
-    if flag("LSBackgroundOnly") {
+    if plist_flag(&v, "LSBackgroundOnly") {
         return None;
     }
     let id = text("CFBundleIdentifier")?.to_string();
     let stem = bundle
         .file_stem()
         .and_then(|s| s.to_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
         .unwrap_or(&id)
         .to_string();
     let name = text("CFBundleDisplayName")
-        .or_else(|| text("CFBundleName"))
         .map(str::to_string)
-        .unwrap_or(stem);
-    Some(InstalledApp { id, name })
+        .unwrap_or_else(|| stem.clone());
+    let mut alt: Vec<String> = Vec::new();
+    for other in [Some(stem.as_str()), text("CFBundleName")]
+        .into_iter()
+        .flatten()
+    {
+        let other = other.to_lowercase();
+        if other != name.to_lowercase() && !alt.contains(&other) {
+            alt.push(other);
+        }
+    }
+    Some(InstalledApp {
+        id,
+        name,
+        alt: alt.join("\n"),
+    })
 }
 
 // -------------------------------------------------------------------------------------- Windows
@@ -175,7 +366,11 @@ pub fn app_from_plist_json(json: &[u8], bundle: &std::path::Path) -> Option<Inst
 fn collect() -> Vec<InstalledApp> {
     super::windows::installed_list()
         .into_iter()
-        .map(|(id, name)| InstalledApp { id, name })
+        .map(|(id, name)| InstalledApp {
+            id,
+            name,
+            alt: String::new(),
+        })
         .collect()
 }
 
@@ -222,7 +417,11 @@ pub fn parse_reg_app_paths(text: &str) -> Vec<InstalledApp> {
             Some(c) => c.to_uppercase().chain(chars).collect(),
             None => continue,
         };
-        out.push(InstalledApp { id, name });
+        out.push(InstalledApp {
+            id,
+            name,
+            alt: String::new(),
+        });
     }
     out
 }
@@ -242,6 +441,7 @@ mod tests {
         InstalledApp {
             id: id.into(),
             name: name.into(),
+            alt: String::new(),
         }
     }
 
@@ -266,6 +466,61 @@ mod tests {
         assert!(matches(&code, "studio code"));
         assert!(matches(&code, "VISUALSTUDIO"));
         assert!(!matches(&code, "studio firefox"));
+    }
+
+    #[test]
+    fn an_app_is_found_by_its_other_names_and_by_a_spelling_without_spaces() {
+        let mut calc = app("com.apple.calculator", "Calculator");
+        calc.alt = "kalkulator".into();
+        assert!(
+            matches(&calc, "kalk"),
+            "the name in the language of the system"
+        );
+        let whats = app("net.whatsapp.WhatsApp", "WhatsApp");
+        assert!(matches(&whats, "whats app"));
+        assert!(matches(&whats, "whats-app"));
+        let code = app("com.microsoft.VSCode", "Visual Studio Code");
+        assert!(matches(&code, "vs code"));
+        assert!(matches(&code, "visualstudio"));
+        assert!(!matches(&code, "vs firefox"));
+        assert!(!matches(&whats, "!!!"), "punctuation alone is not a match");
+    }
+
+    #[test]
+    fn the_languages_of_the_system_are_read_from_the_defaults_output() {
+        let out = "(\n    \"id-ID\",\n    \"en-ID\"\n)\n";
+        assert_eq!(parse_apple_languages(out), ["id-ID", "en-ID"]);
+        assert!(parse_apple_languages("").is_empty());
+        let many = "(\n    a,\n    b,\n    c,\n    d\n)";
+        assert_eq!(parse_apple_languages(many).len(), 3);
+    }
+
+    #[test]
+    fn a_language_tag_gives_the_folders_an_app_may_use() {
+        assert_eq!(lproj_names("id-ID"), ["id-ID", "id_ID", "id"]);
+        assert_eq!(
+            lproj_names("zh-Hans-CN"),
+            ["zh-Hans-CN", "zh_Hans_CN", "zh-Hans", "zh_Hans", "zh"]
+        );
+        assert!(lproj_names("").is_empty());
+    }
+
+    #[test]
+    fn localized_names_come_from_the_strings_file() {
+        let json =
+            br#"{"CFBundleDisplayName":" Kalkulator ","CFBundleName":"Kalkulator","Other":"x"}"#;
+        assert_eq!(names_in_strings_json(json), ["Kalkulator", "Kalkulator"]);
+        assert!(names_in_strings_json(b"nope").is_empty());
+    }
+
+    #[test]
+    fn an_agent_is_told_from_a_normal_app() {
+        assert!(plist_is_agent(br#"{"LSUIElement":true}"#));
+        assert!(plist_is_agent(br#"{"LSUIElement":"1"}"#));
+        assert!(!plist_is_agent(
+            br#"{"CFBundleIdentifier":"com.apple.finder"}"#
+        ));
+        assert!(!plist_is_agent(b"nope"));
     }
 
     #[test]
@@ -298,16 +553,20 @@ mod tests {
     }
 
     #[test]
-    fn an_info_plist_gives_the_id_and_the_best_name() {
+    fn an_info_plist_gives_the_id_and_the_name_finder_shows() {
         let path = std::path::Path::new("/Applications/Visual Studio Code.app");
+        // no display name: the bundle's file name, which is what Finder shows; `Code` is still
+        // a name the app is found by
         let json = br#"{"CFBundleIdentifier":"com.microsoft.VSCode","CFBundleName":"Code"}"#;
-        assert_eq!(
-            app_from_plist_json(json, path),
-            Some(app("com.microsoft.VSCode", "Code"))
-        );
+        let found = app_from_plist_json(json, path).unwrap();
+        assert_eq!(found.id, "com.microsoft.VSCode");
+        assert_eq!(found.name, "Visual Studio Code");
+        assert_eq!(found.alt, "code");
         let json =
             br#"{"CFBundleIdentifier":"x.y","CFBundleDisplayName":"Shown","CFBundleName":"Other"}"#;
-        assert_eq!(app_from_plist_json(json, path).unwrap().name, "Shown");
+        let found = app_from_plist_json(json, path).unwrap();
+        assert_eq!(found.name, "Shown");
+        assert!(found.alt.contains("visual studio code") && found.alt.contains("other"));
         let json = br#"{"CFBundleIdentifier":"x.y"}"#;
         assert_eq!(
             app_from_plist_json(json, path).unwrap().name,

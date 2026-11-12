@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+## 0.8.11
+
+- **Fixed: Settings ended up behind another window after cancelling a file chooser (macOS).** When the chooser
+  closed, the system gave the focus to the window below Settings, and the one request to bring Settings back could
+  lose against it, leaving Settings covered and flickering. CursorPie now activates itself through the system's own
+  call, asks again a moment later if the focus still is not back, and leaves a window that already has the focus alone.
+
+- **Fixed: the app list missed apps that exist.** *macOS:* Finder, Screen Sharing and the other apps in
+  `/System/Library/CoreServices`, apps one folder down (Adobe, Setapp, Chrome apps, `~/Applications/...`) and
+  iPhone/iPad apps were not listed; an app was named by `CFBundleName` (`Code`) instead of what Finder shows
+  (`Visual Studio Code`), so searching `visual` found nothing, and the name in the system language (`Kalkulator`) was
+  unknown. *Windows:* the Start menu was read once and kept until CursorPie quit, so an app installed later never
+  appeared, and a program that was once not found was never looked for again; apps that start through an
+  `Update.exe` (Discord, GitHub Desktop, Slack, Postman) were dropped as updaters. *Linux:* desktop entries in
+  folders below `applications/` (`kde4/`, `wine/Programs/`) and entries with a byte that is not UTF-8 were skipped, the
+  names in the language of the desktop were not searchable, and the Nix directories were not read. The search now
+  also looks at the other names of an app and ignores spaces and punctuation (`vs code`, `whats app`).
+
+- **Fixed: memory kept after the Flow editor was closed.** Zooming the Flow canvas (or the panel designer) cut a new
+  set of glyphs for every zoom value a pinch or a wheel passed through, and egui never gives a glyph back, so memory
+  grew from tens of MB to hundreds of MB, even toward 1 GB. The canvas now cuts its text at a ladder of 16 sizes
+  (at most 10% from the real zoom, the text keeps its exact size on screen), and the font atlas is rebuilt when
+  Settings closes or the UI sleeps. Closing Settings or sleeping also drops the flows of the working copy (and the
+  two copies the undo history held of them), the open sheets and the Flow tab's selection.
+
 ## 0.8.10
 
 - **New: Telegram folders, mentions and a way to skip muted chats.** Three new commands for Telegram Web: `chat.folder`

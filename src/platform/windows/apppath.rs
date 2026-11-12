@@ -9,13 +9,16 @@
 //! 3. the shortcuts of the Start menu, the list Windows itself shows as "installed apps";
 //! 4. the usual program folders, as a last resort, searched a few levels deep.
 //!
-//! Everything here is slow the first time and cached, so call it off the UI thread.
+//! Everything here is slow the first time and cached for a minute (a program installed while
+//! CursorPie runs is found; the list of apps always reads the Start menu again), so call it off the
+//! UI thread.
 
 use super::registry::{self, Hive};
 use super::util::{capitalized, exe_id_from_path, expand_env_vars, is_helper_stem};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 /// Where programs register their own location.
 const APP_PATHS: &str = r"Software\Microsoft\Windows\CurrentVersion\App Paths";
@@ -42,10 +45,15 @@ fn remembered() -> &'static Mutex<HashMap<String, String>> {
     PATHS.get_or_init(Default::default)
 }
 
-fn missing() -> &'static Mutex<HashSet<String>> {
-    static MISSING: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+/// Programs that were looked for in the program folders and not found, and when. A miss is
+/// remembered for a while only: the program may be installed a minute later.
+fn missing() -> &'static Mutex<HashMap<String, Instant>> {
+    static MISSING: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
     MISSING.get_or_init(Default::default)
 }
+
+/// How long a miss, and a read of the Start menu, are believed.
+const FRESH_FOR: Duration = Duration::from_secs(60);
 
 fn env(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|v| !v.is_empty())
@@ -95,10 +103,87 @@ fn shortcuts_in(dir: &Path, depth: u32, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// The programs that the Start menu has a shortcut to (all users and this user).
-pub fn start_menu_apps() -> &'static [StartApp] {
-    static APPS: OnceLock<Vec<StartApp>> = OnceLock::new();
-    APPS.get_or_init(scan_start_menu)
+/// A read of the Start menu and the moment it was made.
+type StartMenuRead = Option<(Instant, Arc<Vec<StartApp>>)>;
+
+/// The Start menu as it was last read, and when.
+fn start_menu_cache() -> &'static Mutex<StartMenuRead> {
+    static APPS: OnceLock<Mutex<StartMenuRead>> = OnceLock::new();
+    APPS.get_or_init(Default::default)
+}
+
+/// The programs that the Start menu has a shortcut to (all users and this user). The read is kept
+/// for a minute, not for the life of the program: an app installed while CursorPie runs must show
+/// up. `fresh` reads it again whatever its age (the list of apps asks for that). The lock is held
+/// during the read, so threads that ask at the same time wait for one read instead of making many.
+pub fn start_menu_apps(fresh: bool) -> Arc<Vec<StartApp>> {
+    let Ok(mut cache) = start_menu_cache().lock() else {
+        return Arc::new(scan_start_menu());
+    };
+    if let Some((at, apps)) = cache.as_ref()
+        && !fresh
+        && at.elapsed() < FRESH_FOR
+    {
+        return Arc::clone(apps);
+    }
+    let apps = Arc::new(scan_start_menu());
+    *cache = Some((Instant::now(), Arc::clone(&apps)));
+    apps
+}
+
+/// The program a shortcut of a Squirrel-installed app (Discord, GitHub Desktop, Slack, Postman...)
+/// really starts. Those shortcuts point at `Update.exe` with `--processStart Name.exe`, so the
+/// shortcut's target says nothing about the app. The program lives in a folder `app-<version>` next
+/// to `Update.exe`; `names` are the `.exe` files found there. It is the one whose name (without
+/// `.exe`, spaces and punctuation dropped, lower case) is the shortcut's name or the folder's.
+pub fn pick_squirrel_exe(names: &[String], link_name: &str, folder: &str) -> Option<String> {
+    let key = |s: &str| -> String {
+        s.chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect()
+    };
+    let (link, folder) = (key(link_name), key(folder));
+    let stem = |n: &String| {
+        let lower = n.to_ascii_lowercase();
+        key(lower.strip_suffix(".exe").unwrap_or(&lower))
+    };
+    names
+        .iter()
+        .find(|n| !link.is_empty() && stem(n) == link)
+        .or_else(|| {
+            names
+                .iter()
+                .find(|n| !folder.is_empty() && stem(n) == folder)
+        })
+        .cloned()
+}
+
+/// The real program behind the `Update.exe` at `target`, found on disk (see [`pick_squirrel_exe`]).
+fn squirrel_program(target: &str, link_name: &str) -> Option<String> {
+    let root = Path::new(target).parent()?;
+    let folder = root.file_name()?.to_string_lossy().into_owned();
+    // the newest `app-<version>` folder: versions sort well enough by their text for this
+    let mut versions: Vec<PathBuf> = std::fs::read_dir(root)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.is_dir()
+                && p.file_name()
+                    .is_some_and(|n| n.to_string_lossy().starts_with("app-"))
+        })
+        .collect();
+    versions.sort();
+    let dir = versions.pop()?;
+    let names: Vec<String> = std::fs::read_dir(&dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.to_ascii_lowercase().ends_with(".exe"))
+        .collect();
+    let exe = pick_squirrel_exe(&names, link_name, &folder)?;
+    Some(dir.join(exe).to_string_lossy().into_owned())
 }
 
 fn scan_start_menu() -> Vec<StartApp> {
@@ -112,19 +197,23 @@ fn scan_start_menu() -> Vec<StartApp> {
     }
     let mut out: Vec<StartApp> = Vec::new();
     for link in links {
-        let Some(target) = super::shellitem::shortcut_target(&link.to_string_lossy()) else {
+        let Some(mut target) = super::shellitem::shortcut_target(&link.to_string_lossy()) else {
             continue;
         };
+        let name_of_link = link.file_stem().map(|s| s.to_string_lossy().into_owned());
+        // `Update.exe --processStart App.exe`: the app is the program next to it, not the updater
+        if exe_id_from_path(&target).as_deref() == Some("update.exe")
+            && let Some(real) = squirrel_program(&target, name_of_link.as_deref().unwrap_or(""))
+        {
+            target = real;
+        }
         let Some(id) = exe_id_from_path(&target) else {
             continue;
         };
         let Some(stem) = id.strip_suffix(".exe") else {
             continue;
         };
-        let name = link
-            .file_stem()
-            .map(|s| s.to_string_lossy().into_owned())
-            .unwrap_or_else(|| capitalized(stem));
+        let name = name_of_link.unwrap_or_else(|| capitalized(stem));
         if is_helper_stem(stem)
             || is_helper_stem(&name.to_lowercase())
             || !Path::new(&target).is_file()
@@ -166,7 +255,12 @@ fn find_below(dir: &Path, id: &str, depth: u32, budget: &mut u32) -> Option<Stri
 /// The last resort: the program folders. A miss is remembered, so a program that is not installed
 /// is not searched for again at every redraw.
 fn from_program_folders(id: &str) -> Option<String> {
-    if missing().lock().ok()?.contains(id) {
+    if missing()
+        .lock()
+        .ok()?
+        .get(id)
+        .is_some_and(|at| at.elapsed() < FRESH_FOR)
+    {
         return None;
     }
     let roots = [
@@ -182,8 +276,8 @@ fn from_program_folders(id: &str) -> Option<String> {
     match &found {
         Some(path) => remember(path),
         None => {
-            if let Ok(mut set) = missing().lock() {
-                set.insert(id.to_string());
+            if let Ok(mut map) = missing().lock() {
+                map.insert(id.to_string(), Instant::now());
             }
         }
     }
@@ -204,7 +298,7 @@ pub fn find_exe(id: &str) -> Option<String> {
     }
     from_app_paths(&id)
         .or_else(|| {
-            start_menu_apps()
+            start_menu_apps(false)
                 .iter()
                 .find(|a| a.id == id)
                 .map(|a| a.path.clone())
@@ -215,7 +309,7 @@ pub fn find_exe(id: &str) -> Option<String> {
 /// The installed apps as `(id, name)`: what the Start menu lists, then the programs that only
 /// registered themselves under `App Paths`.
 pub fn installed_list() -> Vec<(String, String)> {
-    let mut out: Vec<(String, String)> = start_menu_apps()
+    let mut out: Vec<(String, String)> = start_menu_apps(true)
         .iter()
         .map(|a| (a.id.clone(), a.name.clone()))
         .collect();
@@ -235,4 +329,36 @@ pub fn installed_list() -> Vec<(String, String)> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn a_squirrel_shortcut_names_the_program_next_to_the_updater() {
+        let files = names(&["Discord.exe", "squirrel.exe", "crashpad_handler.exe"]);
+        assert_eq!(
+            pick_squirrel_exe(&files, "Discord", "Discord").as_deref(),
+            Some("Discord.exe")
+        );
+        // the shortcut says "GitHub Desktop", the program is GitHubDesktop.exe
+        let files = names(&["GitHubDesktop.exe", "squirrel.exe"]);
+        assert_eq!(
+            pick_squirrel_exe(&files, "GitHub Desktop", "GitHubDesktop").as_deref(),
+            Some("GitHubDesktop.exe")
+        );
+        // no program of that name: the folder's name is the second guess, then nothing
+        let files = names(&["app.exe", "squirrel.exe"]);
+        assert_eq!(
+            pick_squirrel_exe(&files, "Other", "app").as_deref(),
+            Some("app.exe")
+        );
+        assert_eq!(pick_squirrel_exe(&files, "Other", "x"), None);
+        assert_eq!(pick_squirrel_exe(&[], "", ""), None);
+    }
 }

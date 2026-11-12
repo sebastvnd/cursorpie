@@ -157,8 +157,16 @@ pub fn window_scale(_x: f64, _y: f64) -> f64 {
     1.0
 }
 
-/// The toolkit's focus request activates the app, also from another Space, so there is nothing more to ask.
-pub fn raise_own_window() {}
+/// Activates CursorPie with all its windows. The toolkit's focus request is not enough on its own:
+/// it asks to take the focus from the app in front, and a recent macOS refuses that when the app in
+/// front does not give it up (after a file chooser is cancelled the app below Settings is the one in
+/// front, and Settings stayed behind its window). Activating through `NSRunningApplication` goes
+/// through the system's own activation, which also switches to the Space the window is on.
+pub fn raise_own_window() {
+    use objc2_app_kit::{NSApplicationActivationOptions, NSRunningApplication};
+    let me = NSRunningApplication::currentApplication();
+    let _ = me.activateWithOptions(NSApplicationActivationOptions::ActivateAllWindows);
+}
 
 /// Current cursor position in global coordinates.
 pub fn cursor_pos() -> Option<(f64, f64)> {

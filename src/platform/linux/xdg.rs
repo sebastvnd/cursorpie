@@ -18,7 +18,8 @@ pub fn support_dir(home: &Path, xdg_config_home: Option<&str>) -> PathBuf {
 
 /// The data directories, most specific first: the user's (`XDG_DATA_HOME`, default
 /// `~/.local/share`), the system's (`XDG_DATA_DIRS`, default `/usr/local/share:/usr/share`), then
-/// the Flatpak and Snap export directories.
+/// the Flatpak, Snap and Nix directories and the usual system ones, in case the variable left them
+/// out.
 fn data_bases(
     home: &Path,
     xdg_data_home: Option<&str>,
@@ -39,6 +40,14 @@ fn data_bases(
     bases.push(home.join(".local/share/flatpak/exports/share"));
     bases.push(PathBuf::from("/var/lib/flatpak/exports/share"));
     bases.push(PathBuf::from("/var/lib/snapd/desktop"));
+    // Nix and NixOS keep their apps in profiles that `XDG_DATA_DIRS` only names when the session was
+    // started by the login shell; a program started from the menu or at login may not have them
+    bases.push(home.join(".nix-profile/share"));
+    bases.push(PathBuf::from("/nix/var/nix/profiles/default/share"));
+    bases.push(PathBuf::from("/run/current-system/sw/share"));
+    // the usual system directories, for a session whose `XDG_DATA_DIRS` leaves them out
+    bases.push(PathBuf::from("/usr/local/share"));
+    bases.push(PathBuf::from("/usr/share"));
     bases
 }
 
