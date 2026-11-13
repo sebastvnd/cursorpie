@@ -501,6 +501,12 @@ pub struct PanelSpec {
     /// pressed, or after a few seconds without a new panel.
     #[serde(default, skip_serializing_if = "is_default")]
     pub keep_open: bool,
+    /// The panel does not take the keyboard from the app that is in front: for a panel that only
+    /// shows how far something has come (the progress panel of a long run), so the keys that the
+    /// run sends still reach the app they are for. Where the window system decides that for
+    /// itself (macOS, Linux), the request is made and the system has the last word.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub passive: bool,
 }
 
 /// Why a description was refused.

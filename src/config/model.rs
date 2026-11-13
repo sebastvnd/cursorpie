@@ -440,6 +440,10 @@ pub struct Config {
     /// A flow may show a *panel*: a small window with fields, lists and buttons (an *Ask* block in
     /// Panel mode, see [`panel`](crate::panel)). On by default: the person wrote the flow.
     pub panels: bool,
+    /// A run that takes a while (a flow, a pause, a sequence with a pause in it) opens a small
+    /// progress panel by itself, with a bar, the step that is running and a Stop button (see
+    /// [`runpanel`](crate::runpanel)). On by default; needs [`Config::panels`].
+    pub progress_panel: bool,
     /// The browser extension may show panels too (a tab switcher, a question). Off by default,
     /// because it puts content from outside CursorPie on the screen; needs
     /// [`Config::browser_bridge`].

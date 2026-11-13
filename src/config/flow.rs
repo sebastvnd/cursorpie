@@ -366,6 +366,42 @@ impl AskMode {
     }
 }
 
+/// What an *Update panel* block does with the progress panel it names.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PanelOp {
+    /// Shows the panel (a title, a bar with a label and, when asked, a Stop button) and goes on
+    /// without waiting for it. The flow then changes it with [`PanelOp::Update`].
+    #[default]
+    Open,
+    /// Changes the title, the label or the value of the panel that is open. A field that is empty
+    /// stays as it was.
+    Update,
+    /// Takes the panel off the screen.
+    Close,
+}
+
+impl PanelOp {
+    /// Every operation, in the order the editor lists them.
+    pub const ALL: [PanelOp; 3] = [PanelOp::Open, PanelOp::Update, PanelOp::Close];
+
+    /// What the editor shows for it.
+    pub const fn label(self) -> &'static str {
+        match self {
+            PanelOp::Open => "Open progress panel",
+            PanelOp::Update => "Update panel",
+            PanelOp::Close => "Close panel",
+        }
+    }
+
+    /// Whether the operation has a title, a label and a value to fill in.
+    pub const fn has_fields(self) -> bool {
+        !matches!(self, PanelOp::Close)
+    }
+}
+
+/// The id a progress panel has when the block does not name one.
+pub const DEFAULT_PROGRESS_PANEL: &str = "progress";
+
 /// What a *Native* block does with the operating system. Each one takes up to two texts, `a` and
 /// `b`; [`NativeOp::hints`] says what each is for.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -654,6 +690,27 @@ pub enum NodeKind {
         #[serde(default)]
         out: String,
     },
+    /// A progress panel the flow runs itself: opens it, changes what it says and how far the bar
+    /// is, closes it (see [`PanelOp`]). Nothing waits for it. With `stop` the panel has a Stop
+    /// button; pressing it ends the run at once (a wait or a *Run and wait* that is in progress is
+    /// cut short). `value` is a fraction from 0 to 1, a percentage (`40%`) or `busy` for a bar that
+    /// moves without a number; empty leaves the bar as it is. The texts may hold `{{variables}}`.
+    PanelUpdate {
+        #[serde(default)]
+        op: PanelOp,
+        /// The id of the panel; [`DEFAULT_PROGRESS_PANEL`] when empty.
+        #[serde(default)]
+        panel: String,
+        #[serde(default)]
+        title: String,
+        #[serde(default)]
+        label: String,
+        #[serde(default)]
+        value: String,
+        /// [`PanelOp::Open`] only: the panel has a Stop button.
+        #[serde(default)]
+        stop: bool,
+    },
     /// Runs a shell command, **waits** for it (at most `timeout_s` seconds), puts what it printed
     /// in `out` and its exit code in the variable `code`.
     Run {
@@ -846,6 +903,23 @@ impl NodeKind {
                 }
                 text(preset);
                 var(out);
+            }
+            NodeKind::PanelUpdate {
+                panel,
+                title,
+                label,
+                value,
+                ..
+            } => {
+                // an id has the letters of a panel id; an empty one is the default
+                *panel = panel
+                    .chars()
+                    .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | ':'))
+                    .take(MAX_NAME_CHARS)
+                    .collect();
+                text(title);
+                text(label);
+                text(value);
             }
             NodeKind::Run {
                 command,
@@ -1873,6 +1947,8 @@ mod tests {
     const EX_LOOP: &str =
         include_str!("../../docs/examples/flows/ask-and-loop.cursorpie-flow.json");
     const EX_PANEL: &str = include_str!("../../docs/examples/flows/panel-form.cursorpie-flow.json");
+    const EX_PROGRESS: &str =
+        include_str!("../../docs/examples/flows/progress-panel.cursorpie-flow.json");
     const EX_FILE_PASTE: &str =
         include_str!("../../docs/examples/flows/copy-newest-file-and-paste.cursorpie-flow.json");
     const EX_QUICK_REPLY: &str =
@@ -1895,6 +1971,64 @@ mod tests {
         assert!(matches!(chain.first().unwrap().kind, NodeKind::Start));
         assert!(matches!(chain.last().unwrap().kind, NodeKind::End));
         flow
+    }
+
+    #[test]
+    fn the_progress_example_loads_has_nothing_to_warn_about_and_keeps_its_blocks() {
+        let flow = parse_flow(EX_PROGRESS).expect("a valid flow file");
+        assert_eq!(
+            flow.reachable().len(),
+            flow.nodes.len(),
+            "an unreachable block"
+        );
+        assert!(crate::config::flow_check::check_flow(&flow, &[]).is_empty());
+        let ops: Vec<PanelOp> = flow
+            .nodes
+            .iter()
+            .filter_map(|n| match &n.kind {
+                NodeKind::PanelUpdate { op, .. } => Some(*op),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            ops,
+            [
+                PanelOp::Open,
+                PanelOp::Update,
+                PanelOp::Update,
+                PanelOp::Close
+            ]
+        );
+    }
+
+    #[test]
+    fn an_update_panel_block_reads_back_with_defaults_and_a_clean_id() {
+        let text = r#"{"cursorpie_flow":2,"flow":{"id":"f","name":"F","nodes":[
+            {"id":1,"x":0,"y":0,"kind":"Start","next":2},
+            {"id":2,"x":0,"y":0,"kind":{"PanelUpdate":{"panel":"my panel!/1","value":"50%"}},"next":3},
+            {"id":3,"x":0,"y":0,"kind":"End"}]}}"#;
+        let flow = parse_flow(text).expect("a valid flow file");
+        match &flow.nodes[1].kind {
+            NodeKind::PanelUpdate {
+                op,
+                panel,
+                value,
+                stop,
+                ..
+            } => {
+                assert_eq!(*op, PanelOp::Open, "Open is the default");
+                assert_eq!(panel, "mypanel1", "only the letters of an id stay");
+                assert_eq!(value, "50%");
+                assert!(!stop);
+            }
+            other => panic!("not a panel block: {other:?}"),
+        }
+        assert!(!flow.nodes[1].kind.is_sensitive());
+        let json = serde_json::to_string(&flow).unwrap();
+        assert_eq!(
+            parse_flow(&format!(r#"{{"cursorpie_flow":2,"flow":{json}}}"#)).unwrap(),
+            flow
+        );
     }
 
     #[test]

@@ -1,0 +1,225 @@
+{
+  "cursorpie_flow": 2,
+  "flow": {
+    "id": "browser-remote-panel",
+    "name": "Browser remote: a panel that stays open",
+    "nodes": [
+      {
+        "id": 1,
+        "x": 40.0,
+        "y": 60.0,
+        "kind": "Start",
+        "next": 2
+      },
+      {
+        "id": 2,
+        "x": 240.0,
+        "y": 60.0,
+        "kind": {
+          "Native": {
+            "op": "Quiet",
+            "a": "on",
+            "b": ""
+          }
+        },
+        "next": 3
+      },
+      {
+        "id": 3,
+        "x": 540.0,
+        "y": 60.0,
+        "kind": {
+          "Ask": {
+            "mode": "Panel",
+            "message": "{\n  \"id\": \"browser-remote\",\n  \"title\": \"Browser remote\",\n  \"icon\": \"browser\",\n  \"place\": \"bottom\",\n  \"keep_open\": true,\n  \"widgets\": [\n    {\n      \"type\": \"buttons\",\n      \"columns\": 3,\n      \"label\": \"Playback\",\n      \"buttons\": [\n        {\n          \"id\": \"prev\",\n          \"icon\": \"skip-back\"\n        },\n        {\n          \"id\": \"toggle\",\n          \"label\": \"Play / pause\",\n          \"icon\": \"play\",\n          \"tone\": \"primary\"\n        },\n        {\n          \"id\": \"next\",\n          \"icon\": \"skip-forward\"\n        }\n      ]\n    },\n    {\n      \"type\": \"buttons\",\n      \"columns\": 3,\n      \"label\": \"Volume\",\n      \"buttons\": [\n        {\n          \"id\": \"vol_down\",\n          \"label\": \"Quieter\"\n        },\n        {\n          \"id\": \"mute\",\n          \"icon\": \"speaker-slash\"\n        },\n        {\n          \"id\": \"vol_up\",\n          \"label\": \"Louder\"\n        }\n      ]\n    }\n  ],\n  \"buttons\": [\n    {\n      \"id\": \"close\",\n      \"label\": \"Close\",\n      \"cancel\": true\n    }\n  ]\n}",
+            "preset": "",
+            "out": "button"
+          }
+        },
+        "next": 4
+      },
+      {
+        "id": 4,
+        "x": 840.0,
+        "y": 60.0,
+        "kind": {
+          "Branch": {
+            "a": "ok",
+            "op": "IsTrue",
+            "b": ""
+          }
+        },
+        "next": 5,
+        "alt": 20
+      },
+      {
+        "id": 5,
+        "x": 240.0,
+        "y": 260.0,
+        "kind": {
+          "Branch": {
+            "a": "button",
+            "op": "Eq",
+            "b": "prev"
+          }
+        },
+        "next": 6,
+        "alt": 7
+      },
+      {
+        "id": 6,
+        "x": 640.0,
+        "y": 260.0,
+        "kind": {
+          "Native": {
+            "op": "Browser",
+            "a": "media.prev",
+            "b": ""
+          }
+        },
+        "next": 3
+      },
+      {
+        "id": 7,
+        "x": 240.0,
+        "y": 410.0,
+        "kind": {
+          "Branch": {
+            "a": "button",
+            "op": "Eq",
+            "b": "toggle"
+          }
+        },
+        "next": 8,
+        "alt": 9
+      },
+      {
+        "id": 8,
+        "x": 640.0,
+        "y": 410.0,
+        "kind": {
+          "Native": {
+            "op": "Browser",
+            "a": "media.toggle",
+            "b": ""
+          }
+        },
+        "next": 3
+      },
+      {
+        "id": 9,
+        "x": 240.0,
+        "y": 560.0,
+        "kind": {
+          "Branch": {
+            "a": "button",
+            "op": "Eq",
+            "b": "next"
+          }
+        },
+        "next": 10,
+        "alt": 11
+      },
+      {
+        "id": 10,
+        "x": 640.0,
+        "y": 560.0,
+        "kind": {
+          "Native": {
+            "op": "Browser",
+            "a": "media.next",
+            "b": ""
+          }
+        },
+        "next": 3
+      },
+      {
+        "id": 11,
+        "x": 240.0,
+        "y": 710.0,
+        "kind": {
+          "Branch": {
+            "a": "button",
+            "op": "Eq",
+            "b": "vol_down"
+          }
+        },
+        "next": 12,
+        "alt": 13
+      },
+      {
+        "id": 12,
+        "x": 640.0,
+        "y": 710.0,
+        "kind": {
+          "Native": {
+            "op": "Browser",
+            "a": "media.volume_down",
+            "b": ""
+          }
+        },
+        "next": 3
+      },
+      {
+        "id": 13,
+        "x": 240.0,
+        "y": 860.0,
+        "kind": {
+          "Branch": {
+            "a": "button",
+            "op": "Eq",
+            "b": "mute"
+          }
+        },
+        "next": 14,
+        "alt": 15
+      },
+      {
+        "id": 14,
+        "x": 640.0,
+        "y": 860.0,
+        "kind": {
+          "Native": {
+            "op": "Browser",
+            "a": "media.mute",
+            "b": ""
+          }
+        },
+        "next": 3
+      },
+      {
+        "id": 15,
+        "x": 240.0,
+        "y": 1010.0,
+        "kind": {
+          "Branch": {
+            "a": "button",
+            "op": "Eq",
+            "b": "vol_up"
+          }
+        },
+        "next": 16,
+        "alt": 3
+      },
+      {
+        "id": 16,
+        "x": 640.0,
+        "y": 1010.0,
+        "kind": {
+          "Native": {
+            "op": "Browser",
+            "a": "media.volume_up",
+            "b": ""
+          }
+        },
+        "next": 3
+      },
+      {
+        "id": 20,
+        "x": 1140.0,
+        "y": 60.0,
+        "kind": "End"
+      }
+    ]
+  }
+}

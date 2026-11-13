@@ -355,6 +355,12 @@ thread_local! {
         RefCell::new(HashMap::new());
 }
 
+/// Forgets the picture files read so far (their textures go with them). Called when Settings
+/// closes and when the UI sleeps, on the window thread, because the cache is thread local.
+pub(crate) fn release_pics() {
+    FILE_PICS.with(|cache| *cache.borrow_mut() = HashMap::new());
+}
+
 /// The picture that the `icon` text of a button names: an icon of the app (`play`, `ico:play`) or
 /// a picture file (`file:/path.png`). Nothing when it names neither.
 fn button_pic(ctx: &egui::Context, icon: &str) -> Pic {

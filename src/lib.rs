@@ -78,6 +78,7 @@ pub mod panel;
 pub mod platform;
 pub mod refresh;
 pub mod running;
+pub mod runpanel;
 pub mod side;
 pub mod tap;
 pub mod ui;

@@ -58,6 +58,19 @@ impl App {
         self.begin_hud(ctx, note);
     }
 
+    /// The run that the notices announced is over: the pill that stays for it fills its bar and
+    /// goes away after its usual time. A notice that still waits for the window is shown as an
+    /// ordinary one, for its usual time.
+    pub(super) fn hud_end(&mut self, ctx: &egui::Context) {
+        if let Some((note, _)) = self.hud_pending.as_mut() {
+            note.live = false;
+        }
+        if let Some(h) = self.hud.as_mut() {
+            h.release(Instant::now());
+            ctx.request_repaint();
+        }
+    }
+
     /// Runs every frame: shows a notice that was waiting for the window.
     pub(super) fn step_hud(&mut self, ctx: &egui::Context) {
         let Some((note, since)) = self.hud_pending.take() else {
@@ -154,16 +167,16 @@ impl App {
             self.end_hud(&ctx);
             return;
         }
+        // a note that came too soon after the last one takes its turn now
+        h.flush_queued(now);
         let pulse = h.pulse(now);
         let scale = h.scale;
         let note = h.note.clone();
-        let wake = h.next_wake(now);
-        if phase.animating() || pulse > 0.0 {
-            ctx.request_repaint();
-        } else if let Some(wait) = wake {
-            // nothing moves until it is time to leave (or until the note changes)
-            ctx.request_repaint_after(wait);
-        }
+        let (prev, swap) = h.previous(now);
+        let prev = prev.cloned();
+        let elapsed = h.elapsed(now);
+        let sweep = h.sweep(now);
+        let bar = h.bar_fraction(now);
 
         // the notice follows the look of the pie, and the accent the person chose
         let (accent, smoked) = {
@@ -171,6 +184,18 @@ impl App {
             (hud::accent_of(&c), hud::smoked(&c))
         };
         let painter = ui.painter();
+        // the pill glides to the size its note asks for instead of jumping to it
+        let size = h.morph_size(hud::pill_size(painter, &note, scale), now);
+
+        let wake = h.next_wake(now);
+        let moving = h.progress_animates(now) || h.gliding(now);
+        if phase.animating() || pulse > 0.0 || moving {
+            ctx.request_repaint();
+        } else if let Some(wait) = wake {
+            // nothing moves until it is time to leave (or until the note changes)
+            ctx.request_repaint_after(wait);
+        }
+
         let win = hud::window_size(scale);
         let center = Pos2::new(win.x / 2.0, win.y / 2.0);
         let look = hud::PillLook {
@@ -183,8 +208,13 @@ impl App {
             grow: phase.grow(),
             text: phase.text(),
             scale,
+            elapsed,
+            size: Some(size),
+            swap,
+            sweep,
+            bar,
         };
-        hud::paint_pill(painter, center, &note, &look);
+        hud::paint_pill_swap(painter, center, &note, prev.as_ref(), &look);
     }
 }
 

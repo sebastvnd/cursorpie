@@ -40,9 +40,9 @@
 
 use crate::config::flow::is_var_name;
 use crate::config::{
-    AskMode, CalcOp, CmpOp, Cond, Flow, FlowNode, ListOp, LogicOp, MAX_CALL_DEPTH,
-    MAX_FLOW_RUN_SECS, MAX_FLOW_STEPS, MAX_REPEAT, MAX_RUN_SECS, MAX_VALUE_CHARS, MAX_VARS,
-    MAX_WAIT_MS, NativeOp, NodeKind,
+    AskMode, CalcOp, CmpOp, Cond, DEFAULT_PROGRESS_PANEL, Flow, FlowNode, ListOp, LogicOp,
+    MAX_CALL_DEPTH, MAX_FLOW_RUN_SECS, MAX_FLOW_STEPS, MAX_REPEAT, MAX_RUN_SECS, MAX_VALUE_CHARS,
+    MAX_VARS, MAX_WAIT_MS, NativeOp, NodeKind, PanelOp,
 };
 use crate::keys::Shortcut;
 use crate::platform::Os;
@@ -79,6 +79,71 @@ pub struct ExecResult {
     pub code: Option<i32>,
     /// What it printed (the start of it, when it printed a lot).
     pub stdout: String,
+}
+
+/// How far a run has come, told to the host at the start of every block (see [`Host::progress`]).
+///
+/// A run is a walk over wires, so how long it still takes is not known: a loop can go round a
+/// thousand times and a *If / else* skips half the blocks. What is known is told as it is:
+/// `total` only for a flow that goes straight through, `round` only while a loop with a known
+/// number of rounds is running.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Progress {
+    /// Blocks carried out so far in this run, called flows included, with the one that starts now.
+    pub step: u32,
+    /// How many blocks the flow has when no loop or call can make it longer (*Start*, *End* and
+    /// *Stop* not counted); `0` when that is not known. An *If / else* may skip some of them, so a
+    /// run can end below it.
+    pub total: u32,
+    /// The round of the loop the run is in, and how many rounds it makes (*Repeat* and *For each*);
+    /// `None` outside a loop and in a *While*, which does not know.
+    pub round: Option<(u32, u32)>,
+}
+
+/// What an *Update panel* block wants the bar of the panel to show.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PanelValue {
+    /// Leave the bar as it is.
+    Keep,
+    /// How full it is, 0 to 1.
+    Fraction(f64),
+    /// A bar that moves, without a number.
+    Busy,
+}
+
+/// An *Update panel* block, with its texts filled in, as it is handed to the [`Host`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct PanelCommand {
+    pub op: PanelOp,
+    /// The id of the panel; never empty.
+    pub panel: String,
+    /// `None` leaves the title as it is.
+    pub title: Option<String>,
+    /// `None` leaves the label as it is.
+    pub label: Option<String>,
+    pub value: PanelValue,
+    /// [`PanelOp::Open`] only: the panel has a Stop button.
+    pub stop: bool,
+}
+
+/// What the *value* field of an *Update panel* block says: empty keeps the bar, `busy` makes it
+/// move, `40%` is 0.4 and a plain number is a fraction from 0 to 1 (more is cut to 1, less to 0).
+/// `None` when it is none of these.
+pub fn parse_panel_value(text: &str) -> Option<PanelValue> {
+    let t = text.trim();
+    if t.is_empty() {
+        return Some(PanelValue::Keep);
+    }
+    if t.eq_ignore_ascii_case("busy") {
+        return Some(PanelValue::Busy);
+    }
+    let (number, scale) = match t.strip_suffix('%') {
+        Some(n) => (n.trim(), 100.0),
+        None => (t, 1.0),
+    };
+    let n: f64 = number.replace(',', ".").parse().ok()?;
+    n.is_finite()
+        .then(|| PanelValue::Fraction((n / scale).clamp(0.0, 1.0)))
 }
 
 /// How an *Open app (smart)* or *Open link (smart)* block opens what it is told to.
@@ -180,6 +245,26 @@ pub trait Host {
     }
     /// The rest of the run is quiet (or not): no notices of what it does. The default has none.
     fn set_quiet(&mut self, _quiet: bool) {}
+    /// A block is about to be carried out: how far the run has come. A host that shows the person
+    /// what a run is doing (the notice on the screen) keeps it; the default does nothing.
+    fn progress(&mut self, _progress: Progress) {}
+    /// Pauses the run for a *Wait* block (and only for that: the short pauses between blocks use
+    /// [`sleep`](Host::sleep)). The default is a plain pause; a host may also show how long it
+    /// takes.
+    fn wait(&mut self, ms: u64) {
+        self.sleep(ms);
+    }
+    /// Whether the person asked to stop this run (the Stop button of the progress panel). Asked at
+    /// the start of every block; `true` ends the run with [`Ending::Cancelled`]. The default never
+    /// stops.
+    fn cancelled(&mut self) -> bool {
+        false
+    }
+    /// Carries out an *Update panel* block: opens, changes or closes a progress panel, without
+    /// waiting for it. `Err` says why that was not possible. The default cannot show panels.
+    fn panel_command(&mut self, _command: &PanelCommand) -> Result<(), String> {
+        Err("this host cannot show panels".to_string())
+    }
 
     /// Shows a panel ([`crate::panel`]) and waits for the answer. `None` when this host cannot show
     /// panels; the answer says itself when the panel was cancelled, timed out or could not be shown.
@@ -283,6 +368,9 @@ pub enum Ending {
     OutOfSteps,
     /// After [`MAX_FLOW_RUN_SECS`] seconds.
     OutOfTime,
+    /// The person pressed Stop in the progress panel ([`Host::cancelled`]). Not a failure: nothing
+    /// is reported about it.
+    Cancelled,
 }
 
 /// What kind of thing went wrong in a block, for the words of the report.
@@ -437,6 +525,8 @@ pub fn run<H: Host>(host: &mut H, flow: &Flow, os: Os) -> Outcome {
         cur: (0, ""),
         flow_name: String::new(),
         quiet: false,
+        total: straight_total(flow),
+        round: None,
     };
     let ending = match runner.run_flow(flow, 0) {
         Ok(()) => Ending::Finished,
@@ -447,6 +537,23 @@ pub fn run<H: Host>(host: &mut H, flow: &Flow, os: Os) -> Outcome {
         vars: runner.vars,
         failures: runner.failures,
     }
+}
+
+/// How many blocks a run of `flow` carries out when it goes straight through (see
+/// [`Progress::total`]): `0` when a loop or a call can make it longer.
+fn straight_total(flow: &Flow) -> u32 {
+    let mut blocks = 0u32;
+    for node in &flow.nodes {
+        match &node.kind {
+            NodeKind::Start | NodeKind::End | NodeKind::Stop => {}
+            NodeKind::Repeat(_)
+            | NodeKind::While(_)
+            | NodeKind::ForEach { .. }
+            | NodeKind::Call(_) => return 0,
+            _ => blocks += 1,
+        }
+    }
+    blocks
 }
 
 // ------------------------------------------------------------------ pure helpers
@@ -1056,6 +1163,10 @@ struct Runner<'a, H: Host> {
     flow_name: String,
     /// A *Hide notices* block switched the notices off for the rest of the run.
     quiet: bool,
+    /// What [`straight_total`] said about the flow the run began with.
+    total: u32,
+    /// The round of the loop the run is in, when it has a known number of rounds.
+    round: Option<(u32, u32)>,
 }
 
 impl<H: Host> Runner<'_, H> {
@@ -1079,6 +1190,11 @@ impl<H: Host> Runner<'_, H> {
                 break;
             };
             self.cur = (node.id, crate::config::flow_check::label(&node.kind));
+            self.host.progress(Progress {
+                step: self.steps,
+                total: self.total,
+                round: self.round,
+            });
             cur = self.step(node, depth, &mut rounds)?;
         }
         Ok(())
@@ -1086,6 +1202,9 @@ impl<H: Host> Runner<'_, H> {
 
     /// Counts one more block against the limits.
     fn tick(&mut self) -> Result<(), Ending> {
+        if self.host.cancelled() {
+            return Err(Ending::Cancelled);
+        }
         self.steps += 1;
         if self.steps > MAX_FLOW_STEPS {
             self.fail(
@@ -1228,7 +1347,7 @@ impl<H: Host> Runner<'_, H> {
                 self.gap();
             }
             NodeKind::Wait(ms) => {
-                self.host.sleep(u64::from((*ms).min(MAX_WAIT_MS)));
+                self.host.wait(u64::from((*ms).min(MAX_WAIT_MS)));
                 self.gap();
             }
             NodeKind::Set { name, value } => {
@@ -1269,17 +1388,19 @@ impl<H: Host> Runner<'_, H> {
             NodeKind::Repeat(n) => {
                 let round = rounds.get(&node.id).copied().unwrap_or(0);
                 if round < (*n).min(MAX_REPEAT) {
-                    return Ok(self.enter_loop(node, rounds, round));
+                    return Ok(self.enter_loop(node, rounds, round, (*n).min(MAX_REPEAT)));
                 }
                 rounds.remove(&node.id);
+                self.round = None;
                 return Ok(node.alt);
             }
             NodeKind::While(c) => {
                 let round = rounds.get(&node.id).copied().unwrap_or(0);
                 if round < MAX_REPEAT && self.holds(c) {
-                    return Ok(self.enter_loop(node, rounds, round));
+                    return Ok(self.enter_loop(node, rounds, round, 0));
                 }
                 rounds.remove(&node.id);
+                self.round = None;
                 return Ok(node.alt);
             }
             NodeKind::ForEach { list, item } => {
@@ -1303,13 +1424,17 @@ impl<H: Host> Runner<'_, H> {
                         Vec::new()
                     }
                 };
+                let count = u32::try_from(items.len())
+                    .unwrap_or(u32::MAX)
+                    .min(MAX_REPEAT);
                 if round < MAX_REPEAT
                     && let Some(x) = items.get(round as usize)
                 {
                     self.put(item, x.clone());
-                    return Ok(self.enter_loop(node, rounds, round));
+                    return Ok(self.enter_loop(node, rounds, round, count));
                 }
                 rounds.remove(&node.id);
+                self.round = None;
                 return Ok(node.alt);
             }
             NodeKind::List {
@@ -1328,6 +1453,14 @@ impl<H: Host> Runner<'_, H> {
                 preset,
                 out,
             } => self.ask(*mode, message, preset, out),
+            NodeKind::PanelUpdate {
+                op,
+                panel,
+                title,
+                label,
+                value,
+                stop,
+            } => self.update_panel(*op, panel, title, label, value, *stop),
             NodeKind::Run {
                 command,
                 out,
@@ -1365,14 +1498,18 @@ impl<H: Host> Runner<'_, H> {
     }
 
     /// Starts round `round + 1` of a loop block: counts it, sets `index` and leads into the body.
+    /// `total` is how many rounds the loop makes, `0` when that is not known (see
+    /// [`Progress::round`]).
     fn enter_loop(
         &mut self,
         node: &FlowNode,
         rounds: &mut BTreeMap<u32, u32>,
         round: u32,
+        total: u32,
     ) -> Option<u32> {
         rounds.insert(node.id, round + 1);
         self.put("index", (round + 1).to_string());
+        self.round = (total > 0).then_some((round + 1, total));
         node.next
     }
 
@@ -1593,6 +1730,66 @@ impl<H: Host> Runner<'_, H> {
                 self.put(out, "");
                 self.ok(false);
                 self.fail(FailKind::System, "this host cannot show panels".to_string());
+            }
+        }
+    }
+
+    /// An *Update panel* block: opens, changes or closes the progress panel. A value that is not a
+    /// number, a percentage or `busy` leaves the bar as it was and is a failure (`ok` 0); nothing
+    /// waits for the panel and nothing is paused after it, so a loop can update it every round.
+    fn update_panel(
+        &mut self,
+        op: PanelOp,
+        panel: &str,
+        title: &str,
+        label: &str,
+        value: &str,
+        stop: bool,
+    ) {
+        let id = self.text(panel);
+        let id = id.trim();
+        let id = if id.is_empty() {
+            DEFAULT_PROGRESS_PANEL.to_string()
+        } else {
+            id.to_string()
+        };
+        let (title, label, value_text) = (self.text(title), self.text(label), self.text(value));
+        let mut good = true;
+        let value = match parse_panel_value(&value_text) {
+            Some(v) => v,
+            None => {
+                good = false;
+                self.fail(
+                    FailKind::System,
+                    format!(
+                        "the value `{}` is not a number from 0 to 1, a percentage like `40%` or \
+                         `busy`, so the bar stayed as it was",
+                        brief(value_text.trim(), 30)
+                    ),
+                );
+                PanelValue::Keep
+            }
+        };
+        let command = PanelCommand {
+            op,
+            panel: id,
+            title: (!title.trim().is_empty()).then(|| title.trim().to_string()),
+            label: (!label.trim().is_empty()).then(|| label.trim().to_string()),
+            value: if op.has_fields() {
+                value
+            } else {
+                PanelValue::Keep
+            },
+            stop: op == PanelOp::Open && stop,
+        };
+        match self.host.panel_command(&command) {
+            Ok(()) => self.ok(good),
+            Err(why) => {
+                self.ok(false);
+                self.fail(
+                    FailKind::System,
+                    format!("the panel could not be shown: {why}"),
+                );
             }
         }
     }
@@ -1905,9 +2102,36 @@ mod tests {
         vol: Option<u8>,
         panels: Vec<crate::panel::PanelResult>,
         browser: Vec<BrowserReply>,
+        progress: Vec<Progress>,
+        waits: Vec<u64>,
+        panel_cmds: Vec<PanelCommand>,
+        /// What the host says to a panel command; `None` is that it worked.
+        panel_error: Option<String>,
+        /// `cancelled` says yes from the call with this number on (0 = never).
+        cancel_from: usize,
+        cancel_calls: usize,
     }
 
     impl Host for Mock {
+        fn cancelled(&mut self) -> bool {
+            self.cancel_calls += 1;
+            self.cancel_from > 0 && self.cancel_calls >= self.cancel_from
+        }
+        fn panel_command(&mut self, command: &PanelCommand) -> Result<(), String> {
+            self.panel_cmds.push(command.clone());
+            match &self.panel_error {
+                Some(why) => Err(why.clone()),
+                None => Ok(()),
+            }
+        }
+        fn progress(&mut self, progress: Progress) {
+            self.progress.push(progress);
+        }
+        fn wait(&mut self, ms: u64) {
+            self.waits.push(ms);
+            self.sleep(ms);
+        }
+
         fn ask_panel(
             &mut self,
             spec: &crate::panel::PanelSpec,
@@ -2329,6 +2553,286 @@ mod tests {
         assert_eq!(out.ending, Ending::Finished);
         assert_eq!(h.log, ["key 8 2", "key 8 2", "key 8 2", "app done"]);
         assert_eq!(h.files.get("log").map(String::as_str), Some("1,2,3,"));
+    }
+
+    #[test]
+    fn the_host_is_told_how_far_a_straight_run_has_come() {
+        let f = line(vec![
+            NodeKind::Key(Shortcut::new(8, 2)),
+            NodeKind::Wait(500),
+            NodeKind::Key(Shortcut::new(9, 2)),
+        ]);
+        let mut h = Mock::default();
+        let out = go(&f, &mut h);
+        assert_eq!(out.ending, Ending::Finished);
+        // a straight flow knows its length: three blocks (Start and End are not counted)
+        assert!(h.progress.len() >= 3);
+        assert!(h.progress.iter().all(|p| p.total == 3 && p.round.is_none()));
+        let steps: Vec<u32> = h.progress.iter().map(|p| p.step).collect();
+        assert_eq!(steps[..3], [1, 2, 3], "one report per block, counting up");
+        // the Wait block goes through `wait`, so a host can show it
+        assert_eq!(h.waits, [500]);
+    }
+
+    #[test]
+    fn a_loop_reports_its_round_and_a_flow_with_a_loop_has_no_total() {
+        let mut f = Flow::new("f", "F");
+        let r = f.add_after(None, NodeKind::Repeat(3));
+        let k = f.add_after(Some(r), NodeKind::Key(Shortcut::new(8, 2)));
+        assert!(f.connect(k, Port::Next, r));
+        let after = loose(&mut f, NodeKind::OpenApp("done".into()));
+        f.node_mut(after).unwrap().next = Some(2);
+        assert!(f.connect(r, Port::Alt, after));
+        let mut h = Mock::default();
+        let out = go(&f, &mut h);
+        assert_eq!(out.ending, Ending::Finished);
+        assert!(
+            h.progress.iter().all(|p| p.total == 0),
+            "the length is not known"
+        );
+        let rounds: Vec<(u32, u32)> = h.progress.iter().filter_map(|p| p.round).collect();
+        assert_eq!(rounds.first(), Some(&(1, 3)));
+        assert_eq!(rounds.iter().max(), Some(&(3, 3)));
+        // after the loop the run is no longer in a round
+        assert_eq!(h.progress.last().map(|p| p.round), Some(None));
+    }
+
+    // ---- the progress panel
+
+    fn panel_block(op: PanelOp, title: &str, label: &str, value: &str, stop: bool) -> NodeKind {
+        NodeKind::PanelUpdate {
+            op,
+            panel: String::new(),
+            title: title.into(),
+            label: label.into(),
+            value: value.into(),
+            stop,
+        }
+    }
+
+    #[test]
+    fn a_panel_value_is_a_fraction_a_percentage_or_busy() {
+        assert_eq!(parse_panel_value(""), Some(PanelValue::Keep));
+        assert_eq!(parse_panel_value("  "), Some(PanelValue::Keep));
+        assert_eq!(parse_panel_value("busy"), Some(PanelValue::Busy));
+        assert_eq!(parse_panel_value("BUSY"), Some(PanelValue::Busy));
+        assert_eq!(parse_panel_value("0.25"), Some(PanelValue::Fraction(0.25)));
+        assert_eq!(parse_panel_value("0,5"), Some(PanelValue::Fraction(0.5)));
+        assert_eq!(parse_panel_value("40%"), Some(PanelValue::Fraction(0.4)));
+        assert_eq!(parse_panel_value("40 %"), Some(PanelValue::Fraction(0.4)));
+        assert_eq!(
+            parse_panel_value("250%"),
+            Some(PanelValue::Fraction(1.0)),
+            "cut to full"
+        );
+        assert_eq!(
+            parse_panel_value("7"),
+            Some(PanelValue::Fraction(1.0)),
+            "a plain number is a fraction"
+        );
+        assert_eq!(parse_panel_value("-3"), Some(PanelValue::Fraction(0.0)));
+        assert_eq!(parse_panel_value("soon"), None);
+        assert_eq!(parse_panel_value("NaN"), None);
+        assert_eq!(parse_panel_value("inf%"), None);
+    }
+
+    #[test]
+    fn an_update_panel_block_opens_changes_and_closes_a_panel_without_waiting() {
+        let mut f = Flow::new("f", "F");
+        f.add_after(
+            None,
+            panel_block(PanelOp::Open, "Copying", "Starting", "0", true),
+        );
+        f.add_after(
+            None,
+            NodeKind::Set {
+                name: "n".into(),
+                value: "3".into(),
+            },
+        );
+        f.add_after(
+            None,
+            panel_block(PanelOp::Update, "", "File {{n}}", "40%", true),
+        );
+        f.add_after(None, panel_block(PanelOp::Update, "", "", "busy", false));
+        f.add_after(
+            None,
+            panel_block(PanelOp::Close, "ignored", "ignored", "0.9", true),
+        );
+        let mut h = Mock::default();
+        let out = go(&f, &mut h);
+        assert_eq!(out.ending, Ending::Finished);
+        assert!(out.problems().is_empty());
+        let c = &h.panel_cmds;
+        assert_eq!(c.len(), 4);
+        // the id is the default one, empty fields are left alone, the stop button is for Open only
+        assert_eq!(c[0].panel, DEFAULT_PROGRESS_PANEL);
+        assert_eq!(
+            (
+                c[0].op,
+                c[0].title.as_deref(),
+                c[0].label.as_deref(),
+                c[0].value,
+                c[0].stop
+            ),
+            (
+                PanelOp::Open,
+                Some("Copying"),
+                Some("Starting"),
+                PanelValue::Fraction(0.0),
+                true
+            )
+        );
+        assert_eq!(
+            (c[1].title.clone(), c[1].label.as_deref()),
+            (None, Some("File 3"))
+        );
+        assert_eq!((c[1].value, c[1].stop), (PanelValue::Fraction(0.4), false));
+        assert_eq!(c[2].value, PanelValue::Busy);
+        assert_eq!((c[3].op, c[3].value), (PanelOp::Close, PanelValue::Keep));
+        // no pause was added for any of them: only the Set has none either
+        assert_eq!(h.slept, 0);
+        assert_eq!(out.vars.get("ok"), Some("1"));
+    }
+
+    #[test]
+    fn a_panel_that_cannot_be_shown_is_a_failure_and_ok_is_zero_but_the_flow_goes_on() {
+        let f = line(vec![
+            panel_block(PanelOp::Open, "T", "", "", false),
+            NodeKind::Set {
+                name: "after".into(),
+                value: "yes".into(),
+            },
+        ]);
+        let mut h = Mock {
+            panel_error: Some("Panels are switched off".into()),
+            ..Mock::default()
+        };
+        let out = go(&f, &mut h);
+        assert_eq!(out.ending, Ending::Finished);
+        assert_eq!(out.vars.get("after"), Some("yes"), "the flow went on");
+        assert_eq!(out.vars.get("ok"), Some("0"));
+        let problems = out.problems();
+        assert_eq!(problems.len(), 1);
+        assert!(
+            problems[0].detail.contains("Panels are switched off"),
+            "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn a_bad_value_leaves_the_bar_as_it_was() {
+        let f = line(vec![panel_block(PanelOp::Update, "", "x", "soon", false)]);
+        let mut h = Mock::default();
+        let out = go(&f, &mut h);
+        assert_eq!(h.panel_cmds[0].value, PanelValue::Keep, "the bar stays");
+        assert_eq!(
+            h.panel_cmds[0].label.as_deref(),
+            Some("x"),
+            "the rest still goes through"
+        );
+        assert_eq!(out.vars.get("ok"), Some("0"));
+        let problems = out.problems();
+        assert!(
+            problems.iter().any(|p| p.detail.contains("`soon`")),
+            "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn a_named_panel_keeps_its_name_and_the_name_may_hold_a_variable() {
+        let mut f = Flow::new("f", "F");
+        f.add_after(
+            None,
+            NodeKind::Set {
+                name: "who".into(),
+                value: "job2".into(),
+            },
+        );
+        f.add_after(
+            None,
+            NodeKind::PanelUpdate {
+                op: PanelOp::Open,
+                panel: "{{who}}".into(),
+                title: String::new(),
+                label: String::new(),
+                value: String::new(),
+                stop: false,
+            },
+        );
+        let mut h = Mock::default();
+        go(&f, &mut h);
+        assert_eq!(h.panel_cmds[0].panel, "job2");
+        assert_eq!(h.panel_cmds[0].title, None);
+    }
+
+    #[test]
+    fn stop_ends_the_run_at_the_next_block_and_is_not_a_problem() {
+        let f = line(vec![
+            NodeKind::Set {
+                name: "a".into(),
+                value: "1".into(),
+            },
+            NodeKind::Set {
+                name: "b".into(),
+                value: "2".into(),
+            },
+            NodeKind::Set {
+                name: "c".into(),
+                value: "3".into(),
+            },
+            NodeKind::Set {
+                name: "d".into(),
+                value: "4".into(),
+            },
+        ]);
+        // asked at the start of every block after Start: a, b, then "stop" at the block of c
+        let mut h = Mock {
+            cancel_from: 3,
+            ..Mock::default()
+        };
+        let out = go(&f, &mut h);
+        assert_eq!(out.ending, Ending::Cancelled);
+        assert_eq!(out.vars.get("b"), Some("2"));
+        assert_eq!(out.vars.get("c"), None, "c never ran");
+        assert!(out.problems().is_empty(), "stopping is not a failure");
+        assert!(out.report("f", "F").is_none());
+    }
+
+    #[test]
+    fn stop_ends_a_loop_that_would_have_gone_on() {
+        let mut f = Flow::new("f", "F");
+        let r = f.add_after(None, NodeKind::Repeat(1000));
+        let k = f.add_after(
+            Some(r),
+            NodeKind::Set {
+                name: "x".into(),
+                value: "{{index}}".into(),
+            },
+        );
+        assert!(f.connect(k, Port::Next, r));
+        let mut h = Mock {
+            cancel_from: 30,
+            ..Mock::default()
+        };
+        let out = go(&f, &mut h);
+        assert_eq!(out.ending, Ending::Cancelled);
+        let rounds: u32 = out.vars.get("index").and_then(|v| v.parse().ok()).unwrap();
+        assert!(
+            (10..40).contains(&rounds),
+            "stopped after {rounds} rounds, not 1000"
+        );
+    }
+
+    #[test]
+    fn a_host_that_never_cancels_changes_nothing() {
+        let f = line(vec![NodeKind::Set {
+            name: "a".into(),
+            value: "1".into(),
+        }]);
+        let mut h = Mock::default();
+        assert_eq!(go(&f, &mut h).ending, Ending::Finished);
+        assert!(h.cancel_calls >= 2, "asked at every block");
     }
 
     #[test]

@@ -80,7 +80,11 @@ impl App {
         }
         self.ed.icons.revalidate(); // re-read only the images that changed on disk
         self.release_editor(); // the next open copies the config again
-        self.release_font_atlas(ctx); // the glyphs the canvas cut at zoomed sizes
+        // Settings cuts glyphs at many sizes and in several fonts (text, icons, emoji fallbacks),
+        // and egui never gives one back: rebuild the atlas on every close, not only after zoomed
+        // text. The few glyphs of the pie are cut again when it is drawn.
+        let _ = crate::ui::settings::take_crisp_used();
+        crate::ui::fonts::reset_atlas(ctx);
         self.win = cfg().pie_size;
         self.set_settings_open(false);
         self.welcome = None;

@@ -84,6 +84,20 @@ impl App {
         self.ed.user_icons = Vec::new();
         self.ed.icons_not_listed = 0;
         self.ed.backups = Vec::new();
+        // the list of installed apps (name, id and search text of every app on the machine) is
+        // only the app picker's; the next picker reads it again
+        self.ed.installed = Vec::new();
+        self.ed.installed_scan = crate::ui::settings::AppScan::Idle;
+        self.ed.app_query = String::new();
+        // the pictures of panel buttons are a cache of the window thread: they are read again
+        crate::ui::settings::panel_form::release_pics();
+        // marks of flows that were deleted would stay for as long as the app runs
+        {
+            let c = cfg();
+            self.ed
+                .flow_marks
+                .retain(|id, _| c.flows.iter().any(|f| f.id == *id));
+        }
         self.ed.icon_query = String::new();
         self.ed.new_app = String::new();
         self.ed.new_profile_name = String::new();
@@ -146,5 +160,17 @@ mod tests {
             app.ed.flow_new.is_none(),
             "a sheet over the page does not outlive Settings"
         );
+    }
+
+    #[test]
+    fn releasing_the_editor_drops_the_list_of_installed_apps() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut app = App::new(rx, tx, 200.0, None);
+        app.ed.installed = vec![crate::platform::installed::InstalledApp::default(); 3];
+        app.ed.installed_scan = crate::ui::settings::AppScan::Done;
+        app.ed.app_query = "code".into();
+        app.release_editor();
+        assert!(app.ed.installed.is_empty() && app.ed.app_query.is_empty());
+        assert_eq!(app.ed.installed_scan, crate::ui::settings::AppScan::Idle);
     }
 }

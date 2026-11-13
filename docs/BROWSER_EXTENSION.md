@@ -31,8 +31,18 @@ The kind **Browser** is the action `{"Browser": "media.next"}` in `config.json`:
 { "name": "Mom: on my way", "icon": "ico:globe", "action": { "Browser": "chat.send_to Mom :: on my way" } }
 ```
 
-A **Browser** action can be one step of a *Sequence*. It is not a flow block yet; a flow can still reach it by calling a
-flow of one slice, or by being triggered from a slice that holds a sequence.
+A **Browser** action can be one step of a *Sequence*. In a flow the same thing is the **Browser command** block (below).
+
+### The quickest way in: a template
+
+**Flow tab > New flow > Start from a template** adds a complete, working flow to start from:
+
+* *Browser remote*: a panel with play / pause, next, previous and volume that **stays open** between presses (an *Ask* block
+  in Panel mode with `keep_open`, one *Branch* per button, one *Browser command* per branch).
+* *Pause the music only if it plays*: `media.state` into a variable, a *Branch*, then `media.pause` or a notification.
+* *Go to the tab that has a word*: asks for a word, runs `tab.find {{word}}`, and says when no tab has it.
+
+They are also files in `docs/examples/flows/` (`browser-remote-panel`, `browser-pause-if-playing`, `browser-go-to-tab`).
 
 ## Which tab does a command act on?
 
@@ -215,6 +225,12 @@ A flow has a block for this: **Do something > Browser command** (it is the *Syst
 `Browser`). Its first field is the command line, the same as in a slice and with `{{variables}}` filled in
 (`tab.find {{word}}`, `chat.draft_to {{who}} :: {{text}}`). Its second field is a **variable** that receives what the
 browser answers; it may stay empty.
+
+In the editor the first field is the **same list of commands as a slice has** (`Media: Next track`, `Tabs: New tab`...), with
+a field beside it for the text the chosen command takes (it says whether that text is required or optional). Under the block,
+the list view says whether a command can reach a browser right now: extension off, no browser connected, or an extension from
+another version. A command name that is only known when the flow runs (`{{cmd}}`) is typed instead of picked. The *add a
+block* menu has a **Browser** group with the common commands ready to use.
 
 Unlike a slice, which sends the command and moves on, the block **waits** until the browser says how it went:
 

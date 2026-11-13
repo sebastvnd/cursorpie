@@ -3,6 +3,10 @@
 //! It first asks how the flow is to be made:
 //!
 //! * **Build it myself** adds an empty flow (what the button did before);
+//! * **Start from a template** lists complete flows that control the browser (a remote with a panel,
+//!   a pause that asks first, a tab finder; see
+//!   [`config::flow_templates`](crate::config::flow_templates)). One press adds it and opens it, so
+//!   the person sees how a panel, a *Branch* and a *Browser command* fit together;
 //! * **Build it with AI** shows a box that looks like the message box of a chat, but sends
 //!   nothing. The person says what the flow should do and presses **Copy kit**: CursorPie writes a
 //!   zip with the guides an agent needs and what was typed (see
@@ -14,9 +18,10 @@
 //! zip is made on a worker thread (a clipboard program can take a second) and the outcome comes
 //! back as `Msg::FlowKit`, kept in `Ed::flow_kit`.
 
-use super::flow::{Do, run};
-use crate::config::Config;
+use super::flow::{Do, notice, run, select_flow};
 use crate::config::flow_kit::{self, MAX_REQUEST_CHARS};
+use crate::config::flow_templates::{self, TEMPLATES};
+use crate::config::{Config, MAX_FLOWS};
 use crate::msg::Msg;
 use crate::platform::{self, Os};
 use crate::ui::fonts;
@@ -57,6 +62,7 @@ pub(in crate::ui::settings) fn flow_new_sheet(
         None => {}
         Some(FlowNew::Choose) => choose_page(ctx, edit, ed, tx, accent),
         Some(FlowNew::Ai) => ai_page(ctx, edit, ed, tx, accent),
+        Some(FlowNew::Templates) => templates_page(ctx, edit, ed, tx, accent),
     }
 }
 
@@ -97,7 +103,7 @@ fn choice_tile(
     resp
 }
 
-/// "How do you want to make it?": by hand, or with an AI agent.
+/// "How do you want to make it?": by hand, from a template, or with an AI agent.
 fn choose_page(
     ctx: &egui::Context,
     edit: &mut Config,
@@ -107,14 +113,15 @@ fn choose_page(
 ) {
     let mut by_hand = false;
     let mut with_ai = false;
+    let mut from_template = false;
     let (floating, ()) = sheet(
         ctx,
         "flow_new",
         ed.card,
-        Vec2::new(560.0, 300.0),
+        Vec2::new(760.0, 300.0),
         "New flow",
         |ui| {
-            let width = (ui.available_width() - GAP) / 2.0;
+            let width = (ui.available_width() - 2.0 * GAP) / 3.0;
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = GAP;
                 by_hand = choice_tile(
@@ -123,6 +130,15 @@ fn choose_page(
                     symbols::PENCIL_SIMPLE,
                     "Build it myself",
                     "Start from an empty flow and add the blocks yourself.",
+                    accent,
+                )
+                .clicked();
+                from_template = choice_tile(
+                    ui,
+                    width,
+                    symbols::BROWSER,
+                    "Start from a template",
+                    "A working flow for the browser (a remote, a pause, a tab finder) to change.",
                     accent,
                 )
                 .clicked();
@@ -141,9 +157,88 @@ fn choose_page(
     if by_hand {
         ed.flow_new = None;
         run(Do::New, ctx, edit, ed, tx);
+    } else if from_template {
+        ed.flow_new = Some(FlowNew::Templates);
     } else if with_ai {
         ed.flow_new = Some(FlowNew::Ai);
         ed.flow_kit = KitStatus::Idle;
+    } else if floating.close {
+        ed.flow_new = None;
+    }
+}
+
+/// "Start from a template": one row for each, with the button that adds it.
+fn templates_page(
+    ctx: &egui::Context,
+    edit: &mut Config,
+    ed: &mut Ed,
+    tx: &Sender<Msg>,
+    accent: Color32,
+) {
+    let mut chosen = None;
+    let mut back = false;
+    let (floating, ()) = sheet(
+        ctx,
+        "flow_new",
+        ed.card,
+        Vec2::new(600.0, 420.0),
+        "Start from a template",
+        |ui| {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(
+                        "Each one is a complete flow. It is added as a new flow that you can open, \
+                         run and change. The commands for the browser need the extension: \
+                         Settings > Behavior > Browser extension.",
+                    )
+                    .size(13.0)
+                    .color(pal().muted),
+                )
+                .wrap(),
+            );
+            ui.add_space(GAP);
+            for (i, t) in TEMPLATES.iter().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 12.0;
+                    ui.vertical(|ui| {
+                        ui.set_width((ui.available_width() - 90.0).max(120.0));
+                        ui.label(RichText::new(t.title).size(14.5).strong());
+                        ui.add(
+                            egui::Label::new(RichText::new(t.about).size(12.5).color(pal().muted))
+                                .wrap(),
+                        );
+                    });
+                    if button(ui, Look::Primary(accent), Some(symbols::PLUS), "Add")
+                        .on_hover_text("Add it as a new flow and open it")
+                        .clicked()
+                    {
+                        chosen = Some(i);
+                    }
+                });
+                ui.add_space(10.0);
+            }
+            back = button(ui, Look::Soft, None, "Back").clicked();
+        },
+    );
+    if let Some(i) = chosen {
+        if edit.flows.len() >= MAX_FLOWS {
+            notice(
+                tx,
+                ctx,
+                format!("There are already {MAX_FLOWS} flows. Delete one first."),
+            );
+            return;
+        }
+        match flow_templates::build(&TEMPLATES[i], &edit.flows) {
+            Ok(flow) => {
+                edit.flows.push(flow);
+                select_flow(ed, edit.flows.len() - 1);
+                ed.flow_new = None;
+            }
+            Err(why) => notice(tx, ctx, format!("The template could not be added: {why}")),
+        }
+    } else if back {
+        ed.flow_new = Some(FlowNew::Choose);
     } else if floating.close {
         ed.flow_new = None;
     }
@@ -365,12 +460,23 @@ mod tests {
         let mut a = app();
         let ctx = egui::Context::default();
         fonts::install(&ctx);
-        for page in [FlowNew::Choose, FlowNew::Ai] {
+        for page in [FlowNew::Choose, FlowNew::Ai, FlowNew::Templates] {
             a.ed.flow_new = Some(page);
             draw(&mut a, &ctx, 3);
             assert_eq!(a.ed.flow_new, Some(page), "the sheet waits for an answer");
             assert!(!a.has_unsaved_changes());
         }
+    }
+
+    #[test]
+    fn a_template_adds_a_flow_and_opens_it() {
+        let mut a = app();
+        let before = a.edit.flows.len();
+        let flow = flow_templates::build(&TEMPLATES[0], &a.edit.flows).unwrap();
+        a.edit.flows.push(flow);
+        select_flow(&mut a.ed, a.edit.flows.len() - 1);
+        assert_eq!(a.edit.flows.len(), before + 1);
+        assert_eq!(a.ed.flow, before);
     }
 
     #[test]

@@ -621,9 +621,18 @@ impl App {
                 ui,
                 &mut cfg.panels,
                 "Let flows show panels",
-                "An Ask block in Panel mode shows a small window of CursorPie with the fields, lists and buttons the flow describes, and the flow gets what you entered. Off, those blocks fail with a note that panels are switched off and the flow goes on.",
+                "An Ask block in Panel mode shows a small window of CursorPie with the fields, lists and buttons the flow describes, and the flow gets what you entered. An Update panel block opens a progress panel of its own. Off, those blocks fail with a note that panels are switched off and the flow goes on.",
                 accent,
             );
+            if cfg.panels {
+                toggle_row(
+                    ui,
+                    &mut cfg.progress_panel,
+                    "Show a progress panel for long runs",
+                    "When a flow, a pause or a sequence takes more than a couple of seconds, a small panel shows a bar, the step that is running (Waiting, Running command, Round 2/10) and a Stop button that ends the run. Quick runs never show it. A run that presses keys keeps the small notice instead on macOS and Linux, because a window may take the keyboard from the app those keys are for. Off, long runs only have the small notice.",
+                    accent,
+                );
+            }
         });
         panel(ui, desktops_title(), |ui| {
             let mode = cfg.desktop_mode.effective(crate::platform::OS);

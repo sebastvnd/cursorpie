@@ -962,16 +962,7 @@ fn preview_column(ui: &mut egui::Ui, d: &mut PanelDesign, rect: Rect, accent: Co
                 }
             }
         }
-        if let Some(text) = problem.as_deref() {
-            ui.painter().with_clip_rect(rect).text(
-                pos2(rect.center().x, rect.max.y - 12.0),
-                Align2::CENTER_BOTTOM,
-                text,
-                FontId::proportional(12.5),
-                pal().bad,
-            );
-        }
-        zoom_bar(ui, rect, zoom);
+        zoom_bar(ui, rect, zoom, problem.as_deref());
     }
     if let Some(sel) = next {
         // a click on the panel itself: it is already in view
@@ -981,13 +972,40 @@ fn preview_column(ui: &mut egui::Ui, d: &mut PanelDesign, rect: Rect, accent: Co
 }
 
 /// The small capsule at the bottom middle of the preview: zoom out, the zoom (a press goes back to
-/// 100%), zoom in.
+/// 100%), zoom in. When the panel is not valid, the reason is shown right above the capsule.
 ///
 /// It is an area of its own, above everything: the panel in the middle is a layer of its own (so it
 /// can be zoomed) and is drawn over whatever the page itself draws, so a capsule drawn in the page
 /// went under the panel when this was tall. An area is also centered by the toolkit, whatever the
 /// width of what is in it.
-fn zoom_bar(ui: &mut egui::Ui, rect: Rect, zoom: &mut f32) {
+///
+/// The reason is an area of its own too, stacked over the capsule and wrapped to the width of the
+/// preview: drawn in the page at the bottom it was covered by the capsule, and a long reason was cut
+/// at the edges instead of wrapping.
+fn zoom_bar(ui: &mut egui::Ui, rect: Rect, zoom: &mut f32, problem: Option<&str>) {
+    /// The room the capsule takes from the bottom of the preview (its height and the gap below it).
+    const BAR_ROOM: f32 = 20.0 + 40.0;
+    if let Some(text) = problem {
+        egui::Area::new(egui::Id::new("panel_design_problem"))
+            .order(egui::Order::Tooltip)
+            .pivot(Align2::CENTER_BOTTOM)
+            .fixed_pos(pos2(rect.center().x, rect.max.y - BAR_ROOM - 6.0))
+            .constrain(false)
+            .interactable(false)
+            .show(ui.ctx(), |ui| {
+                ui.set_max_width((rect.width() - 32.0).max(120.0));
+                egui::Frame::new()
+                    .fill(pal().bg)
+                    .corner_radius(PILL)
+                    .inner_margin(egui::Margin::symmetric(10, 4))
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::Label::new(egui::RichText::new(text).size(12.5).color(pal().bad))
+                                .wrap(),
+                        );
+                    });
+            });
+    }
     egui::Area::new(egui::Id::new("panel_design_zoom_bar"))
         .order(egui::Order::Tooltip)
         .pivot(Align2::CENTER_BOTTOM)

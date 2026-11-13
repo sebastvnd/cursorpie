@@ -8,7 +8,8 @@
 //! at the top) for a flow that is wired freely, and it stays the place to see the wires.
 
 use super::flow::{
-    AMBER, Do, cond_row, field, kind_info, notice, operands_row, tint, toggle_recording,
+    AMBER, Do, browser_by_variable, cond_row, field, kind_info, notice, operands_row, pick, tint,
+    toggle_recording,
 };
 use crate::config::flow_check::{Severity, block_issues, check_flow};
 use crate::config::flow_list::{self as outline, Arm, Item, Outline, Spot};
@@ -17,6 +18,7 @@ use crate::keys::{Shortcut, key};
 use crate::msg::Msg;
 use crate::ui::draw::on_accent;
 use crate::ui::fonts;
+use crate::ui::settings::action_editor::{bridge_line, browser_fields};
 use crate::ui::settings::state::{Ed, FlowView, Slot};
 use crate::ui::settings::theme::*;
 use crate::ui::settings::widgets::*;
@@ -618,6 +620,7 @@ fn group_icon(group: &str) -> char {
         "Do something" => symbols::LIGHTNING,
         "Decide and repeat" => symbols::ARROWS_CLOCKWISE,
         "Ask and run" => symbols::BELL,
+        "Browser" => symbols::BROWSER,
         "Variables" => symbols::BRACKETS_CURLY,
         "Read from the system" => symbols::CPU,
         "Files and folders" => symbols::FOLDER_SIMPLE,
@@ -805,6 +808,20 @@ fn native(op: NativeOp, hint: &'static str) -> Entry {
     entry(op.label(), hint, kind)
 }
 
+/// A browser command as an entry of its own; `reply` is the variable that gets the answer (empty:
+/// none).
+fn browser_entry(title: &'static str, hint: &'static str, command: &str, reply: &str) -> Entry {
+    entry(
+        title,
+        hint,
+        NodeKind::Native {
+            op: NativeOp::Browser,
+            a: command.to_string(),
+            b: reply.to_string(),
+        },
+    )
+}
+
 /// A list operation as an entry of its own.
 fn list_op(op: ListOp, hint: &'static str) -> Entry {
     let (_, _, ho) = op.hints();
@@ -903,6 +920,48 @@ pub(super) fn quick_catalog() -> Vec<(&'static str, Vec<Entry>)> {
             ],
         ),
         (
+            "Browser",
+            vec![
+                browser_entry(
+                    "Play / pause",
+                    "Plays or pauses the player of the browser",
+                    "media.toggle",
+                    "",
+                ),
+                browser_entry(
+                    "Next track",
+                    "On YouTube, Spotify, SoundCloud...",
+                    "media.next",
+                    "",
+                ),
+                browser_entry(
+                    "Previous track",
+                    "Or back to the start of the track",
+                    "media.prev",
+                    "",
+                ),
+                browser_entry(
+                    "Next tab",
+                    "The tab to the right of this one",
+                    "tab.next",
+                    "",
+                ),
+                browser_entry(
+                    "Is the music playing?",
+                    "Puts playing, paused or none in a variable",
+                    "media.state",
+                    "state",
+                ),
+                browser_entry(
+                    "Address of the tab",
+                    "Puts the address of the tab in a variable",
+                    "tab.url",
+                    "address",
+                ),
+                native(N::Browser, "Any other command, chosen from the list"),
+            ],
+        ),
+        (
             "Ask and run",
             vec![
                 entry(
@@ -933,6 +992,42 @@ pub(super) fn quick_catalog() -> Vec<(&'static str, Vec<Entry>)> {
                         message: PANEL_TEMPLATE.to_string(),
                         preset: String::new(),
                         out: s("button"),
+                    },
+                ),
+                entry(
+                    "Open a progress panel",
+                    "A small window with a bar and a Stop button; the flow goes on",
+                    NodeKind::PanelUpdate {
+                        op: PanelOp::Open,
+                        panel: String::new(),
+                        title: String::new(),
+                        label: s("Working"),
+                        value: s("0"),
+                        stop: true,
+                    },
+                ),
+                entry(
+                    "Update the progress panel",
+                    "Changes its label and how far the bar is",
+                    NodeKind::PanelUpdate {
+                        op: PanelOp::Update,
+                        panel: String::new(),
+                        title: String::new(),
+                        label: String::new(),
+                        value: s("50%"),
+                        stop: false,
+                    },
+                ),
+                entry(
+                    "Close the progress panel",
+                    "Takes it off the screen",
+                    NodeKind::PanelUpdate {
+                        op: PanelOp::Close,
+                        panel: String::new(),
+                        title: String::new(),
+                        label: String::new(),
+                        value: String::new(),
+                        stop: false,
                     },
                 ),
                 entry(
@@ -1469,6 +1564,14 @@ fn title_of(kind: &NodeKind) -> (char, String) {
         NodeKind::OpenApp(_) => (icon, "Open an app".to_string()),
         NodeKind::OpenUrl(_) => (icon, "Open a page or file".to_string()),
         NodeKind::Command(_) => (icon, "Run a shell command".to_string()),
+        NodeKind::PanelUpdate { op, .. } => (
+            icon,
+            match op {
+                PanelOp::Open => "Open a progress panel".to_string(),
+                PanelOp::Update => "Update the progress panel".to_string(),
+                PanelOp::Close => "Close the progress panel".to_string(),
+            },
+        ),
         NodeKind::Run { .. } => (icon, "Run a command and wait".to_string()),
         NodeKind::Branch(_) => (icon, "If".to_string()),
         NodeKind::Repeat(_) => (icon, "Repeat".to_string()),
@@ -1793,6 +1896,44 @@ fn fields(
                 text_row(ui, "Save answer in", out, "variable");
             }
         }
+        NodeKind::PanelUpdate {
+            op,
+            panel,
+            title,
+            label,
+            value,
+            stop,
+        } => {
+            row(ui, "Action", |ui| {
+                let w = ui.available_width();
+                pick(ui, w, &PanelOp::ALL, PanelOp::label, op);
+            });
+            text_row(ui, "Panel id", panel, DEFAULT_PROGRESS_PANEL);
+            if op.has_fields() {
+                let open = *op == PanelOp::Open;
+                text_row(
+                    ui,
+                    "Title",
+                    title,
+                    if open {
+                        "the name of the flow"
+                    } else {
+                        "empty keeps it"
+                    },
+                );
+                text_row(ui, "Label", label, "above the bar, e.g. File {{index}}");
+                text_row(ui, "Bar", value, "0 to 1, 40%, busy, or empty to keep");
+                if open {
+                    row(ui, "Stop button", |ui| {
+                        ui.checkbox(stop, "Pressing it ends the run");
+                    });
+                }
+                hint_line(
+                    ui,
+                    "Nothing waits for the panel. It goes away when the run ends, or at a Close block.",
+                );
+            }
+        }
         NodeKind::Run {
             command,
             out,
@@ -1807,6 +1948,31 @@ fn fields(
                         .suffix(" s"),
                 );
             });
+        }
+        NodeKind::Native { op, a, b } if *op == NativeOp::Browser => {
+            row(ui, "Action", |ui| {
+                let w = ui.available_width();
+                pick(ui, w, &NativeOp::ALL, NativeOp::label, op);
+            });
+            if browser_by_variable(a) {
+                text_row(ui, "Command", a, "command, e.g. media.next");
+            } else {
+                row(ui, "Command", |ui| browser_fields(ui, a));
+            }
+            text_row(ui, "Save reply in", b, "variable (optional)");
+            let (line, good) = bridge_line(
+                crate::config::cfg().browser_bridge,
+                &crate::bridge::status(),
+            );
+            ui.label(
+                RichText::new(line)
+                    .size(12.5)
+                    .color(if good { pal().muted } else { AMBER }),
+            );
+            hint_line(
+                ui,
+                "The block waits for the browser. `ok` says how it went; the reply is also what a question answers (tab.url, media.state).",
+            );
         }
         NodeKind::Native { op, a, b } => {
             let (ha, hb) = op.hints();
@@ -1881,7 +2047,17 @@ mod tests {
                 .iter()
                 .filter(|e| matches!(&e.kind, NodeKind::Native { op: o, .. } if *o == op))
                 .count();
-            assert_eq!(n, 1, "{op:?}");
+            if op == NativeOp::Browser {
+                // the common commands are entries of their own, and the one that picks any
+                assert!(n >= 2, "the Browser group has several entries");
+                assert!(
+                    all.iter().any(|e| matches!(&e.kind,
+                        NodeKind::Native { op: NativeOp::Browser, b, .. } if b == "state")),
+                    "a question for a flow"
+                );
+            } else {
+                assert_eq!(n, 1, "{op:?}");
+            }
         }
         for op in ListOp::ALL {
             let n = all

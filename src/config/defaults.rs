@@ -342,6 +342,7 @@ impl Config {
             open_app_choice: true,
             browser_bridge: false,
             panels: true,
+            progress_panel: true,
             extension_panels: false,
             check_updates: true,
             side_default: SideTarget::App,

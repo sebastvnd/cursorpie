@@ -24,7 +24,11 @@
 //!   *follows* one: on the canvas the blocks that set it get a green ring, the blocks that read
 //!   it a blue one, and dashed lines show the way its value travels (see
 //!   [`crate::config::flow_check::data_edges`]). A variable that is read where no path sets it is
-//!   marked with `!`.
+//!   marked with `!`. The list has a search box (the name of a variable, or part of it) and shows for each variable
+//!   how many blocks set it (green) and read it (blue), the same colors as the rings on the canvas.
+//! - **All blocks**: every block of the flow in the order of a run, with a search box that looks at
+//!   the step number, the name of the block, the text typed in its fields and the variables it uses.
+//!   A click (or Enter, for the first match) moves the canvas to the block and stays on this page.
 //!
 //! The button of the bar under the canvas opens the panel when no block is selected (it then shows
 //! the Variables page). A click on the empty canvas deselects the block and closes the panel.
@@ -83,6 +87,112 @@ fn builtin_note(name: &str) -> Option<&'static str> {
 fn go(ed: &mut Ed, id: u32) {
     ed.flow_sel = Some(id);
     ed.flow_focus = Some(id);
+}
+
+/// Goes to a block from the list of blocks: the canvas moves to it and the list stays where it is
+/// (the block is marked in the list). The panel is told the selection is already known, so it does
+/// not jump to the Block page as it does for a click on the canvas.
+fn open_block(ed: &mut Ed, id: u32) {
+    go(ed, id);
+    ed.flow_insp_seen = Some(id);
+}
+
+/// The pages of the panel.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Page {
+    Block,
+    Vars,
+    Blocks,
+}
+
+/// The words of a search, lower case.
+fn tokens(query: &str) -> Vec<String> {
+    query.split_whitespace().map(str::to_lowercase).collect()
+}
+
+/// Whether `haystack` (lower case) holds every word of the search.
+fn has_all(haystack: &str, words: &[String]) -> bool {
+    words.iter().all(|w| haystack.contains(w.as_str()))
+}
+
+/// The search box at the top of a list.
+fn search_box(ui: &mut egui::Ui, text: &mut String, hint: &str) -> egui::Response {
+    let w = ui.available_width();
+    ui.add(text_field(text).desired_width(w).hint_text(hint))
+}
+
+/// Whether Enter was pressed in the search box.
+fn entered(ui: &egui::Ui, r: &egui::Response) -> bool {
+    r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
+}
+
+/// The text typed in the fields of a block (its command, its labels, its values...), in the order
+/// the fields are saved in.
+fn kind_text(kind: &NodeKind) -> Vec<String> {
+    fn walk(v: &serde_json::Value, out: &mut Vec<String>) {
+        match v {
+            serde_json::Value::String(s) => {
+                let s = s.split_whitespace().collect::<Vec<_>>().join(" ");
+                if !s.is_empty() {
+                    out.push(s);
+                }
+            }
+            serde_json::Value::Array(a) => a.iter().for_each(|x| walk(x, out)),
+            serde_json::Value::Object(m) => m.values().for_each(|x| walk(x, out)),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    if let Ok(v) = serde_json::to_value(kind) {
+        walk(&v, &mut out);
+    }
+    out
+}
+
+/// Every block with its step (`None` for a block no run reaches): the blocks a run reaches first,
+/// in the order of the run, then the others.
+fn block_order(flow: &Flow) -> Vec<(u32, Option<usize>)> {
+    let reach: Vec<u32> = flow.reachable().iter().map(|n| n.id).collect();
+    let mut order: Vec<(u32, Option<usize>)> = reach
+        .iter()
+        .enumerate()
+        .map(|(p, &id)| (id, Some(p)))
+        .collect();
+    for n in &flow.nodes {
+        if !reach.contains(&n.id) {
+            order.push((n.id, None));
+        }
+    }
+    order
+}
+
+/// The blocks that match a search, in the order of [`block_order`].
+fn block_matches(flow: &Flow, query: &str) -> Vec<(u32, Option<usize>)> {
+    let words = tokens(query);
+    block_order(flow)
+        .into_iter()
+        .filter(|(id, step)| {
+            if words.is_empty() {
+                return true;
+            }
+            let Some(n) = flow.node(*id) else {
+                return false;
+            };
+            let mut hay = format!("{} {}", kind_info(&n.kind).1, id);
+            if let Some(s) = step {
+                hay.push_str(&format!(" step {s}"));
+            }
+            for t in kind_text(&n.kind)
+                .into_iter()
+                .chain(block_reads(&n.kind))
+                .chain(block_writes(&n.kind))
+            {
+                hay.push(' ');
+                hay.push_str(&t);
+            }
+            has_all(&hay.to_lowercase(), &words)
+        })
+        .collect()
 }
 
 /// A small button with a variable's name as it is written in a field, `{{name}}`.
@@ -154,28 +264,74 @@ pub(super) fn panel(
         ed.flow_insp_seen = sel;
         if sel.is_some() {
             ed.flow_insp_vars = false;
+            ed.flow_insp_blocks = false;
         }
     }
-    let show_vars = sel.is_none() || ed.flow_insp_vars;
+    let page = if ed.flow_insp_blocks {
+        Page::Blocks
+    } else if sel.is_none() || ed.flow_insp_vars {
+        Page::Vars
+    } else {
+        Page::Block
+    };
     let mut ops: Vec<Op> = Vec::new();
 
     ui.scope_builder(UiBuilder::new().max_rect(rect.shrink(14.0)), |ui| {
+        let mut items: Vec<(Option<char>, &str)> = Vec::new();
         if sel.is_some() {
-            let items = [(None, "Block"), (None, "Variables")];
-            if let Some(i) = segmented(ui, &items, usize::from(show_vars)) {
-                ed.flow_insp_vars = i == 1;
-            }
-            ui.add_space(GAP);
+            items.push((None, "Block"));
         }
+        items.push((None, "Variables"));
+        items.push((None, "All blocks"));
+        let current = match page {
+            Page::Block => 0,
+            Page::Vars => usize::from(sel.is_some()),
+            Page::Blocks => items.len() - 1,
+        };
+        if let Some(i) = segmented(ui, &items, current) {
+            let name = items[i].1;
+            ed.flow_insp_blocks = name == "All blocks";
+            ed.flow_insp_vars = name == "Variables";
+        }
+        ui.add_space(GAP);
+
+        // the search boxes stay in place while the list under them scrolls
+        match page {
+            Page::Vars => {
+                let r = search_box(ui, &mut ed.flow_var_search, "Search variables\u{2026}");
+                if entered(ui, &r)
+                    && let Some(name) = first_variable(flow, &ed.flow_var_search)
+                {
+                    ed.flow_var = Some(name);
+                }
+                ui.add_space(GAP / 2.0);
+            }
+            Page::Blocks => {
+                let r = search_box(
+                    ui,
+                    &mut ed.flow_block_search,
+                    "Search blocks: name, text, variable, step\u{2026}",
+                );
+                if entered(ui, &r)
+                    && let Some((id, _)) = block_matches(flow, &ed.flow_block_search).first()
+                {
+                    open_block(ed, *id);
+                }
+                ui.add_space(GAP / 2.0);
+            }
+            Page::Block => {}
+        }
+
         egui::ScrollArea::vertical()
             .id_salt("flow_inspector")
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 8.0;
-                match sel {
-                    Some(id) if !show_vars => {
+                match (page, sel) {
+                    (Page::Block, Some(id)) => {
                         block_page(ui, flow, ed, accent, others, id, &issues, &mut ops);
                     }
+                    (Page::Blocks, _) => blocks_page(ui, flow, ed, accent, sel),
                     _ => variables_page(ui, flow, ed, accent),
                 }
             });
@@ -355,23 +511,107 @@ fn block_page(
     }
 }
 
+/// The name of the first variable that matches a search.
+fn first_variable(flow: &Flow, query: &str) -> Option<String> {
+    let words = tokens(query);
+    variables(flow)
+        .into_iter()
+        .find(|r| has_all(&r.name.to_lowercase(), &words))
+        .map(|r| r.name)
+}
+
+/// A line that says who is in a group of blocks (the ones that set a variable, the ones that read
+/// it...), with the blocks as buttons under it.
+fn link_group(
+    ui: &mut egui::Ui,
+    flow: &Flow,
+    ed: &mut Ed,
+    title: &str,
+    color: Color32,
+    ids: &[u32],
+    none: &str,
+) {
+    ui.horizontal(|ui| {
+        let (r, _) = ui.allocate_exact_size(vec2(10.0, 14.0), Sense::hover());
+        ui.painter().circle_filled(r.center(), 4.0, color);
+        ui.label(RichText::new(title).size(12.5).color(pal().muted));
+    });
+    if ids.is_empty() {
+        wrapped(ui, none, pal().muted);
+        return;
+    }
+    ui.horizontal_wrapped(|ui| {
+        for &b in ids {
+            if button(ui, Look::Plain, None, &block_label(flow, b))
+                .on_hover_text("Go to this block")
+                .clicked()
+            {
+                // like the list of blocks: the canvas moves to the block and the panel stays on
+                // the Variables page, with the variable still followed
+                open_block(ed, b);
+            }
+        }
+    });
+}
+
+/// The two small counters at the right of a variable: how many blocks set it and read it, in the
+/// colors of the rings on the canvas. Returns where the free room of the row ends.
+fn count_pills(p: &egui::Painter, rect: Rect, sets: usize, reads: usize) -> f32 {
+    let pills = [
+        (
+            format!("set {sets}"),
+            if sets == 0 { pal().muted } else { SETS_C },
+        ),
+        (
+            format!("read {reads}"),
+            if reads == 0 { pal().muted } else { READS_C },
+        ),
+    ];
+    let mut right = rect.max.x - 10.0;
+    for (text, color) in pills.iter().rev() {
+        let g = p.layout_no_wrap(text.clone(), FontId::proportional(12.0), *color);
+        let w = g.size().x + 24.0;
+        let pill =
+            Rect::from_min_size(egui::pos2(right - w, rect.center().y - 11.0), vec2(w, 22.0));
+        p.rect_filled(pill, PILL, wash(*color, 0.14));
+        p.circle_filled(egui::pos2(pill.min.x + 10.0, pill.center().y), 3.0, *color);
+        p.galley(
+            egui::pos2(pill.min.x + 18.0, pill.center().y - g.size().y / 2.0),
+            g,
+            *color,
+        );
+        right = pill.min.x - 6.0;
+    }
+    right
+}
+
 /// The page with every variable of the flow.
 fn variables_page(ui: &mut egui::Ui, flow: &Flow, ed: &mut Ed, accent: Color32) {
-    ui.label(fonts::title("Variables", 16.0, pal().text));
-    wrapped(
-        ui,
-        "Click a variable to follow it. On the canvas the blocks that set it are ringed in green, \
-         the blocks that read it in blue, and dashed lines show where its value travels.",
-        pal().muted,
-    );
-    ui.add_space(4.0);
-    let rows = variables(flow);
-    if rows.is_empty() {
+    let all = variables(flow);
+    if all.is_empty() {
         wrapped(
             ui,
             "No variable yet. A Set variable, Ask or Run block makes one.",
             pal().muted,
         );
+        return;
+    }
+    let words = tokens(&ed.flow_var_search);
+    let total = all.len();
+    let rows: Vec<_> = all
+        .into_iter()
+        .filter(|r| has_all(&r.name.to_lowercase(), &words))
+        .collect();
+    let hint = if words.is_empty() {
+        "Click a variable to follow it: the blocks that set it get a green ring, the ones that \
+         read it a blue ring, and dashed lines show where its value travels."
+            .to_string()
+    } else {
+        format!("{} of {} variables", rows.len(), total)
+    };
+    wrapped(ui, &hint, pal().muted);
+    if rows.is_empty() {
+        wrapped(ui, "No variable has this name.", pal().muted);
         return;
     }
     for row in rows {
@@ -387,6 +627,8 @@ fn variables_page(ui: &mut egui::Ui, flow: &Flow, ed: &mut Ed, accent: Color32) 
         };
         let p = ui.painter();
         p.rect_filled(rect, CONTROL_R, fill);
+        let room = count_pills(p, rect, row.writers.len(), row.readers.len());
+        let p = p.with_clip_rect(Rect::from_min_max(rect.min, egui::pos2(room, rect.max.y)));
         let mut x = rect.min.x + 12.0;
         if !row.unset.is_empty() {
             p.text(
@@ -405,17 +647,6 @@ fn variables_page(ui: &mut egui::Ui, flow: &Flow, ed: &mut Ed, accent: Color32) 
             FontId::new(13.5, fonts::semibold()),
             pal().text,
         );
-        p.text(
-            rect.right_center() - vec2(12.0, 0.0),
-            Align2::RIGHT_CENTER,
-            format!(
-                "{} set \u{b7} {} read",
-                row.writers.len(),
-                row.readers.len()
-            ),
-            FontId::proportional(12.0),
-            pal().muted,
-        );
         if resp
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .clicked()
@@ -427,29 +658,150 @@ fn variables_page(ui: &mut egui::Ui, flow: &Flow, ed: &mut Ed, accent: Color32) 
             };
         }
         if followed {
-            if let Some(n) = builtin_note(&row.name) {
-                wrapped(ui, &format!("{n}."), pal().muted);
-            }
-            if row.writers.is_empty() {
-                wrapped(ui, "Nothing sets it.", pal().muted);
-            } else {
-                block_links(ui, flow, ed, "set by", &row.writers);
-            }
-            if row.readers.is_empty() {
-                wrapped(ui, "Nothing reads it.", pal().muted);
-            } else {
-                block_links(ui, flow, ed, "read by", &row.readers);
-            }
-            if !row.unset.is_empty() {
-                block_links(
-                    ui,
-                    flow,
-                    ed,
-                    "read before any block sets it, at",
-                    &row.unset,
-                );
-            }
+            ui.horizontal(|ui| {
+                ui.add_space(12.0);
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 6.0;
+                    if let Some(n) = builtin_note(&row.name) {
+                        wrapped(ui, &format!("{n}."), pal().muted);
+                    }
+                    link_group(
+                        ui,
+                        flow,
+                        ed,
+                        "Set by",
+                        SETS_C,
+                        &row.writers,
+                        "Nothing sets it.",
+                    );
+                    link_group(
+                        ui,
+                        flow,
+                        ed,
+                        "Read by",
+                        READS_C,
+                        &row.readers,
+                        "Nothing reads it.",
+                    );
+                    if !row.unset.is_empty() {
+                        link_group(
+                            ui,
+                            flow,
+                            ed,
+                            "Read before any block sets it, at",
+                            pal().bad,
+                            &row.unset,
+                            "",
+                        );
+                    }
+                });
+            });
             ui.add_space(4.0);
         }
+    }
+}
+
+/// The page with every block of the flow.
+fn blocks_page(ui: &mut egui::Ui, flow: &Flow, ed: &mut Ed, accent: Color32, sel: Option<u32>) {
+    let total = flow.nodes.len();
+    let found = block_matches(flow, &ed.flow_block_search);
+    let hint = if ed.flow_block_search.trim().is_empty() {
+        format!("{total} blocks. Click one to go to it.")
+    } else {
+        format!(
+            "{} of {} blocks. Enter goes to the first.",
+            found.len(),
+            total
+        )
+    };
+    wrapped(ui, &hint, pal().muted);
+    if found.is_empty() {
+        wrapped(ui, "No block matches.", pal().muted);
+        return;
+    }
+    for (id, step) in found {
+        block_row(ui, flow, ed, accent, id, step, sel == Some(id));
+    }
+}
+
+/// One block in the list of blocks: its icon, its name, the text typed in it and its step.
+fn block_row(
+    ui: &mut egui::Ui,
+    flow: &Flow,
+    ed: &mut Ed,
+    accent: Color32,
+    id: u32,
+    step: Option<usize>,
+    selected: bool,
+) {
+    let Some(n) = flow.node(id) else {
+        return;
+    };
+    let (icon, title) = kind_info(&n.kind);
+    let color = tint(&n.kind, accent);
+    let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 50.0), Sense::click());
+    let fill = if selected {
+        wash(accent, 0.16)
+    } else if resp.hovered() {
+        pal().hot
+    } else {
+        pal().input
+    };
+    let p = ui.painter();
+    p.rect_filled(rect, CONTROL_R, fill);
+    fonts::paint_icon(
+        p,
+        egui::pos2(rect.min.x + 22.0, rect.center().y),
+        icon,
+        18.0,
+        color,
+        false,
+    );
+    let note = match step {
+        _ if matches!(n.kind, NodeKind::Start) => String::new(),
+        Some(s) => format!("step {s}"),
+        None => "not wired".to_string(),
+    };
+    p.text(
+        egui::pos2(rect.max.x - 12.0, rect.min.y + 17.0),
+        Align2::RIGHT_CENTER,
+        note,
+        FontId::proportional(12.0),
+        pal().muted,
+    );
+    p.with_clip_rect(Rect::from_min_max(
+        rect.min,
+        egui::pos2(rect.max.x - 80.0, rect.max.y),
+    ))
+    .text(
+        egui::pos2(rect.min.x + 42.0, rect.min.y + 17.0),
+        Align2::LEFT_CENTER,
+        title,
+        FontId::new(13.5, fonts::semibold()),
+        pal().text,
+    );
+    let snippet: String = kind_text(&n.kind)
+        .into_iter()
+        .filter(|t| t.as_str() != title)
+        .take(3)
+        .collect::<Vec<_>>()
+        .join(" \u{b7} ")
+        .chars()
+        .take(80)
+        .collect();
+    if !snippet.is_empty() {
+        p.with_clip_rect(rect.shrink2(vec2(10.0, 0.0))).text(
+            egui::pos2(rect.min.x + 42.0, rect.min.y + 34.0),
+            Align2::LEFT_CENTER,
+            snippet,
+            FontId::proportional(12.0),
+            pal().muted,
+        );
+    }
+    if resp
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
+    {
+        open_block(ed, id);
     }
 }

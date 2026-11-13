@@ -7,6 +7,11 @@
 //! screen waits in a short queue ([`App::step_panel`]), and is given up after
 //! [`QUEUE_WAIT`].
 //!
+//! A **passive** panel ([`PanelSpec::passive`](crate::panel::PanelSpec::passive): the progress panel
+//! of a run, see [`runpanel`](crate::runpanel)) is shown without taking the keyboard, so the keys that
+//! the run sends still reach the app they are for, and it gives the window up to any other panel
+//! that is asked for.
+//!
 //! The rules about answers live in [`Form`]; the drawing lives in
 //! [`panel_form`]. This file is the window and the clock.
 
@@ -144,6 +149,25 @@ impl App {
                 self.panel_queue.push_front(req);
                 ctx.request_repaint();
             }
+            return;
+        }
+        // a panel that only shows progress does not hold the window against another panel: that
+        // one (a question of the flow, say) would wait for it for as long as the run lasts
+        let yields = self.panel.as_ref().is_some_and(|p| {
+            p.form.spec.passive && p.source == req.source && p.form.panel_id() != id
+        });
+        if yields && !self.pie_open {
+            let shown = self
+                .panel
+                .as_ref()
+                .map(|p| p.form.panel_id().to_string())
+                .unwrap_or_default();
+            self.end_panel(
+                ctx,
+                PanelResult::cancelled(&shown, "another panel needs the window"),
+            );
+            self.panel_queue.push_front(req);
+            ctx.request_repaint();
             return;
         }
         // a panel with the id of the one on screen replaces it
@@ -304,6 +328,9 @@ impl App {
             }
         }
         if let Some(p) = self.panel.take() {
+            if p.form.spec.passive {
+                platform::set_window_passive(false);
+            }
             let id = p.form.panel_id().to_string();
             let _ = p
                 .reply
@@ -360,8 +387,9 @@ impl App {
                 if options.len() > crate::panel::layout::SEARCH_FROM)
         });
 
-        // it takes the keyboard: unlike the notice it is for typing
-        platform::set_window_passive(false);
+        // it takes the keyboard (unlike the notice it is for typing), except a panel that only
+        // shows progress
+        platform::set_window_passive(spec.passive);
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(win));
         ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
         ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(false));
@@ -441,6 +469,9 @@ impl App {
     /// The panel is over: it is answered, and the window is hidden again.
     fn end_panel(&mut self, ctx: &egui::Context, result: PanelResult) {
         if let Some(p) = self.panel.take() {
+            if p.form.spec.passive {
+                platform::set_window_passive(false);
+            }
             let _ = p.reply.send(result);
         }
         self.visible = false;
@@ -462,9 +493,12 @@ impl App {
             // the window is being mapped: ask for the keyboard a few times, it may not be there yet
             if p.frames < FOCUS_FRAMES {
                 p.frames += 1;
-                request_focus(&ctx);
-                if p.frames == 3 {
-                    platform::raise_own_window();
+                // a panel that only shows progress leaves the keyboard where it is
+                if !p.form.spec.passive {
+                    request_focus(&ctx);
+                    if p.frames == 3 {
+                        platform::raise_own_window();
+                    }
                 }
                 ctx.request_repaint();
             }

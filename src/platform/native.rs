@@ -446,7 +446,18 @@ fn run(inv: &Invocation, timeout: Duration, capture: bool) -> Option<Output> {
 
 /// The part of [`run`] that is the same for a program and a shell line: the environment, the
 /// pipes, the hidden window, the wait.
-fn finish(mut cmd: Command, inv: &Invocation, timeout: Duration, capture: bool) -> Option<Output> {
+fn finish(cmd: Command, inv: &Invocation, timeout: Duration, capture: bool) -> Option<Output> {
+    finish_until(cmd, inv, timeout, capture, &|| false)
+}
+
+/// [`finish`] that also ends the program when `stop` says so.
+fn finish_until(
+    mut cmd: Command,
+    inv: &Invocation,
+    timeout: Duration,
+    capture: bool,
+    stop: &dyn Fn() -> bool,
+) -> Option<Output> {
     cmd.envs(inv.envs.iter().map(|(k, v)| (k.as_str(), v.as_str())))
         .stdin(if inv.stdin.is_some() {
             Stdio::piped()
@@ -485,8 +496,8 @@ fn finish(mut cmd: Command, inv: &Invocation, timeout: Duration, capture: bool) 
     let status = loop {
         match child.try_wait() {
             Ok(Some(s)) => break Some(s),
-            Ok(None) if started.elapsed() >= timeout => {
-                let _ = child.kill();
+            Ok(None) if started.elapsed() >= timeout || stop() => {
+                kill_tree(&mut child);
                 let _ = child.wait();
                 break None;
             }
@@ -502,6 +513,25 @@ fn finish(mut cmd: Command, inv: &Invocation, timeout: Duration, capture: bool) 
         code: status.and_then(|s| s.code()),
         stdout,
     })
+}
+
+/// Ends `child` and, on Windows, the programs it started. `cmd.exe /C` runs the person's command
+/// as a grandchild: killing only the shell leaves that program holding the end of the output pipe,
+/// so the thread that reads it (see [`finish`]) would wait for ever, with its buffer, for every
+/// command that timed out.
+fn kill_tree(child: &mut std::process::Child) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let _ = Command::new("taskkill")
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(0x0800_0000)
+            .status();
+    }
+    let _ = child.kill();
 }
 
 /// Tries each program until one can be started; `None` when none can.
@@ -539,6 +569,17 @@ fn start_and_forget(inv: &Invocation) -> bool {
 /// with `env` added to the environment. Gives up after `timeout` and ends the program (`code` is then
 /// `None`). `None` when the shell could not be started.
 pub fn exec(command: &str, env: &[(String, String)], timeout: Duration) -> Option<Output> {
+    exec_until(command, env, timeout, &|| false)
+}
+
+/// [`exec`] that also gives up, and ends the program (`code` is then `None`), as soon as `stop`
+/// says so. It is asked about every 10 ms while the program runs.
+pub fn exec_until(
+    command: &str,
+    env: &[(String, String)],
+    timeout: Duration,
+    stop: &dyn Fn() -> bool,
+) -> Option<Output> {
     let inv = Invocation {
         program: shell_program(Os::current()),
         args: Vec::new(),
@@ -547,7 +588,7 @@ pub fn exec(command: &str, env: &[(String, String)], timeout: Duration) -> Optio
     };
     let mut cmd = Command::new(inv.program);
     shell_line(&mut cmd, command);
-    finish(cmd, &inv, timeout, true)
+    finish_until(cmd, &inv, timeout, true, stop)
 }
 
 /// The program that runs shell lines on `os`.

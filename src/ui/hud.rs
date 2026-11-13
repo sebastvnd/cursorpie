@@ -11,9 +11,21 @@
 //! | Part | Contents |
 //! |---|---|
 //! | [`HudNote`], [`HudKind`] | what is announced: a kind (which picks the icon) and one or two lines of text |
+//! | [`HudProgress`] | how far a run has come: a countdown, the blocks of a flow, or a moving bar |
 //! | [`note_for`] | turns an [`Action`] into a note (never shows a command: it may hold a secret) |
 //! | [`paint_pill`] | draws the pill, in the colors of the current appearance and accent; Settings uses it for its preview too |
 //! | [`Hud`] | the state of the notice on screen: its timing and animation |
+//!
+//! A run that takes a while (a flow, a sequence with a wait in it) keeps its notice on the screen
+//! until it is over: the notes carry a [`HudNote::live`] flag, the pill stays (see [`Hud::phase`])
+//! and the worker ends it with [`Msg::HudEnd`](crate::msg::Msg::HudEnd). A pill that has a progress
+//! shows a thin bar along its bottom edge and a small label (`3/8`, `4.2 s`) at its right end.
+//!
+//! Changes of the note are never a jump. The pill glides to its new width and height, the old text and
+//! icon fade out while the new ones fade in, the bar glides to its new fill, a note that comes right
+//! after another waits its turn (only the last one is shown), and a pill that was already on its way
+//! out is called back smoothly. [`Hud`] keeps the little bit of state this needs; the drawing stays a
+//! function of that state.
 //!
 //! The pill follows the look of the pie: a card in the light or dark appearance, smoked graphite when
 //! the pie is set to Glass, a round badge in the accent color with the icon of the kind of action.
@@ -48,6 +60,16 @@ pub fn scale_of(cfg: &Config) -> f32 {
 
 /// Height of the pill.
 const PILL_H: f32 = 56.0;
+/// Height of the pill when it shows a progress bar under its text.
+const PILL_H_BAR: f32 = 72.0;
+/// Thickness of the progress bar and the distance of its middle from the bottom edge of the pill.
+const BAR_H: f32 = 4.0;
+const BAR_FROM_BOTTOM: f32 = 14.0;
+/// Seconds one sweep takes of the bar that does not know how far the run has come.
+const SWEEP_SECS: f32 = 1.4;
+/// A notice that belongs to a run that is going on goes away by itself when nothing was heard of
+/// the run for this long (the worker may have died before it could end the notice).
+pub const LIVE_STALL: Duration = Duration::from_secs(150);
 /// Narrowest and widest the pill gets.
 const PILL_MIN_W: f32 = 168.0;
 const PILL_MAX_W: f32 = 480.0;
@@ -80,13 +102,30 @@ const GROW_MAX: f32 = 1.08;
 /// How far the text slides in from the left while it fades in (points).
 const TEXT_SLIDE: f32 = 12.0;
 /// How much the badge swells when the note changes (a damped bounce, see [`PillLook::pulse`]).
-const PULSE_SWELL: f32 = 0.24;
+const PULSE_SWELL: f32 = 0.12;
+/// A change of the note only starts a new bounce when the last one is mostly over (see
+/// [`Hud::pulse`]), so quick changes do not make the badge shake.
+const PULSE_RETRIGGER: f32 = 0.5;
 /// Seconds the bounce after a change of the note takes.
 const PULSE_SECS: f32 = 0.38;
 /// How the time of going away is shared: the pill shrinks to a circle during the first `SHRINK_END`
 /// of it, and the circle fades and sinks from `FADE_START` on.
 const SHRINK_END: f32 = 0.6;
 const FADE_START: f32 = 0.5;
+/// Seconds the pill takes to glide to a new width and height.
+const MORPH_SECS: f32 = 0.24;
+/// Seconds the bar takes to glide to a new fill.
+const BAR_SECS: f32 = 0.30;
+/// Seconds the old text and icon take to give way to the new ones.
+const SWAP_SECS: f32 = 0.24;
+/// Points the text moves while it is replaced: the old one up, the new one up into its place.
+const SWAP_SLIDE: f32 = 5.0;
+/// Seconds a pill that was on its way out takes to come back when a note arrives.
+const RECALL_SECS: f32 = 0.22;
+/// A note stays at least this long before the next one replaces it. Notes that come faster (the
+/// blocks of a quick flow) wait, and only the last of them is shown: a note that is on screen for a
+/// few milliseconds is not a note, it is a flicker.
+pub const MIN_DWELL: Duration = Duration::from_millis(260);
 /// How long a notice that has to wait for the pie to go away is remembered.
 pub const PENDING_MAX: Duration = Duration::from_millis(1500);
 
@@ -100,6 +139,7 @@ pub enum HudKind {
     Command,
     Browser,
     Flow,
+    Wait,
 }
 
 impl HudKind {
@@ -113,6 +153,81 @@ impl HudKind {
             HudKind::Command => symbols::TERMINAL_WINDOW,
             HudKind::Browser => symbols::BROWSER,
             HudKind::Flow => symbols::LIGHTNING,
+            HudKind::Wait => symbols::CLOCK,
+        }
+    }
+}
+
+/// How far what is announced has come. The pill draws it as a thin bar along its bottom edge and a
+/// small label at its right end; the time of a countdown is kept by the pill itself, so a long wait
+/// costs one message and not one per frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum HudProgress {
+    /// Nothing to show: a short pill without a bar.
+    #[default]
+    None,
+    /// A pause of `ms` milliseconds that began when the note arrived: a bar that fills and the time
+    /// that is left.
+    Wait { ms: u32 },
+    /// Something that takes as long as it takes (a command that is waited for): a bar that moves
+    /// back and forth and the seconds it has taken.
+    Busy,
+    /// Block or round `done` of `total`; with a `total` of `0` the number of blocks is not known (a
+    /// flow with a loop in it): a moving bar and `step 4`.
+    Steps { done: u32, total: u32 },
+    /// The run is over: a full bar, while the pill waits to go away.
+    Done,
+}
+
+impl HudProgress {
+    /// How full the bar is, 0 to 1, `elapsed` seconds after the note arrived. `None` when it is not
+    /// known (the bar moves instead) and for [`HudProgress::None`].
+    pub fn fraction(self, elapsed: f32) -> Option<f32> {
+        match self {
+            HudProgress::None | HudProgress::Busy => None,
+            HudProgress::Wait { ms } => Some((elapsed * 1000.0 / ms.max(1) as f32).clamp(0.0, 1.0)),
+            HudProgress::Steps { done, total } => {
+                (total > 0).then(|| (done as f32 / total as f32).clamp(0.0, 1.0))
+            }
+            HudProgress::Done => Some(1.0),
+        }
+    }
+
+    /// The small text at the right end of the pill.
+    pub fn label(self, elapsed: f32) -> String {
+        match self {
+            HudProgress::None | HudProgress::Done => String::new(),
+            HudProgress::Wait { ms } => {
+                format!("{:.1} s", (ms as f32 / 1000.0 - elapsed).max(0.0))
+            }
+            HudProgress::Busy => format!("{} s", elapsed.max(0.0) as u32),
+            // not started: no number yet
+            HudProgress::Steps { done: 0, .. } => String::new(),
+            HudProgress::Steps { done, total } if total > 0 => format!("{done}/{total}"),
+            HudProgress::Steps { done, .. } => format!("step {done}"),
+        }
+    }
+
+    /// The widest text [`label`](Self::label) can be, so that the pill keeps its width while the
+    /// numbers change.
+    fn reserve(self) -> String {
+        match self {
+            HudProgress::None | HudProgress::Done => String::new(),
+            HudProgress::Wait { .. } => "88.8 s".into(),
+            HudProgress::Busy => "888 s".into(),
+            HudProgress::Steps { total, .. } if total > 0 => format!("{total}/{total}"),
+            HudProgress::Steps { .. } => "step 8888".into(),
+        }
+    }
+
+    /// Whether the bar moves by itself `elapsed` seconds after the note arrived (the window then
+    /// needs a frame every tick).
+    pub fn animates(self, elapsed: f32) -> bool {
+        match self {
+            HudProgress::Wait { ms } => elapsed * 1000.0 < ms as f32,
+            HudProgress::Busy => true,
+            HudProgress::Steps { total: 0, .. } => true,
+            HudProgress::None | HudProgress::Steps { .. } | HudProgress::Done => false,
         }
     }
 }
@@ -123,6 +238,11 @@ pub struct HudNote {
     pub kind: HudKind,
     pub title: String,
     pub detail: String,
+    /// How far it has come; a pill with a progress also shows a bar.
+    pub progress: HudProgress,
+    /// The note belongs to a run that is still going on (a flow, a sequence with a wait): the pill
+    /// stays on the screen until [`Msg::HudEnd`](crate::msg::Msg::HudEnd) says the run is over.
+    pub live: bool,
 }
 
 impl HudNote {
@@ -131,7 +251,32 @@ impl HudNote {
             kind,
             title: title.into(),
             detail: detail.into(),
+            progress: HudProgress::None,
+            live: false,
         }
+    }
+
+    /// The same note with a progress.
+    pub fn with_progress(mut self, progress: HudProgress) -> Self {
+        self.progress = progress;
+        self
+    }
+
+    /// The same note, marked as part of a run that is still going on (or not).
+    pub fn running(mut self, live: bool) -> Self {
+        self.live = live;
+        self
+    }
+
+    /// "Waiting" with a countdown of `ms` milliseconds, for a pause of a flow or a sequence.
+    pub fn waiting(ms: u32) -> Self {
+        Self::new(HudKind::Wait, "Waiting", "").with_progress(HudProgress::Wait { ms })
+    }
+
+    /// A command that is waited for: a moving bar (the command itself is never shown, see
+    /// [`note_for`]).
+    pub fn busy(title: impl Into<String>) -> Self {
+        Self::new(HudKind::Command, title, "").with_progress(HudProgress::Busy)
     }
 
     /// "Open app" with the app's name, for the blocks and steps that open an app.
@@ -274,6 +419,26 @@ fn clip(text: &str, max: usize) -> String {
     out
 }
 
+/// The size of the pill on its way from one width and height to another (see [`Hud::morph_size`]).
+#[derive(Clone, Copy, Debug)]
+struct SizeGlide {
+    from: Vec2,
+    to: Vec2,
+    since: Instant,
+}
+
+impl SizeGlide {
+    /// The size `now`: eased from `from` to `to` over [`MORPH_SECS`].
+    fn at(&self, now: Instant) -> Vec2 {
+        let t = now.saturating_duration_since(self.since).as_secs_f32() / MORPH_SECS;
+        self.from + (self.to - self.from) * ease_out_cubic(t)
+    }
+
+    fn running(&self, now: Instant) -> bool {
+        now.saturating_duration_since(self.since).as_secs_f32() < MORPH_SECS
+    }
+}
+
 /// The state of the notice that is on screen.
 #[derive(Debug)]
 pub struct Hud {
@@ -288,17 +453,54 @@ pub struct Hud {
     pub changed_at: Option<Instant>,
     /// How big it is drawn, 1.0 = normal. Fixed when the notice comes up (the window has that size).
     pub scale: f32,
+    /// The run it announces is still going on: the pill stays until [`release`](Self::release).
+    pub live: bool,
+    /// When the last note arrived: a progress counts its seconds from there.
+    pub progress_since: Instant,
+    /// When something was last heard of the run (see [`LIVE_STALL`]).
+    pub last_note: Instant,
+    /// The note that was on screen before the last change: its text and icon fade out while the
+    /// new ones fade in (see [`previous`](Self::previous)).
+    prev: Option<HudNote>,
+    /// When the shown note last changed, which is when the fade between the two starts.
+    swapped_at: Instant,
+    /// A note that came too soon after the last change and waits its turn, with the time it arrived.
+    queued: Option<(HudNote, Instant)>,
+    /// Where the bar stood when the note last changed, so that it glides from there to the fill the
+    /// new note asks for. `None` when the bar had no known fill (it sweeps instead).
+    bar_from: Option<f32>,
+    bar_since: Instant,
+    /// The glide of the pill's width and height; `None` until the first frame.
+    size: Option<SizeGlide>,
+    /// A pill that was on its way out and was called back by a new note: how far it had gone
+    /// (0 to 1) and when. It comes back over [`RECALL_SECS`] instead of jumping.
+    recall: Option<(f32, Instant)>,
+    /// When this notice was made: the sweep of a bar that does not know how far the run has come
+    /// counts from here, so it keeps moving from one note to the next.
+    born: Instant,
 }
 
 impl Hud {
     pub fn new(note: HudNote, hold: Duration) -> Self {
+        let now = Instant::now();
         Self {
+            live: note.live,
             note,
             hold,
             shown_at: None,
             until: None,
             changed_at: None,
             scale: 1.0,
+            progress_since: now,
+            last_note: now,
+            prev: None,
+            swapped_at: now,
+            queued: None,
+            bar_from: None,
+            bar_since: now,
+            size: None,
+            recall: None,
+            born: now,
         }
     }
 
@@ -309,15 +511,102 @@ impl Hud {
     }
 
     /// Replaces the note while the pill is on screen and keeps it there for another `hold`.
+    ///
+    /// A note that comes less than [`MIN_DWELL`] after the last change waits (a newer one takes its
+    /// place), so the blocks of a quick flow do not flash by; [`flush_queued`](Self::flush_queued)
+    /// shows it when its turn comes.
     pub fn update(&mut self, note: HudNote, now: Instant) {
-        if self.note != note {
-            self.note = note;
-            self.changed_at = Some(now);
-        }
         if self.shown_at.is_some() {
+            // a pill that was already on its way out comes back smoothly (how far it had gone is
+            // worked out before `live` and `last_note` change: they decide whether it was leaving)
+            self.recall_from(now);
             self.until = Some(now + self.hold);
         }
-        // (a pill that was already on its way out comes back: `phase` derives everything from `until`)
+        self.live = note.live;
+        self.last_note = now;
+        if note == self.note {
+            // nothing new to say: what waited is stale, and a countdown starts over with every
+            // note, also when the note is the same as before
+            self.queued = None;
+            self.restart_progress(now);
+            return;
+        }
+        if let Some((queued, at)) = self.queued.as_mut()
+            && *queued == note
+        {
+            *at = now;
+            return;
+        }
+        let settled = now.saturating_duration_since(self.swapped_at) >= MIN_DWELL;
+        if self.shown_at.is_none() || settled {
+            self.queued = None;
+            self.apply(note, now, now);
+        } else {
+            self.queued = Some((note, now));
+        }
+    }
+
+    /// Shows the note that waited for its turn once the last change has been on screen long enough.
+    /// Runs every frame.
+    pub fn flush_queued(&mut self, now: Instant) {
+        if self.queued.is_none() || now.saturating_duration_since(self.swapped_at) < MIN_DWELL {
+            return;
+        }
+        if let Some((note, arrived)) = self.queued.take() {
+            self.apply(note, arrived, now);
+        }
+    }
+
+    /// Makes `note` the one that is shown. `arrived` is when it came (a countdown counts from
+    /// there, also when the note had to wait), `now` is the moment of the change.
+    fn apply(&mut self, note: HudNote, arrived: Instant, now: Instant) {
+        // where the bar is now, so that it glides to where the new note puts it
+        let bar_from = self.bar_fraction(now);
+        if self.shown_at.is_some() {
+            self.prev = Some(std::mem::replace(&mut self.note, note));
+            self.swapped_at = now;
+        } else {
+            self.note = note;
+        }
+        if self.pulse(now) < PULSE_RETRIGGER {
+            self.changed_at = Some(now);
+        }
+        self.progress_since = arrived;
+        self.bar_from = bar_from;
+        self.bar_since = now;
+    }
+
+    /// The countdown and the moving bar start over; the bar glides from where it is.
+    fn restart_progress(&mut self, now: Instant) {
+        let bar_from = self.bar_fraction(now);
+        self.progress_since = now;
+        self.bar_from = bar_from;
+        self.bar_since = now;
+    }
+
+    /// Remembers how far the pill had gone away at `now`, before a new note calls it back.
+    fn recall_from(&mut self, now: Instant) {
+        let going = self.going_at(now);
+        self.recall = (going > 0.001).then_some((going, now));
+    }
+
+    /// How far the notice has gone away at `now`, 0 to 1 (see [`Phase::going`]).
+    fn going_at(&self, now: Instant) -> f32 {
+        let Some(until) = self.until else {
+            return 0.0;
+        };
+        let mut late = now.saturating_duration_since(until).as_secs_f32();
+        if self.live && !self.stalled(now) {
+            // the run goes on: the pill does not leave
+            late = 0.0;
+        }
+        let mut going = (late / OUT_SECS).clamp(0.0, 1.0);
+        if let Some((from, at)) = self.recall {
+            // called back: it eases back from where it was, it does not jump to the full pill
+            let back = now.saturating_duration_since(at).as_secs_f32() / RECALL_SECS;
+            going = going.max(from * (1.0 - ease_out_cubic(back)));
+        }
+        going
     }
 
     /// The phase at `now`: how far the notice has come in (0 to 1), how far it has gone away
@@ -325,13 +614,12 @@ impl Hud {
     /// full pill stays, after it has come in and before it goes away.
     pub fn phase(&mut self, now: Instant) -> Phase {
         let shown = *self.shown_at.get_or_insert(now);
-        let until = *self
-            .until
-            .get_or_insert(now + Duration::from_secs_f32(IN_SECS) + self.hold);
+        if self.until.is_none() {
+            self.until = Some(now + Duration::from_secs_f32(IN_SECS) + self.hold);
+        }
         let into = now.saturating_duration_since(shown).as_secs_f32();
-        let late = now.saturating_duration_since(until).as_secs_f32();
         let coming = (into / IN_SECS).clamp(0.0, 1.0);
-        let going = (late / OUT_SECS).clamp(0.0, 1.0);
+        let going = self.going_at(now);
         Phase {
             coming,
             going,
@@ -347,8 +635,135 @@ impl Hud {
     }
 
     /// How long until the notice starts to go away (nothing else changes on its own before that).
+    /// While the run goes on it is the time until nothing heard of it counts as a stall. A note that
+    /// waits for its turn shortens it to the time until that turn.
     pub fn next_wake(&self, now: Instant) -> Option<Duration> {
-        self.until.map(|u| u.saturating_duration_since(now))
+        let base = if self.live {
+            let quiet = now.saturating_duration_since(self.last_note);
+            Some(LIVE_STALL.saturating_sub(quiet))
+        } else {
+            self.until.map(|u| u.saturating_duration_since(now))
+        };
+        if self.queued.is_some() {
+            let left = MIN_DWELL.saturating_sub(now.saturating_duration_since(self.swapped_at));
+            return Some(base.map_or(left, |b| b.min(left)));
+        }
+        base
+    }
+
+    /// Whether nothing was heard of the run for [`LIVE_STALL`]: the pill then goes away as if the
+    /// run had ended.
+    fn stalled(&self, now: Instant) -> bool {
+        now.saturating_duration_since(self.last_note) > LIVE_STALL
+    }
+
+    /// Seconds since the last note arrived: what the countdown and the label are drawn from.
+    pub fn elapsed(&self, now: Instant) -> f32 {
+        now.saturating_duration_since(self.progress_since)
+            .as_secs_f32()
+    }
+
+    /// Seconds since the notice was made: what the sweep of a bar without a known fill is drawn
+    /// from. It does not start over with a new note, so the bar does not jump back to the left.
+    pub fn sweep(&self, now: Instant) -> f32 {
+        now.saturating_duration_since(self.born).as_secs_f32()
+    }
+
+    /// How full the bar is at `now`, 0 to 1, or `None` when the fill is not known. When the note
+    /// (or its progress) changed a moment ago the bar glides from where it stood to the new fill
+    /// instead of jumping.
+    pub fn bar_fraction(&self, now: Instant) -> Option<f32> {
+        let raw = self.note.progress.fraction(self.elapsed(now))?;
+        let Some(from) = self.bar_from else {
+            return Some(raw);
+        };
+        let t = now.saturating_duration_since(self.bar_since).as_secs_f32() / BAR_SECS;
+        Some(from + (raw - from) * ease_out_cubic(t))
+    }
+
+    /// The note that was shown before the current one and how far the change has come (0 = just
+    /// changed, 1 = done): the old text and icon fade out while the new ones fade in. `None` for
+    /// the note once the change is over.
+    pub fn previous(&self, now: Instant) -> (Option<&HudNote>, f32) {
+        let t = now.saturating_duration_since(self.swapped_at).as_secs_f32() / SWAP_SECS;
+        if t >= 1.0 {
+            return (None, 1.0);
+        }
+        (
+            self.prev.as_ref(),
+            if self.prev.is_some() { t } else { 1.0 },
+        )
+    }
+
+    /// The size the pill is drawn at in `now`, given the size `target` its note asks for: it
+    /// glides from the size it has to the new one over `MORPH_SECS`. While the run goes on the
+    /// pill never gets narrower, or it would breathe with every block.
+    pub fn morph_size(&mut self, target: Vec2, now: Instant) -> Vec2 {
+        let Some(glide) = self.size.as_mut() else {
+            self.size = Some(SizeGlide {
+                from: target,
+                to: target,
+                since: now,
+            });
+            return target;
+        };
+        let target = if self.live {
+            Vec2::new(target.x.max(glide.to.x), target.y)
+        } else {
+            target
+        };
+        if (glide.to.x - target.x).abs() > 0.5 || (glide.to.y - target.y).abs() > 0.5 {
+            *glide = SizeGlide {
+                from: glide.at(now),
+                to: target,
+                since: now,
+            };
+        }
+        glide.at(now)
+    }
+
+    /// Whether the bar of the pill moves by itself at `now`.
+    pub fn progress_animates(&self, now: Instant) -> bool {
+        self.note.progress.animates(self.elapsed(now))
+    }
+
+    /// Whether something glides at `now` (the size, the bar, the old text giving way, a note that
+    /// waits for its turn): the window then needs a frame every tick.
+    pub fn gliding(&self, now: Instant) -> bool {
+        let since = |t: Instant| now.saturating_duration_since(t).as_secs_f32();
+        self.queued.is_some()
+            || self.size.is_some_and(|g| g.running(now))
+            || (self.bar_from.is_some() && since(self.bar_since) < BAR_SECS)
+            || (self.prev.is_some() && since(self.swapped_at) < SWAP_SECS)
+    }
+
+    /// The run is over: the bar fills up and the pill goes away after its usual time.
+    pub fn release(&mut self, now: Instant) {
+        if !self.live {
+            return;
+        }
+        if self.shown_at.is_some() {
+            // (before `live` changes: a pill that was held for its run was not on its way out)
+            self.recall_from(now);
+            self.until = Some(now + self.hold);
+        }
+        // a note that still waits for its turn is the last thing the run said: show it first
+        if let Some((note, arrived)) = self.queued.take() {
+            self.apply(note, arrived, now);
+        }
+        self.live = false;
+        self.note.live = false;
+        let bar_from = self.bar_fraction(now);
+        self.note.progress = match self.note.progress {
+            HudProgress::None => HudProgress::None,
+            HudProgress::Steps { total, .. } if total > 0 => {
+                HudProgress::Steps { done: total, total }
+            }
+            _ => HudProgress::Done,
+        };
+        // the bar glides to full from where it stands
+        self.bar_from = bar_from;
+        self.bar_since = now;
     }
 }
 
@@ -448,9 +863,22 @@ pub fn pill_size(painter: &Painter, note: &HudNote, scale: f32) -> Vec2 {
         scale,
     );
     let text_w = tg.size().x.max(dg.map_or(0.0, |d| d.size().x));
-    let w = ((PAD_L + BADGE + GAP + PAD_R) * scale + text_w)
+    // a progress has a label at the right end, and a bar under the text
+    let reserve = note.progress.reserve();
+    let label_w = if reserve.is_empty() {
+        0.0
+    } else {
+        let g = painter.layout_no_wrap(reserve, FontId::proportional(12.5 * scale), Color32::WHITE);
+        g.size().x + GAP * scale
+    };
+    let w = ((PAD_L + BADGE + GAP + PAD_R) * scale + text_w + label_w)
         .clamp(PILL_MIN_W * scale, PILL_MAX_W * scale);
-    Vec2::new(w.ceil(), PILL_H * scale)
+    let h = if note.progress == HudProgress::None {
+        PILL_H
+    } else {
+        PILL_H_BAR
+    };
+    Vec2::new(w.ceil(), h * scale)
 }
 
 type Galley = std::sync::Arc<egui::Galley>;
@@ -499,6 +927,19 @@ pub struct PillLook {
     pub text: f32,
     /// How big everything is drawn, 1.0 = normal (see [`scale_of`]).
     pub scale: f32,
+    /// Seconds since the note arrived: the countdown and the label of a progress.
+    pub elapsed: f32,
+    /// The size to draw the pill at instead of the one its note asks for (the glide of
+    /// [`Hud::morph_size`]). `None` draws the size of the note.
+    pub size: Option<Vec2>,
+    /// How far the old text and icon have given way to the new ones, 0 (just changed) to 1 (done,
+    /// also the value at rest). Only has an effect when [`paint_pill_swap`] gets the old note.
+    pub swap: f32,
+    /// Seconds the sweep of a bar without a known fill has been going (see [`Hud::sweep`]).
+    pub sweep: f32,
+    /// The fill of the bar after it was smoothed (see [`Hud::bar_fraction`]); `None` draws the
+    /// fill the progress itself gives.
+    pub bar: Option<f32>,
 }
 
 impl PillLook {
@@ -514,6 +955,11 @@ impl PillLook {
             grow: 1.0,
             text: 1.0,
             scale: scale_of(cfg),
+            elapsed: 0.0,
+            size: None,
+            swap: 1.0,
+            sweep: 0.0,
+            bar: None,
         }
     }
 }
@@ -522,6 +968,20 @@ impl PillLook {
 ///
 /// Returns the rectangle of the pill. Used by the notice window and by the preview in Settings.
 pub fn paint_pill(painter: &Painter, center: Pos2, note: &HudNote, look: &PillLook) -> Rect {
+    paint_pill_swap(painter, center, note, None, look)
+}
+
+/// [`paint_pill`] while the note is being replaced: `prev` is the note that was shown before, and
+/// `look.swap` says how far the change has come. The old text (and the old icon, when the kind of
+/// the note changed) fades out and moves up while the new ones fade in, instead of one replacing the
+/// other in a single frame.
+pub fn paint_pill_swap(
+    painter: &Painter,
+    center: Pos2,
+    note: &HudNote,
+    prev: Option<&HudNote>,
+    look: &PillLook,
+) -> Rect {
     let PillLook {
         accent,
         smoked,
@@ -532,16 +992,25 @@ pub fn paint_pill(painter: &Painter, center: Pos2, note: &HudNote, look: &PillLo
         grow,
         text,
         scale,
+        elapsed,
+        size,
+        swap,
+        sweep,
+        bar,
     } = *look;
     let scale = scale.clamp(0.25, 4.0);
     let alpha = alpha.clamp(0.0, 1.0);
     let c = pill_colors(smoked);
     let fade = |col: Color32| col.gamma_multiply(alpha);
     let ink = |col: Color32| col.gamma_multiply(alpha * text.clamp(0.0, 1.0));
-    let (title, detail) = note.clipped();
-    let (tg, dg) = layouts(painter, &title, &detail, ink(c.title), ink(c.detail), scale);
+    // the change of the note: the old one gives way during the first part, the new one comes in
+    // during the last part, so that the two are not both at half strength for long
+    let swap = swap.clamp(0.0, 1.0);
+    let prev = prev.filter(|_| swap < 1.0);
+    let old_k = (1.0 - swap / 0.6).clamp(0.0, 1.0);
+    let new_k = ease_out_cubic(((swap - 0.3) / 0.7).clamp(0.0, 1.0));
     // a circle (as wide as it is high) that stretches into the pill as `grow` goes from 0 to 1
-    let full = pill_size(painter, note, scale);
+    let full = size.unwrap_or_else(|| pill_size(painter, note, scale));
     let size = Vec2::new(
         full.y + (full.x - full.y) * grow.clamp(0.0, GROW_MAX),
         full.y,
@@ -578,30 +1047,116 @@ pub fn paint_pill(painter: &Painter, center: Pos2, note: &HudNote, look: &PillLo
     let badge = BADGE * scale;
     let d = badge * pop.max(0.0) * (1.0 + PULSE_SWELL * ring);
     painter.circle_filled(badge_c, d / 2.0, fade(accent));
-    fonts::paint_icon(
-        painter,
-        badge_c,
-        note.kind.glyph(),
-        20.0 * scale * (d / badge),
-        fade(on_accent(accent)),
-        true,
-    );
+    let glyph_size = 20.0 * scale * (d / badge);
+    let on = fade(on_accent(accent));
+    match prev.filter(|p| p.kind != note.kind) {
+        Some(p) => {
+            // another kind of icon: the old one fades out, the new one fades in, in the same place
+            fonts::paint_icon(
+                painter,
+                badge_c,
+                p.kind.glyph(),
+                glyph_size,
+                on.gamma_multiply(old_k),
+                true,
+            );
+            fonts::paint_icon(
+                painter,
+                badge_c,
+                note.kind.glyph(),
+                glyph_size,
+                on.gamma_multiply(new_k),
+                true,
+            );
+        }
+        None => fonts::paint_icon(painter, badge_c, note.kind.glyph(), glyph_size, on, true),
+    }
 
     // the text: one line is centered, two lines are stacked; the pill is the window it shows through
     let painter = painter.with_clip_rect(rect.shrink(1.0));
     // it slides in from the left while it fades in
     let x = rect.min.x + (PAD_L + BADGE + GAP) * scale
         - (1.0 - text.clamp(0.0, 1.0)) * TEXT_SLIDE * scale;
-    match dg {
-        Some(dg) => {
-            let total = tg.size().y + 1.0 + dg.size().y;
-            let top = rect.center().y - total / 2.0;
-            painter.galley(Pos2::new(x, top), tg.clone(), ink(c.title));
-            painter.galley(Pos2::new(x, top + tg.size().y + 1.0), dg, ink(c.detail));
+    // `k` is how much of the text shows, `dy` how far it is moved down (a note that gives way moves
+    // up, a note that comes in rises into its place)
+    let paint_text = |n: &HudNote, k: f32, dy: f32| {
+        if k <= 0.0 {
+            return;
         }
-        None => {
-            let y = rect.center().y - tg.size().y / 2.0;
-            painter.galley(Pos2::new(x, y), tg, ink(c.title));
+        let tint = |col: Color32| ink(col).gamma_multiply(k);
+        let (title, detail) = n.clipped();
+        let (tg, dg) = layouts(
+            &painter,
+            &title,
+            &detail,
+            tint(c.title),
+            tint(c.detail),
+            scale,
+        );
+        match dg {
+            Some(dg) => {
+                let total = tg.size().y + 1.0 + dg.size().y;
+                let top = rect.center().y - total / 2.0 + dy;
+                let below = top + tg.size().y + 1.0;
+                painter.galley(Pos2::new(x, top), tg, tint(c.title));
+                painter.galley(Pos2::new(x, below), dg, tint(c.detail));
+            }
+            None => {
+                let y = rect.center().y - tg.size().y / 2.0 + dy;
+                painter.galley(Pos2::new(x, y), tg, tint(c.title));
+            }
+        }
+    };
+    match prev {
+        Some(p) => {
+            paint_text(p, old_k, -swap * SWAP_SLIDE * scale);
+            paint_text(note, new_k, (1.0 - swap) * SWAP_SLIDE * scale);
+        }
+        None => paint_text(note, 1.0, 0.0),
+    }
+
+    // the progress: its label at the right end and a thin bar along the bottom, under the text
+    if note.progress != HudProgress::None {
+        let right = rect.max.x - PAD_R * scale;
+        let left = rect.min.x + (PAD_L + BADGE + GAP) * scale;
+        let label = note.progress.label(elapsed);
+        if !label.is_empty() {
+            let lg =
+                painter.layout_no_wrap(label, FontId::proportional(12.5 * scale), ink(c.detail));
+            let y = rect.center().y - lg.size().y / 2.0;
+            painter.galley(Pos2::new(right - lg.size().x, y), lg, ink(c.detail));
+        }
+        // while the pill grows taller to make room for the bar, the bar fades in with it
+        let room = ((rect.height() / scale - PILL_H) / (PILL_H_BAR - PILL_H)).clamp(0.0, 1.0);
+        let bar_ink = |col: Color32| ink(col).gamma_multiply(room);
+        let bar_h = BAR_H * scale;
+        let mid = rect.max.y - BAR_FROM_BOTTOM * scale;
+        let track = Rect::from_min_max(
+            Pos2::new(left, mid - bar_h / 2.0),
+            Pos2::new(right.max(left), mid + bar_h / 2.0),
+        );
+        let w = track.width();
+        painter.rect_filled(track, PILL, bar_ink(c.detail).gamma_multiply(0.3));
+        // known: filled from the left (as smoothed by the notice, if it says so); not known: a
+        // short piece that sweeps along the track
+        let known = note
+            .progress
+            .fraction(elapsed)
+            .map(|raw| bar.unwrap_or(raw));
+        let (from, to) = match known {
+            Some(f) => (0.0, w * f.clamp(0.0, 1.0)),
+            None => {
+                let seg = w * 0.35;
+                let head = (sweep / SWEEP_SECS).fract() * (w + seg);
+                ((head - seg).max(0.0), head.min(w))
+            }
+        };
+        if to - from > 0.5 {
+            let fill = Rect::from_min_max(
+                Pos2::new(track.min.x + from, track.min.y),
+                Pos2::new(track.min.x + to, track.max.y),
+            );
+            painter.rect_filled(fill, PILL, bar_ink(accent));
         }
     }
     rect
@@ -685,6 +1240,108 @@ mod tests {
         ] {
             assert!(note_for(&quiet, none).is_none(), "{quiet:?}");
         }
+    }
+
+    #[test]
+    fn a_progress_says_how_far_it_has_come() {
+        let wait = HudProgress::Wait { ms: 4000 };
+        assert_eq!(wait.fraction(1.0), Some(0.25));
+        assert_eq!(wait.label(1.0), "3.0 s");
+        assert_eq!(wait.label(9.0), "0.0 s", "never below zero");
+        assert_eq!(wait.fraction(9.0), Some(1.0));
+        assert!(wait.animates(1.0) && !wait.animates(4.0));
+
+        let steps = HudProgress::Steps { done: 3, total: 8 };
+        assert_eq!(steps.fraction(0.0), Some(0.375));
+        assert_eq!(steps.label(0.0), "3/8");
+        assert!(!steps.animates(5.0), "a bar that is known stands still");
+
+        let unknown = HudProgress::Steps { done: 4, total: 0 };
+        assert_eq!(unknown.fraction(0.0), None);
+        assert_eq!(unknown.label(0.0), "step 4");
+        assert!(unknown.animates(0.0));
+
+        assert!(
+            HudProgress::Steps { done: 0, total: 8 }
+                .label(0.0)
+                .is_empty()
+        );
+        assert_eq!(HudProgress::Busy.label(12.4), "12 s");
+        assert_eq!(HudProgress::Done.fraction(0.0), Some(1.0));
+        assert!(HudProgress::None.label(1.0).is_empty());
+        assert!(!HudProgress::None.animates(1.0));
+    }
+
+    #[test]
+    fn the_longest_label_is_reserved_so_the_pill_keeps_its_width() {
+        let steps = HudProgress::Steps {
+            done: 1,
+            total: 120,
+        };
+        assert!(steps.reserve().len() >= steps.label(0.0).len());
+        let done = HudProgress::Steps {
+            done: 120,
+            total: 120,
+        };
+        assert!(steps.reserve().len() >= done.label(0.0).len());
+        assert!(HudProgress::Wait { ms: 10_000 }.reserve().len() >= "10.0 s".len());
+    }
+
+    #[test]
+    fn a_pill_of_a_run_stays_until_the_run_is_over() {
+        let hold = Duration::from_millis(1500);
+        let note = HudNote::waiting(5000).running(true);
+        let mut hud = Hud::new(note, hold);
+        let t0 = Instant::now();
+        assert!(!hud.phase(t0).over);
+        // long after the hold would have run out it is still there, and nothing has gone away
+        let later = t0 + Duration::from_secs(60);
+        let phase = hud.phase(later);
+        assert!(!phase.over && phase.going == 0.0);
+        // the run ends: the bar is full and the pill leaves after its usual time
+        hud.release(later);
+        assert_eq!(hud.note.progress, HudProgress::Done);
+        assert!(!hud.phase(later).over);
+        assert!(hud.phase(later + hold + Duration::from_secs(1)).over);
+    }
+
+    #[test]
+    fn a_finished_flow_shows_a_full_bar() {
+        let note = HudNote::new(HudKind::Flow, "Run flow", "Morning")
+            .with_progress(HudProgress::Steps { done: 2, total: 5 })
+            .running(true);
+        let mut hud = Hud::new(note, Duration::from_millis(1500));
+        hud.release(Instant::now());
+        assert_eq!(hud.note.progress, HudProgress::Steps { done: 5, total: 5 });
+        assert!(!hud.live && !hud.note.live);
+        // a second release changes nothing
+        hud.release(Instant::now());
+        assert_eq!(hud.note.progress, HudProgress::Steps { done: 5, total: 5 });
+    }
+
+    #[test]
+    fn a_pill_whose_run_was_never_ended_goes_away_by_itself() {
+        let mut hud = Hud::new(
+            HudNote::busy("Running command").running(true),
+            Duration::from_millis(1500),
+        );
+        let t0 = Instant::now();
+        assert!(!hud.phase(t0).over);
+        assert!(hud.phase(t0 + LIVE_STALL + Duration::from_secs(5)).over);
+        assert!(hud.next_wake(t0).is_some_and(|w| w <= LIVE_STALL));
+    }
+
+    #[test]
+    fn a_new_note_starts_the_countdown_again() {
+        let mut hud = Hud::new(HudNote::waiting(2000), Duration::from_millis(1500));
+        let t0 = Instant::now();
+        let t1 = t0 + Duration::from_secs(3);
+        assert!(hud.elapsed(t1) >= 3.0);
+        hud.update(HudNote::waiting(2000), t1);
+        assert!(
+            hud.elapsed(t1) < 0.01,
+            "the same wait again counts from its own start"
+        );
     }
 
     #[test]
@@ -848,6 +1505,211 @@ mod tests {
 
     fn scale_of_percent(p: u32) -> f32 {
         p as f32 / 100.0
+    }
+
+    #[test]
+    fn a_pill_that_is_called_back_does_not_jump() {
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        let mut h = Hud::new(
+            HudNote::new(HudKind::App, "Open app", "Mail"),
+            Duration::from_millis(1000),
+        );
+        h.phase(t0);
+        // it comes in during 720 ms, stays 1000 ms and has gone halfway out at 1890 ms
+        let before = h.phase(ms(1890));
+        assert!(before.going > 0.4 && before.going < 0.6, "{before:?}");
+        h.update(HudNote::new(HudKind::Link, "Open link", "a.io"), ms(1890));
+        let after = h.phase(ms(1890));
+        assert!(
+            (after.going - before.going).abs() < 0.01,
+            "no jump: {} then {}",
+            before.going,
+            after.going
+        );
+        // it eases back instead of snapping, and then it is the whole pill again
+        let later = h.phase(ms(1890 + 100));
+        assert!(later.going > 0.0 && later.going < after.going, "{later:?}");
+        assert_eq!(h.phase(ms(1890 + 300)).going, 0.0);
+        assert!(!h.phase(ms(1890 + 300)).over);
+    }
+
+    #[test]
+    fn notes_that_come_too_fast_wait_and_only_the_last_is_shown() {
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        let mut h = Hud::new(
+            HudNote::new(HudKind::App, "Open app", "A"),
+            Duration::from_millis(1000),
+        );
+        h.phase(t0);
+        h.update(HudNote::new(HudKind::App, "Open app", "B"), ms(50));
+        h.update(HudNote::new(HudKind::App, "Open app", "C"), ms(90));
+        assert_eq!(h.note.detail, "A", "the first note had no time to be read");
+        assert!(h.next_wake(ms(100)).is_some_and(|w| w <= MIN_DWELL));
+        h.flush_queued(ms(100));
+        assert_eq!(h.note.detail, "A", "still its turn for A");
+        h.flush_queued(ms(500));
+        assert_eq!(h.note.detail, "C", "B was skipped, C is shown");
+        // the old note is kept for the fade, and then let go
+        let (prev, swap) = h.previous(ms(500));
+        assert_eq!(prev.map(|n| n.detail.as_str()), Some("A"));
+        assert!(swap < 0.1);
+        let (prev, swap) = h.previous(ms(500 + 400));
+        assert!(prev.is_none() && swap == 1.0);
+        // a note that waits is not lost when the run ends
+        h.update(
+            HudNote::new(HudKind::App, "Open app", "D").running(true),
+            ms(600),
+        );
+        h.release(ms(620));
+        assert_eq!(h.note.detail, "D");
+    }
+
+    #[test]
+    fn a_countdown_that_waited_counts_from_its_arrival() {
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        let mut h = Hud::new(
+            HudNote::new(HudKind::App, "Open app", "A"),
+            Duration::from_millis(1000),
+        );
+        h.phase(t0);
+        h.update(HudNote::waiting(2000), ms(50));
+        h.flush_queued(ms(450));
+        assert_eq!(h.note.progress, HudProgress::Wait { ms: 2000 });
+        let left = h.note.progress.label(h.elapsed(ms(450)));
+        assert_eq!(
+            left, "1.6 s",
+            "it counts from the arrival of the note, not from its turn"
+        );
+    }
+
+    #[test]
+    fn the_bar_glides_to_a_new_step() {
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        let step = |done, detail: &str| {
+            HudNote::new(HudKind::Flow, "Run flow", detail)
+                .with_progress(HudProgress::Steps { done, total: 4 })
+                .running(true)
+        };
+        let mut h = Hud::new(step(1, "a"), Duration::from_millis(1000));
+        h.phase(t0);
+        assert_eq!(h.bar_fraction(ms(10)), Some(0.25));
+        h.update(step(2, "b"), ms(1000));
+        assert_eq!(
+            h.bar_fraction(ms(1000)),
+            Some(0.25),
+            "it starts where it was"
+        );
+        let mid = h.bar_fraction(ms(1150)).unwrap();
+        assert!(mid > 0.25 && mid < 0.5, "{mid}");
+        assert_eq!(h.bar_fraction(ms(1500)), Some(0.5));
+        assert!(h.gliding(ms(1100)) && !h.gliding(ms(1000 + 1000)));
+        // the end of the run: the bar glides to full too
+        h.release(ms(3000));
+        assert_eq!(h.bar_fraction(ms(3000)), Some(0.5));
+        assert_eq!(h.bar_fraction(ms(3500)), Some(1.0));
+    }
+
+    #[test]
+    fn the_sweep_does_not_start_over_with_every_note() {
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        let sweeping = |detail: &str| {
+            HudNote::new(HudKind::Flow, "Run flow", detail)
+                .with_progress(HudProgress::Steps { done: 1, total: 0 })
+                .running(true)
+        };
+        let mut h = Hud::new(sweeping("a"), Duration::from_millis(1000));
+        h.phase(t0);
+        h.update(sweeping("b"), ms(1500));
+        assert!(h.sweep(ms(2000)) > 1.9, "the bar keeps moving along");
+        assert!(
+            h.elapsed(ms(2000)) < 0.6,
+            "but the label counts from the new note"
+        );
+    }
+
+    #[test]
+    fn the_pill_glides_to_a_new_size_and_a_run_never_narrows_it() {
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        let mut h = Hud::new(
+            HudNote::new(HudKind::App, "Open app", "Mail"),
+            Duration::from_millis(1000),
+        );
+        assert_eq!(
+            h.morph_size(Vec2::new(200.0, 56.0), t0),
+            Vec2::new(200.0, 56.0)
+        );
+        // the new size is reached with a glide, not in one frame
+        assert_eq!(
+            h.morph_size(Vec2::new(300.0, 72.0), t0),
+            Vec2::new(200.0, 56.0)
+        );
+        let mid = h.morph_size(Vec2::new(300.0, 72.0), ms(100));
+        assert!(
+            mid.x > 200.0 && mid.x < 300.0 && mid.y > 56.0 && mid.y < 72.0,
+            "{mid:?}"
+        );
+        assert_eq!(
+            h.morph_size(Vec2::new(300.0, 72.0), ms(1000)),
+            Vec2::new(300.0, 72.0)
+        );
+        // a pill that is not a run's gets narrower again ...
+        let narrow = h.morph_size(Vec2::new(220.0, 72.0), ms(1100));
+        assert!(narrow.x <= 300.0);
+        assert_eq!(h.morph_size(Vec2::new(220.0, 72.0), ms(2000)).x, 220.0);
+        // ... but a run's pill keeps the widest width it had
+        let mut run = Hud::new(
+            HudNote::waiting(5000).running(true),
+            Duration::from_millis(1000),
+        );
+        run.morph_size(Vec2::new(300.0, 72.0), t0);
+        assert_eq!(run.morph_size(Vec2::new(220.0, 72.0), ms(2000)).x, 300.0);
+        run.morph_size(Vec2::new(340.0, 72.0), ms(4000));
+        assert_eq!(run.morph_size(Vec2::new(340.0, 72.0), ms(5000)).x, 340.0);
+    }
+
+    #[test]
+    fn a_change_of_kind_fades_between_the_icons() {
+        let ctx = egui::Context::default();
+        ctx.set_fonts(fonts::definitions());
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let painter = ui.painter().clone();
+            let old = HudNote::new(HudKind::App, "Open app", "Mail");
+            let new = HudNote::new(HudKind::Link, "Open link", "a.io");
+            let look = PillLook {
+                accent: Color32::from_rgb(80, 120, 200),
+                smoked: false,
+                alpha: 1.0,
+                lift: 0.0,
+                pulse: 0.0,
+                pop: 1.0,
+                grow: 1.0,
+                text: 1.0,
+                scale: 1.0,
+                elapsed: 0.0,
+                size: None,
+                swap: 0.5,
+                sweep: 0.0,
+                bar: None,
+            };
+            // halfway through a change: nothing panics and the pill has the size of the new note
+            let rect = paint_pill_swap(&painter, Pos2::new(200.0, 70.0), &new, Some(&old), &look);
+            let want = pill_size(&painter, &new, 1.0);
+            assert!((rect.width() - want.x).abs() < 0.01 && (rect.height() - want.y).abs() < 0.01);
+            // a size from the glide is what is drawn
+            let glided = PillLook {
+                size: Some(Vec2::new(250.0, 60.0)),
+                ..look
+            };
+            let rect = paint_pill_swap(&painter, Pos2::new(200.0, 70.0), &new, None, &glided);
+            assert!((rect.width() - 250.0).abs() < 0.01 && (rect.height() - 60.0).abs() < 0.01);
+        });
+        out.textures_delta.clear();
     }
 
     #[test]

@@ -277,6 +277,9 @@ fn from_program_folders(id: &str) -> Option<String> {
         Some(path) => remember(path),
         None => {
             if let Ok(mut map) = missing().lock() {
+                // a miss older than `FRESH_FOR` is not believed any more: drop it, or the table
+                // grows with every name that was ever looked for
+                map.retain(|_, at| at.elapsed() < FRESH_FOR);
                 map.insert(id.to_string(), Instant::now());
             }
         }

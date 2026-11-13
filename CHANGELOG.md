@@ -2,6 +2,58 @@
 
 ## Unreleased
 
+## 0.8.12
+
+- **New: the notice follows a run from its start to its end.** A flow, a pause or a sequence with a pause in it
+  used to show its notice for a moment at the start and then went quiet: while a *Wait* block, a *Run and wait*
+  command or a long flow was still busy nothing was on the screen, and then something appeared out of nowhere.
+  Now the pill stays until the run is over and says what it is doing and how far it has come: a thin bar along the
+  bottom edge and a small label at the right end. A *Wait* shows a countdown (`Waiting`, `3.2 s`), a *Run and wait*
+  block shows a moving bar and the seconds it has taken (`Running command`, `12 s`, the command itself is still never
+  shown), a flow that goes straight through shows `3/8`, a *Repeat* or *For each* loop shows its round (`2/10`), a
+  flow with a *While* or a call shows `step 4`, and a sequence shows its step. When the run ends the bar fills and the
+  pill goes away after its usual time (*Behavior > Notice*). A run that is hidden with *Hide notices*, or with the
+  notice switched off, stays quiet as before, and a pill whose run is never reported as ended leaves by itself after
+  150 seconds. New: `Host::progress` and `Host::wait` in `flowrun` (both have a default, so a host that does not
+  care changes nothing), `HudProgress` and `Msg::HudEnd` in the notice.
+
+- **Fixed: the notice glitched and stuttered while a flow ran.** Every new note of a run replaced the old one in a
+  single frame: the pill jumped to the width of the new text (and to a new height when a bar appeared), the text and
+  the icon swapped without a transition, the bar leapt to its new fill, and a moving bar started again from the left
+  with every block. A quick flow made this flash by many times a second, and a note that arrived while the pill was
+  already leaving made it snap back to full size. Now the pill glides to its new size (a run never makes it narrower),
+  the old text and icon fade out while the new ones fade in, the bar glides to its new fill (and to full when the run
+  ends), a moving bar keeps moving from one block to the next, a pill that was leaving eases back instead of
+  snapping, and notes that follow each other faster than 260 ms wait their turn so that only the last of them is shown
+  (a pause still counts its time from when its note arrived). The bounce of the badge is softer and does not start
+  again while the last one is still ringing. The text is also laid out once per frame instead of three times.
+
+- **New: a progress panel with a Stop button for long runs, and an *Update panel* block.** On top of the small
+  notice, a flow, a pause or a sequence that lasts more than about two seconds now opens a small panel with a bar,
+  the step that is running (`Waiting`, `Running command`, `Open app: Safari`), how far it has come (`3.2 s`, `12 s`,
+  `Round 2/10`, `Step 3/8`) and a **Stop** button. Stop ends the run at the next block and cuts a *Wait* or a *Run
+  and wait* short (the command is ended); stopping is not reported as a problem and the notice says `Stopped`. The
+  panel never takes the keyboard on Windows, so the keys a flow sends still reach their app; on macOS and Linux a run
+  that presses keys keeps the small notice instead. Another panel or the pie takes the window from it at once. *Behavior >
+  Show a progress panel for long runs* (`progress_panel`, on by default) switches it off. The new flow block **Update
+  panel** (`PanelUpdate`: *Open*, *Update*, *Close*) lets a flow open its own progress panel and set its title,
+  label and bar (a fraction, `40%` or `busy`) while it works, with an optional Stop button; nothing waits for it and
+  it goes away when the run ends. New: `Ending::Cancelled`, `Host::cancelled`, `Host::panel_command` and
+  `parse_panel_value` in `flowrun`, `PanelSpec::passive`, the `runpanel` module, `platform::native::exec_until`,
+  `docs/examples/flows/progress-panel.cursorpie-flow.json`.
+
+- **New: building flows for the browser extension is much easier.** The *Browser command* block used to be a text
+  field in which the person had to type the exact name of a command (`media.seek_fwd 30`) from the documentation, and
+  a mistake only showed when the flow ran. Now the block has the same list of commands as a slice (`Media: Next
+  track`, `Tabs: Go to a tab with this text`...) with a field beside it for the text the command takes, marked
+  required or optional; in the list view it also says whether a browser can be reached right now (extension off, no
+  browser connected, extension from another version). The add-block menus have a **Browser** group with ready
+  commands (play / pause, next track, is the music playing?, address of the tab...). **New flow > Start from a
+  template** adds a complete working flow to learn from: a *Browser remote* (a panel with play, next, previous and
+  volume that stays open, one Branch and one command per button), *Pause the music only if it plays* and *Go to the
+  tab that has a word*. A command name that is a `{{variable}}` is still typed. New: `config::flow_templates`,
+  `docs/examples/flows/browser-*.cursorpie-flow.json`.
+
 ## 0.8.11
 
 - **Fixed: Settings ended up behind another window after cancelling a file chooser (macOS).** When the chooser

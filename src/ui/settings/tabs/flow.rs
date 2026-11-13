@@ -59,6 +59,7 @@ use crate::tap::{RECORDING, SWALLOW_KEY};
 use crate::ui::app::App;
 use crate::ui::draw::rgb;
 use crate::ui::fonts;
+use crate::ui::settings::action_editor::browser_fields;
 use crate::ui::settings::panel_designer;
 use crate::ui::settings::picker::spawn_file_picker;
 use crate::ui::settings::state::{Ed, FlowMenu, FlowNew, FlowView, KitStatus, PickFor, Rec, Slot};
@@ -427,6 +428,17 @@ fn catalog() -> Vec<(&'static str, Vec<(&'static str, NodeKind)>)> {
                     },
                 ),
                 (
+                    "Show a progress panel, then update it",
+                    NodeKind::PanelUpdate {
+                        op: PanelOp::Open,
+                        panel: String::new(),
+                        title: String::new(),
+                        label: var("Working"),
+                        value: var("0"),
+                        stop: true,
+                    },
+                ),
+                (
                     "Run a command and wait for its result",
                     NodeKind::Run {
                         command: String::new(),
@@ -717,6 +729,7 @@ pub(super) fn kind_info(kind: &NodeKind) -> (char, &'static str) {
         NodeKind::Repeat(_) => (symbols::ARROWS_CLOCKWISE, "Repeat"),
         NodeKind::While(_) => (symbols::ARROWS_CLOCKWISE, "While"),
         NodeKind::Ask { .. } => (symbols::BELL, "Ask"),
+        NodeKind::PanelUpdate { .. } => (symbols::CHART_BAR, "Update panel"),
         NodeKind::Run { .. } => (symbols::TERMINAL_WINDOW, "Run and wait"),
         NodeKind::Native { .. } => (symbols::CPU, "System"),
         NodeKind::List { .. } => (symbols::STACK, "List"),
@@ -743,6 +756,13 @@ fn rows(kind: &NodeKind) -> usize {
         NodeKind::Start | NodeKind::End | NodeKind::Stop => 0,
         NodeKind::Set { .. } | NodeKind::Calc { .. } | NodeKind::Logic { .. } => 2,
         NodeKind::Run { .. } => 2,
+        NodeKind::PanelUpdate { op, .. } => {
+            if op.has_fields() {
+                4
+            } else {
+                1
+            }
+        }
         NodeKind::Ask { mode, .. } => {
             if matches!(mode, AskMode::Text) {
                 3
@@ -963,6 +983,14 @@ pub(super) fn operands_row<T: Copy + PartialEq>(
     });
 }
 
+/// Whether the name of the browser command of a block is only known when the flow runs
+/// (`{{command}}`): then the line is typed out, as before, and not picked from the list.
+pub(super) fn browser_by_variable(line: &str) -> bool {
+    line.split_whitespace()
+        .next()
+        .is_some_and(|name| name.contains("{{"))
+}
+
 /// The controls of one block. What a control needs from the canvas (recording a shortcut, the app
 /// list) is asked for through `ops`.
 pub(super) fn controls(
@@ -1085,6 +1113,44 @@ pub(super) fn controls(
                 field(ui, preset, "starts with");
             }
         }
+        NodeKind::PanelUpdate {
+            op,
+            panel,
+            title,
+            label,
+            value,
+            stop,
+        } => {
+            ui.horizontal(|ui| {
+                pick(ui, 150.0, &PanelOp::ALL, PanelOp::label, op);
+                field(ui, panel, "panel id (progress)");
+            });
+            if op.has_fields() {
+                let open = *op == PanelOp::Open;
+                field(
+                    ui,
+                    title,
+                    if open { "title" } else { "title (empty: keep)" },
+                );
+                field(ui, label, "label, e.g. File {{index}}");
+                ui.horizontal(|ui| {
+                    let w = if open {
+                        (ui.available_width() - 74.0).max(60.0)
+                    } else {
+                        ui.available_width()
+                    };
+                    ui.add(
+                        text_field(value)
+                            .desired_width(w)
+                            .hint_text("0 to 1, 40% or busy"),
+                    );
+                    if open {
+                        ui.checkbox(stop, "Stop")
+                            .on_hover_text("A Stop button that ends the run when it is pressed");
+                    }
+                });
+            }
+        }
         NodeKind::Run {
             command,
             out,
@@ -1109,11 +1175,17 @@ pub(super) fn controls(
             let w = ui.available_width();
             pick(ui, w, &NativeOp::ALL, NativeOp::label, op);
             let (ha, hb) = op.hints();
-            if !ha.is_empty() {
-                field(ui, a, ha);
-            }
-            if !hb.is_empty() {
+            if *op == NativeOp::Browser && !browser_by_variable(a) {
+                // the commands in a list, with the text the chosen one takes beside it
+                ui.horizontal(|ui| browser_fields(ui, a));
                 field(ui, b, hb);
+            } else {
+                if !ha.is_empty() {
+                    field(ui, a, ha);
+                }
+                if !hb.is_empty() {
+                    field(ui, b, hb);
+                }
             }
         }
         NodeKind::List {
@@ -1539,6 +1611,12 @@ fn canvas(
         let pointer = ctx
             .input(|i| i.pointer.latest_pos())
             .map(|p| from_global * p);
+        // whether the pointer is over the canvas itself: the blocks go on under the inspector and
+        // the other panels, where they are clipped away but still have a place, so a press there
+        // must not reach them
+        let in_view = ctx
+            .input(|i| i.pointer.latest_pos())
+            .is_some_and(|p| view.contains(p));
 
         // where every dot is, before anything moves
         let mut outs: BTreeMap<(u32, Port), Pos2> = BTreeMap::new();
@@ -1943,6 +2021,7 @@ fn canvas(
                 );
                 let wired_in = flow.nodes.iter().any(|n| n.wires().contains(&Some(id)));
                 let hot = wiring.is_some_and(|(w, _)| w != id)
+                    && in_view
                     && pointer.is_some_and(|p| (p - in_c).length() <= DROP_R);
                 painter.circle_filled(
                     in_c,
@@ -1981,6 +2060,7 @@ fn canvas(
                     .and_then(|p| ctx.layer_id_at(p))
                     .is_some_and(|l| l != layer && l != base_layer && l.order >= base_layer.order);
                 if !covered
+                    && in_view
                     && ctx.input(|i| i.pointer.primary_pressed())
                     && pointer.is_some_and(|p| body_rect.contains(p))
                 {
@@ -1998,6 +2078,7 @@ fn canvas(
                 ctx.request_repaint();
             } else {
                 if let Some(p) = pointer
+                    && in_view
                     && let Some((to, _)) = ins.iter().find(|(_, c)| (*c - p).length() <= DROP_R)
                 {
                     ops.push(Op::Connect(from.0, from.1, *to));
@@ -2257,6 +2338,22 @@ mod tests {
                 out: "o".into(),
                 timeout_s: 5,
             },
+            NodeKind::PanelUpdate {
+                op: PanelOp::Open,
+                panel: String::new(),
+                title: "T".into(),
+                label: "L".into(),
+                value: "0".into(),
+                stop: true,
+            },
+            NodeKind::PanelUpdate {
+                op: PanelOp::Close,
+                panel: String::new(),
+                title: String::new(),
+                label: String::new(),
+                value: String::new(),
+                stop: false,
+            },
             NodeKind::Native {
                 op: NativeOp::Notify,
                 a: "t".into(),
@@ -2330,6 +2427,15 @@ mod tests {
     }
 
     #[test]
+    fn a_browser_command_with_a_variable_for_a_name_is_typed_not_picked() {
+        assert!(browser_by_variable("{{cmd}}"));
+        assert!(browser_by_variable("  {{cmd}} 30"));
+        assert!(!browser_by_variable("media.next"));
+        assert!(!browser_by_variable("tab.find {{word}}"));
+        assert!(!browser_by_variable(""));
+    }
+
+    #[test]
     fn a_block_is_as_tall_as_its_rows_and_the_second_dot_is_below_the_first() {
         let ask = |mode| NodeKind::Ask {
             mode,
@@ -2337,6 +2443,17 @@ mod tests {
             preset: String::new(),
             out: String::new(),
         };
+        let panel = |op| NodeKind::PanelUpdate {
+            op,
+            panel: String::new(),
+            title: String::new(),
+            label: String::new(),
+            value: String::new(),
+            stop: false,
+        };
+        assert_eq!(rows(&panel(PanelOp::Open)), 4);
+        assert_eq!(rows(&panel(PanelOp::Update)), 4);
+        assert_eq!(rows(&panel(PanelOp::Close)), 1);
         assert_eq!(rows(&ask(AskMode::Text)), 3);
         assert_eq!(rows(&ask(AskMode::YesNo)), 2);
         assert_eq!(node_h(&ask(AskMode::Text)), NODE_H + 2.0 * ROW_STEP);

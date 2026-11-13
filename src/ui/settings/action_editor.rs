@@ -169,7 +169,7 @@ fn command_labels() -> Vec<String> {
 
 /// The editor of a "Browser" action: the command in a list, and the text it takes, if any. The
 /// action holds one line, `command text`, which is also how it reads in config.json.
-fn browser_fields(ui: &mut egui::Ui, spec: &mut String) {
+pub(in crate::ui::settings) fn browser_fields(ui: &mut egui::Ui, spec: &mut String) {
     use crate::bridge::commands::{Arg, CATALOG, find};
     let (name, arg) = {
         // only the start is trimmed: a space typed at the end of the text is still being typed
@@ -183,13 +183,12 @@ fn browser_fields(ui: &mut egui::Ui, spec: &mut String) {
         let labels = command_labels();
         let names: Vec<&str> = labels.iter().map(String::as_str).collect();
         let width = ui.available_width().max(140.0);
-        if let Some(i) = select(
-            ui,
-            width,
-            "Unknown command: choose one\u{2026}",
-            &names,
-            usize::MAX,
-        ) {
+        let shown = if name.is_empty() {
+            "Choose a command\u{2026}".to_string()
+        } else {
+            format!("Unknown: {name}. Choose one\u{2026}")
+        };
+        if let Some(i) = select(ui, width, &shown, &names, usize::MAX) {
             *spec = CATALOG[i].id.to_string();
         }
         return;
@@ -232,4 +231,82 @@ fn browser_fields(ui: &mut egui::Ui, spec: &mut String) {
     } else {
         format!("{new_name} {}", new_arg.trim_start())
     };
+}
+
+/// What the editor says about the browser extension where a block or slice uses it: whether a
+/// command can reach a browser right now, and why not when it cannot. `true` when it can.
+pub(in crate::ui::settings) fn bridge_line(
+    on: bool,
+    status: &crate::bridge::Status,
+) -> (String, bool) {
+    if !on || !status.running {
+        return (
+            "The browser extension is off, so this does nothing yet. Turn on Settings > Behavior > \
+             Browser extension and save."
+                .to_string(),
+            false,
+        );
+    }
+    if status.browsers.is_empty() {
+        return (
+            "No browser is connected. Open the browser that has the CursorPie extension (Settings > \
+             Behavior > Browser extension shows how to add it)."
+                .to_string(),
+            false,
+        );
+    }
+    if !status.outdated.is_empty() {
+        return (
+            format!(
+                "The extension in {} is from another version: show the extension files again and \
+                 reload it, or new commands will not work there.",
+                status.outdated.join(", ")
+            ),
+            false,
+        );
+    }
+    let names: Vec<String> = status
+        .browsers
+        .iter()
+        .map(|(b, n)| format!("{b} ({n} tabs)"))
+        .collect();
+    (format!("Connected: {}.", names.join(", ")), true)
+}
+
+#[cfg(test)]
+mod bridge_line_tests {
+    use super::bridge_line;
+    use crate::bridge::Status;
+
+    #[test]
+    fn the_line_says_what_stands_in_the_way_of_a_browser_command() {
+        let off = Status::default();
+        assert!(!bridge_line(false, &off).1);
+        assert!(bridge_line(false, &off).0.contains("off"));
+        let running = Status {
+            running: true,
+            ..Status::default()
+        };
+        assert!(
+            bridge_line(true, &running)
+                .0
+                .contains("No browser is connected")
+        );
+        let old = Status {
+            running: true,
+            browsers: vec![("Chrome".into(), 3)],
+            outdated: vec!["Chrome".into()],
+            ..Status::default()
+        };
+        assert!(bridge_line(true, &old).0.contains("another version"));
+        let good = Status {
+            running: true,
+            browsers: vec![("Chrome".into(), 12)],
+            ..Status::default()
+        };
+        assert_eq!(
+            bridge_line(true, &good),
+            ("Connected: Chrome (12 tabs).".to_string(), true)
+        );
+    }
 }

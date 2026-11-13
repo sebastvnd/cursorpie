@@ -123,6 +123,7 @@ button of the bottom row (`out` gets its `id`).
 | `columns` | Buttons per row, 1 to 6; `0` or missing: as many as there are, at most 4 |
 | `buttons` | At most 24 per grid and 48 in all the grids of a panel. Ids are unique over the whole panel |
 | button `icon` | The name of an icon of the app (`play`, `skip-forward`, `ico:heart`; the designer lists them) or, in a panel of a flow, `file:/path/to/picture.png` (`~/` works; at most 4 MB; pictures are not drawn for the browser extension). A button with an icon and no label is icon only |
+| panel `passive` | `true`: the panel does not take the keyboard from the app that is in front (for a panel that only shows progress). It also gives the window up to any other panel that is asked for. Where the window system decides for itself (macOS, Linux) it is a request |
 | button `keep_open` | This button does not make the panel go away (see below) |
 
 `{ "type": "spacer", "height": 16 }` is empty room (2 to 200 points).
@@ -266,3 +267,19 @@ To change how panels look, replace `ui::settings::panel_form::draw`; to add a wi
 5. Extension (switched on in Settings): run `ui.tabs`, pick a tab; type in the search box, press Enter.
 6. Extension, switched off in Settings: `ui.tabs` shows an error saying panels are switched off.
 7. A display smaller than the panel: the widgets scroll, the buttons stay.
+
+## Progress panels
+
+A run that takes a while can be followed in a small panel with a bar, the step that is running and a **Stop** button.
+
+* **By itself.** A flow, a pause or a sequence that lasts more than about two seconds opens one (*Behavior > Show a
+  progress panel for long runs*, `progress_panel` in the config). It says `Waiting` with a countdown, `Running
+  command` with the seconds it has taken (the command itself is never shown), the block of a flow (`Step 3/8`) or the
+  round of a loop (`Round 2/10`). When the run ends the bar fills and the panel goes away. **Stop** ends the run at
+  the next block and cuts a *Wait* or a *Run and wait* short. If another panel or the pie needs the window, the
+  progress panel gives way and the small notice carries on. Off Windows, a run that presses keys keeps the small notice
+  instead, because showing a window may take the keyboard from the app those keys are for.
+* **By the flow.** The *Update panel* block (`PanelUpdate`, see `docs/FLOWS_FOR_AI.md`) opens a progress panel with a
+  title, a label and a bar, changes them as the flow works, and closes it. `docs/examples/flows/progress-panel.cursorpie-flow.json`
+  is an example (a test loads it). The panel is an ordinary panel with `"passive": true`, a `progress` widget with the id
+  `bar` and, when asked for, a button with the id `stop`.

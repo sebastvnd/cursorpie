@@ -119,6 +119,9 @@ pub enum FlowNew {
     /// The AI page: describe the flow, then copy the kit for the agent (see
     /// [`config::flow_kit`](crate::config::flow_kit)).
     Ai,
+    /// The templates: complete flows for the browser extension to start from (see
+    /// [`config::flow_templates`](crate::config::flow_templates)).
+    Templates,
 }
 
 /// Where the kit for an AI agent stands (see [`FlowNew::Ai`]).
@@ -350,6 +353,12 @@ pub struct Ed {
     pub flow_insp: bool,
     /// Flow tab: the inspector shows the variables of the flow instead of the selected block
     pub flow_insp_vars: bool,
+    /// Flow tab: the inspector shows the searchable list of every block of the flow
+    pub flow_insp_blocks: bool,
+    /// Flow tab: the words typed in the search box of the inspector's variable list
+    pub flow_var_search: String,
+    /// Flow tab: the words typed in the search box of the inspector's list of blocks
+    pub flow_block_search: String,
     /// Flow tab: the block that was selected when the inspector last looked, so a new selection
     /// brings it back to the block
     pub flow_insp_seen: Option<u32>,
@@ -436,6 +445,9 @@ impl Ed {
             flow_sel: None,
             flow_insp: false,
             flow_insp_vars: false,
+            flow_insp_blocks: false,
+            flow_var_search: String::new(),
+            flow_block_search: String::new(),
             flow_insp_seen: None,
             flow_var: None,
             flow_focus: None,
@@ -494,6 +506,9 @@ impl Ed {
         self.flow_var = None;
         self.flow_insp = false;
         self.flow_insp_vars = false;
+        self.flow_insp_blocks = false;
+        self.flow_var_search = String::new();
+        self.flow_block_search = String::new();
         self.flow_insp_seen = None;
         self.flow_mid = false;
         self.flow_search = String::new();

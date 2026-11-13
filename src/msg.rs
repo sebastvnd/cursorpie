@@ -108,6 +108,10 @@ pub enum Msg {
     /// notice on the screen (see [`ui::hud`](crate::ui::hud)). Ignored while Settings is open or
     /// when the notice is switched off.
     Hud(crate::ui::hud::HudNote),
+    /// The run that the notices were announcing is over (sent by the actions worker, see
+    /// [`HudNote::live`](crate::ui::hud::HudNote::live)): the pill fills its bar and goes away
+    /// after its usual time. Ignored when no such pill is on the screen.
+    HudEnd,
     /// The kit for an AI agent was made, and put on the clipboard if a program could do that (see
     /// [`config::flow_kit`](crate::config::flow_kit)). The "New flow" sheet shows the outcome.
     FlowKit(crate::ui::settings::KitStatus),

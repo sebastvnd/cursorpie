@@ -130,6 +130,7 @@ pub fn label(kind: &NodeKind) -> &'static str {
         NodeKind::Repeat(_) => "Repeat",
         NodeKind::While(_) => "While",
         NodeKind::Ask { .. } => "Ask",
+        NodeKind::PanelUpdate { .. } => "Update panel",
         NodeKind::Run { .. } => "Run and wait",
         NodeKind::Native { .. } => "System",
         NodeKind::List { .. } => "List",
@@ -299,6 +300,18 @@ fn reads(kind: &NodeKind) -> (Vec<(String, How)>, Vec<String>) {
             scan_text(preset, &mut found, &mut bad);
         }
         NodeKind::Run { command, .. } => scan_text(command, &mut found, &mut bad),
+        NodeKind::PanelUpdate {
+            panel,
+            title,
+            label,
+            value,
+            ..
+        } => {
+            scan_text(panel, &mut found, &mut bad);
+            scan_text(title, &mut found, &mut bad);
+            scan_text(label, &mut found, &mut bad);
+            scan_text(value, &mut found, &mut bad);
+        }
         NodeKind::Native { op, a, b } => {
             if !op.a_is_variable() {
                 scan_text(a, &mut found, &mut bad);
@@ -704,6 +717,77 @@ pub fn check_flow(flow: &Flow, known_flows: &[&str]) -> Vec<Issue> {
                     None,
                     format!("{me} has no valid name for the answer, so the answer is lost."),
                 ));
+            }
+            NodeKind::PanelUpdate {
+                op, panel, value, ..
+            } => {
+                // a value that is written out is checked now; one with a variable in it only when
+                // the flow runs
+                if op.has_fields() && !value.contains("{{") {
+                    match crate::flowrun::parse_panel_value(value) {
+                        None => found.push(warning(
+                            n.id,
+                            None,
+                            format!(
+                                "{me} has the value `{}`, which is not a number from 0 to 1, a \
+                                 percentage like `40%` or `busy`, so the bar stays as it was.",
+                                brief(value)
+                            ),
+                        )),
+                        Some(crate::flowrun::PanelValue::Fraction(f))
+                            if f >= 1.0
+                                && !value.trim_end().ends_with('%')
+                                && parse_number(value).is_some_and(|v| v > 1.0) =>
+                        {
+                            found.push(warning(
+                                n.id,
+                                None,
+                                format!(
+                                    "{me} has the value `{}`: a plain number is a fraction from 0 \
+                                     to 1, so the bar is full. Write `{}%` for a percentage.",
+                                    brief(value),
+                                    brief(value)
+                                ),
+                            ));
+                        }
+                        Some(_) => {}
+                    }
+                }
+                // changing or closing a panel that nothing in this flow opens does nothing, unless
+                // a flow that is called opens it
+                if *op != super::flow::PanelOp::Open && !panel.contains("{{") {
+                    let id = if panel.trim().is_empty() {
+                        super::flow::DEFAULT_PROGRESS_PANEL
+                    } else {
+                        panel.trim()
+                    };
+                    let opened = flow.nodes.iter().any(|m| {
+                        matches!(&m.kind, NodeKind::PanelUpdate { op: o, panel: p, .. }
+                            if *o == super::flow::PanelOp::Open
+                                && (p.contains("{{")
+                                    || (if p.trim().is_empty() {
+                                        super::flow::DEFAULT_PROGRESS_PANEL
+                                    } else {
+                                        p.trim()
+                                    }) == id))
+                    });
+                    let calls = flow
+                        .nodes
+                        .iter()
+                        .any(|m| matches!(m.kind, NodeKind::Call(_)));
+                    if !opened && !calls {
+                        found.push(warning(
+                            n.id,
+                            None,
+                            format!(
+                                "{me} works on the panel `{}`, but no block of this flow opens \
+                                 it, so nothing happens. Add an Update panel block that opens it \
+                                 first.",
+                                brief(id)
+                            ),
+                        ));
+                    }
+                }
             }
             NodeKind::Run { command, out, .. } => {
                 if command.trim().is_empty() {
@@ -1641,5 +1725,83 @@ mod tests {
         let mut seen = issues.clone();
         seen.dedup();
         assert_eq!(seen, issues);
+    }
+
+    #[test]
+    fn an_update_panel_block_warns_about_a_value_it_cannot_read_and_a_panel_nothing_opens() {
+        use super::super::flow::PanelOp;
+        let mk = |op, panel: &str, value: &str| NodeKind::PanelUpdate {
+            op,
+            panel: panel.into(),
+            title: String::new(),
+            label: String::new(),
+            value: value.into(),
+            stop: false,
+        };
+        let flow = |kinds: Vec<NodeKind>| {
+            let mut f = Flow::new("f", "F");
+            for k in kinds {
+                f.add_after(None, k);
+            }
+            f
+        };
+        let texts = |f: &Flow| -> Vec<String> {
+            check_flow(f, &[]).into_iter().map(|i| i.message).collect()
+        };
+        // fine: opened, then updated with a percentage, a fraction, busy and a variable
+        let ok = flow(vec![
+            NodeKind::Set {
+                name: "p".into(),
+                value: "0.2".into(),
+            },
+            mk(PanelOp::Open, "", "0"),
+            mk(PanelOp::Update, "", "40%"),
+            mk(PanelOp::Update, "progress", "0.5"),
+            mk(PanelOp::Update, "", "busy"),
+            mk(PanelOp::Update, "", "{{p}}"),
+            mk(PanelOp::Close, "", ""),
+        ]);
+        let found = texts(&ok);
+        assert!(
+            found.iter().all(|m| !m.contains("Update panel")),
+            "{found:?}"
+        );
+        // a value that says nothing
+        let bad = texts(&flow(vec![
+            mk(PanelOp::Open, "", "0"),
+            mk(PanelOp::Update, "", "soon"),
+        ]));
+        assert!(bad.iter().any(|m| m.contains("`soon`")), "{bad:?}");
+        // a plain number above 1 is a full bar, and says how to write a percentage
+        let big = texts(&flow(vec![
+            mk(PanelOp::Open, "", "0"),
+            mk(PanelOp::Update, "", "50"),
+        ]));
+        assert!(big.iter().any(|m| m.contains("`50%`")), "{big:?}");
+        // a panel that nothing opens
+        let lonely = texts(&flow(vec![mk(PanelOp::Update, "other", "10%")]));
+        assert!(
+            lonely
+                .iter()
+                .any(|m| m.contains("no block of this flow opens")),
+            "{lonely:?}"
+        );
+        // a different id from the one that was opened
+        let other = texts(&flow(vec![
+            mk(PanelOp::Open, "a", "0"),
+            mk(PanelOp::Close, "b", ""),
+        ]));
+        assert!(other.iter().any(|m| m.contains("`b`")), "{other:?}");
+        // the flow that is called may be the one that opens it
+        let mut f = flow(vec![
+            mk(PanelOp::Update, "other", "10%"),
+            NodeKind::Call("g".into()),
+        ]);
+        f.clean();
+        assert!(
+            texts(&f)
+                .iter()
+                .all(|m| !m.contains("no block of this flow opens"))
+        );
     }
 }

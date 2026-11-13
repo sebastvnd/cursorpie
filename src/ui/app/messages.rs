@@ -53,6 +53,7 @@ impl App {
                 self.hover = h;
             }
             Msg::Hud(note) => self.hud_note(ctx, note),
+            Msg::HudEnd => self.hud_end(ctx),
             Msg::Panel(req) => self.panel_request(ctx, req),
             Msg::PanelPatch {
                 panel,
@@ -65,8 +66,11 @@ impl App {
             }
             Msg::NewProfileAppPicked(bundle) => self.ed.new_profile_app = bundle,
             Msg::InstalledApps(apps) => {
-                self.ed.installed = apps;
-                self.ed.installed_scan = crate::ui::settings::AppScan::Done;
+                // a read that ends after Settings was closed would put the list back for good
+                if self.settings_open {
+                    self.ed.installed = apps;
+                    self.ed.installed_scan = crate::ui::settings::AppScan::Done;
+                }
             }
             Msg::ProfileImportPicked(file) => self.import_profile(&file),
             Msg::FlowImportPicked(file) => self.import_flow(&file),

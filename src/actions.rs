@@ -7,18 +7,30 @@
 //! When blocks of a flow could not do their work and the flow did not deal with it, `report_run`
 //! tells the person: a desktop notification (at most one every few seconds) and a message for the
 //! UI ([`Msg::FlowRan`]) that marks the blocks and, while Settings is open, shows the details.
+//!
+//! A run that takes a while (a flow, a pause, a sequence with a pause in it: see `takes_time`) is
+//! followed on the screen from its start to its end: its notices are marked as part of a run that
+//! is going on and carry how far it has come (the block of a flow, the round of a loop, the step of
+//! a sequence, the countdown of a wait), so the notice does not disappear while the run is still
+//! busy; [`Msg::HudEnd`] tells the UI when it is over.
+//!
+//! The same runs can also be followed in a small panel with a bar and a **Stop** button
+//! ([`runpanel`]): it opens by itself when a run lasts a couple of seconds, and the
+//! *Update panel* block of a flow can open one on purpose. Stop ends the run: the interpreter asks
+//! [`Host::cancelled`] at every block, and a pause or a command that is waited for is cut short.
 
-use crate::config::{Action, Flow, is_web_url};
+use crate::config::{Action, Flow, NodeKind, is_web_url};
 use crate::flowrun::{self, ExecResult, Host, OpenMode};
 use crate::geometry::Point;
 use crate::keys::Shortcut;
 use crate::msg::{Msg, Notifier};
 use crate::platform;
 use crate::running::{self, Choice};
+use crate::runpanel;
 use crate::tap::Kind;
-use crate::ui::hud::{self, HudNote};
+use crate::ui::hud::{self, HudKind, HudNote, HudProgress};
 use crate::windowing::{Asked, Baseline};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{OnceLock, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -56,13 +68,44 @@ const NOTE_EVERY_SECS: u64 = 5;
 /// worker thread writes it, and it runs one job at a time.
 static ANNOUNCING: AtomicBool = AtomicBool::new(true);
 
+/// Whether the job the worker is running now takes a while (see `takes_time`): its notices stay
+/// on the screen until the job is over. Only the worker thread writes it.
+static LIVE: AtomicBool = AtomicBool::new(false);
+
+/// How far that job has come: the step of a sequence, the block of a flow (or the round of its
+/// loop) that runs, and how many there are (`0` when that is not known). Only the worker thread
+/// writes them.
+static STEP_DONE: AtomicU32 = AtomicU32::new(0);
+static STEP_TOTAL: AtomicU32 = AtomicU32::new(0);
+
+/// How often a pause looks at the Stop button of the progress panel, in milliseconds.
+const WAIT_SLICE_MS: u64 = 50;
+
+/// A pause shorter than this (in milliseconds) is not announced: it is over before it can be read.
+const WAIT_NOTE_MS: u64 = 300;
+
 /// Tells the person what is about to happen: a small notice on the screen (see [`hud`]). Does nothing
 /// for the jobs that are silent (the side buttons, which fire all the time) and when the notice is off.
 fn announce(note: Option<HudNote>) {
-    let Some(note) = note else {
+    let Some(mut note) = note else {
         return;
     };
-    if !ANNOUNCING.load(Ordering::Relaxed) || !crate::config::cfg().hud {
+    if !ANNOUNCING.load(Ordering::Relaxed) {
+        return;
+    }
+    // a run that takes a while keeps its notice until it is over, and says how far it has come
+    if LIVE.load(Ordering::Relaxed) {
+        note.live = true;
+        if note.progress == HudProgress::None {
+            note.progress = HudProgress::Steps {
+                done: STEP_DONE.load(Ordering::Relaxed),
+                total: STEP_TOTAL.load(Ordering::Relaxed),
+            };
+        }
+        // the progress panel says the same, whether or not the small notice is on
+        runpanel::note(&note);
+    }
+    if !crate::config::cfg().hud {
         return;
     }
     if let Some(n) = NOTIFIER.get() {
@@ -198,7 +241,94 @@ fn flow_by_id(id: &str) -> Option<Flow> {
 /// affected.
 fn execute(action: &Action, choice: Option<Choice>) {
     let mut choice = choice;
+    let long = takes_time(action);
+    if long {
+        STEP_DONE.store(0, Ordering::Relaxed);
+        STEP_TOTAL.store(0, Ordering::Relaxed);
+        LIVE.store(true, Ordering::Relaxed);
+        runpanel::begin(&run_name(action), panel_may_open(action));
+    }
     execute_step(action, &mut choice);
+    if long {
+        LIVE.store(false, Ordering::Relaxed);
+        STEP_DONE.store(0, Ordering::Relaxed);
+        STEP_TOTAL.store(0, Ordering::Relaxed);
+        let stopped = runpanel::stopped();
+        runpanel::end();
+        // the notice that stayed for the run fills its bar and goes away
+        if let Some(n) = NOTIFIER.get() {
+            n.send(Msg::HudEnd);
+        }
+        if stopped {
+            announce(Some(HudNote::new(HudKind::Flow, "Stopped", "")));
+        }
+    }
+}
+
+/// What the progress panel of a run of `action` is titled: the name of the flow.
+fn run_name(action: &Action) -> String {
+    match action {
+        Action::Flow(id) => flow_by_id(id).map_or_else(|| "Running".to_string(), |f| f.name),
+        _ => "Running".to_string(),
+    }
+}
+
+/// Whether the progress panel may open by itself for a run of `action`: the person has it on, and
+/// the notices of the job are not silenced (the side buttons). A window that takes the keyboard
+/// would take the keys that a run sends to the app in front, so off Windows (where the window can
+/// be shown without being activated) a run that sends keys keeps the small notice instead.
+fn panel_may_open(action: &Action) -> bool {
+    let c = crate::config::cfg();
+    c.progress_panel
+        && c.panels
+        && ANNOUNCING.load(Ordering::Relaxed)
+        && (platform::OS == platform::Os::Windows || !presses_keys(action, 0))
+}
+
+/// Whether a run of `action` presses shortcuts or types text, in it or in a flow it calls.
+fn presses_keys(action: &Action, depth: u8) -> bool {
+    match action {
+        Action::Key(_) => true,
+        Action::Sequence(steps) => steps.iter().any(|s| presses_keys(s, depth)),
+        Action::Flow(id) => flow_by_id(id).is_some_and(|f| flow_presses_keys(&f, depth)),
+        _ => false,
+    }
+}
+
+/// [`presses_keys`] for a flow: a block that does, or a call to a flow that does (a call whose id
+/// is only known when the flow runs counts as one that does not).
+fn flow_presses_keys(flow: &Flow, depth: u8) -> bool {
+    flow.nodes.iter().any(|n| match &n.kind {
+        NodeKind::Call(id) => {
+            !id.contains("{{")
+                && depth < 4
+                && flow_by_id(id.trim()).is_some_and(|f| flow_presses_keys(&f, depth + 1))
+        }
+        kind => kind.sends_keys(),
+    })
+}
+
+/// Pauses for `ms` milliseconds, or until the person presses Stop in the progress panel.
+fn sleep_unless_stopped(ms: u64) {
+    let end = Instant::now() + Duration::from_millis(ms);
+    loop {
+        let left = end.saturating_duration_since(Instant::now());
+        if left.is_zero() || runpanel::stopped() {
+            return;
+        }
+        std::thread::sleep(left.min(Duration::from_millis(WAIT_SLICE_MS)));
+    }
+}
+
+/// Whether running `action` takes long enough to be followed on the screen: a flow, a pause, or a
+/// sequence that has one of them among its steps.
+fn takes_time(action: &Action) -> bool {
+    match action {
+        Action::Flow(_) => true,
+        Action::Wait(ms) => u64::from(*ms) >= WAIT_NOTE_MS,
+        Action::Sequence(steps) => steps.iter().any(takes_time),
+        _ => false,
+    }
 }
 
 /// [`execute`], with the choice that is still waiting for an "Open app" step to be used on.
@@ -226,14 +356,27 @@ fn execute_step(action: &Action, choice: &mut Option<Choice>) {
         }
         Action::Browser(spec) if !spec.trim().is_empty() => browser_command(spec),
         Action::Sequence(steps) => {
-            for s in steps {
+            let total = u32::try_from(steps.len()).unwrap_or(u32::MAX);
+            for (i, s) in steps.iter().enumerate() {
+                // Stop in the progress panel ends the sequence before the next step
+                if runpanel::stopped() {
+                    break;
+                }
+                // the notice of this step says which step of how many it is
+                let done = u32::try_from(i + 1).unwrap_or(u32::MAX);
+                STEP_DONE.store(done, Ordering::Relaxed);
+                STEP_TOTAL.store(total, Ordering::Relaxed);
+                runpanel::steps(done, total, false);
                 execute_step(s, choice);
                 std::thread::sleep(Duration::from_millis(40));
             }
         }
         Action::Wait(ms) => {
             let ms = (*ms).min(crate::config::MAX_WAIT_MS);
-            std::thread::sleep(Duration::from_millis(u64::from(ms)));
+            if u64::from(ms) >= WAIT_NOTE_MS {
+                announce(Some(HudNote::waiting(ms)));
+            }
+            sleep_unless_stopped(u64::from(ms));
         }
         Action::Flow(id) => {
             if let Some(flow) = flow_by_id(id) {
@@ -433,6 +576,39 @@ impl Host for SystemHost {
 
     fn set_quiet(&mut self, quiet: bool) {
         ANNOUNCING.store(self.announced && !quiet, Ordering::Relaxed);
+        runpanel::set_quiet(quiet);
+    }
+
+    fn progress(&mut self, p: flowrun::Progress) {
+        // what the notices of the next blocks carry (see `announce`): the round of a loop with a
+        // known number of rounds, else the block of a flow that knows its length, else only the
+        // number of the block
+        let (done, total) = match p.round {
+            Some((round, rounds)) => (round, rounds),
+            None if p.total > 0 => (p.step.min(p.total), p.total),
+            None => (p.step, 0),
+        };
+        STEP_DONE.store(done, Ordering::Relaxed);
+        STEP_TOTAL.store(total, Ordering::Relaxed);
+        runpanel::steps(done, total, p.round.is_some());
+    }
+
+    fn wait(&mut self, ms: u64) {
+        if ms >= WAIT_NOTE_MS {
+            announce(Some(HudNote::waiting(
+                u32::try_from(ms).unwrap_or(u32::MAX),
+            )));
+        }
+        // a pause that the person can end with Stop
+        sleep_unless_stopped(ms);
+    }
+
+    fn cancelled(&mut self) -> bool {
+        runpanel::stopped()
+    }
+
+    fn panel_command(&mut self, command: &flowrun::PanelCommand) -> Result<(), String> {
+        runpanel::command(command)
     }
 
     fn sleep(&mut self, ms: u64) {
@@ -445,10 +621,22 @@ impl Host for SystemHost {
         env: &[(String, String)],
         timeout: Duration,
     ) -> Option<ExecResult> {
-        platform::native::exec(command, env, timeout).map(|o| ExecResult {
-            code: o.code,
-            stdout: o.stdout,
-        })
+        // a command can take as long as its timeout: say that it is waited for, and when it ended
+        announce(Some(HudNote::busy("Running command")));
+        let result =
+            platform::native::exec_until(command, env, timeout, &runpanel::stopped).map(|o| {
+                ExecResult {
+                    code: o.code,
+                    stdout: o.stdout,
+                }
+            });
+        let title = if result.is_some() {
+            "Command finished"
+        } else {
+            "Command not started"
+        };
+        announce(Some(HudNote::new(HudKind::Command, title, "")));
+        result
     }
 
     fn ask_text(&mut self, message: &str, preset: &str) -> Option<String> {
@@ -624,6 +812,23 @@ mod tests {
         assert!(!sends_keys(&Action::Sequence(vec![Action::OpenUrl(
             "https://example.com".into()
         )])));
+    }
+
+    #[test]
+    fn only_runs_that_take_a_while_are_followed_on_the_screen() {
+        assert!(takes_time(&Action::Flow("f".into())));
+        assert!(takes_time(&Action::Wait(1000)));
+        assert!(!takes_time(&Action::Wait(100)));
+        assert!(takes_time(&Action::Sequence(vec![
+            Action::OpenApp("Safari".into()),
+            Action::Wait(2000),
+        ])));
+        assert!(!takes_time(&Action::Sequence(vec![
+            Action::OpenApp("Safari".into()),
+            Action::Key(Shortcut::new(6, 0)),
+        ])));
+        assert!(!takes_time(&Action::Command("true".into())));
+        assert!(!takes_time(&Action::Nothing));
     }
 
     #[test]

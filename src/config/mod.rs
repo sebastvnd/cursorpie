@@ -28,6 +28,7 @@ pub mod flow;
 pub mod flow_check;
 pub mod flow_kit;
 pub mod flow_list;
+pub mod flow_templates;
 mod model;
 mod sanitize;
 pub mod share;
@@ -37,7 +38,8 @@ mod tree;
 pub use defaults::{blank_items, presets, quick_actions};
 pub use first_run::{FirstRun, mark_welcomed, welcome_due};
 pub use flow::{
-    AskMode, CalcOp, CmpOp, Cond, Flow, FlowNode, ListOp, LogicOp, NativeOp, NodeKind, Port,
+    AskMode, CalcOp, CmpOp, Cond, DEFAULT_PROGRESS_PANEL, Flow, FlowNode, ListOp, LogicOp,
+    NativeOp, NodeKind, PanelOp, Port,
 };
 pub use flow_check::{Issue, Severity, check_flow};
 pub use model::*;
@@ -145,6 +147,17 @@ mod tests {
         let off = parse_config(r#"{"version": 2, "panels": false, "extension_panels": true}"#)
             .expect("parses");
         assert!(!off.panels && off.extension_panels);
+    }
+
+    #[test]
+    fn the_progress_panel_is_on_by_default_and_old_files_still_load() {
+        assert!(Config::default().progress_panel);
+        let old = parse_config(r#"{"version": 2}"#).expect("parses");
+        assert!(old.progress_panel);
+        let off = parse_config(r#"{"version": 2, "progress_panel": false}"#).expect("parses");
+        assert!(!off.progress_panel);
+        let json = serde_json::to_string(&off).unwrap();
+        assert!(json.contains(r#""progress_panel":false"#));
     }
 
     #[test]
