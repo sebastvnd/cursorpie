@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.8.13
+
+- Publish crates v.0.8.12
+
 ## 0.8.12
 
 - **New: the notice follows a run from its start to its end.** A flow, a pause or a sequence with a pause in it

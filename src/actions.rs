@@ -278,9 +278,15 @@ fn run_name(action: &Action) -> String {
 /// would take the keys that a run sends to the app in front, so off Windows (where the window can
 /// be shown without being activated) a run that sends keys keeps the small notice instead.
 fn panel_may_open(action: &Action) -> bool {
-    let c = crate::config::cfg();
-    c.progress_panel
-        && c.panels
+    // The config lock is let go before `presses_keys` runs: it looks the flows up with
+    // `flow_by_id`, which takes the same lock, and a `Mutex` is not re-entrant. Holding it here
+    // made the worker wait for itself for ever the first time a flow ran (and with the worker
+    // stuck, every later action and every screen that reads the config froze too).
+    let wanted = {
+        let c = crate::config::cfg();
+        c.progress_panel && c.panels
+    };
+    wanted
         && ANNOUNCING.load(Ordering::Relaxed)
         && (platform::OS == platform::Os::Windows || !presses_keys(action, 0))
 }
