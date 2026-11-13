@@ -13,6 +13,8 @@ keywords = ["pie-menu", "mouse", "trackpad", "launcher", "shortcuts"]
 categories = ["gui"]
 
 # What `cargo publish` leaves out of the package: the website, the CI files and the packaging scripts.
+# `packaging/linux/` stays in: `include_str!` embeds the desktop entry and the GNOME extension from it,
+# and the udev rules are shipped there too (the in-app guides point to them).
 # `diag/` and `tools/` are packages of their own and are never part of this one. What the build needs
 # stays in: `src/`, `assets/fonts/`, `assets/cursorpie-mark.png`, `assets/cursorpie-logo-black.png` (all
 # `include_bytes!`) and `CONTRIBUTING.md` (the `guides::contributing` page includes it as documentation).
@@ -38,7 +40,6 @@ exclude = [
     "/assets/app-icon-macos.png",
     "/icon",
     "/installer",
-    "/packaging",
     "/scripts",
 ]
 
