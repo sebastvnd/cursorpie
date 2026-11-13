@@ -235,7 +235,7 @@ pub fn spawn(notifier: Notifier) {
     // the thread of the delayed jobs is started here, not by the first press inside a hook
     timers::start();
     crate::config::start_saver();
-    // Linux decides once, from the session, which layer runs (docs/WAYLAND_SUPPORT.md): the X11
+    // Linux decides once, from the session, which layer runs (docs/developer/WAYLAND_SUPPORT.md): the X11
     // layer is not touched, the Wayland one is added beside it.
     #[cfg(target_os = "linux")]
     {

@@ -1,6 +1,6 @@
 [package]
 name = "cursorpie"
-version = "0.8.13"
+version = "0.8.14"
 edition = "2024"
 rust-version = "1.88"
 description = "Hold-to-open pie menu for macOS, Windows and Linux (X11 and Wayland): per-app profiles, shortcuts, launchers and submenus."
@@ -157,7 +157,7 @@ objc2-app-kit = { version = "0.3", features = [
 objc2-foundation = { version = "0.3", features = ["NSString", "NSURL", "NSData"] }
 
 # Tray / menu bar icon (muda menus are re-exported as `tray_icon::menu`). Not built on other
-# targets: on Linux it would need GTK (the Linux tray is future work, docs/LINUX_MIGRATION.md).
+# targets: on Linux it would need GTK (the Linux tray is future work, docs/developer/LINUX_MIGRATION.md).
 [target.'cfg(any(target_os = "macos", windows))'.dependencies]
 tray-icon = "0.25"
 
@@ -168,7 +168,7 @@ tray-icon = "0.25"
 # `glow` (OpenGL) renderer asks for a pixel format with an alpha channel and winit enables
 # per-pixel alpha, which is the combination that gives a transparent window there.
 # Turn the default features off: with both renderers compiled in, eframe prefers `wgpu`.
-# Never add the `wgpu` feature here (see docs/UI_DESIGN.md, "Transparent window on Windows").
+# Never add the `wgpu` feature here (see docs/developer/UI_DESIGN.md, "Transparent window on Windows").
 eframe = { version = "0.36", default-features = false, features = [
     "accesskit",
     "default_fonts",

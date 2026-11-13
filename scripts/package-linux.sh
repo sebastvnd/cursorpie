@@ -21,10 +21,10 @@ rm -rf "$OUT" "$OUT.tar.gz"
 mkdir -p "$OUT"
 cp target/release/cursorpie "$OUT/cursorpie"
 cp packaging/linux/cursorpie.desktop "$OUT/cursorpie.desktop"
-# the udev rule a Wayland session needs (docs/WAYLAND_SUPPORT.md); install.sh installs it when it runs as root
+# the udev rule a Wayland session needs (docs/developer/WAYLAND_SUPPORT.md); install.sh installs it when it runs as root
 cp packaging/linux/70-cursorpie.rules "$OUT/70-cursorpie.rules"
 # the GNOME Shell extension that gives CursorPie the pointer and the windows on GNOME with Wayland
-# (the user copies it to ~/.local/share/gnome-shell/extensions/ and enables it; see docs/INSTALL.md)
+# (the user copies it to ~/.local/share/gnome-shell/extensions/ and enables it; see docs/user/install.md)
 mkdir -p "$OUT/gnome-extension"
 cp -r packaging/linux/gnome-extension/. "$OUT/gnome-extension/"
 cp LICENSE README.md "$OUT/"
@@ -70,7 +70,7 @@ if [ "$(id -u)" = 0 ] && [ -d /etc/udev/rules.d ]; then
 else
     echo "Wayland session (KDE Plasma 6.8 and newer)? CursorPie also needs the udev rule: $rule_cmd, then log in again."
 fi
-echo "GNOME with Wayland? For per-app profiles also install the extension in $here/gnome-extension (see docs/INSTALL.md)."
+echo "GNOME with Wayland? For per-app profiles also install the extension in $here/gnome-extension (see docs/user/install.md)."
 echo "Installed under $prefix. Start CursorPie from your applications menu or run: cursorpie"
 INSTALL
 chmod +x "$OUT/install.sh"

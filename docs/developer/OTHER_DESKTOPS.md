@@ -14,7 +14,7 @@ chooses what happens (`desktop_mode` in `config.json`, the type is `DesktopMode`
 On Linux the window manager does the switching: *Open app* asks it to activate the app's window with
 `_NET_ACTIVE_WINDOW` (`Conn::raise`). The app is started only when it has no window. None of the search code
 described below is used there, and whether a given window manager follows the request has not been checked on
-real desktops (see `docs/LINUX_MIGRATION.md`). The rest of this document is about macOS and Windows.
+real desktops (see `docs/developer/LINUX_MIGRATION.md`). The rest of this document is about macOS and Windows.
 
 Nothing changes when the app does not run, is hidden, has no window, or has one on the desktop that is
 shown. `DesktopMode::effective` turns a mode the OS lacks into `SwitchToApp`.
@@ -85,7 +85,7 @@ run in CI on Linux.
   move the display under the pointer.
 * Full screen apps are Spaces of their own and are crossed like any other.
 * Windows has no public call to switch to, list or move windows of other programs between desktops, so the
-  switch there is Win+Ctrl+Left / Right with the same search; see `docs/WINDOWS_MIGRATION.md`.
+  switch there is Win+Ctrl+Left / Right with the same search; see `docs/developer/WINDOWS_MIGRATION.md`.
 
 ## Manual check on a Mac (macOS 26 and 27)
 

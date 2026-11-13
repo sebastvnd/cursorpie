@@ -16,17 +16,30 @@ This is a root-level, Markdown-driven website for the CursorPie repository.
 The site does not contain converted copies of the documentation. It reads the Markdown files already present in the repository and renders them in the browser:
 
 - `docs/README.md`
-- `docs/INSTALL.md`
-- `docs/USER_GUIDE.md`
-- `docs/CONFIGURATION.md`
-- `docs/KNOWN_ISSUES.md`
+- `docs/user/getting-started.md`
+- `docs/user/install.md`
+- `docs/user/README.md`
+- `docs/user/using-the-pie.md`
+- `docs/user/profiles-and-buttons.md`
+- `docs/user/trackpad.md`
+- `docs/user/flows.md`
+- `docs/user/settings.md`
+- `docs/user/linux.md`
+- `docs/user/updates.md`
+- `docs/user/configuration.md`
+- `docs/user/known-issues.md`
+- `docs/FLOWS_FOR_AI.md`
+- `docs/examples/README.md`
+- `docs/PANELS.md`
+- `docs/BROWSER_EXTENSION.md`
 - `docs/DEBUGGING.md`
-- `docs/LINUX_MIGRATION.md`
-- `docs/WAYLAND_SUPPORT.md`
-- `docs/WINDOWS_MIGRATION.md`
-- `docs/OTHER_DESKTOPS.md`
-- `docs/UI_DESIGN.md`
-- `docs/TRACKPAD_HAPTICS_PLAN.md`
+- `docs/developer/README.md`
+- `docs/developer/LINUX_MIGRATION.md`
+- `docs/developer/WAYLAND_SUPPORT.md`
+- `docs/developer/WINDOWS_MIGRATION.md`
+- `docs/developer/OTHER_DESKTOPS.md`
+- `docs/developer/UI_DESIGN.md`
+- `docs/developer/TRACKPAD_HAPTICS_PLAN.md`
 - `CONTRIBUTING.md`
 - `CHANGELOG.md`
 - `README.md`
@@ -51,9 +64,9 @@ cursorpie/
 ├── CONTRIBUTING.md
 ├── docs/
 │   ├── README.md
-│   ├── INSTALL.md
-│   ├── USER_GUIDE.md
-│   └── ...existing documentation files...
+│   ├── user/            (user guide, one .md per page)
+│   ├── developer/       (design records)
+│   └── ...reference files (FLOWS_FOR_AI.md, PANELS.md, ...)
 ├── diag/
 │   └── README.md
 └── assets/

@@ -101,6 +101,12 @@ impl App {
                 if self.settings_open && !focused {
                     self.raise_settings(ctx, "chooser_closed");
                 }
+                // While the chooser was open the compositor stopped asking Settings for frames
+                // (it was covered or unfocused), so what is on screen can be a stale buffer. Draw
+                // on a timer for a moment so the first real frames replace it.
+                if self.settings_open {
+                    self.start_repaint_burst(ctx);
+                }
             }
             Msg::HidePie => {
                 diag::log!(

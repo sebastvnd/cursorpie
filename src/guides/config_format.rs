@@ -34,7 +34,7 @@
 //! A step-by-step reference for writing a flow as JSON (written for AI agents, with a JSON Schema and tested
 //! examples) is `docs/FLOWS_FOR_AI.md`.
 //!
-//! The full annotated example and the table of fields are in the repository's `docs/CONFIGURATION.md`.
+//! The full annotated example and the table of fields are in the repository's `docs/user/configuration.md`.
 //!
 //! ## Versioning and compatibility
 //!

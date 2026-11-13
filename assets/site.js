@@ -146,19 +146,32 @@
   // ---------------------------------------------------------------
   const documentMap = [
     { file: 'docs/README.md', label: 'Documentation overview' },
-    { file: 'docs/INSTALL.md', label: 'Installation' },
-    { file: 'docs/USER_GUIDE.md', label: 'User guide' },
-    { file: 'docs/CONFIGURATION.md', label: 'Configuration' },
-    { file: 'docs/KNOWN_ISSUES.md', label: 'Known issues' },
+    { file: 'docs/user/install.md', label: 'Installation' },
+    { file: 'docs/user/README.md', label: 'User guide' },
+    { file: 'docs/user/getting-started.md', label: 'Getting started' },
+    { file: 'docs/user/using-the-pie.md', label: 'Using the pie' },
+    { file: 'docs/user/profiles-and-buttons.md', label: 'Profiles and mouse buttons' },
+    { file: 'docs/user/trackpad.md', label: 'Trackpad hold' },
+    { file: 'docs/user/flows.md', label: 'Flows' },
+    { file: 'docs/user/settings.md', label: 'Settings and backups' },
+    { file: 'docs/user/linux.md', label: 'CursorPie on Linux' },
+    { file: 'docs/user/updates.md', label: 'Updates' },
+    { file: 'docs/user/configuration.md', label: 'Configuration' },
+    { file: 'docs/user/known-issues.md', label: 'Known issues' },
+    { file: 'docs/FLOWS_FOR_AI.md', label: 'Flows for AI agents' },
+    { file: 'docs/examples/README.md', label: 'Example flows' },
+    { file: 'docs/PANELS.md', label: 'Panels' },
+    { file: 'docs/BROWSER_EXTENSION.md', label: 'Browser extension' },
     { file: 'docs/DEBUGGING.md', label: 'Debugging' },
     { file: 'CONTRIBUTING.md', label: 'Contributing' },
     { file: 'CHANGELOG.md', label: 'Changelog' },
-    { file: 'docs/LINUX_MIGRATION.md', label: 'Linux migration' },
-    { file: 'docs/WAYLAND_SUPPORT.md', label: 'Wayland support plan' },
-    { file: 'docs/WINDOWS_MIGRATION.md', label: 'Windows migration' },
-    { file: 'docs/OTHER_DESKTOPS.md', label: 'Other desktops' },
-    { file: 'docs/UI_DESIGN.md', label: 'UI design' },
-    { file: 'docs/TRACKPAD_HAPTICS_PLAN.md', label: 'Trackpad and haptics plan' },
+    { file: 'docs/developer/README.md', label: 'Developer guide' },
+    { file: 'docs/developer/LINUX_MIGRATION.md', label: 'Linux migration' },
+    { file: 'docs/developer/WAYLAND_SUPPORT.md', label: 'Wayland support plan' },
+    { file: 'docs/developer/WINDOWS_MIGRATION.md', label: 'Windows migration' },
+    { file: 'docs/developer/OTHER_DESKTOPS.md', label: 'Other desktops' },
+    { file: 'docs/developer/UI_DESIGN.md', label: 'UI design' },
+    { file: 'docs/developer/TRACKPAD_HAPTICS_PLAN.md', label: 'Trackpad and haptics plan' },
     { file: 'README.md', label: 'Project README' },
     { file: 'diag/README.md', label: 'Diagnostic crate notes' }
   ];
@@ -181,7 +194,7 @@
   function isAllowedMarkdown(path) {
     const normalized = normalizeDocPath(path);
     return documentMap.some((item) => item.file === normalized) ||
-      (/^docs\/[A-Za-z0-9._-]+\.md$/i.test(normalized)) ||
+      (/^docs\/(?:(?:user|developer|examples)\/)?[A-Za-z0-9._-]+\.md$/i.test(normalized)) ||
       (/^diag\/[A-Za-z0-9._-]+\.md$/i.test(normalized));
   }
 

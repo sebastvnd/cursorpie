@@ -1,8 +1,8 @@
 # Updates
 
-CursorPie looks for a newer release and can install it. The same steps on macOS, Windows and Linux; this page says
-what each system does and how to test it. The code is `src/update/` (`mod.rs`: the daily rule, `install.rs`: the
-install, `sha256.rs`) and `src/platform/http.rs` (the requests).
+CursorPie looks for a newer release and can install it. The steps are the same on macOS, Windows and Linux; this page
+says what each system does. How to test the updater before a release is in the
+[developer notes](../developer/UPDATES_TESTING.md).
 
 ## When
 
@@ -48,7 +48,7 @@ file existed counts as "not done yet".
 
 | File | Brought up to date when |
 |---|---|
-| Browser extension (`<support folder>/browser-extension`) | you exported it there before (**Show the extension files**); nothing is created for someone who never did. The extension that is loaded then reloads itself, see `docs/BROWSER_EXTENSION.md` |
+| Browser extension (`<support folder>/browser-extension`) | you exported it there before (**Show the extension files**); nothing is created for someone who never did. The extension that is loaded then reloads itself, see [the browser extension guide](../BROWSER_EXTENSION.md) |
 | Login entry (LaunchAgent, `Run` key, autostart file) | *Launch at login* is on and this is an ordinary install (the test of the update: a build folder never takes it over) |
 | Linux: `~/.local/share/applications/cursorpie.desktop` | it is there and still CursorPie's own (its `Name` and `Exec` lines are the shipped ones); one you edited stays |
 | Linux: the GNOME Shell extension in `~/.local/share/gnome-shell/extensions/` | the folder is there. GNOME reads an extension once per session, so the new code runs after the next log in |
@@ -58,24 +58,6 @@ offers, the panel templates and the flow kit are compiled into the program, so a
 being written. Not written either, because they are not in your own folders: the udev rule (`/etc/udev/rules.d`, needs
 root) and the icons; `install.sh` does those. Everything is best effort: a file that cannot be written stays as it was.
 
-## Checking it by hand
-
-There is no way to test a real swap in CI, so before a release that changes `src/update/` or the packaging, on each
-system, install the *previous* release, publish (or point `LATEST_RELEASE_API_URL` at) a newer test release and check:
-
-- [ ] Settings opens, the sheet appears once; reopening the same day does not show it again; the next day it does.
-- [ ] **Not now**, Esc and a click outside close the sheet; About still shows the update.
-- [ ] **Install update**: status goes *Downloading*, then the app quits and the new version starts (About shows the new
-      number). Settings, pies and the login entry are unchanged.
-- [ ] With unsaved changes in Settings the app does not quit; **Restart to update** works after saving.
-- [ ] After the update, with the extension exported before and loaded: `browser-extension/` holds the new version (its
-      `manifest.json`), and within a minute the extension has reloaded itself (the line under the switch no longer says
-      *from another version*) without pressing **Show the extension files**. Loaded from another folder: it is asked at most
-      a few times and the line says what to do.
-- [ ] Linux: an old `~/.local/share/applications/cursorpie.desktop` is the new one; an edited one is left alone.
-- [ ] Offline: **Check now** says *Could not check*, nothing else changes. A tampered file (change one byte of the
-      downloaded package while it sits in `updates/`) is refused as *not the file the release published*.
-- [ ] A copy run from `target/release` (or an unzipped Windows download) shows **Download page**, not *Install update*.
-- [ ] macOS: `/Applications` owned by an admin and by a standard user; Apple silicon and Intel. Windows: from the zip
-      self-install and from Setup. Linux: `/usr/local/bin` (not writable as a normal user: **Download page**) and
-      `~/.local/bin`; Ubuntu and Fedora.
+> **Linux note.** The updater only handles an ordinary install: a program outside a `target/` folder, in a folder you can
+> write to (for example `~/.local/bin`). A copy in `/usr/local/bin` that your user cannot write to shows **Download page**.
+> The Fedora package is chosen for the Fedora, RHEL and CentOS family, the Ubuntu one for everything else.

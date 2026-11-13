@@ -1,8 +1,8 @@
-//! Linux support. See `docs/LINUX_MIGRATION.md` for the design.
+//! Linux support. See `docs/developer/LINUX_MIGRATION.md` for the design.
 //!
 //! The pure helpers (session detection, desktop entries, icon themes, window hit test, XDG paths, autostart file
 //! text, launch resolution, app roles, display scale, the kernel's list of input devices) compile on every OS, so their tests run everywhere. The X11
-//! backend (`xlib`, `x11`, `backend`) is only compiled on Linux. The Wayland backend (`wayland`, `uinput`) has its pure parts (the clone's description, the KWin script and its reports) built everywhere too; see `docs/WAYLAND_SUPPORT.md`.
+//! backend (`xlib`, `x11`, `backend`) is only compiled on Linux. The Wayland backend (`wayland`, `uinput`) has its pure parts (the clone's description, the KWin script and its reports) built everywhere too; see `docs/developer/WAYLAND_SUPPORT.md`.
 
 pub mod autostart;
 pub mod desktop_entry;

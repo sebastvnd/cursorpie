@@ -1,11 +1,11 @@
 # Linux support: design and migration plan
 
 **Status: X11 (phases L1 to L4, with the gaps listed in [Implementation
-status](#implementation-status)) is implemented and supported, but experimental. The manual
-[checklist](#manual-verification-checklist) is under internal observation: the maintainers are
-watching how CursorPie behaves on real desktops and whether any part of the X11 implementation is
-wrong, so no item is signed off yet and no results are recorded here. Wayland (L5 to L7) is partly
-written and has not yet been run on real hardware: see [Implementation status](WAYLAND_SUPPORT.md#implementation-status).** Releases up to 0.4.2 supported macOS and Windows only (Linux built a do-nothing stub so
+status](#implementation-status)) is pre-stable. Wayland (L5 to L7) is experimental.**
+X11 is implemented, built and tested on every release and in use; the manual
+[checklist](#manual-verification-checklist) is still being completed on real desktops, so no item is signed off yet and
+no results are recorded here. Wayland is written and unit tested but has not been run on real hardware: see
+[Implementation status](WAYLAND_SUPPORT.md#implementation-status). Releases up to 0.4.2 supported macOS and Windows only (Linux built a do-nothing stub so
 `cargo test` runs); the X11 backend arrived in 0.5.0 (see `CHANGELOG.md`).
 
 **Update, November 2026:** KDE Plasma no longer offers an X11 session from its 6.8 release (October 2026), and GNOME
@@ -98,7 +98,7 @@ What exists in the code today, what differs from the design below, and what was 
   with XTest, pointer, monitors (XRandR), frontmost app and app under the pointer (EWMH), activating an
   app, keyboard grab while recording a shortcut.
 - L4, the parts that need no new dependency: XDG autostart, `xdg-open`/`gio`/shell launching, *Open app*
-  that follows an app to its workspace (`reveal_app`, see `docs/OTHER_DESKTOPS.md`), a file
+  that follows an app to its workspace (`reveal_app`, see `docs/developer/OTHER_DESKTOPS.md`), a file
   chooser through `zenity` or `kdialog`, a single-instance lock (`flock`), `malloc_trim`, a hover sound
   through `canberra-gtk-play`, Pause and Quit buttons in Settings > General, `scripts/package-linux.sh`
   and `packaging/linux/cursorpie.desktop`.
@@ -118,7 +118,7 @@ What exists in the code today, what differs from the design below, and what was 
 | Window hints, XShape fallback | none; the window uses winit's defaults | not done yet |
 | Packages | a tarball with `install.sh` | `.deb`, `.rpm`, AppImage not done |
 
-**Not built:** everything Wayland (L5 to L7), the tray, keyboard-layout labels, the XShape
+**Not built:** the tray, keyboard-layout labels, the XShape
 fallback for a missing compositor, the `--doctor` report, Flatpak.
 
 **What was checked:**
@@ -134,6 +134,10 @@ fallback for a missing compositor, the `--doctor` report, Flatpak.
   rows match, and the modifier codes.
 - The expected values of the pure helpers' tests, by re-implementing their algorithms separately.
 
+**Wayland (L5 to L7)** was written after this section: the evdev and uinput layer (`tap/wayland.rs`), the compositor adapters
+and the udev rule exist, but are experimental. What exists is listed in
+[WAYLAND_SUPPORT.md](WAYLAND_SUPPORT.md#implementation-status).
+
 **Compiled and tested:** CI builds the Linux backend and runs every test on Ubuntu (`cargo tools
 ci`, see `.github/workflows/ci.yml`), and the pure helpers are tested on every OS. **Under internal
 observation, not signed off:** behavior on real desktops. That means a real mouse, window managers,
@@ -142,7 +146,7 @@ compositors, high-DPI displays and the distributions people use. The state handl
 through the prototype above, so treat them as the likeliest places for a wrong implementation. Until
 the observation ends, a surprising behavior is as likely to be a bug in the implementation as a
 limit of X11: report it with the distribution, desktop, session type, GPU and scaling (see
-[KNOWN_ISSUES.md](KNOWN_ISSUES.md)).
+[Known issues](../user/known-issues.md)).
 
 ## Goals and non-goals
 
@@ -164,7 +168,7 @@ Non-goals (first Linux release)
 - BSDs and other Unixes. They keep the stub.
 - Remote sessions without local input devices (RDP, VNC, `xrdp`, SSH X forwarding): best effort only.
 - TTY/console use.
-- Touchpads as a trigger: now an opt-in feature on X11, see [TRACKPAD_HAPTICS_PLAN.md](TRACKPAD_HAPTICS_PLAN.md#linux-x11) and *Trackpad* in the user guide. Wayland: still no.
+- Touchpads as a trigger: now an opt-in feature on X11, see [TRACKPAD_HAPTICS_PLAN.md](TRACKPAD_HAPTICS_PLAN.md#linux-x11) and [Trackpad hold](../user/trackpad.md). Wayland: added later, experimental (milestone W4 in [WAYLAND_SUPPORT.md](WAYLAND_SUPPORT.md)).
 - GNOME Wayland parity without an extension (see [Support tiers](#support-tiers)).
 - A Flatpak with Wayland capture. A sandbox cannot grab `/dev/input` devices without broad device access.
 
@@ -208,7 +212,7 @@ Same layout as the table in `WINDOWS_MIGRATION.md`. `Wayland` means "the Tier 2/
 
 | Area | Files | X11 | Wayland |
 |---|---|---|---|
-| Global mouse/keyboard hook | `tap/mod.rs`, `tap/*.rs` | XInput2 passive grab on the trigger and side buttons, raw events for motion; `tap/linux/x11.rs` | evdev: grab pointer devices, forward through a uinput device, `tap/linux/evdev.rs` |
+| Global mouse/keyboard hook | `tap/mod.rs`, `tap/*.rs` | XInput2 passive grab on the trigger and side buttons, raw events for motion; `tap/linux.rs` and `platform/linux/x11.rs` | evdev: grab pointer devices, forward through a uinput device, `tap/wayland.rs` |
 | Event types in the state machine | `tap/trigger.rs` and friends | unchanged (`Ev`, `Kind`, `Verdict`, `Point`) | unchanged |
 | Sending keys / replaying clicks | `actions.rs` | XTest | uinput virtual keyboard and mouse |
 | Frontmost app, app under pointer | `platform/apps.rs` | `_NET_ACTIVE_WINDOW`, `_NET_CLIENT_LIST_STACKING`, `WM_CLASS`, hit test | adapter: KWin script, Sway IPC, Hyprland IPC, GNOME extension |
@@ -260,7 +264,7 @@ Same layout as the table in `WINDOWS_MIGRATION.md`. `Wayland` means "the Tier 2/
 6. **App id = desktop-entry id.** See [App identity](#app-identity).
 7. **Coordinates are logical points**, as everywhere. X11 has one global scale (no per-monitor scale),
    taken from the toolkit's scale factor; Wayland reports logical coordinates natively.
-8. **The event layer stays portable.** `tap/linux/{x11,evdev}.rs` translate native events into `Ev` and
+8. **The event layer stays portable.** `tap/linux.rs` (X11) and `tap/wayland.rs` (evdev) translate native events into `Ev` and
    call `dispatch`. The state machine and the lock order (*gesture, then config, then side state*)
    are untouched. As on Windows, pointer moves are never dropped on X11; on evdev they are forwarded
    unless the state machine says `Drop`.
@@ -274,7 +278,7 @@ Same layout as the table in `WINDOWS_MIGRATION.md`. `Wayland` means "the Tier 2/
     enable `wgpu` in the Linux table, and check with `cargo tree -i wgpu --target
     x86_64-unknown-linux-gnu`.
 11. **New dependencies are few, pure Rust, and justified per phase** ([Dependencies](#dependencies)).
-12. **Linux code is type-checkable on any OS** with a `check-linux` feature, like `check-windows`, so
+12. **Linux code is type-checkable on any OS** (*planned, not built: there is no `check-linux` feature, only `check-windows`*) with a `check-linux` feature, like `check-windows`, so
     macOS and Windows contributors can compile it without Linux.
 
 ## Subsystem designs
@@ -296,7 +300,7 @@ connect to the compositor's IPC, try to open `/dev/uinput`. The result is a `Cap
 
 ### Input capture
 
-**X11 (`tap/linux/x11.rs`).**
+**X11 (`tap/linux.rs` and `platform/linux/x11.rs`).**
 
 - Passive grab (`XIGrabButton`) on the root window for the trigger button and the two side buttons, in
   asynchronous mode. The press is delivered to CursorPie, not to the app: the swallow. The right button is
@@ -313,7 +317,7 @@ connect to the compositor's IPC, try to open `/dev/uinput`. The result is a `Cap
   recording no keyboard grab exists, same promise as the README's privacy section.
 - The loop waits on the X connection's file descriptor and a wake pipe. It does not block in `dispatch`.
 
-**Wayland (`tap/linux/evdev.rs`).**
+**Wayland (`tap/wayland.rs`).**
 
 - Opens pointer devices that can be a trigger: `EV_REL` with `REL_X` and `REL_Y`, and `BTN_MIDDLE`.
   Touchpads, tablets, keyboards and our own uinput devices are skipped.
@@ -755,16 +759,16 @@ macOS and Windows builds must show no new crates: every one is under
 
 Done with the X11 release:
 
-- `README.md` (title, tagline, platform table), `docs/INSTALL.md` (Linux install and packages),
-  `docs/KNOWN_ISSUES.md` (the Linux limits) and `docs/USER_GUIDE.md` (Linux notes).
+- `README.md` (title, tagline, platform table), `docs/user/install.md` (Linux install and packages),
+  `docs/user/known-issues.md` (the Linux limits) and `docs/user/` pages (Linux notes).
 - `CONTRIBUTING.md`: prerequisites per distribution, build table, what each OS can check.
-- `Cargo.toml` description, `about.rs` tagline, `docs/UI_DESIGN.md` ("Transparent window on Linux").
-- `docs/WINDOWS_MIGRATION.md`: the non-goal "Linux support" points here.
+- `Cargo.toml` description, `about.rs` tagline, `docs/developer/UI_DESIGN.md` ("Transparent window on Linux").
+- `docs/developer/WINDOWS_MIGRATION.md`: the non-goal "Linux support" points here.
 - `CHANGELOG.md`: the Linux entries under `## Unreleased`.
 
 Still to do, with the phases that need them:
 
-- `docs/INSTALL.md` and `docs/KNOWN_ISSUES.md`: packages (deb, rpm, AppImage) and the udev rule once Wayland capture
+- `docs/user/install.md` and `docs/user/known-issues.md`: packages (deb, rpm, AppImage) and the udev rule once Wayland capture
   exists, and the parity matrix, honestly.
 - `src/lib.rs`, `src/platform/mod.rs`, `src/tap/mod.rs`, `src/guides/architecture.rs`: the D-Bus and watchdog
   threads and the capability table, when they are built.
@@ -850,7 +854,7 @@ The list is an input to `Session::detect`; the capability probe, not the names, 
 This new file, up realese in version **0.5.0**..
 
 ```text
-docs/LINUX_MIGRATION.md                this document
+docs/developer/LINUX_MIGRATION.md                this document
 src/platform/linux/                    L2+  capability plumbing, facade functions, session, doctor
   session.rs                           L1   Session::detect (pure)
   desktop_entry.rs                     L1   desktop entry parser, index, app id matching (pure)
@@ -860,7 +864,7 @@ src/platform/linux/                    L2+  capability plumbing, facade function
   wayland/                             L5+  evdev, uinput, adapters (kwin, sway, hyprland, gnome), layer-shell
   autostart.rs, shell.rs, instance.rs  L4
 src/platform/keymap.rs                 L1   gains the Linux tables
-src/tap/linux/                         L3+  x11.rs, evdev.rs (event glue; the state machine is untouched)
+src/tap/linux.rs, src/tap/wayland.rs   L3+  event glue for X11 and evdev (the state machine is untouched)
 src/ui/tray.rs                         L4   gains a StatusNotifierItem arm
 packaging/linux/                       L4   cursorpie.desktop, AppStream metadata, icons, 70-cursorpie.rules, uinput.conf
 scripts/package-linux.sh               L4

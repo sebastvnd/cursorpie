@@ -1,4 +1,4 @@
-# CursorPie, Wayland sessions (docs/WAYLAND_SUPPORT.md).
+# CursorPie, Wayland sessions (docs/developer/WAYLAND_SUPPORT.md).
 #
 # CursorPie grabs the mouse you hold the trigger button on and writes everything it does not use to a
 # virtual mouse it makes itself, because a Wayland program cannot see or swallow the buttons of

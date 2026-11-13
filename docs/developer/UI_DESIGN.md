@@ -257,12 +257,12 @@ The same single window is created as on the other platforms: borderless, transpa
 (`with_transparent(true)`), always on top, click-through in pie mode (`with_mouse_passthrough`), not
 focused (`with_active(false)`). What differs is what stands between that request and the screen.
 **None of the rows below was checked on a real desktop yet**; the Linux backend has only been exercised
-against a bare X server (see `docs/LINUX_MIGRATION.md`, "Implementation status").
+against a bare X server (see `docs/developer/LINUX_MIGRATION.md`, "Implementation status").
 
 | Setup | Expected result |
 |---|---|
 | X11, a compositing manager is running (Mutter, KWin, Xfwm with compositing on, picom...) | transparent: the window has an alpha channel and the compositor blends it |
-| X11, **no** compositing manager (a bare i3, bspwm or openbox) | opaque: the pie sits in a **black box**. Per-pixel alpha needs a compositor. Not handled yet; the planned fallback is an XShape mask, see `docs/LINUX_MIGRATION.md` |
+| X11, **no** compositing manager (a bare i3, bspwm or openbox) | opaque: the pie sits in a **black box**. Per-pixel alpha needs a compositor. Not handled yet; the planned fallback is an XShape mask, see `docs/developer/LINUX_MIGRATION.md` |
 | Wayland session | the window runs through XWayland, because only eframe's `x11` feature is enabled (on purpose, so that the window can be placed under the pointer). Whether it is stacked above Wayland-native windows depends on the compositor |
 
 Rules:
@@ -272,7 +272,7 @@ Rules:
    still works and the surface has an alpha channel. If both renderers are compiled in, eframe prefers
    `wgpu`. After changing eframe features run `cargo tree -i wgpu --target x86_64-unknown-linux-gnu`:
    it must report that `wgpu` is not part of the Linux build. Do not add the `wayland` feature either
-   without reading the "Pie window" part of `docs/LINUX_MIGRATION.md`: a plain Wayland window cannot
+   without reading the "Pie window" part of `docs/developer/LINUX_MIGRATION.md`: a plain Wayland window cannot
    choose its position or stay on top.
 2. **Keep every layer above the window transparent**, exactly as in the Windows rules: `clear_color`
    alpha 0, `CentralPanel` with `Frame::new()` in pie mode.
@@ -290,7 +290,7 @@ Rules:
 6. **What is not done.** No `_NET_WM_WINDOW_TYPE` hint, no skip-taskbar or skip-pager hint, no
    override-redirect, no XShape fallback. A window manager may therefore show a taskbar button for the
    pie, or tile it (tiling window managers such as i3 and bspwm are the likely trouble). The planned
-   test of the common window managers is spike S3 in `docs/LINUX_MIGRATION.md`.
+   test of the common window managers is spike S3 in `docs/developer/LINUX_MIGRATION.md`.
 
 If a machine shows a black box, note the desktop or window manager, whether a compositor runs, the GPU
 and driver, and whether the session is X11 or Wayland (XWayland), and whether Settings is affected too,

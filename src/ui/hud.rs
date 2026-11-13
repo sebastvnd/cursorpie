@@ -34,9 +34,9 @@ use crate::config::{Action, Config, HUD_SIZE_MAX, HUD_SIZE_MIN, PieStyle, is_web
 use crate::platform::linux::roles::Role;
 use crate::ui::draw::{ease_out_back_with, ease_out_cubic, on_accent, rgb, spring_out};
 use crate::ui::fonts;
-use crate::ui::settings::theme::{PILL, pal};
+use crate::ui::settings::theme::pal;
 use crate::ui::symbols;
-use eframe::egui::{self, Color32, FontId, Painter, Pos2, Rect, Vec2};
+use eframe::egui::{self, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Vec2};
 use std::time::{Duration, Instant};
 
 /// Size of the window while it shows the notice at the normal size (points). The pill is centered in
@@ -60,11 +60,12 @@ pub fn scale_of(cfg: &Config) -> f32 {
 
 /// Height of the pill.
 const PILL_H: f32 = 56.0;
-/// Height of the pill when it shows a progress bar under its text.
-const PILL_H_BAR: f32 = 72.0;
-/// Thickness of the progress bar and the distance of its middle from the bottom edge of the pill.
+/// Height of the pill when it shows a progress bar under its text. Only a little taller than the
+/// plain pill: the text and the bar are one column that is centered next to the badge.
+const PILL_H_BAR: f32 = 62.0;
+/// Thickness of the progress bar and the space between the text and the bar.
 const BAR_H: f32 = 4.0;
-const BAR_FROM_BOTTOM: f32 = 14.0;
+const BAR_GAP: f32 = 7.0;
 /// Seconds one sweep takes of the bar that does not know how far the run has come.
 const SWEEP_SECS: f32 = 1.4;
 /// A notice that belongs to a run that is going on goes away by itself when nothing was heard of
@@ -113,19 +114,20 @@ const PULSE_SECS: f32 = 0.38;
 const SHRINK_END: f32 = 0.6;
 const FADE_START: f32 = 0.5;
 /// Seconds the pill takes to glide to a new width and height.
-const MORPH_SECS: f32 = 0.24;
+const MORPH_SECS: f32 = 0.42;
 /// Seconds the bar takes to glide to a new fill.
-const BAR_SECS: f32 = 0.30;
-/// Seconds the old text and icon take to give way to the new ones.
-const SWAP_SECS: f32 = 0.24;
+const BAR_SECS: f32 = 0.45;
+/// Seconds the old text and icon take to give way to the new ones. Long enough for the eye to follow
+/// the change: the old text is still readable while the new one comes in.
+const SWAP_SECS: f32 = 0.60;
 /// Points the text moves while it is replaced: the old one up, the new one up into its place.
-const SWAP_SLIDE: f32 = 5.0;
+const SWAP_SLIDE: f32 = 9.0;
 /// Seconds a pill that was on its way out takes to come back when a note arrives.
 const RECALL_SECS: f32 = 0.22;
 /// A note stays at least this long before the next one replaces it. Notes that come faster (the
 /// blocks of a quick flow) wait, and only the last of them is shown: a note that is on screen for a
 /// few milliseconds is not a note, it is a flicker.
-pub const MIN_DWELL: Duration = Duration::from_millis(260);
+pub const MIN_DWELL: Duration = Duration::from_millis(400);
 /// How long a notice that has to wait for the pie to go away is remembered.
 pub const PENDING_MAX: Duration = Duration::from_millis(1500);
 
@@ -478,6 +480,9 @@ pub struct Hud {
     /// When this notice was made: the sweep of a bar that does not know how far the run has come
     /// counts from here, so it keeps moving from one note to the next.
     born: Instant,
+    /// A panel is waiting for the window: the pill finishes coming in, goes away with its usual
+    /// animation and takes no new note (see [`dismiss`](Self::dismiss)).
+    leaving: bool,
 }
 
 impl Hud {
@@ -501,6 +506,7 @@ impl Hud {
             size: None,
             recall: None,
             born: now,
+            leaving: false,
         }
     }
 
@@ -615,7 +621,13 @@ impl Hud {
     pub fn phase(&mut self, now: Instant) -> Phase {
         let shown = *self.shown_at.get_or_insert(now);
         if self.until.is_none() {
-            self.until = Some(now + Duration::from_secs_f32(IN_SECS) + self.hold);
+            // a pill that has to make room for a panel does not stay for its hold time
+            let hold = if self.leaving {
+                Duration::ZERO
+            } else {
+                self.hold
+            };
+            self.until = Some(now + Duration::from_secs_f32(IN_SECS) + hold);
         }
         let into = now.saturating_duration_since(shown).as_secs_f32();
         let coming = (into / IN_SECS).clamp(0.0, 1.0);
@@ -735,6 +747,37 @@ impl Hud {
             || self.size.is_some_and(|g| g.running(now))
             || (self.bar_from.is_some() && since(self.bar_since) < BAR_SECS)
             || (self.prev.is_some() && since(self.swapped_at) < SWAP_SECS)
+    }
+
+    /// Whether the pill is on its way out to make room for a panel (see [`dismiss`](Self::dismiss)).
+    pub fn is_leaving(&self) -> bool {
+        self.leaving
+    }
+
+    /// A panel wants the window, which the pill shares with it: the pill does not vanish at once
+    /// but finishes coming in, then goes away with its usual animation (fade and sink), and the
+    /// panel takes the window when [`phase`](Self::phase) says it is over. Notes that arrive in the
+    /// meantime are ignored (see `App::hud_note`). Calling it again changes nothing.
+    pub fn dismiss(&mut self, now: Instant) {
+        if self.leaving {
+            return;
+        }
+        // (before `live` changes: a pill that was held for its run has no end time that counts)
+        let held = self.live && !self.stalled(now);
+        self.leaving = true;
+        self.live = false;
+        self.note.live = false;
+        self.queued = None;
+        self.recall = None;
+        if let Some(shown) = self.shown_at {
+            // a pill that is still coming in gets to arrive; one that has been there a while goes now
+            let leave_at = (shown + Duration::from_secs_f32(IN_SECS)).max(now);
+            // a pill that already left by itself keeps going the way it was going
+            if held || self.until.is_none_or(|u| leave_at < u) {
+                self.until = Some(leave_at);
+            }
+        }
+        // `shown_at` is `None`: the first frame has not been drawn, `phase` sets the end time
     }
 
     /// The run is over: the bar fills up and the pill goes away after its usual time.
@@ -883,6 +926,13 @@ pub fn pill_size(painter: &Painter, note: &HudNote, scale: f32) -> Vec2 {
 
 type Galley = std::sync::Arc<egui::Galley>;
 
+/// The corner radius that makes `rect` a capsule: half of its height, so the ends are exact
+/// half circles at every size and while the pill grows (a fixed, huge radius leaves it to the
+/// painter to cut it down, and the shadow and the outline do not all do that the same way).
+fn capsule(rect: Rect) -> CornerRadius {
+    CornerRadius::same((rect.height() / 2.0).clamp(0.0, 255.0).round() as u8)
+}
+
 fn layouts(
     painter: &Painter,
     title: &str,
@@ -1007,8 +1057,11 @@ pub fn paint_pill_swap(
     // during the last part, so that the two are not both at half strength for long
     let swap = swap.clamp(0.0, 1.0);
     let prev = prev.filter(|_| swap < 1.0);
-    let old_k = (1.0 - swap / 0.6).clamp(0.0, 1.0);
-    let new_k = ease_out_cubic(((swap - 0.3) / 0.7).clamp(0.0, 1.0));
+    // both curves are eased, and they overlap for a moment (the old one is still half there when the
+    // new one starts), so the text is never missing and never jumps
+    let old_k = 1.0 - ease_out_cubic((swap / 0.65).clamp(0.0, 1.0));
+    let new_k = ease_out_cubic(((swap - 0.25) / 0.75).clamp(0.0, 1.0));
+    let slide = ease_out_cubic(swap);
     // a circle (as wide as it is high) that stretches into the pill as `grow` goes from 0 to 1
     let full = size.unwrap_or_else(|| pill_size(painter, note, scale));
     let size = Vec2::new(
@@ -1018,6 +1071,7 @@ pub fn paint_pill_swap(
     let rect = Rect::from_center_size(center + Vec2::new(0.0, lift * scale), size);
 
     // soft shadow, one blurred shape
+    let round = capsule(rect);
     painter.add(
         egui::Shadow {
             offset: [0, (6.0 * scale).round() as i8],
@@ -1025,17 +1079,18 @@ pub fn paint_pill_swap(
             spread: 0,
             color: Color32::from_black_alpha((70.0 * alpha) as u8),
         }
-        .as_shape(rect, PILL),
+        .as_shape(rect, round),
     );
-    painter.rect_filled(rect, PILL, fade(c.fill));
+    painter.rect_filled(rect, round, fade(c.fill));
     painter.rect_stroke(
         rect,
-        PILL,
+        round,
         egui::Stroke::new(1.0, fade(c.stroke)),
         egui::StrokeKind::Inside,
     );
 
-    // the badge: the accent, with the icon of the kind in the color that reads on it
+    // the badge: the accent, with the icon of the kind in the color that reads on it, in the
+    // middle of the pill
     let badge_c = Pos2::new(rect.min.x + (PAD_L + BADGE / 2.0) * scale, rect.center().y);
     // a change of the note makes the badge bounce: a swell that rings out (1 at first, then a dip)
     let t = 1.0 - pulse.clamp(0.0, 1.0);
@@ -1074,6 +1129,26 @@ pub fn paint_pill_swap(
 
     // the text: one line is centered, two lines are stacked; the pill is the window it shows through
     let painter = painter.with_clip_rect(rect.shrink(1.0));
+    // With a bar, the text and the bar are one column whose middle is the middle of the pill, so
+    // the text rises above the middle by half of what the bar takes. `room` is how far the pill has
+    // grown to make room for the bar (it grows and the bar fades in together).
+    let room = ((rect.height() / scale - PILL_H) / (PILL_H_BAR - PILL_H)).clamp(0.0, 1.0);
+    let bar_zone = (BAR_GAP + BAR_H) * scale * room;
+    let text_h = {
+        let (title, detail) = note.clipped();
+        let (tg, dg) = layouts(
+            &painter,
+            &title,
+            &detail,
+            Color32::WHITE,
+            Color32::WHITE,
+            scale,
+        );
+        tg.size().y + dg.map_or(0.0, |d| 1.0 + d.size().y)
+    };
+    let column_top = rect.center().y - (text_h + bar_zone) / 2.0;
+    // the middle of the line of text (and of the label at the right end)
+    let line_y = column_top + text_h / 2.0;
     // it slides in from the left while it fades in
     let x = rect.min.x + (PAD_L + BADGE + GAP) * scale
         - (1.0 - text.clamp(0.0, 1.0)) * TEXT_SLIDE * scale;
@@ -1096,21 +1171,21 @@ pub fn paint_pill_swap(
         match dg {
             Some(dg) => {
                 let total = tg.size().y + 1.0 + dg.size().y;
-                let top = rect.center().y - total / 2.0 + dy;
+                let top = line_y - total / 2.0 + dy;
                 let below = top + tg.size().y + 1.0;
                 painter.galley(Pos2::new(x, top), tg, tint(c.title));
                 painter.galley(Pos2::new(x, below), dg, tint(c.detail));
             }
             None => {
-                let y = rect.center().y - tg.size().y / 2.0 + dy;
+                let y = line_y - tg.size().y / 2.0 + dy;
                 painter.galley(Pos2::new(x, y), tg, tint(c.title));
             }
         }
     };
     match prev {
         Some(p) => {
-            paint_text(p, old_k, -swap * SWAP_SLIDE * scale);
-            paint_text(note, new_k, (1.0 - swap) * SWAP_SLIDE * scale);
+            paint_text(p, old_k, -slide * SWAP_SLIDE * scale);
+            paint_text(note, new_k, (1.0 - slide) * SWAP_SLIDE * scale);
         }
         None => paint_text(note, 1.0, 0.0),
     }
@@ -1123,20 +1198,19 @@ pub fn paint_pill_swap(
         if !label.is_empty() {
             let lg =
                 painter.layout_no_wrap(label, FontId::proportional(12.5 * scale), ink(c.detail));
-            let y = rect.center().y - lg.size().y / 2.0;
+            let y = line_y - lg.size().y / 2.0;
             painter.galley(Pos2::new(right - lg.size().x, y), lg, ink(c.detail));
         }
         // while the pill grows taller to make room for the bar, the bar fades in with it
-        let room = ((rect.height() / scale - PILL_H) / (PILL_H_BAR - PILL_H)).clamp(0.0, 1.0);
         let bar_ink = |col: Color32| ink(col).gamma_multiply(room);
         let bar_h = BAR_H * scale;
-        let mid = rect.max.y - BAR_FROM_BOTTOM * scale;
+        let mid = column_top + text_h + (BAR_GAP + BAR_H / 2.0) * scale;
         let track = Rect::from_min_max(
             Pos2::new(left, mid - bar_h / 2.0),
             Pos2::new(right.max(left), mid + bar_h / 2.0),
         );
         let w = track.width();
-        painter.rect_filled(track, PILL, bar_ink(c.detail).gamma_multiply(0.3));
+        painter.rect_filled(track, capsule(track), bar_ink(c.detail).gamma_multiply(0.3));
         // known: filled from the left (as smoothed by the notice, if it says so); not known: a
         // short piece that sweeps along the track
         let known = note
@@ -1156,7 +1230,7 @@ pub fn paint_pill_swap(
                 Pos2::new(track.min.x + from, track.min.y),
                 Pos2::new(track.min.x + to, track.max.y),
             );
-            painter.rect_filled(fill, PILL, bar_ink(accent));
+            painter.rect_filled(fill, capsule(fill), bar_ink(accent));
         }
     }
     rect
@@ -1174,6 +1248,48 @@ mod tests {
 
     fn none(_: &str) -> Option<String> {
         None
+    }
+
+    fn note() -> HudNote {
+        HudNote::new(HudKind::Link, "Open link", "example.com")
+    }
+
+    #[test]
+    fn a_pill_that_makes_room_for_a_panel_arrives_and_then_fades_out() {
+        let t0 = Instant::now();
+        let mut h = Hud::new(note(), Duration::from_millis(1500));
+        let _ = h.phase(t0);
+        h.dismiss(t0 + Duration::from_millis(100));
+        assert!(h.is_leaving());
+        // it is not cut off at once: it is still there while it comes in
+        let early = h.phase(t0 + Duration::from_millis(300));
+        assert!(!early.over && early.going == 0.0, "{early:?}");
+        // after its animation it goes away, long before its hold time
+        let late = h.phase(t0 + Duration::from_secs_f32(IN_SECS + OUT_SECS + 0.05));
+        assert!(late.over, "{late:?}");
+    }
+
+    #[test]
+    fn a_pill_that_was_held_for_a_run_leaves_with_its_animation_not_at_once() {
+        let t0 = Instant::now();
+        let mut h = Hud::new(note().running(true), Duration::from_millis(1500));
+        let _ = h.phase(t0);
+        let now = t0 + Duration::from_secs(20);
+        h.dismiss(now);
+        let first = h.phase(now);
+        assert!(!first.over && first.going < 0.2, "{first:?}");
+        let end = h.phase(now + Duration::from_secs_f32(OUT_SECS + 0.05));
+        assert!(end.over, "{end:?}");
+    }
+
+    #[test]
+    fn a_pill_that_never_drew_a_frame_still_leaves_quickly() {
+        let t0 = Instant::now();
+        let mut h = Hud::new(note(), Duration::from_millis(1500));
+        h.dismiss(t0);
+        let _ = h.phase(t0);
+        let end = h.phase(t0 + Duration::from_secs_f32(IN_SECS + OUT_SECS + 0.05));
+        assert!(end.over, "{end:?}");
     }
 
     #[test]
@@ -1555,7 +1671,7 @@ mod tests {
         let (prev, swap) = h.previous(ms(500));
         assert_eq!(prev.map(|n| n.detail.as_str()), Some("A"));
         assert!(swap < 0.1);
-        let (prev, swap) = h.previous(ms(500 + 400));
+        let (prev, swap) = h.previous(ms(500 + 700));
         assert!(prev.is_none() && swap == 1.0);
         // a note that waits is not lost when the run ends
         h.update(

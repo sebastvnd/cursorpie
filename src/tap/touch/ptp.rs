@@ -26,7 +26,7 @@
 //!   guaranteed, so they are **not** used here.
 //!
 //! Everything about the real layouts of devices is a **design assumption until spikes W1 to W4 of
-//! `docs/TRACKPAD_HAPTICS_PLAN.md` are answered on a Windows laptop**.
+//! `docs/developer/TRACKPAD_HAPTICS_PLAN.md` are answered on a Windows laptop**.
 
 use super::recognizer::{Finger, PALM_SIZE};
 

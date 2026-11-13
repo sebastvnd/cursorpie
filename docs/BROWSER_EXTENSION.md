@@ -1,11 +1,11 @@
 # The browser extension: controlling the browser from a slice
 
 CursorPie ships a small extension for Firefox and Chromium browsers (Chrome, Edge, Brave, Vivaldi, Opera). Since it
-only told CursorPie which pages were open (see `docs/BROWSER_BRIDGE.md`), it now also **does things in the browser** when
+only told CursorPie which pages were open (see `docs/developer/BROWSER_BRIDGE.md`), it now also **does things in the browser** when
 a slice asks: pause the song, skip to the next one, close a tab, open the next unread chat in WhatsApp Web.
 
 This page is the manual of those commands. How the extension is installed and how it talks to the app is in
-`docs/BROWSER_BRIDGE.md`.
+`docs/developer/BROWSER_BRIDGE.md`.
 
 ## Quick start
 
@@ -382,7 +382,7 @@ Tested (`cargo test`, and `cd tests/browser-extension && npm install && npm test
 SoundCloud, WhatsApp Web and Telegram Web today; Firefox and Chromium loading the extension; window state changes on
 Wayland. The adapters were written from how those pages are built, and the chat selectors in particular are the most
 likely to need an override. If a command says "not found", see *When a site changes*. Please report what you find in
-`docs/KNOWN_ISSUES.md`.
+`docs/user/known-issues.md`.
 
 ## Known limits
 

@@ -43,7 +43,7 @@ are under [Development workflow](#development-workflow).
 GitHub Actions packages macOS, Windows, Ubuntu and Fedora on pull requests, pushes to `main`, and manual runs;
 those runs expose temporary files under **Actions → workflow run → Artifacts**. A push of a `v*` tag also
 publishes the packages as GitHub Release assets, but only after all platform jobs succeed. The public download
-links in `README.md` and `docs/INSTALL.md` point to this repository's latest stable release.
+links in `README.md` and `docs/user/install.md` point to this repository's latest stable release.
 
 `cargo run --release` builds and starts the app on every system. To produce something you can hand out:
 
@@ -60,13 +60,13 @@ GitHub Actions runs these package scripts automatically on pull requests, pushes
 (`v*`) and manual workflow runs. Each run publishes short-lived artifacts under **Actions → the workflow run →
 Artifacts**. When a `v*` tag is pushed, a final job also attaches ready-to-install assets to the GitHub Release:
 a universal macOS `.dmg`, a Windows `.zip` and Setup `.exe`, and separate Linux `.tar.gz` packages built on
-Ubuntu 24.04 and Fedora 44. The stable asset names are linked from `README.md` and `docs/INSTALL.md`. Linux
+Ubuntu 24.04 and Fedora 44. The stable asset names are linked from `README.md` and `docs/user/install.md`. Linux
 archives are built for x86_64; the macOS disk image contains both Apple silicon and Intel binaries.
 
 Build on the target OS to exercise its native desktop integration. CI compiles and packages each supported
 platform, but interactive checks such as macOS permissions, Windows tray behavior and Linux desktop behavior
 still need a real user session. Signing, notarizing and installing are explained for users in
-`docs/INSTALL.md`; the maintainer-facing notes follow.
+`docs/user/install.md`; the maintainer-facing notes follow.
 
 **macOS.** CursorPie needs the **Accessibility** permission (and sometimes *Input Monitoring*). With `cargo run`,
 macOS attributes it to your terminal app, and a rebuilt ad-hoc-signed binary may need it granted again. Set
@@ -78,13 +78,13 @@ console window and is not code signed unless `SIGN_CERT_THUMBPRINT` is set (and 
 start of a packaged `cursorpie.exe` installs it for the current user (`platform/windows/install.rs`). Builds in a
 `target\debug` or `target\release` folder are never installed, so `cargo run --release` cannot replace the copy
 that starts at login; set `CURSORPIE_NO_INSTALL=1` for the same on any other copy. To test the install, run the
-packaged exe from the unzipped folder and follow checks 7a to 7c of `docs/WINDOWS_MIGRATION.md`; test the Setup
+packaged exe from the unzipped folder and follow checks 7a to 7c of `docs/developer/WINDOWS_MIGRATION.md`; test the Setup
 wizard with check 7d.
 
-**Linux.** The app works in an **X11 session** (supported, but experimental: its checklist is under internal
-observation) and in a **Wayland session**, where a separate layer (`tap/wayland.rs`, `platform/linux/wayland/`) takes over (written, not yet run on real hardware; see
-`docs/LINUX_MIGRATION.md`; the research and plan for Wayland, starting with KDE Plasma, are in
-`docs/WAYLAND_SUPPORT.md`). `scripts/package-linux.sh` builds a tarball with an `install.sh`. Build on an older
+**Linux.** The app works in an **X11 session** (pre-stable: implemented and in use, its checklist is still being
+completed) and in a **Wayland session**, where a separate layer (`tap/wayland.rs`, `platform/linux/wayland/`) takes over (experimental: written, not yet run on real hardware; see
+`docs/developer/LINUX_MIGRATION.md`; the research and plan for Wayland, starting with KDE Plasma, are in
+`docs/developer/WAYLAND_SUPPORT.md`). `scripts/package-linux.sh` builds a tarball with an `install.sh`. Build on an older
 distribution if the binary must start on older ones. `CURSORPIE_BACKEND=x11` forces the X11 backend, for bug
 reports.
 
@@ -172,8 +172,8 @@ alternative costs more later.
   reproduced without a screen. What cannot be unit tested (gestures, rendering, caches after sleep) is listed under
   "Tested by hand" in the pull request.
 - **Notes and docs for users.** A user-visible change adds a line under `## Unreleased` in `CHANGELOG.md`,
-  written for users of the app, and updates `docs/USER_GUIDE.md` or `docs/CONFIGURATION.md` when behavior or
-  settings change. Refactors, tests, docs and tooling need no changelog line. A breaking change starts its line
+  written for users of the app, and updates the matching page in `docs/user/` (for example `using-the-pie.md`, `settings.md` or
+  `configuration.md`) when behavior or settings change. Refactors, tests, docs and tooling need no changelog line. A breaking change starts its line
   with `Breaking:` and says how to migrate.
 - **The version and the tags belong to the release tool.** Only maintainers release, from `main`, with
   `cargo tools bump`. A pushed tag is never moved, deleted or reused: a bad release is fixed by the next patch
@@ -183,7 +183,7 @@ alternative costs more later.
   enough, its license, whether it is maintained). Dependency updates are their own pull request.
 - **All platforms stay in step.** A change in `platform/`, `tap/` or behind a `cfg` is checked for the other
   systems too (`cargo tools ci` type-checks the Windows backend on macOS and Linux), and the manual checklists in
-  `docs/WINDOWS_MIGRATION.md` and `docs/LINUX_MIGRATION.md` are run for what the change touches.
+  `docs/developer/WINDOWS_MIGRATION.md` and `docs/developer/LINUX_MIGRATION.md` are run for what the change touches.
 - **Old config files keep loading.** See *Config compatibility* under [Coding guidelines](#coding-guidelines).
 
 ## Commits and pull requests
@@ -225,7 +225,7 @@ Merges, reverts, `Release ...` commits and `fixup!` or `squash!` commits are not
   *gesture, then config, then side state*.
 - **Keep the Settings look consistent.** Colors, corner radii and spacing come from `src/ui/settings/theme.rs`
   (controls are 32 px high, the gap is 8 px), controls from `src/ui/settings/widgets.rs` (see `guides::extending`
-  and `docs/UI_DESIGN.md`). No emoji on buttons.
+  and `docs/developer/UI_DESIGN.md`). No emoji on buttons.
 - **Keep drawing sharp.** Never push a hand-made `egui::Mesh` for something with an edge: use
   `ui::draw::ring_slice` (anti-aliased) or an egui shape. Drive animations with `ui::draw::step_linear` plus one
   easing curve, not by feeding an exponential through an easing function. Test the geometry and math you add (see
@@ -270,10 +270,11 @@ For step-by-step instructions on common changes (a new action kind, a setting, a
 | Where | For whom | What |
 |---|---|---|
 | `README.md` | everyone | What CursorPie is, who it is for, quick start. Kept short on purpose |
-| `docs/INSTALL.md`, `USER_GUIDE.md`, `CONFIGURATION.md`, `KNOWN_ISSUES.md` | users | Installing, using, configuring, limits |
+| `docs/user/` (start at `README.md`) | users | Getting started, installing, using, Linux, configuring, limits |
+| `docs/FLOWS_FOR_AI.md`, `docs/examples/`, `docs/PANELS.md`, `docs/BROWSER_EXTENSION.md` | flow and extension authors | File formats, examples and commands. Compiled into the app or read by tests, so they keep their paths |
 | Rust docs (`cargo docs`, `src/guides/*.rs`) | developers | Architecture, config format, recipes for common changes. The source of truth for how the code works |
-| `docs/WINDOWS_MIGRATION.md`, `LINUX_MIGRATION.md`, `WAYLAND_SUPPORT.md`, `OTHER_DESKTOPS.md`, `UI_DESIGN.md` | developers | Design records and manual test checklists |
-| `docs/README.md` | everyone | An index of everything in `docs/` |
+| `docs/developer/` (start at `README.md`) | developers | Design records and manual test checklists (`WINDOWS_MIGRATION.md`, `LINUX_MIGRATION.md`, `WAYLAND_SUPPORT.md`, `OTHER_DESKTOPS.md`, `UI_DESIGN.md`, ...) |
+| `docs/README.md` | everyone | An index of `docs/` by audience, and the platform support levels |
 | `CHANGELOG.md` | users | What changed in each release |
 
 The guides in `src/guides/` are ordinary `//!` comments. Start with `guides::architecture`: it explains the
@@ -291,7 +292,7 @@ scripts/       packaging: bundle.sh and make-dmg.sh (macOS), package-windows.ps1
 installer/     Inno Setup script of the Windows Setup wizard
 packaging/     Linux desktop entry
 assets/       app icons for macOS, Windows and Linux; logos, fonts and the editable brand artwork
-docs/          user documentation and design records
+docs/          user/ (user guide), developer/ (design records), and the reference files for flows and the extension
 ```
 
 ## Releasing

@@ -142,7 +142,7 @@ impl Session {
             (DisplayServer::Wayland, true) => Some(
                 "this is a Wayland session and the X11 backend was asked for: it only sees X11 and \
                  XWayland windows, so the gesture works over those only. Unset CURSORPIE_BACKEND to \
-                 use the Wayland backend (docs/WAYLAND_SUPPORT.md).",
+                 use the Wayland backend (docs/developer/WAYLAND_SUPPORT.md).",
             ),
             _ => None,
         }

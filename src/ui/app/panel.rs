@@ -199,7 +199,11 @@ impl App {
         }
         let free = !self.pie_open && (!self.visible || self.hud.is_some()) && self.panel.is_none();
         if free {
-            self.drop_hud(ctx);
+            if self.yield_hud(ctx) {
+                // the notice is still on screen: it goes away with its animation first
+                self.panel_queue.push_back(req);
+                return;
+            }
             self.begin_panel(ctx, req);
             return;
         }
@@ -307,8 +311,11 @@ impl App {
             && !self.pie_open
             && !self.settings_open
             && (!self.visible || self.hud.is_some());
+        if free && self.yield_hud(ctx) {
+            // the notice is on its way out and hands the window over when it is gone (`end_hud`)
+            return;
+        }
         if free && let Some(req) = self.panel_queue.pop_front() {
-            self.drop_hud(ctx);
             self.begin_panel(ctx, req);
         } else {
             ctx.request_repaint_after(Duration::from_millis(50));
@@ -343,7 +350,7 @@ impl App {
     }
 
     /// Turns the (hidden) window into the panel and shows it.
-    fn begin_panel(&mut self, ctx: &egui::Context, req: Request) {
+    pub(super) fn begin_panel(&mut self, ctx: &egui::Context, req: Request) {
         let Request {
             spec,
             reply,
@@ -466,7 +473,7 @@ impl App {
         ctx.request_repaint_after(LINGER);
     }
 
-    /// The panel is over: it is answered, and the window is hidden again.
+    /// The panel is over: it is answered, and the window is hidden again after one empty frame.
     fn end_panel(&mut self, ctx: &egui::Context, result: PanelResult) {
         if let Some(p) = self.panel.take() {
             if p.form.spec.passive {
@@ -474,12 +481,14 @@ impl App {
             }
             let _ = p.reply.send(result);
         }
-        self.visible = false;
+        // The window is not hidden here: it still holds the last frame of the panel, and a hidden
+        // window keeps what it showed last. The next time it is mapped (the pie, a notice) that old
+        // panel was on screen for a moment before the first new frame. Left `visible`, the next
+        // frame draws nothing (see `pie_ui`) and only then hides the window, so what it keeps is empty.
         self.show_wait = None;
         self.want_pos = None;
-        self.hide_root(ctx);
         self.sleep_step(ctx);
-        // a panel that was waiting starts on the next frame
+        // that frame, and a panel that was waiting starts after it
         ctx.request_repaint();
     }
 
@@ -494,7 +503,11 @@ impl App {
             if p.frames < FOCUS_FRAMES {
                 p.frames += 1;
                 // a panel that only shows progress leaves the keyboard where it is
-                if !p.form.spec.passive {
+                // (and stop once it has it: asking again and again while the window manager is
+                // already giving it, or while the notice window is still being handed over, made the
+                // focus jump back and forth)
+                let focused = ctx.input(|i| i.viewport().focused).unwrap_or(false);
+                if !p.form.spec.passive && !focused {
                     request_focus(&ctx);
                     if p.frames == 3 {
                         platform::raise_own_window();

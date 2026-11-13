@@ -2,6 +2,18 @@
 
 CursorPie keeps all settings in one JSON file. You can edit them in Settings, or by hand.
 
+## Contents
+
+- [Where the file lives](#where-the-file-lives)
+- [Structure](#structure)
+- [Complete example](#complete-example)
+- [Field reference](#field-reference)
+- [Extra mouse buttons](#extra-mouse-buttons)
+- [mice.json](#micejson)
+- [Image icons](#image-icons)
+- [What happens to bad files](#what-happens-to-bad-files)
+- [Security](#security)
+
 ## Where the file lives
 
 | System | `config.json` |
@@ -20,9 +32,11 @@ config.broken.json     a config that could not be read (see below)
 mice.json              the mice CursorPie has met and their extra buttons (not part of the config, see below)
 icons/                 images copied in by a profile import, and the smaller copies made when you choose a big image
 welcome_shown          empty file: the welcome window was already shown
+update_state.json      what the update check remembers (day of the last check, newest version, day of the last offer)
+program_version        the version that last refreshed the files CursorPie keeps outside its program
 ai-kit/                the zip "New flow, Build it with AI" puts on the clipboard (one file, made again on every copy)
-logs/                  diagnostic logs, only when logging is on (see DEBUGGING.md)
-debug                  optional empty file that turns the diagnostic log on (see DEBUGGING.md)
+logs/                  diagnostic logs, only when logging is on (see [Debugging](../DEBUGGING.md))
+debug                  optional empty file that turns the diagnostic log on (see [Debugging](../DEBUGGING.md))
 ```
 
 Export writes `cursorpie-config.json` to your Downloads folder.
@@ -55,6 +69,7 @@ At most 24 mice are kept (the one seen longest ago goes first). `active` names t
 An `icon` that ends in `.png`, `.jpg`, `.jpeg` or `.webp` is an image file (a path may start with `~/`). CursorPie reads its size from the file header first and does not decode an image over 4096 px on a side: the slice shows `?`. A loaded image is scaled down to at most 128 px. Choose images in Settings with **Image...** and big ones are shrunk for you; if you write a path by hand, use a file that is already small (at most 512 px).
 
 ## Structure
+
 `profiles[] > items[] > kind`, where `kind` is `Mode`, `Run` or `Submenu`. Actions are `Nothing`, `Key`,
 `OpenApp`, `OpenUrl`, `Command`, `Sequence`, `Wait` (milliseconds) or `Flow` (the `id` of a flow). Enums use serde's
 default external tagging, for example `{"Run": {"OpenApp": "Notes"}}`.
@@ -70,7 +85,11 @@ the others). The flow runs from the one `Start` node along the wires until `End`
 limit (10000 blocks, 10 minutes); several wires may lead into a node and a wire may lead back (a loop). A flow without an
 `End` gets one when the file is loaded. At most 32 flows of 128 nodes; a wait is at
 most 10000 ms, a repeat 1000 rounds, a `Run` 120 s. Anything outside the limits is repaired when the file is loaded. The full reference for writing a flow by
-hand or with an AI agent (key codes, rules, recipe, examples, a JSON Schema) is [FLOWS_FOR_AI.md](FLOWS_FOR_AI.md).
+hand or with an AI agent (key codes, rules, recipe, examples, a JSON Schema) is [FLOWS_FOR_AI.md](../FLOWS_FOR_AI.md).
+
+## Complete example
+
+Every field with its default value, and a small menu. A field you leave out takes its default.
 
 ```json
 {
@@ -85,6 +104,7 @@ hand or with an AI agent (key codes, rules, recipe, examples, a JSON Schema) is 
   "hud": true,
   "hud_position": "Bottom",
   "hud_ms": 1500,
+  "hud_size": 100,
   "launch_at_login": false,
   "app_gesture": "DoubleClick",
   "double_click_ms": 260,
@@ -92,6 +112,10 @@ hand or with an AI agent (key codes, rules, recipe, examples, a JSON Schema) is 
   "focus_target": true,
   "desktop_mode": "SwitchToApp",
   "open_app_choice": true,
+  "browser_bridge": false,
+  "panels": true,
+  "progress_panel": true,
+  "extension_panels": false,
   "check_updates": true,
   "side_default": "App",
   "side_adopt": true,
@@ -162,6 +186,8 @@ hand or with an AI agent (key codes, rules, recipe, examples, a JSON Schema) is 
 
 | Field | Meaning |
 |---|---|
+| `version` | Always `2`. A file without it (the old v1 format) is rejected, see [What happens to bad files](#what-happens-to-bad-files) |
+| `flows` | The flows of the **Flow** tab, see [Flows](#flows) above |
 | `trigger_button` | `2` = middle, `5` / `6` / `7` = extra buttons (shown as "Extra button 6/7/8"). Only the middle button works on Windows and Linux |
 | `accent` | Accent color as `[r, g, b]`. The default is `[90, 120, 94]`; the old default blue `[64, 156, 255]` is replaced by the new default when a file is loaded |
 | `pie_hold_ms` | Hold time before the pie opens (50 to 2000 in the file; the Settings slider goes from 50 to 1500; default 150) |
@@ -171,7 +197,7 @@ hand or with an AI agent (key codes, rules, recipe, examples, a JSON Schema) is 
 | `double_click_ms` | Window for the second click (150 to 500) |
 | `target_app` | `"UnderCursor"` (app whose window is under the pointer) or `"Focused"` (app in front) |
 | `focus_target` | With `UnderCursor`: bring that app to the front before sending it a shortcut |
-| `desktop_mode` | `"SwitchToApp"` (default), `"BringToCurrent"` or `"DoNothing"`: what an Open app slice does when the app's window is on another desktop or Space. `BringToCurrent` is macOS only (experimental) and acts as `SwitchToApp` elsewhere. See [OTHER_DESKTOPS.md](OTHER_DESKTOPS.md) |
+| `desktop_mode` | `"SwitchToApp"` (default), `"BringToCurrent"` or `"DoNothing"`: what an Open app slice does when the app's window is on another desktop or Space. `BringToCurrent` is macOS only (experimental) and acts as `SwitchToApp` elsewhere. See [Other desktops](../developer/OTHER_DESKTOPS.md) |
 | `open_app_choice` | `true` (default) or `false`. When an Open app slice's app is already running, hovering the slice shows two round badges side by side just outside the ring, in front of the slice: a green one with a + (a new window, on the side where the slice starts) and a yellow one with a small square (the app that is open, on the side where it ends). Releasing on the half of the slice nearer a badge picks it. `false`: the slice always does what it did before. The running apps are looked up once per press, off the input thread, and only when a pie has an Open app slice. A new window is `open -a` then Cmd+N on macOS, and starting the app again on Windows and Linux |
 | `side_default` | `"App"` or `"General"`: the pie the side buttons follow in an app that has its own pie, until you choose |
 | `side_adopt` | Picking a side-button mode in a pie makes the side buttons follow that pie |
@@ -186,16 +212,18 @@ hand or with an AI agent (key codes, rules, recipe, examples, a JSON Schema) is 
 | `appearance` | `"System"` (default), `"Light"` or `"Dark"`: the look of Settings and the pie |
 | `pie_style` | `"Solid"` (default) or `"Glass"`: opaque slices, or see-through frosted ones (always smoked dark) |
 | `glass_clear`, `glass_frost`, `glass_shine` | Glass style only, in percent (0 to 100, larger values are clamped): how see-through the slices are (default 60), how frosted (default 45) and how bright the rim and sheen are (default 60) |
-| `touch_trigger` | macOS trackpad, Windows precision touchpad and Linux (X11 or Wayland) touchpad: a hold opens the pie (default `false`; while it is off the system's touch library is never loaded on macOS, nothing is registered with Windows and `/dev/input` is never opened on Linux). See [the user guide](USER_GUIDE.md#trackpad-macos-windows-and-linux) |
+| `touch_trigger` | macOS trackpad, Windows precision touchpad and Linux touchpad (X11 pre-stable, Wayland experimental): a hold opens the pie (default `false`; while it is off the system's touch library is never loaded on macOS, nothing is registered with Windows and `/dev/input` is never opened on Linux). See [Trackpad hold](trackpad.md) |
 | `touch_still_mm` | 0.5 to 6.0 (default `2.0`): how far, in millimeters on the trackpad, the holding finger may move before the hold counts |
 | `touch_click_action` | `"SwitchPie"` (default, like the right-click), `"PickHovered"` (the hovered Mode slice becomes the active mode) or `"Nothing"`: what the extra click does |
 | `touch_typing_guard_ms` | 0 to 2000 (default `400`, `0` = off): no hold is armed this soon after a key press |
 | `haptics`, `haptic_hover` | macOS only (ignored on Windows and Linux): trackpad ticks when the pie opens and the mode switches (default on), and when the hovered slice changes (default on, needs `haptics`) |
 | `hud` | `true` (default, also for a file that lacks the field): a small notice on the screen says what CursorPie does when an action runs: "Open app Safari", "Open link github.com", "Shortcut Cmd + C", "Run flow Morning". A shell command is announced as "Run command" and never with its text. The back and forward buttons stay quiet. `false` turns it off |
 | `hud_position` | `"Bottom"` (default, above the dock or taskbar), `"Top"` or `"Cursor"` (just below the pointer): where the notice appears, on the display the pointer is on |
-| `panels` | `true` (default): a flow may show a panel (an *Ask* block in Panel mode, `docs/PANELS.md`). `false`: those blocks fail with a note and the flow goes on |
+| `panels` | `true` (default): a flow may show a panel (an *Ask* block in Panel mode, [Panels](../PANELS.md)). `false`: those blocks fail with a note and the flow goes on |
 | `progress_panel` | `true` (default): a flow, a pause or a sequence that takes more than about two seconds opens a small progress panel by itself, with a bar, the step that is running and a Stop button that ends the run (needs `panels`). `false`: long runs only have the small notice. Off Windows, a run that presses keys keeps the notice anyway, so the panel cannot take the keyboard from the app those keys are for |
 | `extension_panels` | `false` (default): the browser extension may show panels (needs `browser_bridge` too). Off, every panel it asks for is refused |
+| `hud_size` | 70 to 160 (default `100`): the size of the notice in percent |
+| `browser_bridge` | `false` (default): lets the optional [browser extension](../BROWSER_EXTENSION.md) tell CursorPie which pages are open and run browser commands. Switch it in **Settings > Behavior > Browser extension** |
 | `hud_ms` | 500 to 6000 (default `1500`): how long the whole pill stays, in milliseconds, after it has come in (a round badge rises from the bottom, stretches into the pill and shows its text, about 0.6 s) and before it goes away (the same, backwards, about 0.3 s). A new action while it is on screen changes its text and keeps it longer |
 | `sleep_after_s` | Seconds without a pie or Settings before cached icons (except those of the general pie) and the Settings copy are freed (10 to 3600, `0` = never) |
 | `check_updates` | `true` (default, also for a file that lacks the field) or `false`. When Settings opens, CursorPie looks at most once a day for a newer stable release on GitHub and offers it once that day; the About tab always shows the result. It runs the system's `curl` (or `wget`), sends only your IP address and the CursorPie version. Together with the download that *Install update* starts, it is the only network use of the app. `false`: no automatic look; **Check now** in the About tab still works. What is remembered between runs (the day of the last check, the newest version found, the day of the last offer) is not in `config.json` but in `update_state.json` next to it; deleting that file only makes the next opening look again |
@@ -220,4 +248,4 @@ trust.** CursorPie warns you after importing a file that contains any.
 ## For developers
 
 How the format is versioned and how to add a setting is in the Rust docs (`guides::config_format` and
-`guides::extending`; run `cargo docs`).
+`guides::extending`; run `cargo docs`) and in [the developer documentation](../developer/README.md).

@@ -8,7 +8,7 @@
 //! the inactive-caption color, which is white. The pie window is never activated, so it always
 //! looks like that. winit also writes the styles again from its own flags on every
 //! visibility / click-through / window-level change, which is why [`clear_window_frame`] is
-//! idempotent and is called on every frame (see `docs/UI_DESIGN.md`, "Transparent window on Windows").
+//! idempotent and is called on every frame (see `docs/developer/UI_DESIGN.md`, "Transparent window on Windows").
 
 use super::util::{frameless_ex_style, frameless_style, frameless_styles};
 use std::sync::Mutex;

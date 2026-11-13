@@ -43,6 +43,9 @@ fn user_agrees_to_install(dir: &Path) -> bool {
         "Install {APP_NAME} for this user?\n\n\
          It will be copied to {}, listed in Apps & features and started at every login. \
          Nothing needs administrator rights.\n\n\
+         Note: Windows blocks input to programs that run as administrator (Task Manager, an \
+         elevated terminal), so CursorPie does nothing in their windows unless it runs as \
+         administrator too. Every other program works normally.\n\n\
          Choose No to just run it from where it is.",
         dir.display()
     );

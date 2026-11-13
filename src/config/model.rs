@@ -162,7 +162,7 @@ pub enum AppGesture {
 }
 
 /// What the extra click does while a pie opened by a trackpad hold is open (macOS trackpad, see
-/// `docs/TRACKPAD_HAPTICS_PLAN.md`).
+/// `docs/developer/TRACKPAD_HAPTICS_PLAN.md`).
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq, Default)]
 pub enum TouchClickAction {
     /// The same as the right-click: the side buttons now follow the other pie; the pie stays open.

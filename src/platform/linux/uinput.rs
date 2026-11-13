@@ -1,6 +1,6 @@
 //! A virtual input device made through `/dev/uinput`: what the Wayland layer writes the events it
 //! keeps to (a clone of the mouse it grabbed), and what it sends shortcuts through (a virtual
-//! keyboard). See `docs/WAYLAND_SUPPORT.md`, "Architecture".
+//! keyboard). See `docs/developer/WAYLAND_SUPPORT.md`, "Architecture".
 //!
 //! The file is built on every OS so its pure part is tested everywhere: the event codec, the
 //! mouse button numbering, the choice of what a clone copies from the mouse ([`CloneSpec`], from

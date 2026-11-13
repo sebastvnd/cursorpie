@@ -48,7 +48,7 @@
 //! Linux use the `glow` renderer for that reason, macOS keeps `wgpu`, and on Windows the OS frame
 //! (white box, border, shadow) is stripped every frame by `platform::clear_window_frame`. On Linux that
 //! function does nothing, and per-pixel alpha needs a compositing manager on X11 (see
-//! `docs/UI_DESIGN.md`).
+//! `docs/developer/UI_DESIGN.md`).
 //! A third mode, the *notice* (`ui::hud`, `ui::app::notice`), makes the window a small pill near the
 //! edge of the display for a second or so: it says what the actions worker is doing. It is
 //! click-through like the pie and is taken over by the pie or Settings at once.
@@ -286,8 +286,8 @@
 //! Each need is met by one function of the [`platform`](crate::platform) facade (or by the `tap`
 //! glue); the macOS, Windows and Linux implementations sit side by side in `platform/macos/`,
 //! `platform/windows/` and `platform/linux/`. The
-//! [Windows migration plan](https://github.com/sebastvnd/cursorpie/blob/main/docs/WINDOWS_MIGRATION.md)
-//! and the [Linux migration plan](https://github.com/sebastvnd/cursorpie/blob/main/docs/LINUX_MIGRATION.md)
+//! [Windows migration plan](https://github.com/sebastvnd/cursorpie/blob/main/docs/developer/WINDOWS_MIGRATION.md)
+//! and the [Linux migration plan](https://github.com/sebastvnd/cursorpie/blob/main/docs/developer/LINUX_MIGRATION.md)
 //! explain the designs; the Linux one also says what is built and what is not.
 //!
 //! | Need | macOS | Windows | Linux (X11) | Where |

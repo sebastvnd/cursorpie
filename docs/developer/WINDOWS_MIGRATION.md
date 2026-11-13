@@ -210,7 +210,7 @@ Run on macOS 11+ and on Windows 10 and 11:
   `glow` (OpenGL), selected in `Cargo.toml`. That alone still left a white box with a border, a white
   old-style window flashing up when the pie opened and a 1 px white line along the top edge, because winit
   keeps `WS_CAPTION` on borderless windows and asks for an "undecorated shadow". `platform::clear_window_frame`
-  (`platform/windows/window.rs`) removes all of that; see `docs/UI_DESIGN.md`, "Transparent window on
+  (`platform/windows/window.rs`) removes all of that; see `docs/developer/UI_DESIGN.md`, "Transparent window on
   Windows". OpenGL 2.0 or newer is needed, which every Windows 10/11 GPU driver provides, but a machine
   with a broken OpenGL driver or a remote desktop session without GPU acceleration may fail to create the
   window.
@@ -220,12 +220,12 @@ Run on macOS 11+ and on Windows 10 and 11:
 Verified by hand on a real Windows machine: the pie opens under the cursor and runs slices,
 Settings opens and saves, the tray icon and its menu work, and the pie and the Settings card are drawn on
 a transparent window with no white box, border, flash or top line (after the window-frame fix described in
-`docs/UI_DESIGN.md`). Behavior is almost identical to macOS.
+`docs/developer/UI_DESIGN.md`). Behavior is almost identical to macOS.
 
 Not at parity: extra mouse buttons (see [Risks](#risks-and-known-limitations)).
 
 Windows is treated as stable by the maintainers. The limits that remain come from Windows itself and
-are listed for users in [KNOWN_ISSUES.md](KNOWN_ISSUES.md): programs running as administrator
+are listed for users in [Known issues](../user/known-issues.md): programs running as administrator
 (UIPI), Store (UWP) apps that share one host process, switching to another virtual desktop, and
 monitors with different scales. The checklist above is the regression list: run the items a change
 touches (the keyboard-layout, scaling and elevated-window items first), and report anything you see

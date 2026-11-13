@@ -565,7 +565,7 @@ other missing setting takes its default).
 > overwrites it on **Save**, so a change made behind its back is lost or fights with Settings. **Prefer the flow
 > file and Import.** If you must write `config.json`, tell the person to quit CursorPie first, keep their existing
 > content (read the file, add to `flows`, never replace it), and expect the app to repair whatever is out of range.
-> A profile file (`cursorpie_profile`, see [CONFIGURATION.md](CONFIGURATION.md)) also carries `"flows": [...]` next to
+> A profile file (`cursorpie_profile`, see [CONFIGURATION.md](user/configuration.md)) also carries `"flows": [...]` next to
 > the profile; the same flow object applies there.
 
 ## Examples

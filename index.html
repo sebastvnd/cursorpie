@@ -113,7 +113,7 @@
           <p class="lead">CursorPie brings your favorite shortcuts and actions right to the pointer. Hold a mouse button or touch and hold your trackpad, flick toward what you need, and release. No menus to search. No shortcuts to memorize.</p>
           <div class="cta-row">
             <a class="btn" id="hero-download" href="#download">Download CursorPie <span class="icon" aria-hidden="true">&#xe5de;</span></a>
-            <a class="btn btn-secondary" href="./index.html?doc=docs/USER_GUIDE.md">See how it works <span class="icon" aria-hidden="true">&#xe13a;</span></a>
+            <a class="btn btn-secondary" href="./index.html?doc=docs/user/README.md">See how it works <span class="icon" aria-hidden="true">&#xe13a;</span></a>
           </div>
           <div class="hero-meta">
             <span><i class="icon" aria-hidden="true">&#xe184;</i> Free and open source</span>
@@ -186,14 +186,14 @@
         <div class="os-grid">
           <article class="os-card" data-os-card="win"><div class="os-top"><span class="os-symbol"><i class="icon" aria-hidden="true">&#xe32e;</i></span><span class="badge">Stable</span></div><h3>Windows</h3><p>Windows 10 (1809) or 11. Per-user installer; no special permissions required. Trackpad hold needs a precision touchpad.</p><div class="os-links"><a data-release="CursorPie-windows-setup.exe" href="#">Installer <i class="icon" aria-hidden="true">&#xe5de;</i></a><a data-release="CursorPie-windows.zip" href="#">ZIP</a></div></article>
           <article class="os-card" data-os-card="mac"><div class="os-top"><span class="os-symbol"><i class="icon" aria-hidden="true">&#xe586;</i></span><span class="badge">Supported</span></div><h3>macOS</h3><p>macOS 11+, for Intel and Apple silicon. Accessibility permission is required. Any trackpad works for trackpad hold.</p><div class="os-links"><a data-release="CursorPie-macos-universal.dmg" href="#">Universal DMG <i class="icon" aria-hidden="true">&#xe5de;</i></a></div></article>
-          <article class="os-card" data-os-card="linux"><div class="os-top"><span class="os-symbol"><i class="icon" aria-hidden="true">&#xe1aa;</i></span><span class="badge">Experimental</span></div><h3>Linux (X11 and Wayland)</h3><p>x86_64 builds for Ubuntu 24.04+ and Fedora 44. Works in X11 and Wayland sessions; Wayland needs a udev rule. Trackpad hold needs your user in the <code>input</code> group (or the udev rule on Wayland).</p><div class="os-links"><a data-release="CursorPie-ubuntu-24.04-x86_64.tar.gz" href="#">Ubuntu 24.04+</a><a data-release="CursorPie-fedora-44-x86_64.tar.gz" href="#">Fedora 44</a></div></article>
+          <article class="os-card" data-os-card="linux"><div class="os-top"><span class="os-symbol"><i class="icon" aria-hidden="true">&#xe1aa;</i></span><span class="badge">X11 pre-stable · Wayland experimental</span></div><h3>Linux (X11 and Wayland)</h3><p>x86_64 builds for Ubuntu 24.04+ and Fedora 44. X11 sessions are pre-stable and need nothing set up. Wayland sessions are experimental and need a udev rule. Trackpad hold needs your user in the <code>input</code> group (or the udev rule on Wayland).</p><div class="os-links"><a data-release="CursorPie-ubuntu-24.04-x86_64.tar.gz" href="#">Ubuntu 24.04+</a><a data-release="CursorPie-fedora-44-x86_64.tar.gz" href="#">Fedora 44</a></div></article>
         </div>
         <div class="download-notes">
           <div class="download-note"><h4>Seeing a Windows warning?</h4><p>This build is not signed yet. Select <strong>More info</strong>, then <strong>Run anyway</strong> if you choose to continue.</p></div>
           <div class="download-note"><h4>macOS will not open?</h4><p>On first launch, right-click the app and choose <strong>Open</strong>, then grant Accessibility permission.</p></div>
-          <div class="download-note"><h4>Linux</h4><p>Extract the package and run <code>install.sh</code>. A tray icon is not available yet.</p></div>
+          <div class="download-note"><h4>Linux</h4><p>Extract the package and run <code>install.sh</code>. On Wayland also install the udev rule (see the <a href="./index.html?doc=docs/user/linux.md">Linux guide</a>). A tray icon is not available yet.</p></div>
         </div>
-        <div class="doc-cta"><div><h3>Need help getting set up?</h3><p>The installation guide covers Windows, macOS, and Linux.</p></div><a class="btn btn-secondary" href="./index.html?doc=docs/INSTALL.md">Read the installation guide <span class="icon" aria-hidden="true">&#xe13a;</span></a></div>
+        <div class="doc-cta"><div><h3>Need help getting set up?</h3><p>The installation guide covers Windows, macOS, and Linux.</p></div><a class="btn btn-secondary" href="./index.html?doc=docs/user/install.md">Read the installation guide <span class="icon" aria-hidden="true">&#xe13a;</span></a></div>
       </div>
     </section>
 
@@ -204,9 +204,9 @@
           <details><summary>Is CursorPie free?</summary><p>Yes. CursorPie is open source under the MIT license, with no account and no ads.</p></details>
           <details><summary>Does my data go online?</summary><p>No. CursorPie does not make network connections or collect telemetry. Keyboard events are read while you record a shortcut in Settings; otherwise, events are passed through and are not stored or logged.</p></details>
           <details><summary>Can I use it without a middle mouse button?</summary><p>Yes, with a trackpad. Turn on <em>Open the pie with a trackpad hold</em> in Settings &gt; Behavior &gt; Trackpad, then touch and hold. It works on macOS, Windows (precision touchpads) and Linux, X11 or Wayland (your user must be in the <code>input</code> group, or on Wayland the udev rule must be installed). With a mouse, a clickable scroll wheel is enough. On macOS, some additional mouse buttons can also be used as triggers.</p></details>
-          <details><summary>Does the trackpad feature work on my system?</summary><p>It is off by default and new, so it has not been tried on every device. macOS reads any trackpad, Windows needs a precision touchpad, and Linux reads the touchpad from <code>/dev/input</code>. Haptic ticks exist on macOS only. See the <a href="./index.html?doc=docs/KNOWN_ISSUES.md">known issues</a>.</p></details>
+          <details><summary>Does the trackpad feature work on my system?</summary><p>It is off by default and new, so it has not been tried on every device. macOS reads any trackpad, Windows needs a precision touchpad, and Linux reads the touchpad from <code>/dev/input</code>. Haptic ticks exist on macOS only. See the <a href="./index.html?doc=docs/user/known-issues.md">known issues</a>.</p></details>
           <details><summary>How do I change the slices?</summary><p>Hold in the center of the pie to open Settings. From there, add actions, change icons, and configure pies for specific apps.</p></details>
-          <details><summary>Is Linux Wayland supported?</summary><p>Yes, experimentally. CursorPie works in X11 and in Wayland sessions. On Wayland it grabs the mouse through <code>/dev/input</code>, so it needs the udev rule <code>70-cursorpie.rules</code> that ships in the package; per-app profiles work on KDE Plasma, Hyprland, GNOME (with the extension) and, mostly, Sway. Wayland support has not yet been run on real hardware, and a tray icon is not available yet.</p></details>
+          <details><summary>Is Linux Wayland supported?</summary><p>Yes, but it is experimental; X11 is pre-stable. CursorPie works in X11 and in Wayland sessions. On Wayland it grabs the mouse through <code>/dev/input</code>, so it needs the udev rule <code>70-cursorpie.rules</code> that ships in the package; per-app profiles work on KDE Plasma, Hyprland, GNOME (with the extension) and, mostly, Sway. Wayland support has not yet been run on real hardware, and a tray icon is not available yet. See the <a href="./index.html?doc=docs/user/linux.md">Linux guide</a>.</p></details>
         </div>
       </div>
     </section>
@@ -220,20 +220,35 @@
       <aside class="docs-sidebar" aria-label="Documentation pages">
         <h3>Documentation</h3>
         <a href="?doc=docs/README.md" data-doc-file="docs/README.md"><span class="icon" aria-hidden="true">&#xe23a;</span> Overview</a>
-        <a href="?doc=docs/INSTALL.md" data-doc-file="docs/INSTALL.md"><span class="icon" aria-hidden="true">&#xe20c;</span> Installation</a>
-        <a href="?doc=docs/USER_GUIDE.md" data-doc-file="docs/USER_GUIDE.md"><span class="icon" aria-hidden="true">&#xe0e6;</span> User guide</a>
-        <a href="?doc=docs/CONFIGURATION.md" data-doc-file="docs/CONFIGURATION.md"><span class="icon" aria-hidden="true">&#xe434;</span> Configuration</a>
-        <a href="?doc=docs/KNOWN_ISSUES.md" data-doc-file="docs/KNOWN_ISSUES.md"><span class="icon" aria-hidden="true">&#xe4e0;</span> Known issues</a>
+        <h3 style="margin-top:18px">Using CursorPie</h3>
+        <a href="?doc=docs/user/getting-started.md" data-doc-file="docs/user/getting-started.md"><span class="icon" aria-hidden="true">&#xe13a;</span> Getting started</a>
+        <a href="?doc=docs/user/install.md" data-doc-file="docs/user/install.md"><span class="icon" aria-hidden="true">&#xe20c;</span> Installation</a>
+        <a href="?doc=docs/user/README.md" data-doc-file="docs/user/README.md"><span class="icon" aria-hidden="true">&#xe0e6;</span> User guide</a>
+        <a href="?doc=docs/user/using-the-pie.md" data-doc-file="docs/user/using-the-pie.md"><span class="icon" aria-hidden="true">&#xe0e6;</span> Using the pie</a>
+        <a href="?doc=docs/user/profiles-and-buttons.md" data-doc-file="docs/user/profiles-and-buttons.md"><span class="icon" aria-hidden="true">&#xe0e6;</span> Profiles and mouse buttons</a>
+        <a href="?doc=docs/user/trackpad.md" data-doc-file="docs/user/trackpad.md"><span class="icon" aria-hidden="true">&#xe586;</span> Trackpad hold</a>
+        <a href="?doc=docs/user/flows.md" data-doc-file="docs/user/flows.md"><span class="icon" aria-hidden="true">&#xe0e6;</span> Flows</a>
+        <a href="?doc=docs/user/settings.md" data-doc-file="docs/user/settings.md"><span class="icon" aria-hidden="true">&#xe434;</span> Settings and backups</a>
+        <a href="?doc=docs/user/linux.md" data-doc-file="docs/user/linux.md"><span class="icon" aria-hidden="true">&#xe4e0;</span> Linux</a>
+        <a href="?doc=docs/user/updates.md" data-doc-file="docs/user/updates.md"><span class="icon" aria-hidden="true">&#xe0e6;</span> Updates</a>
+        <a href="?doc=docs/user/configuration.md" data-doc-file="docs/user/configuration.md"><span class="icon" aria-hidden="true">&#xe434;</span> Configuration</a>
+        <a href="?doc=docs/user/known-issues.md" data-doc-file="docs/user/known-issues.md"><span class="icon" aria-hidden="true">&#xe4e0;</span> Known issues</a>
+        <h3 style="margin-top:18px">Flows &amp; extension authors</h3>
+        <a href="?doc=docs/FLOWS_FOR_AI.md" data-doc-file="docs/FLOWS_FOR_AI.md"><span class="icon" aria-hidden="true">&#xe0e6;</span> Flows for AI agents</a>
+        <a href="?doc=docs/examples/README.md" data-doc-file="docs/examples/README.md"><span class="icon" aria-hidden="true">&#xe0e6;</span> Example flows</a>
+        <a href="?doc=docs/PANELS.md" data-doc-file="docs/PANELS.md"><span class="icon" aria-hidden="true">&#xe0e6;</span> Panels</a>
+        <a href="?doc=docs/BROWSER_EXTENSION.md" data-doc-file="docs/BROWSER_EXTENSION.md"><span class="icon" aria-hidden="true">&#xe0e6;</span> Browser extension</a>
         <a href="?doc=docs/DEBUGGING.md" data-doc-file="docs/DEBUGGING.md"><span class="icon" aria-hidden="true">&#xeae8;</span> Debugging</a>
-        <h3 style="margin-top:18px">Project & engineering</h3>
+        <h3 style="margin-top:18px">Project &amp; engineering</h3>
         <a href="?doc=CONTRIBUTING.md" data-doc-file="CONTRIBUTING.md"><span class="icon" aria-hidden="true">&#xe576;</span> Contributing</a>
         <a href="?doc=CHANGELOG.md" data-doc-file="CHANGELOG.md"><span class="icon" aria-hidden="true">&#xe1a0;</span> Changelog</a>
-        <a href="?doc=docs/LINUX_MIGRATION.md" data-doc-file="docs/LINUX_MIGRATION.md"><span class="icon" aria-hidden="true">&#xe6a2;</span> Linux migration</a>
-        <a href="?doc=docs/WAYLAND_SUPPORT.md" data-doc-file="docs/WAYLAND_SUPPORT.md"><span class="icon" aria-hidden="true">&#xe6a2;</span> Wayland support plan</a>
-        <a href="?doc=docs/WINDOWS_MIGRATION.md" data-doc-file="docs/WINDOWS_MIGRATION.md"><span class="icon" aria-hidden="true">&#xe32e;</span> Windows migration</a>
-        <a href="?doc=docs/OTHER_DESKTOPS.md" data-doc-file="docs/OTHER_DESKTOPS.md"><span class="icon" aria-hidden="true">&#xe586;</span> Other desktops</a>
-        <a href="?doc=docs/UI_DESIGN.md" data-doc-file="docs/UI_DESIGN.md"><span class="icon" aria-hidden="true">&#xe150;</span> UI design</a>
-        <a href="?doc=docs/TRACKPAD_HAPTICS_PLAN.md" data-doc-file="docs/TRACKPAD_HAPTICS_PLAN.md"><span class="icon" aria-hidden="true">&#xe586;</span> Trackpad and haptics plan</a>
+        <a href="?doc=docs/developer/README.md" data-doc-file="docs/developer/README.md"><span class="icon" aria-hidden="true">&#xe6a2;</span> Developer guide</a>
+        <a href="?doc=docs/developer/LINUX_MIGRATION.md" data-doc-file="docs/developer/LINUX_MIGRATION.md"><span class="icon" aria-hidden="true">&#xe6a2;</span> Linux migration</a>
+        <a href="?doc=docs/developer/WAYLAND_SUPPORT.md" data-doc-file="docs/developer/WAYLAND_SUPPORT.md"><span class="icon" aria-hidden="true">&#xe6a2;</span> Wayland support plan</a>
+        <a href="?doc=docs/developer/WINDOWS_MIGRATION.md" data-doc-file="docs/developer/WINDOWS_MIGRATION.md"><span class="icon" aria-hidden="true">&#xe32e;</span> Windows migration</a>
+        <a href="?doc=docs/developer/OTHER_DESKTOPS.md" data-doc-file="docs/developer/OTHER_DESKTOPS.md"><span class="icon" aria-hidden="true">&#xe586;</span> Other desktops</a>
+        <a href="?doc=docs/developer/UI_DESIGN.md" data-doc-file="docs/developer/UI_DESIGN.md"><span class="icon" aria-hidden="true">&#xe150;</span> UI design</a>
+        <a href="?doc=docs/developer/TRACKPAD_HAPTICS_PLAN.md" data-doc-file="docs/developer/TRACKPAD_HAPTICS_PLAN.md"><span class="icon" aria-hidden="true">&#xe586;</span> Trackpad and haptics plan</a>
         <div class="sidebar-note"><span class="icon" aria-hidden="true">&#xe23a;</span><p>Pages are rendered from the original <code>.md</code> files. Edit the Markdown in the repository to update this site.</p></div>
       </aside>
       <article class="markdown" id="markdown-content" aria-live="polite">
@@ -259,16 +274,16 @@
         <h4>Learn</h4>
         <ul>
           <li><a href="./index.html?doc=docs/README.md"><span class="icon" aria-hidden="true">&#xe0e6;</span>Documentation</a></li>
-          <li><a href="./index.html?doc=docs/INSTALL.md"><span class="icon" aria-hidden="true">&#xe20c;</span>Installation</a></li>
-          <li><a href="./index.html?doc=docs/USER_GUIDE.md"><span class="icon" aria-hidden="true">&#xe2dc;</span>User guide</a></li>
-          <li><a href="./index.html?doc=docs/CONFIGURATION.md"><span class="icon" aria-hidden="true">&#xe434;</span>Configuration</a></li>
+          <li><a href="./index.html?doc=docs/user/install.md"><span class="icon" aria-hidden="true">&#xe20c;</span>Installation</a></li>
+          <li><a href="./index.html?doc=docs/user/README.md"><span class="icon" aria-hidden="true">&#xe2dc;</span>User guide</a></li>
+          <li><a href="./index.html?doc=docs/user/configuration.md"><span class="icon" aria-hidden="true">&#xe434;</span>Configuration</a></li>
         </ul>
       </nav>
       <nav class="footer-col" aria-label="Project">
         <h4>Project</h4>
         <ul>
           <li><a href="./index.html?doc=CHANGELOG.md"><span class="icon" aria-hidden="true">&#xe1a0;</span>Changelog</a></li>
-          <li><a href="./index.html?doc=docs/KNOWN_ISSUES.md"><span class="icon" aria-hidden="true">&#xe4e0;</span>Known issues</a></li>
+          <li><a href="./index.html?doc=docs/user/known-issues.md"><span class="icon" aria-hidden="true">&#xe4e0;</span>Known issues</a></li>
           <li><a href="./index.html?doc=CONTRIBUTING.md"><span class="icon" aria-hidden="true">&#xe2a8;</span>Contributing</a></li>
           <li><a href="https://github.com/sebastvnd/cursorpie/issues" target="_blank" rel="noopener"><span class="icon" aria-hidden="true">&#xe5f4;</span>Report an issue</a></li>
         </ul>

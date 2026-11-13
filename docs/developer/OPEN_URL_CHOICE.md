@@ -2,7 +2,7 @@
 
 An *Open app* slice offers two round badges when its app runs: a green **+** (a new window) and a yellow one (the app
 that is open). An *Open URL* slice with an `http(s)` link offers the same two badges, **only with the browser
-extension** (Settings > Behavior > Browser extension, see `docs/BROWSER_BRIDGE.md`).
+extension** (Settings > Behavior > Browser extension, see `docs/developer/BROWSER_BRIDGE.md`).
 
 | | What the slice does |
 |---|---|

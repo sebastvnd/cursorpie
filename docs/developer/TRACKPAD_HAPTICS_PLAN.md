@@ -465,10 +465,10 @@ When the work lands, in the same pull requests as the code:
 
 | File | Change |
 |---|---|
-| `docs/USER_GUIDE.md` | A "Trackpad" section: the gestures table, fingers, the extra click, the system settings to turn off, haptics |
-| `docs/CONFIGURATION.md` | The seven fields in the field table and the example |
-| `docs/KNOWN_ISSUES.md` | macOS: private framework, system gesture conflicts, no Magic Mouse surface, haptics need a Force Touch trackpad |
-| `docs/INSTALL.md` | The permissions section, if S7 finds one |
+| `docs/user/README.md` | A "Trackpad" section: the gestures table, fingers, the extra click, the system settings to turn off, haptics |
+| `docs/user/configuration.md` | The seven fields in the field table and the example |
+| `docs/user/known-issues.md` | macOS: private framework, system gesture conflicts, no Magic Mouse surface, haptics need a Force Touch trackpad |
+| `docs/user/install.md` | The permissions section, if S7 finds one |
 | `docs/DEBUGGING.md` | The `touch` category and its events |
 | `src/guides/architecture.rs` and `extending.rs` | The touch source and the recognizer; the recipe "Add a gesture source" |
 | `docs/README.md` | The status of this record changes from plan to done |

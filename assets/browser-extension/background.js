@@ -1,4 +1,4 @@
-// CursorPie Bridge: the browser side of CursorPie (see docs/BROWSER_BRIDGE.md and
+// CursorPie Bridge: the browser side of CursorPie (see docs/developer/BROWSER_BRIDGE.md and
 // docs/BROWSER_EXTENSION.md).
 //
 // Everything goes through native messaging with the CursorPie app on this computer (nothing goes

@@ -13,7 +13,7 @@
 //!
 //! A way that would work on Sway (a transparent layer-shell surface that reads the pointer when it
 //! enters, as `wl-find-cursor` does) needs a Wayland client in this program, which it does not have
-//! yet (`docs/WAYLAND_SUPPORT.md`, milestone W3).
+//! yet (`docs/developer/WAYLAND_SUPPORT.md`, milestone W3).
 //!
 //! **How it is asked.** `$SWAYSOCK` is a Unix socket. A message is `i3-ipc`, the length of the
 //! payload and the message type (both 32 bits, in the byte order of the machine), then the payload;

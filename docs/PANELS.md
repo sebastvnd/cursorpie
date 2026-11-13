@@ -201,7 +201,7 @@ in `src/panel/design.rs` (tested); the drawing is in `src/ui/settings/panel_desi
 
 ## From the browser extension
 
-The extension talks to the app over the bridge (`docs/BROWSER_BRIDGE.md`). Three messages:
+The extension talks to the app over the bridge (`docs/developer/BROWSER_BRIDGE.md`). Three messages:
 
 | Direction | Message |
 |---|---|

@@ -1,5 +1,5 @@
 //! The Wayland backend of the Linux platform layer: what the facade functions of `backend.rs` call
-//! in a Wayland session. See `docs/WAYLAND_SUPPORT.md`.
+//! in a Wayland session. See `docs/developer/WAYLAND_SUPPORT.md`.
 //!
 //! * [`Sink`] and the registry below: where the events the mouse layer keeps are written (a clone
 //!   of the mouse, made with `/dev/uinput`), and where a click the state machine re-posts goes.

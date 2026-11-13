@@ -64,7 +64,7 @@ pub fn hints(f: &Facts) -> Vec<&'static str> {
         v.push(
             "This is a Wayland session without an X display. CursorPie's Wayland layer takes the \
              touchpad while a hold runs, so it needs read access to it: install the udev rule \
-             (70-cursorpie.rules, see docs/WAYLAND_SUPPORT.md) or be in the `input` group, then \
+             (70-cursorpie.rules, see docs/developer/WAYLAND_SUPPORT.md) or be in the `input` group, then \
              log in again.",
         );
     }

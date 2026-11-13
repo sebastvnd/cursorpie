@@ -8,6 +8,11 @@
 ; the program uses when it installs itself from the zip, so the two never leave two copies behind.
 ; Settings in %APPDATA%\CursorPie are never touched, not even by the uninstaller.
 ;
+; The wizard shows one note (see InitializeWizard) about programs that run as administrator, which
+; Windows shields from the input of a normal program. It is a page, so silent runs (the update that
+; CursorPie installs by itself, deployment tools) skip it. Keep its wording in step with
+; src/platform/windows/install.rs and docs/user/known-issues.md.
+;
 ; Keep AppName, the publisher and the URLs in step with src/about.rs when rebranding.
 
 #ifndef AppVersion
@@ -80,6 +85,24 @@ Filename: "{app}\{#AppExe}"; Description: "Start {#AppName} now"; Flags: nowait 
 Filename: "{app}\{#AppExe}"; Flags: nowait runasoriginaluser skipifnotsilent; Check: RestartAfterUpdate
 
 [Code]
+var
+  AdminNotePage: TOutputMsgWizardPage;
+
+// A page after the license: the one thing that makes people think CursorPie is broken on Windows.
+procedure InitializeWizard;
+begin
+  AdminNotePage := CreateOutputMsgPage(wpLicense,
+    'Before you start',
+    'Programs that run as administrator',
+    'Windows does not let a normal program send clicks or shortcuts to a window that runs as ' +
+    'administrator (for example Task Manager, or a terminal opened with Run as administrator). ' +
+    'In those windows CursorPie does nothing, and that is a Windows rule, not a fault.' + #13#10 + #13#10 +
+    'Every other program works normally and CursorPie needs no administrator rights.' + #13#10 + #13#10 +
+    'If you need the pie in elevated windows too, start CursorPie as administrator: ' +
+    'right-click the CursorPie shortcut and choose Run as administrator. ' +
+    'More: Known issues in the documentation.');
+end;
+
 // Ends every running copy of the program. It is a tray app without a window, so Setup cannot
 // close it politely, and a running .exe cannot be replaced or deleted.
 procedure StopCursorPie;

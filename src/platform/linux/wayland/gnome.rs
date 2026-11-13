@@ -8,7 +8,7 @@
 //! (a new extension is only found after a log out on Wayland), which is why the report text
 //! ([`enable_steps`]) says how. CursorPie never writes into GNOME's configuration.
 //!
-//! **Not run.** See `docs/WAYLAND_SUPPORT.md`.
+//! **Not run.** See `docs/developer/WAYLAND_SUPPORT.md`.
 
 /// The extension's id: the name of its directory and what `gnome-extensions enable` is given.
 pub(crate) const EXTENSION_UUID: &str = "cursorpie-adapter@sebastvnd.github.io";

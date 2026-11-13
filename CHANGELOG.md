@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+## 0.8.14
+
+- **The Windows setup now says that programs running as administrator ignore the pie.** Many people thought
+  CursorPie was broken when its slices did nothing in Task Manager or an elevated terminal: Windows does not let a
+  normal program send input to those windows (UIPI), and that was written only in Settings and the docs. The setup
+  wizard now has a short page after the license that explains it and how to run CursorPie as administrator, and
+  the question that the first start from the zip asks says the same in one sentence. Silent installs and the
+  automatic update skip the wizard page, as every page. `docs/user/install.md` and `known-issues.md` explain the
+  cost of running as administrator (a UAC prompt at each start, and shell commands with full rights).
+
+- **Fixed (Wayland): the cursor sometimes seemed to vanish when the pie opened.** In a Wayland session the pie of a
+  mouse hold let the pointer through to the window below, so that window kept the say over the cursor image: a
+  terminal, editor, browser or video player that had hidden its cursor (after typing, or after a moment without
+  movement) kept it hidden while the pie was open, and the person saw a pie and no cursor. The pie of a mouse hold
+  now takes the pointer, as the pie of a trackpad hold already did (the cursor is a plain arrow and the app below
+  hears nothing), and lets it through again when it hides. The pie of the menu-bar preview never takes it. Sessions
+  on X11, macOS and Windows are unchanged.
+
+- **Fixed: the notice and a panel still jerked against each other, and the old panel flashed when the pie came.**
+  The notice used to be hidden when it was over and the window mapped again for the panel, so the screen was bare
+  for a moment and the keyboard focus was given away and asked for again (the pill seemed to stutter before the
+  panel came). Now the window goes straight from the faded notice to the panel without being hidden, and the panel
+  only asks for the keyboard while it does not have it. A panel that was closed left its last frame in the hidden
+  window, and the next window to come up (the pie) showed it for a moment before its own first frame: the window
+  now draws one empty frame before it is hidden.
+
+- **Fixed: the notice pill vanished the moment a panel came up.** The pill and a panel share one window, and a
+  panel that arrived while the pill was on screen (a flow that shows a notice and then asks something, or opens
+  its progress panel) hid the pill at once, in the middle of its animation. It looked like something had gone
+  wrong. Now the pill finishes coming in, goes away with its usual fade and sink, and the panel opens as soon as
+  the window is free (a fraction of a second later). Notes that arrive while the pill is leaving no longer bring
+  it back, and no new pill appears while a panel waits for the window. The pie and Settings still take the window
+  at once, as before.
+
 ## 0.8.13
 
 - Publish crates v.0.8.12

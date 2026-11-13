@@ -1,7 +1,7 @@
 //! The Windows touch source: the contact reports of a Precision Touchpad, through Raw Input.
 //!
 //! **Everything here is a design assumption until spikes W1 to W5 of
-//! `docs/TRACKPAD_HAPTICS_PLAN.md` are answered on a Windows laptop.** Unlike macOS, Windows has a
+//! `docs/developer/TRACKPAD_HAPTICS_PLAN.md` are answered on a Windows laptop.** Unlike macOS, Windows has a
 //! public interface for this: a program registers for the HID *Digitizer / Touch Pad* usage page
 //! with `RegisterRawInputDevices` and gets one `WM_INPUT` per report, even when it is in the
 //! background (`RIDEV_INPUTSINK`). Nothing private is loaded, and nothing is registered unless the

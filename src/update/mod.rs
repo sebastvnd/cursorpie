@@ -4,7 +4,7 @@
 //! is one, offers it once that day (a sheet over Settings) and always shows it in the About tab. The
 //! same on macOS, Windows and Linux. Nothing is downloaded until the person presses *Install update*;
 //! then [`install`] downloads the package for their system from the release's own address, checks it
-//! against the checksum GitHub publishes, swaps it in and starts the new version (see `docs/UPDATES.md`).
+//! against the checksum GitHub publishes, swaps it in and starts the new version (see `docs/user/updates.md`).
 //! Where that is not possible (a copy that is not an ordinary install, a folder that cannot be
 //! written) the person is sent to the release page instead. No address from the network is ever
 //! opened or downloaded: the page is the constant [`LATEST_RELEASE_URL`](crate::about::LATEST_RELEASE_URL) and the package's address is

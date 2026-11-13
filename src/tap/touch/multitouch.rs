@@ -1,7 +1,7 @@
 //! The macOS touch source: contact frames from Apple's private `MultitouchSupport.framework`.
 //!
 //! **Everything here is a design assumption until spikes S1, S5, S7 and S10 of
-//! `docs/TRACKPAD_HAPTICS_PLAN.md` are answered on a real Mac.** No public API gives a background
+//! `docs/developer/TRACKPAD_HAPTICS_PLAN.md` are answered on a real Mac.** No public API gives a background
 //! app the number and position of the fingers on a trackpad; the private framework is the one the
 //! open-source tools use. To keep a macOS update from ever stopping the app:
 //!

@@ -5,7 +5,7 @@
 //! story with different words, so this module translates touches into the calls a mouse press, drag
 //! and release make. The pie, the profiles, the app detection and the actions do not change, and
 //! with the trackpad trigger off (the default) nothing here runs. The design, and what is still
-//! to be confirmed on a real Mac and a real Windows laptop, is in `docs/TRACKPAD_HAPTICS_PLAN.md`.
+//! to be confirmed on a real Mac and a real Windows laptop, is in `docs/developer/TRACKPAD_HAPTICS_PLAN.md`.
 //!
 //! | Part | What it does | Where it is tested |
 //! |---|---|---|

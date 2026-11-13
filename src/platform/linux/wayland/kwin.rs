@@ -1,6 +1,6 @@
 //! The KDE Plasma adapter: where the pointer is, which windows there are, which app is under the
 //! pointer, and bringing a window forward. KWin is the only one that knows, and a Wayland client
-//! cannot ask it directly (`docs/WAYLAND_SUPPORT.md`, "Research"), so a small script runs *inside*
+//! cannot ask it directly (`docs/developer/WAYLAND_SUPPORT.md`, "Research"), so a small script runs *inside*
 //! KWin and talks to CursorPie over D-Bus.
 //!
 //! This file is the pure part and the state, built and tested on every OS:

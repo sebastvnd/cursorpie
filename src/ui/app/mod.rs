@@ -141,6 +141,12 @@ pub struct App {
     /// Linux: the window was asked to appear and is kept unmapped until it has its size and an empty
     /// frame was drawn, see `App::show_window`. While set, nothing is drawn.
     pub show_wait: Option<ShowWait>,
+    /// Linux: transparent frames still to draw *after* the window was mapped. Under XWayland the
+    /// surface only exists once the window is mapped, so the frames drawn before that never reach
+    /// the compositor; the first buffer it sees must be empty as well. While above 0 nothing is drawn.
+    pub settle_frames: u8,
+    /// Until when the window is repainted on a timer after a file chooser closed (see `Msg::Refocus`).
+    pub repaint_until: Option<Instant>,
     /// Some(true) = closing and saving, Some(false) = closing without saving
     pub closing: Option<bool>,
     pub card_size: Vec2,
@@ -207,6 +213,8 @@ impl App {
             settings_anim: 0.0,
             settings_wait: None,
             show_wait: None,
+            settle_frames: 0,
+            repaint_until: None,
             closing: None,
             card_size: egui::vec2(CARD_SIZE[0], CARD_SIZE[1]),
             toast: None,
@@ -270,6 +278,7 @@ impl eframe::App for App {
             self.handle_msg(ctx, msg);
         }
         self.step_show_wait(ctx);
+        self.step_repaint_burst(ctx);
         self.step_hud(ctx);
         self.step_panel(ctx);
         self.panel_close_requested(ctx);
@@ -310,6 +319,10 @@ impl eframe::App for App {
         crate::ui::settings::theme::apply_appearance(ui.ctx(), appearance);
         if self.show_wait.is_some() {
             // waiting to be mapped: draw nothing, so the buffer shown first is fully transparent
+        } else if self.settle_frames > 0 {
+            // just mapped: the compositor has no buffer of ours yet, keep it empty a little longer
+            self.settle_frames -= 1;
+            ui.ctx().request_repaint();
         } else if self.settings_open && self.welcome.is_some() {
             self.welcome_ui(ui);
         } else if self.settings_open {

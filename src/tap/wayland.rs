@@ -1,5 +1,5 @@
 //! Wayland event layer: the mouse is grabbed through evdev and everything the state machine does
-//! not keep is written to a clone of it. See `docs/WAYLAND_SUPPORT.md`.
+//! not keep is written to a clone of it. See `docs/developer/WAYLAND_SUPPORT.md`.
 //!
 //! ```text
 //! physical mouse --EVIOCGRAB--> this thread --Ev--> tap::dispatch (unchanged)

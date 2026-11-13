@@ -1,6 +1,6 @@
 # Wayland support: research and plan
 
-**Status: research, plan, and an implementation of W1, W2 and W4 (7 November 2026). The code compiles, `cargo tools ci`
+**Status: Wayland is experimental.** Research, plan, and an implementation of W1, W2 and W4 (7 November 2026). The code compiles, `cargo tools ci`
 passes (clippy, 680+ tests), and it has not been run on a Plasma 6.8 machine.** What was written, what was not, and what rests on an assumption is
 listed in [Implementation status](#implementation-status).
 
@@ -119,7 +119,7 @@ not changed (D1).
 | W5 | COSMIC, niri and other compositors: no adapter | capture and shortcuts work, per-app features are off, and the report says so (see [Other compositors](#other-compositors-w5) for why each is missing) |
 | W5 | Hyprland, Sway and GNOME adapters, **written but not run on any of them** | see [Other compositors](#other-compositors-w5) |
 | W6 | `.deb`, `.rpm`; `install.sh` installing the udev rule (it only prints the command); the matrix of the checklist | none |
-| Docs | `INSTALL.md`, `KNOWN_ISSUES.md`, `README.md`, `USER_GUIDE.md` now describe the Wayland layer as written but unverified; they drop "experimental" only once the checklist passes | final wording after the checklist |
+| Docs | `user/install.md`, `user/known-issues.md`, `user/linux.md`, `README.md` now describe the Wayland layer as written but unverified; X11 is called *pre-stable* and Wayland stays *experimental* until the checklist below passes (see [user/linux.md](../user/linux.md#support-level)) | final wording after the checklist |
 
 ### Written from documentation, not confirmed (look here first if something fails)
 
@@ -176,7 +176,7 @@ answered by XWayland for X clients only [assume: confirm in SW1]. This is the si
 
 ## What CursorPie does in a Plasma 6.8 session today
 
-All read from the code of version 0.8.4:
+This section describes the state **before** the Wayland layer existed (read from the code of version 0.8.4); it is kept as the motivation. The Wayland layer described in [Implementation status](#implementation-status) has since been added:
 
 - `Cargo.toml` enables only the `x11` window system of eframe on Linux, on purpose: "in a Wayland session the window
   then runs through XWayland, where it can be placed under the pointer" [code].
@@ -467,7 +467,7 @@ to `LINUX_MIGRATION.md`'s checklist when W2 is built. Nothing here has been run.
 
 Done in the same change as this page: this page; its row in the index (`docs/README.md`) and in the website's list
 (`index.html`, `assets/site.js`, `sitemap.xml`, `README-WEBSITE.md`); a pointer from `LINUX_MIGRATION.md`;
-the Linux limits in `KNOWN_ISSUES.md`, `INSTALL.md`, `CONTRIBUTING.md` and `README.md` now say that Plasma 6.8 has no
+the Linux limits in `docs/user/known-issues.md`, `docs/user/install.md`, `CONTRIBUTING.md` and `README.md` now say that Plasma 6.8 has no
 X11 session and link here. They still say Wayland is not supported, because it is not yet.
 
 To do with the code: the texts in `ui/settings/tabs/general.rs` and `ui/settings/welcome.rs` that tell the user to log in

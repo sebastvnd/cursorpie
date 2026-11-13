@@ -3,7 +3,7 @@
 //! X11 sessions use the X11 backend (`x11`); a Wayland session uses the Wayland one (`wayland`, chosen
 //! once from the session, see `wayland::active`), which answers first and leaves the X11 code as the
 //! fallback for what it does not know yet. This first release supports X11 sessions (and XWayland for the windows it can see). What it does
-//! not do yet, and why, is listed in `docs/LINUX_MIGRATION.md`: a tray icon and keyboard-layout
+//! not do yet, and why, is listed in `docs/developer/LINUX_MIGRATION.md`: a tray icon and keyboard-layout
 //! labels fall back to the same behavior as the stub, and Wayland-native windows are invisible to
 //! it.
 

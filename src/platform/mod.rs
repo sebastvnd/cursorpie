@@ -7,7 +7,7 @@
 //! |---|---|---|
 //! | `macos` | `target_os = "macos"` | Core Graphics, AppKit, TIS, LaunchAgent |
 //! | `windows` | `windows` | Win32 through `windows-sys` |
-//! | `linux` | `target_os = "linux"` | X11 through Xlib, XInput2, XTest and XRandR (see `docs/LINUX_MIGRATION.md`) |
+//! | `linux` | `target_os = "linux"` | X11 through Xlib, XInput2, XTest and XRandR (see `docs/developer/LINUX_MIGRATION.md`) |
 //! | `stub` | anything else | does nothing; only exists so `cargo test` runs on other Unixes |
 //!
 //! Every backend provides the same functions (the list is in the table below); a missing or
@@ -195,7 +195,7 @@ impl Os {
     pub const fn trigger_buttons(self) -> &'static [i64] {
         match self {
             Os::Mac => &[2, 5, 6, 7],
-            // Linux: extra buttons have no stable numbers yet (docs/LINUX_MIGRATION.md, Appendix B)
+            // Linux: extra buttons have no stable numbers yet (docs/developer/LINUX_MIGRATION.md, Appendix B)
             Os::Windows | Os::Linux => &[2],
         }
     }
@@ -417,7 +417,7 @@ mod tests {
         assert!(!Os::Linux.has_tray());
         assert!(Os::Mac.has_tray() && Os::Windows.has_tray());
         // a Mac trackpad, a Windows precision touchpad and a Linux (X11) touchpad can open the pie
-        // by touch (docs/TRACKPAD_HAPTICS_PLAN.md); only the Mac one ticks
+        // by touch (docs/developer/TRACKPAD_HAPTICS_PLAN.md); only the Mac one ticks
         assert!(Os::Mac.has_trackpad() && Os::Windows.has_trackpad() && Os::Linux.has_trackpad());
         assert!(Os::Mac.has_haptics());
         assert!(!Os::Windows.has_haptics() && !Os::Linux.has_haptics());

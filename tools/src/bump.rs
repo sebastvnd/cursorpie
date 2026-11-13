@@ -463,7 +463,7 @@ fn manual_steps(
     }
     steps.push(
         "Build on each OS (scripts/bundle.sh, scripts/package-windows.ps1), run the manual \
-         checklists (docs/WINDOWS_MIGRATION.md, docs/UI_DESIGN.md) and attach the .app (zipped) \
+         checklists (docs/developer/WINDOWS_MIGRATION.md, docs/developer/UI_DESIGN.md) and attach the .app (zipped) \
          and CursorPie-windows.zip to a GitHub release. Push with `git push --follow-tags`."
             .to_string(),
     );

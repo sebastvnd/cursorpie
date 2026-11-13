@@ -13,7 +13,7 @@
 //!   (press and release both swallowed, then sent again) is reliable. Handing a **drag** back to the
 //!   app while the button is still down is best effort: the server may drop a press of a button it
 //!   believes is already down, so the app can miss the start of the drag (see
-//!   `docs/LINUX_MIGRATION.md`, S2).
+//!   `docs/developer/LINUX_MIGRATION.md`, S2).
 //! * A side-button press the state machine wants to keep (no mode set) is sent again when the
 //!   button is released, which is the same click one moment later.
 //! * While CursorPie is paused the grabs are lifted, so every event reaches the apps untouched.

@@ -25,7 +25,7 @@
 //!
 //! The look is modern flat: a light, roomy window with large rounded cards, pill-shaped chips, one
 //! icon set, the Inter font and one accent color. Anything that opens on top of a page is a sheet or a
-//! popover (see `widgets`). See the `theme` module for the rules and `docs/UI_DESIGN.md` for the
+//! popover (see `widgets`). See the `theme` module for the rules and `docs/developer/UI_DESIGN.md` for the
 //! reasoning.
 
 mod action_editor;

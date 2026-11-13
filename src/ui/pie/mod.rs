@@ -116,10 +116,19 @@ impl App {
             }
         }
 
+        if self.pie_open {
+            // when the pie takes the pointer (a trackpad hold, a mouse hold on Wayland) the cursor
+            // is the one of this window: a plain arrow, not whatever the last widget left behind
+            ctx.set_cursor_icon(egui::CursorIcon::Default);
+        }
         if !self.pie_open && self.anim <= 0.0 {
             if self.visible {
                 self.visible = false;
                 self.hide_root(&ctx);
+                if !self.panel_queue.is_empty() {
+                    // a panel waited for the window (see `App::end_panel`)
+                    ctx.request_repaint();
+                }
             }
             return;
         }

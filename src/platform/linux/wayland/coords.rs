@@ -1,4 +1,4 @@
-//! Where to put the pie window in a Wayland session (decision D7 of `docs/WAYLAND_SUPPORT.md`).
+//! Where to put the pie window in a Wayland session (decision D7 of `docs/developer/WAYLAND_SUPPORT.md`).
 //!
 //! The pointer and the outputs come from KWin, in compositor points. The pie is still a window
 //! of the X11 toolkit, which runs through XWayland and places it in *its* points: X pixels divided

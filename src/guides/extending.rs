@@ -44,7 +44,7 @@
 //!    config, which *Save* applies).
 //! 5. Use it where needed with `let v = cfg().field;`. **Copy the value out and drop the guard**
 //!    instead of holding the lock across slow work.
-//! 6. Document it in the field table of `docs/CONFIGURATION.md`, and in `docs/USER_GUIDE.md` if users see it.
+//! 6. Document it in the field table of `docs/user/configuration.md`, and in `docs/user/README.md` if users see it.
 //!
 //! ## Add a ready-made slice
 //!
@@ -116,7 +116,7 @@
 //! ## Keep the Settings look consistent
 //!
 //! The Settings window is modern flat: light, roomy, with large rounded cards, pill chips and one
-//! icon set (see `docs/UI_DESIGN.md`). When you add or change a widget:
+//! icon set (see `docs/developer/UI_DESIGN.md`). When you add or change a widget:
 //!
 //! 1. Take colors from `pal()` (`pal().bg`, `.card`, `.idle`, `.hot`, ...: Settings is light or
 //!    dark, so never keep a color in a `const`), and radius, spacing and height from

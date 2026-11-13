@@ -3,7 +3,7 @@
 > The extension can also control the browser (media, tabs, WhatsApp / Telegram Web): see `docs/BROWSER_EXTENSION.md`.
 
 An *Open URL* slice with an `http(s)` link offers the choice **new window / the page that is open** (see
-`docs/OPEN_URL_CHOICE.md`) **only with this extension**: a browser does not tell other programs which tabs it has, and
+`docs/developer/OPEN_URL_CHOICE.md`) **only with this extension**: a browser does not tell other programs which tabs it has, and
 guessing opens the same page twice.
 
 | | Without the extension (default) | With the extension (Settings > Behavior > Browser extension) |
@@ -105,7 +105,7 @@ a program outside it and are not covered.
   store, so add it to `extension::CHROMIUM_ID` handling in `install::manifest_json`) and a Firefox add-on **signed** by
   Mozilla (unlisted signing is enough: `web-ext sign` on the `firefox` folder). `scripts/package-extension.sh` writes the
   two zips from the built program.
-* Tab matching is by address, then by site and path, then by site (the rules are in `docs/OPEN_URL_CHOICE.md`).
+* Tab matching is by address, then by site and path, then by site (the rules are in `docs/developer/OPEN_URL_CHOICE.md`).
 
 ## Command line
 

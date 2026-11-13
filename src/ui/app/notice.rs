@@ -40,10 +40,15 @@ pub(super) fn pill_center(position: HudPosition, area: Rect, at: Pos2, scale: f3
 impl App {
     /// A notice arrived from the actions worker.
     pub(super) fn hud_note(&mut self, ctx: &egui::Context, note: HudNote) {
-        if !cfg().hud || self.settings_open || self.panel.is_some() {
+        // a panel that waits for the window (see `yield_hud`) gets it without a new pill in between
+        if !cfg().hud || self.settings_open || self.panel.is_some() || !self.panel_queue.is_empty()
+        {
             return;
         }
         if let Some(h) = self.hud.as_mut() {
+            if h.is_leaving() {
+                return; // on its way out, for a panel
+            }
             // already on screen: the pill changes its text and stays a little longer
             h.update(note, Instant::now());
             ctx.request_repaint();
@@ -76,8 +81,12 @@ impl App {
         let Some((note, since)) = self.hud_pending.take() else {
             return;
         };
-        if self.settings_open || since.elapsed() > PENDING_MAX || !cfg().hud {
-            return; // too late to be of any use
+        if self.settings_open
+            || since.elapsed() > PENDING_MAX
+            || !cfg().hud
+            || !self.panel_queue.is_empty()
+        {
+            return; // too late to be of any use (or a panel is next)
         }
         if self.pie_open || self.visible {
             self.hud_pending = Some((note, since));
@@ -133,6 +142,23 @@ impl App {
         }
     }
 
+    /// A panel wants the window the notice is on. The notice does not vanish at once (that looked
+    /// like something went wrong): it finishes coming in and goes away with its usual animation, and
+    /// the panel starts when the window is free again (see [`App::step_panel`]). Returns whether a
+    /// notice is still on screen, in which case the panel has to wait for it.
+    pub(super) fn yield_hud(&mut self, ctx: &egui::Context) -> bool {
+        let Some(h) = self.hud.as_mut() else {
+            return false;
+        };
+        if !h.is_leaving() {
+            h.dismiss(Instant::now());
+            self.hud_pending = None;
+            ctx.request_repaint();
+        }
+        // (a pill that is leaving draws its own frames; nothing to ask for here)
+        true
+    }
+
     /// The pie or Settings wants the window: the notice (and one that was waiting) goes away at once.
     pub(super) fn drop_hud(&mut self, ctx: &egui::Context) {
         self.hud_pending = None;
@@ -145,13 +171,31 @@ impl App {
         }
     }
 
-    /// The notice is over: the window is hidden again.
+    /// The notice is over: the window is hidden again, or, when a panel waits for it, goes straight
+    /// to the panel.
+    ///
+    /// The pill has faded out completely by now, so the window is empty. Hiding it and mapping it
+    /// again for the panel left the screen bare for a moment (the window has to be mapped, resized
+    /// and drawn into first), and the keyboard focus was given away and asked for again. Handing
+    /// the mapped window over keeps the focus where it is and the panel's own fade-in does the rest.
     fn end_hud(&mut self, ctx: &egui::Context) {
         self.hud = None;
+        self.want_pos = None;
+        if self.panel.is_none()
+            && !self.pie_open
+            && !self.settings_open
+            && let Some(req) = self.panel_queue.pop_front()
+        {
+            self.begin_panel(ctx, req);
+            return;
+        }
         platform::set_window_passive(false);
         self.visible = false;
-        self.want_pos = None;
         self.hide_root(ctx);
+        if !self.panel_queue.is_empty() {
+            // a panel that could not start now (the pie is open): it starts when the window is free
+            ctx.request_repaint();
+        }
         self.sleep_step(ctx);
     }
 

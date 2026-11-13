@@ -5,7 +5,7 @@
 //! or remap the mouse's back/forward buttons. Every app can have its own pie ("profile").
 //!
 //! This is the documentation for **developers and contributors**. End-user documentation lives
-//! in the repository's `README.md` and the `docs/` folder (start with `docs/USER_GUIDE.md`).
+//! in the repository's `README.md` and the `docs/` folder (start with `docs/user/README.md`).
 //!
 //! The package is a library (this crate, which holds everything) plus a tiny binary
 //! (`src/main.rs`) that calls [`run`]. Keeping the code in a library lets it be documented here.
@@ -47,8 +47,8 @@
 //!
 //! macOS (11 or later), Windows (10 1809 or later) and Linux (X11 sessions). Other targets build
 //! against a do-nothing stub backend so the portable code can be unit tested there; see [`platform`].
-//! The Windows port is described in `docs/WINDOWS_MIGRATION.md`, the Linux one in
-//! `docs/LINUX_MIGRATION.md`.
+//! The Windows port is described in `docs/developer/WINDOWS_MIGRATION.md`, the Linux one in
+//! `docs/developer/LINUX_MIGRATION.md`.
 //! To read these docs locally run `cargo docs` (an alias for
 //! `cargo doc --no-deps --document-private-items --open`, see `.cargo/config.toml`).
 //! When published, docs.rs builds them for the Apple targets listed in `Cargo.toml`.
@@ -98,7 +98,7 @@ use ui::app::App;
 ///    second copy of an app that already runs exits (all three are no-ops on macOS);
 /// 2. the action worker thread is started ([`actions::init`]);
 /// 3. the eframe window is created hidden, transparent and click-through (it renders with `glow`
-///    on Windows and `wgpu` on macOS, chosen in `Cargo.toml`: see `docs/UI_DESIGN.md`);
+///    on Windows and `wgpu` on macOS, chosen in `Cargo.toml`: see `docs/developer/UI_DESIGN.md`);
 /// 4. inside eframe's creator (which runs on the **main thread**, inside the event loop) the
 ///    Dock icon is hidden, the keyboard-layout snapshot is taken (TIS needs the main thread),
 ///    the event-tap thread is spawned and the menu bar icon is created.

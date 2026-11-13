@@ -1,6 +1,6 @@
 //! Which adapter brings the pointer and the windows to CursorPie in this Wayland session.
 //!
-//! A Wayland client cannot ask for either (`docs/WAYLAND_SUPPORT.md`, "Why an X11 program cannot do
+//! A Wayland client cannot ask for either (`docs/developer/WAYLAND_SUPPORT.md`, "Why an X11 program cannot do
 //! the job"), so each compositor has to be asked in its own way. What every way produces is the
 //! same thing, a `kwin::Snapshot` and a pointer position, written to the state in `kwin.rs`; the
 //! rest of the program reads that state and does not know which compositor wrote it.
@@ -19,7 +19,7 @@
 //! answer is never far out of date.
 //!
 //! **Not run.** Everything in this file and in the adapters it starts was written from the
-//! documentation of each compositor, not run on one (see `docs/WAYLAND_SUPPORT.md`).
+//! documentation of each compositor, not run on one (see `docs/developer/WAYLAND_SUPPORT.md`).
 
 use super::super::session::{Compositor, Session};
 use serde_json::Value;

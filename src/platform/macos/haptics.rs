@@ -6,7 +6,7 @@
 //!
 //! **Thread:** [`haptic`] is called by the UI thread (the message `Msg::Haptic` is handled in
 //! `App::logic`), never by the event tap or the touch thread. Whether AppKit allows it from a
-//! background thread is spike S4 of `docs/TRACKPAD_HAPTICS_PLAN.md`; until then the main thread is used.
+//! background thread is spike S4 of `docs/developer/TRACKPAD_HAPTICS_PLAN.md`; until then the main thread is used.
 
 use crate::platform::HapticKind;
 use objc2_app_kit::{

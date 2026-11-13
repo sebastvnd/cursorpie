@@ -28,7 +28,15 @@ pub struct ShowWait {
     since: Instant,
     /// Frames seen so far with the window at that size.
     frames: u8,
+    /// Where the pie's top-left corner has to be once the window is mapped (see `App::show_pie`).
+    pub pos: Option<Pos2>,
 }
+
+/// Transparent frames drawn after the window was mapped (see [`App::settle_frames`]).
+const SETTLE_FRAMES: u8 = 2;
+
+/// How long the window is repainted on a timer after a file chooser closed.
+const REPAINT_BURST: Duration = Duration::from_millis(800);
 
 /// Whether a window of `size` (None = the system did not say) is the size `want`, give or take
 /// the rounding to whole pixels. An unknown size counts as arrived: there is nothing to wait for.
@@ -126,6 +134,7 @@ impl App {
                 want,
                 since: Instant::now(),
                 frames: 0,
+                pos: None,
             });
             ctx.request_repaint();
         } else {
@@ -156,8 +165,20 @@ impl App {
                 waited_ms = waited,
                 arrived = arrived
             );
+            let pos = wait.pos;
             self.show_wait = None;
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            self.settle_frames = SETTLE_FRAMES;
+            // KWin ignores the position a window had while it was hidden (a program-specified
+            // position is not the user's: ICCCM 4.1.2.3) and places it itself when it is mapped.
+            // A move of a window that is already mapped is honored, so ask again now, and keep
+            // watching from this moment (not from the press, the map may come 100 ms later).
+            if let Some(top_left) = pos
+                && platform::window_manager_may_recenter()
+            {
+                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(top_left));
+                self.want_pos = Some((top_left, Instant::now()));
+            }
             if self.settings_open {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             }
@@ -523,7 +544,7 @@ impl App {
         // every move reach the page below (a video player shows its controls, links highlight).
         // So the pie of a trackpad hold takes the pointer; the pie follows the cursor, so the
         // pointer stays inside it. Clicks are swallowed by the taps as before.
-        let takes_pointer = crate::tap::touch_pie_active();
+        let takes_pointer = crate::tap::touch_pie_active() || mouse_pie_takes_pointer();
         diag::log!("ui", "pie_input", takes_pointer = takes_pointer);
         ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(!takes_pointer));
         ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
@@ -557,17 +578,39 @@ impl App {
         if !self.visible {
             self.visible = true;
             self.show_window(ctx, Vec2::splat(w));
+            if let Some(wait) = self.show_wait.as_mut() {
+                wait.pos = Some(top_left); // asked again once the window is mapped
+            }
         }
         // A hidden window gets its next frame only if somebody asks for it. Without this the pie
         // could be "open" for as long as nothing else woke the window (the first press after a long
         // idle time), and the hold timer then opened Settings instead.
         ctx.request_repaint();
-        if platform::window_manager_may_recenter() {
+        if platform::window_manager_may_recenter() && self.show_wait.is_none() {
             // Once mapped, a move is a request from the client and the window manager honors
-            // it; the position given while the window was hidden is not always kept.
+            // it; the position given while the window was hidden is not always kept. (A window
+            // that is still waiting to be mapped is moved by `step_show_wait` when it is.)
             ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(top_left));
             self.want_pos = Some((top_left, Instant::now()));
             ctx.request_repaint();
+        }
+    }
+
+    /// Starts repainting on a timer for [`REPAINT_BURST`] (see `Msg::Refocus`).
+    pub(super) fn start_repaint_burst(&mut self, ctx: &egui::Context) {
+        self.repaint_until = Some(Instant::now() + REPAINT_BURST);
+        ctx.request_repaint();
+    }
+
+    /// Runs every frame: keeps the window repainting while a burst is on.
+    pub(super) fn step_repaint_burst(&mut self, ctx: &egui::Context) {
+        let Some(until) = self.repaint_until else {
+            return;
+        };
+        if Instant::now() >= until {
+            self.repaint_until = None;
+        } else {
+            ctx.request_repaint_after(Duration::from_millis(16));
         }
     }
 
@@ -591,7 +634,13 @@ impl App {
             PieHold::Move => {
                 ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(target));
             }
-            PieHold::Keep => {}
+            PieHold::Keep => {
+                // The position read back may be the one winit stored while the window was hidden,
+                // not the one the window manager gave it: for the first moments say it again.
+                if since.elapsed() < Duration::from_millis(250) {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(target));
+                }
+            }
         }
         ctx.request_repaint_after(Duration::from_millis(16));
     }
@@ -615,6 +664,8 @@ impl App {
         let at = self.cursor_or_default();
         let center = screen_rect_at(at).map_or(at, |r| r.center());
         self.show_pie(ctx, center.x as f64, center.y as f64, profile, Vec::new());
+        // a preview is not a hold: nobody is using the pie, so it never takes the pointer
+        ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(true));
         self.preview_until = Some(Instant::now() + Duration::from_millis(ms));
         // the ring colors are computed for the app the last gesture was about
         side::set_target(bundle, false);
@@ -689,6 +740,21 @@ pub(super) fn request_focus(ctx: &egui::Context) {
     if platform::OS != platform::Os::Windows {
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
     }
+}
+
+/// Whether the pie of a mouse hold also takes the pointer instead of letting it through.
+///
+/// In a Wayland session the swallowed trigger does not hold the pointer for the pie, as an X11
+/// grab or a pressed button does elsewhere: the window below the pie stays under the pointer. It
+/// sees the pointer move, and, worse, it keeps the say over the cursor image: a terminal, an editor,
+/// a browser or a video player that hid the cursor (after typing, or after a moment without
+/// movement) keeps it hidden while the pie is open, so the person sees a pie and no cursor, or one
+/// that is cut off by the pie, and does not know where the pointer is. The pie window under the
+/// pointer shows an ordinary arrow and the app below hears nothing (`WAYLAND_SUPPORT.md`, "Cursor
+/// keeps moving during the hold"). The window lets the pointer through again when the pie hides
+/// ([`Msg::HidePie`](crate::msg::Msg::HidePie)).
+fn mouse_pie_takes_pointer() -> bool {
+    crate::platform::linux::wayland::active()
 }
 
 /// What a blocked pie asks of the Settings window.

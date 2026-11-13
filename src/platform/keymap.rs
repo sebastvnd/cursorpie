@@ -1,6 +1,6 @@
 //! Key tables that translate between CursorPie's key codes and Windows keys.
 //!
-//! `config.json` stores macOS virtual key codes (see `docs/WINDOWS_MIGRATION.md`). A code is a
+//! `config.json` stores macOS virtual key codes (see `docs/developer/WINDOWS_MIGRATION.md`). A code is a
 //! *physical position*, so the Windows backend maps it to the key in the same position:
 //!
 //! * **layout keys** (letters, digits, punctuation) by PS/2 **scan code**, which is also a position

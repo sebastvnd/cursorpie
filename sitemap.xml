@@ -9,19 +9,67 @@
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/INSTALL.md</loc>
+    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/user/getting-started.md</loc>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/USER_GUIDE.md</loc>
+    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/user/install.md</loc>
     <priority>0.8</priority>
   </url>
   <url>
-    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/CONFIGURATION.md</loc>
+    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/user/README.md</loc>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/user/using-the-pie.md</loc>
     <priority>0.5</priority>
   </url>
   <url>
-    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/KNOWN_ISSUES.md</loc>
+    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/user/profiles-and-buttons.md</loc>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/user/trackpad.md</loc>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/user/flows.md</loc>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/user/settings.md</loc>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/user/configuration.md</loc>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/user/linux.md</loc>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/user/updates.md</loc>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/user/known-issues.md</loc>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/FLOWS_FOR_AI.md</loc>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/examples/README.md</loc>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/PANELS.md</loc>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/BROWSER_EXTENSION.md</loc>
     <priority>0.5</priority>
   </url>
   <url>
@@ -29,27 +77,31 @@
     <priority>0.5</priority>
   </url>
   <url>
-    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/OTHER_DESKTOPS.md</loc>
+    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/developer/README.md</loc>
     <priority>0.5</priority>
   </url>
   <url>
-    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/LINUX_MIGRATION.md</loc>
+    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/developer/OTHER_DESKTOPS.md</loc>
     <priority>0.5</priority>
   </url>
   <url>
-    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/WAYLAND_SUPPORT.md</loc>
+    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/developer/LINUX_MIGRATION.md</loc>
     <priority>0.5</priority>
   </url>
   <url>
-    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/WINDOWS_MIGRATION.md</loc>
+    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/developer/WAYLAND_SUPPORT.md</loc>
     <priority>0.5</priority>
   </url>
   <url>
-    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/UI_DESIGN.md</loc>
+    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/developer/WINDOWS_MIGRATION.md</loc>
     <priority>0.5</priority>
   </url>
   <url>
-    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/TRACKPAD_HAPTICS_PLAN.md</loc>
+    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/developer/UI_DESIGN.md</loc>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/developer/TRACKPAD_HAPTICS_PLAN.md</loc>
     <priority>0.3</priority>
   </url>
   <url>
