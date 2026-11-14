@@ -58,8 +58,8 @@ pub fn bundle_id_of(app_path: &str) -> Option<String> {
 }
 
 /// The real icon of an app: the `Icon=` of its desktop entry, found in the icon themes (see
-/// [`icontheme`]). `bundle` is an app id or a role such as `@browser`. A PNG is read directly; an
-/// SVG needs `rsvg-convert` (see [`render_svg`]). None while the desktop entries have not been
+/// `icontheme`). `bundle` is an app id or a role such as `@browser`. A PNG is read directly; an
+/// SVG needs `rsvg-convert` (see `render_svg`). None while the desktop entries have not been
 /// scanned yet (the icon is asked for again a little later), for an app without an entry or icon,
 /// and when no file can be read; the pie then shows its own glyph.
 pub fn app_icon(bundle: &str) -> Option<NativeIcon> {
@@ -308,7 +308,7 @@ pub(crate) fn x_button_for(button: i64) -> Option<i32> {
     }
 }
 
-/// The mice the kernel lists right now, with the extra buttons each one has (see [`inputdev`]). Empty
+/// The mice the kernel lists right now, with the extra buttons each one has (see `inputdev`). Empty
 /// when the list cannot be read (the app then relies on a scan in Settings).
 pub fn mouse_devices() -> Vec<crate::mouse::Device> {
     std::fs::read_to_string("/proc/bus/input/devices")
@@ -366,7 +366,7 @@ static RAISE_WAITING: AtomicBool = AtomicBool::new(false);
 ///
 /// The toolkit's focus request cannot do this on X11: it is sent as an application, and a window
 /// manager that sees another program with the focus only flashes the taskbar (see
-/// [`toplevels::SOURCE_PAGER`](super::toplevels::SOURCE_PAGER)). This asks as a pager does, like
+/// `toplevels::SOURCE_PAGER`). This asks as a pager does, like
 /// "Open app" does for another app's window. The window may have been shown a moment ago and not be
 /// known to the window manager yet, so the request is repeated until it is listed. One thread
 /// waiting is enough: a request that comes while it waits is the same request.
@@ -686,7 +686,7 @@ pub fn open_url(target: &str) {
 }
 
 /// Opens a web link in a **new window** of the default browser: the browser's program is started
-/// with `--new-window <link>` when it is one that takes it (see [`roles::new_window_args`]). Any
+/// with `--new-window <link>` when it is one that takes it (see `roles::new_window_args`). Any
 /// other browser, or a system that cannot say which one it is, gets the link from `xdg-open`, which
 /// most browsers answer with a new tab.
 ///
@@ -850,6 +850,11 @@ pub fn single_instance() -> bool {
 
 /// Nothing throttles a hidden X11 program the way Windows and macOS do.
 pub fn stay_responsive() {}
+
+/// The memory this process holds, from `/proc/self/status`. Read for the diagnostic log only.
+pub fn memory_use() -> Option<crate::platform::MemoryUse> {
+    super::procmem::parse_status(&std::fs::read_to_string("/proc/self/status").ok()?)
+}
 
 /// Gives freed heap pages back to the OS (glibc only). The amount is not measured.
 pub fn release_unused_memory() -> usize {

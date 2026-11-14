@@ -33,6 +33,18 @@ const SLOW_OPEN_MS: f64 = 300.0;
 const SLOW_STEP_MS: f64 = 250.0;
 /// An action that waited this long (ms) in the queue before the worker started it is reported.
 const SLOW_WAIT_MS: f64 = 200.0;
+/// One step of the program that raised the footprint by more than this (MiB) is reported.
+const MEM_JUMP_MB: f64 = 64.0;
+/// One app icon that cost more than this (MiB) of footprint is reported.
+const MEM_ICON_COST_MB: f64 = 32.0;
+/// An app icon whose source (what the system handed over) was bigger than this (MiB) is reported.
+const MEM_ICON_SOURCE_MB: f64 = 8.0;
+/// A `trim` that found less than this (MiB) to give back, while the footprint was above
+/// [`MEM_TRIM_FOOTPRINT_MB`], is reported: the memory is held somewhere the allocator cannot reach.
+const MEM_TRIM_GAIN_MB: f64 = 5.0;
+const MEM_TRIM_FOOTPRINT_MB: f64 = 200.0;
+/// A footprint that rose by more than this (MiB) between the first and the last idle `tick` is a leak.
+const MEM_IDLE_RISE_MB: f64 = 50.0;
 /// An event written more often than this per second is said to flood the log.
 const FLOOD_PER_SECOND: f64 = 50.0;
 /// The default of `log slow --ms`.
@@ -562,6 +574,7 @@ pub fn extra_findings(recs: &[Rec]) -> Vec<String> {
     let mut out = Vec::new();
     out.extend(program_findings(recs));
     out.extend(raise_findings(recs));
+    out.extend(memory_findings(recs));
 
     for (i, g) in gestures(recs).iter().enumerate() {
         if let Some(lag) = g.lag_ms()
@@ -620,6 +633,105 @@ pub fn extra_findings(recs: &[Rec]) -> Vec<String> {
                 text(r, "kind").unwrap_or("?")
             ));
         }
+    }
+    out
+}
+
+/// Findings about memory (category `mem`, and the size of what an app icon handed over): the step
+/// that raised the footprint too much, an icon that was far too big, a trim that gave nothing back
+/// while the footprint was large, and a footprint that kept rising while the program was idle. Part
+/// of [`extra_findings`]. The log must have been written with the `mem` category on.
+fn memory_findings(recs: &[Rec]) -> Vec<String> {
+    let mut out = Vec::new();
+
+    // steps that raised the footprint a lot (the biggest one per stage)
+    let mut jumps: BTreeMap<String, (usize, f64)> = BTreeMap::new();
+    for r in recs {
+        if is(r, "mem", "mark")
+            && let Some(delta) = num(r, "delta_mb")
+            && delta > MEM_JUMP_MB
+        {
+            let e = jumps
+                .entry(text(r, "stage").unwrap_or("?").to_string())
+                .or_insert((0, 0.0));
+            e.0 += 1;
+            e.1 = e.1.max(delta);
+        }
+    }
+    for (stage, (count, biggest)) in &jumps {
+        out.push(format!(
+            "memory: the footprint rose by more than {MEM_JUMP_MB:.0} MiB between two marks, ending at '{stage}', {count} time(s) (largest {biggest:.0} MiB): look at `cargo tools log grep mem:mark` for what ran before it"
+        ));
+    }
+
+    if let Some(r) = recs.iter().find(|r| is(r, "mem", "high")) {
+        out.push(format!(
+            "memory: the footprint reached {:.0} MiB (at '{}'); the biggest value in the log is {:.0} MiB",
+            num(r, "footprint_mb").unwrap_or(0.0),
+            text(r, "stage").unwrap_or("?"),
+            recs.iter()
+                .filter(|r| is(r, "mem", "mark"))
+                .filter_map(|r| num(r, "footprint_mb"))
+                .fold(0.0, f64::max)
+        ));
+    }
+
+    // an app icon that was far bigger than anything the pie draws
+    let biggest_source = recs
+        .iter()
+        .filter(|r| is(r, "ui", "icon_decode"))
+        .filter_map(|r| num(r, "source_bytes"))
+        .fold(0.0, f64::max)
+        / (1024.0 * 1024.0);
+    if biggest_source > MEM_ICON_SOURCE_MB {
+        out.push(format!(
+            "memory: an app icon was {biggest_source:.0} MiB as the system handed it over (more than {MEM_ICON_SOURCE_MB:.0} MiB): the pie draws it at 128 px, so ask the system for one size instead of all of them"
+        ));
+    }
+    let costly = recs
+        .iter()
+        .filter(|r| is(r, "mem", "icon_cost"))
+        .filter_map(|r| num(r, "grew_mb"))
+        .filter(|g| *g > MEM_ICON_COST_MB)
+        .count();
+    if costly > 0 {
+        out.push(format!(
+            "memory: {costly} app icon(s) raised the footprint by more than {MEM_ICON_COST_MB:.0} MiB each while they were made (`mem.icon_cost`)"
+        ));
+    }
+
+    // a trim that found nothing while the footprint was large: the memory is not in the allocator
+    let empty_trims = recs
+        .iter()
+        .filter(|r| is(r, "mem", "trim"))
+        .filter(|r| {
+            let (before, after) = (
+                num(r, "before_mb").unwrap_or(0.0),
+                num(r, "after_mb").unwrap_or(0.0),
+            );
+            before > MEM_TRIM_FOOTPRINT_MB && before - after < MEM_TRIM_GAIN_MB
+        })
+        .count();
+    if empty_trims > 0 {
+        out.push(format!(
+            "memory: {empty_trims} trim(s) gave back less than {MEM_TRIM_GAIN_MB:.0} MiB while the footprint was above {MEM_TRIM_FOOTPRINT_MB:.0} MiB: what is held is not in the allocator's free blocks (a cache of the system, or something still referenced)"
+        ));
+    }
+
+    // a footprint that kept rising while nothing was done
+    let ticks: Vec<f64> = recs
+        .iter()
+        .filter(|r| is(r, "mem", "mark") && text(r, "stage") == Some("tick"))
+        .filter_map(|r| num(r, "footprint_mb"))
+        .collect();
+    if let (Some(first), Some(last)) = (ticks.first(), ticks.last())
+        && ticks.len() >= 3
+        && last - first > MEM_IDLE_RISE_MB
+    {
+        out.push(format!(
+            "memory: the footprint rose from {first:.0} to {last:.0} MiB over {} idle samples (every 30 s): something grows without being used",
+            ticks.len()
+        ));
     }
     out
 }
@@ -933,6 +1045,66 @@ mod tests {
     }
 
     use super::*;
+
+    fn parsed(log: &[&str]) -> Vec<Rec> {
+        log.iter()
+            .filter_map(|l| crate::diag::parse_line(l))
+            .collect()
+    }
+
+    #[test]
+    fn a_jump_in_the_footprint_names_the_stage_that_ended_it() {
+        let recs = parsed(&[
+            r#"{"cat":"mem","ev":"mark","stage":"warm_begin","footprint_mb":40.0,"delta_mb":0.0}"#,
+            r#"{"cat":"mem","ev":"mark","stage":"show_pie","footprint_mb":480.0,"delta_mb":440.0}"#,
+            r#"{"cat":"mem","ev":"mark","stage":"hide_pie","footprint_mb":482.0,"delta_mb":2.0}"#,
+            r#"{"cat":"mem","ev":"high","stage":"show_pie","footprint_mb":480.0}"#,
+        ]);
+        let f = memory_findings(&recs).join("\n");
+        assert!(
+            f.contains("ending at 'show_pie'") && f.contains("440 MiB"),
+            "{f}"
+        );
+        assert!(f.contains("reached 480 MiB"), "{f}");
+        assert!(!f.contains("hide_pie"), "{f}");
+    }
+
+    #[test]
+    fn a_huge_icon_and_a_trim_that_found_nothing_are_named() {
+        let recs = parsed(&[
+            r#"{"cat":"ui","ev":"icon_decode","source_bytes":73949448,"page_px":128}"#,
+            r#"{"cat":"mem","ev":"icon_cost","grew_mb":70.0,"made":true}"#,
+            r#"{"cat":"mem","ev":"trim","released_mb":0.0,"before_mb":480.0,"after_mb":479.0}"#,
+            r#"{"cat":"mem","ev":"trim","released_mb":30.0,"before_mb":90.0,"after_mb":60.0}"#,
+        ]);
+        let f = memory_findings(&recs).join("\n");
+        assert!(f.contains("an app icon was 71 MiB"), "{f}");
+        assert!(f.contains("1 app icon(s) raised the footprint"), "{f}");
+        assert!(f.contains("1 trim(s) gave back less than"), "{f}");
+    }
+
+    #[test]
+    fn a_footprint_that_rises_while_idle_is_a_finding_and_a_steady_one_is_not() {
+        let tick = |mb: f64| {
+            format!(
+                r#"{{"cat":"mem","ev":"mark","stage":"tick","footprint_mb":{mb},"delta_mb":0.0}}"#
+            )
+        };
+        let rising: Vec<String> = [40.0, 70.0, 130.0].iter().map(|m| tick(*m)).collect();
+        let r: Vec<&str> = rising.iter().map(String::as_str).collect();
+        assert!(
+            memory_findings(&parsed(&r))
+                .join("")
+                .contains("rose from 40 to 130")
+        );
+        let steady: Vec<String> = [40.0, 41.0, 40.5].iter().map(|m| tick(*m)).collect();
+        let s: Vec<&str> = steady.iter().map(String::as_str).collect();
+        assert!(memory_findings(&parsed(&s)).is_empty());
+        assert!(
+            memory_findings(&[]).is_empty(),
+            "a log without the mem category says nothing"
+        );
+    }
 
     fn lines(text: &str) -> Vec<String> {
         text.lines().map(str::to_string).collect()

@@ -43,6 +43,9 @@ pub enum Msg {
         /// What was done to the image (shrunk, ...), for the status bar
         note: Option<String>,
     },
+    /// An image of the icons folder ("Mine") was deleted from the icon picker (`error` says why not
+    /// when it could not be). The UI tells which slices were still using it.
+    IconDeleted { file: String, error: Option<String> },
     /// One or more images could not be used as an icon (chosen with the chooser or dropped on the
     /// window). `file` is a path or a short label, `lines` say why, one sentence per file; the UI
     /// shows them in a pop-up sheet, not only in the status bar.

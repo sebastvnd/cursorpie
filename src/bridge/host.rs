@@ -7,14 +7,26 @@
 //! to the browser's `stdout` as frames. It shows no window, claims no single-instance lock and
 //! never writes anything else to `stdout` (the browser would read it as a message).
 //!
-//! When the app is not running there is nothing to relay to: the host ends at once, the browser
-//! sees the port close, and the extension tries again a minute later.
+//! When the app is not running the host **waits** for it (it looks for `bridge.json` every
+//! `RETRY`) and keeps the browser's port open, so the extension is connected the moment the app
+//! starts: the app greets the new connection with `sync` and the extension answers with its tabs.
+//! (Ending at once, as an earlier version did, left the extension to try again a minute later, or
+//! at the next click on a tab.) The host ends when the browser closes its pipe. If the app goes
+//! away it goes back to waiting; what the browser says in the meantime is dropped, the extension
+//! sends everything again on `sync`.
 
 use super::proto::{self, Auth, BridgeFile, HOST_NAME};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+/// How often a waiting host looks for the running app.
+const RETRY: Duration = Duration::from_secs(1);
+
+/// The connection to the app while there is one; what the browser says is written to it.
+type Link = Arc<Mutex<Option<TcpStream>>>;
 
 /// Whether the arguments (without the program name) are those of a browser starting the host.
 /// `--native-host` does the same by hand, for trying it out in a terminal.
@@ -46,15 +58,12 @@ fn connect() -> Option<TcpStream> {
     Some(stream)
 }
 
-/// Runs the host until the browser or the app closes its side. The exit code of the process.
+/// Runs the host until the browser closes its side. The exit code of the process.
 pub fn run() -> i32 {
-    let Some(link) = connect() else {
-        return 1;
-    };
-    let Ok(mut to_app) = link.try_clone() else {
-        return 1;
-    };
+    let link: Link = Arc::new(Mutex::new(None));
     // browser -> app. The browser closing its pipe ends the host: it has nothing left to serve.
+    // While there is no app the message is dropped (the extension says it all again on `sync`).
+    let to_app = Arc::clone(&link);
     std::thread::spawn(move || {
         let mut stdin = std::io::stdin().lock();
         while let Ok(Some(frame)) = proto::read_frame(&mut stdin) {
@@ -64,24 +73,47 @@ pub fn run() -> i32 {
             };
             let mut line = value.to_string();
             line.push('\n');
-            if to_app.write_all(line.as_bytes()).is_err() {
-                break;
+            let Ok(mut guard) = to_app.lock() else { break };
+            let failed = guard
+                .as_mut()
+                .is_some_and(|stream| stream.write_all(line.as_bytes()).is_err());
+            if failed {
+                // the app went away: the reader below notices too; wait for the next one
+                *guard = None;
             }
         }
         std::process::exit(0);
     });
-    // app -> browser
+    // app -> browser, for every run of the app in turn
     let mut out = std::io::stdout().lock();
-    for line in BufReader::new(link).lines() {
-        let Ok(line) = line else { break };
-        if line.trim().is_empty() {
+    loop {
+        let Some(stream) = connect() else {
+            std::thread::sleep(RETRY);
             continue;
+        };
+        let Ok(reader) = stream.try_clone() else {
+            std::thread::sleep(RETRY);
+            continue;
+        };
+        if let Ok(mut guard) = link.lock() {
+            *guard = Some(stream);
         }
-        if proto::write_frame(&mut out, line.as_bytes()).is_err() {
-            break;
+        for line in BufReader::new(reader).lines() {
+            let Ok(line) = line else { break };
+            if line.trim().is_empty() {
+                continue;
+            }
+            if proto::write_frame(&mut out, line.as_bytes()).is_err() {
+                // the browser's pipe is gone
+                return 0;
+            }
         }
+        // the app ended its side: wait for the next one
+        if let Ok(mut guard) = link.lock() {
+            *guard = None;
+        }
+        std::thread::sleep(RETRY);
     }
-    0
 }
 
 /// The command-line switches of the bridge, for packaging and for a person to run by hand. `None`

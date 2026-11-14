@@ -163,6 +163,10 @@ pub enum ToBrowser {
     /// from (it does that when it starts after an update): load them. The extension reloads itself
     /// once per version asked; one from before this message existed ignores it.
     Reload { version: String },
+    /// The app has just accepted this connection (it started after the browser, or restarted):
+    /// say hello again and send the open tabs now, without waiting for a tab event. An extension
+    /// from before this message ignores it and keeps the old behavior (first tab event).
+    Sync,
 }
 
 /// The first line a host process sends to the app.
@@ -182,6 +186,12 @@ pub struct BridgeFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sync_is_a_bare_type() {
+        let out = serde_json::to_value(ToBrowser::Sync).unwrap();
+        assert_eq!(out, serde_json::json!({ "type": "sync" }));
+    }
 
     #[test]
     fn a_frame_goes_through_the_pipe_and_back() {

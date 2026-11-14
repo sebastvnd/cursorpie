@@ -95,12 +95,28 @@ pub(crate) fn open_reader(
         .ok()
 }
 
+/// Bytes as MiB with one decimal, for the log.
+fn round_mb(bytes: u64) -> f64 {
+    (bytes as f64 / (1024.0 * 1024.0) * 10.0).round() / 10.0
+}
+
 /// Decodes an icon file to RGBA, but only if its size (read from the header, nothing is decoded
 /// for that) is within [`MAX_SOURCE_SIDE`].
 fn decode_icon(path: &std::path::Path) -> Option<image::RgbaImage> {
     let (w, h) = open_reader(path)?.into_dimensions().ok()?;
     if w > MAX_SOURCE_SIDE || h > MAX_SOURCE_SIDE {
+        diag::log!("mem", "image_refused", width = w, height = h);
         return None;
+    }
+    // a big source costs 4 bytes per pixel while it is decoded: say so when it is 4 MiB or more
+    if u64::from(w) * u64::from(h) * 4 >= 4 << 20 {
+        diag::log!(
+            "mem",
+            "big_image",
+            width = w,
+            height = h,
+            decoded_mb = round_mb(u64::from(w) * u64::from(h) * 4)
+        );
     }
     // `into_rgba8` reuses the buffer when the file is already RGBA, `to_rgba8` would copy it
     Some(open_reader(path)?.decode().ok()?.into_rgba8())

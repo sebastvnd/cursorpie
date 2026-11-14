@@ -153,6 +153,10 @@ pub fn stay_responsive() {}
 pub fn release_unused_memory() -> usize {
     0
 }
+/// The memory is not measured.
+pub fn memory_use() -> Option<crate::platform::MemoryUse> {
+    None
+}
 
 /// Keyboard layout: there is no snapshot, so labels use the US/ANSI fallback table.
 pub mod layout {

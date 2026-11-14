@@ -13,6 +13,8 @@
 //                      "panel_result"  the answer to a panel
 //                      "reload"   the app wrote the files of a newer version where this extension was
 //                                 loaded from (after an update): reload to take them (CP.reloadFor)
+//                      "sync"     the app just accepted this connection (it started after the browser,
+//                                 or restarted): say hello and send the tabs now
 //
 // The commands live in cmd-tab.js, cmd-media.js, cmd-chat.js and cmd-ui.js; the code they run inside
 // pages in page-media.js and page-chat.js; the panels in ui.js. The same files run in Firefox (an event page whose scripts the
@@ -134,14 +136,21 @@ if (typeof importScripts === "function") {
       // nobody is going to answer the panels that were open
       CP.ui.disconnected();
     });
-    browserName().then((name) => {
+    hello();
+  }
+
+  // Who we are and what is open. Sent when the port opens and again on "sync": the host keeps the
+  // port open while CursorPie is not running, and drops what is said then, so the app asks again
+  // (sync) as soon as it is there instead of waiting for a tab event.
+  function hello() {
+    return browserName().then((name) => {
       post({
         type: "hello",
         browser: name,
         version: api.runtime.getManifest().version,
         commands: Object.keys(CP.commands),
       });
-      sendTabs();
+      return sendTabs();
     });
   }
 
@@ -203,6 +212,7 @@ if (typeof importScripts === "function") {
     else if (m.type === "command") command(m);
     else if (m.type === "panel_result") CP.ui.handle(m);
     else if (m.type === "reload") CP.reloadFor(m.version);
+    else if (m.type === "sync") hello();
   }
 
   // Panels (ui.js) go to the app through the same connection; false when there is none.

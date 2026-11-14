@@ -353,6 +353,11 @@ fn handle(stream: TcpStream, token: &str, generation: u64) {
                 state: Activity::default(),
             },
         );
+        // Ask the extension for hello + tabs right away: when the app starts after the browser the
+        // extension has nothing to prompt it, and the list would stay empty until a tab is clicked.
+        if let Some(client) = s.clients.get(&id) {
+            send(client, &ToBrowser::Sync);
+        }
         id
     };
     loop {

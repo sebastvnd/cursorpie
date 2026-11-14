@@ -92,6 +92,11 @@ impl<K: Hash + Eq + Clone, V> Lru<K, V> {
         self.map.remove(key).map(|s| s.value)
     }
 
+    /// The values, in no particular order. Does not count as a use.
+    pub fn values(&self) -> impl Iterator<Item = &V> {
+        self.map.values().map(|s| &s.value)
+    }
+
     /// Keeps only the entries for which `keep` returns true. Does not count as a use.
     pub fn retain(&mut self, mut keep: impl FnMut(&K, &V) -> bool) {
         self.map.retain(|k, s| keep(k, &s.value));

@@ -658,7 +658,18 @@ pub(in crate::ui::settings) fn tile(
     selected: bool,
     accent: Color32,
 ) -> (Rect, egui::Response) {
-    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
+    tile_sense(ui, size, selected, accent, egui::Sense::click())
+}
+
+/// [`tile`] that also answers to `sense` (a tile that can be dragged: `Sense::click_and_drag()`).
+pub(in crate::ui::settings) fn tile_sense(
+    ui: &mut egui::Ui,
+    size: Vec2,
+    selected: bool,
+    accent: Color32,
+    sense: egui::Sense,
+) -> (Rect, egui::Response) {
+    let (rect, resp) = ui.allocate_exact_size(size, sense);
     let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
     let radius = egui::CornerRadius::same(14);
     let painter = ui.painter();

@@ -75,6 +75,46 @@ pub fn raise_current_thread() {
     }
 }
 
+/// `PROCESS_MEMORY_COUNTERS` of psapi (the sizes are `SIZE_T`).
+#[repr(C)]
+struct ProcessMemoryCounters {
+    cb: u32,
+    page_fault_count: u32,
+    peak_working_set_size: usize,
+    working_set_size: usize,
+    quota_peak_paged_pool_usage: usize,
+    quota_paged_pool_usage: usize,
+    quota_peak_non_paged_pool_usage: usize,
+    quota_non_paged_pool_usage: usize,
+    pagefile_usage: usize,
+    peak_pagefile_usage: usize,
+}
+
+unsafe extern "system" {
+    /// `BOOL K32GetProcessMemoryInfo(HANDLE, PROCESS_MEMORY_COUNTERS *, DWORD)` of kernel32.
+    fn K32GetProcessMemoryInfo(
+        process: isize,
+        counters: *mut ProcessMemoryCounters,
+        cb: u32,
+    ) -> i32;
+}
+
+/// The memory this process holds: the working set (RAM) and the private commit (`footprint`: what
+/// the program allocated and still holds). Read for the diagnostic log only.
+pub fn memory_use() -> Option<crate::platform::MemoryUse> {
+    // SAFETY: all fields are plain integers, so zeroed is a valid value.
+    let mut c: ProcessMemoryCounters = unsafe { std::mem::zeroed() };
+    c.cb = std::mem::size_of::<ProcessMemoryCounters>() as u32;
+    // SAFETY: -1 is the pseudo handle of the current process, and `c` is a
+    // `PROCESS_MEMORY_COUNTERS` of `cb` bytes.
+    let ok = unsafe { K32GetProcessMemoryInfo(-1, &mut c, c.cb) };
+    (ok != 0).then_some(crate::platform::MemoryUse {
+        resident: c.working_set_size as u64,
+        peak: c.peak_working_set_size as u64,
+        footprint: c.pagefile_usage as u64,
+    })
+}
+
 /// Compacts the process heap, which returns freed blocks to the system. Memory that is in use stays
 /// where it is, so the next press finds its code and data in RAM. Reports 0 because Windows does
 /// not say how much was released.

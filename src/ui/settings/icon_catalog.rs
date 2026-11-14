@@ -276,6 +276,27 @@ pub fn scan_user_icons() -> UserIcons {
     }
 }
 
+/// Deletes the image `icon` (an icon string, `~/` allowed) from the user icons folder. Only a file
+/// that is an image and sits directly in that folder is ever removed: an icon string that points
+/// anywhere else (a picture the person chose in place, with `Mode::InPlace`) is refused, so the
+/// button can never delete a file the person did not import. The original of an imported image is
+/// never touched, only the copy in the folder.
+pub fn delete_user_icon(icon: &str) -> Result<(), String> {
+    delete_in(&user_icons_dir(), icon)
+}
+
+fn delete_in(dir: &std::path::Path, icon: &str) -> Result<(), String> {
+    let path =
+        crate::config::image_path(icon).ok_or_else(|| "That is not an image.".to_string())?;
+    let (Ok(dir), Ok(file)) = (fs::canonicalize(dir), fs::canonicalize(&path)) else {
+        return Err("The image is already gone.".to_string());
+    };
+    if file.parent() != Some(dir.as_path()) {
+        return Err("Only images in the icons folder can be deleted here.".to_string());
+    }
+    fs::remove_file(&file).map_err(|e| format!("Could not delete the image: {e}"))
+}
+
 /// Opens the icons folder in the file manager.
 pub fn open_icons_folder() {
     platform::open_path(&user_icons_dir());
@@ -310,6 +331,27 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn only_images_in_the_icons_folder_are_deleted() {
+        let base = std::env::temp_dir().join(format!("cursorpie-del-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let icons = base.join("icons");
+        fs::create_dir_all(&icons).unwrap();
+        let mine = icons.join("a.png");
+        let other = base.join("b.png");
+        fs::write(&mine, b"x").unwrap();
+        fs::write(&other, b"x").unwrap();
+        // outside the folder, and not an image: refused, nothing removed
+        assert!(delete_in(&icons, other.to_str().unwrap()).is_err());
+        assert!(other.exists());
+        assert!(delete_in(&icons, "ico:copy").is_err());
+        // inside the folder: removed; a second time it is already gone
+        delete_in(&icons, mine.to_str().unwrap()).unwrap();
+        assert!(!mine.exists());
+        assert!(delete_in(&icons, mine.to_str().unwrap()).is_err());
+        let _ = fs::remove_dir_all(&base);
     }
 
     #[test]

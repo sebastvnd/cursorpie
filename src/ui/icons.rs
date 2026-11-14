@@ -11,7 +11,8 @@
 //! * It **survives** opening and closing Settings. Only image files that changed on disk are
 //!   reloaded ([`IconCache::revalidate`]), instead of throwing everything away every time.
 //! * It is **warmed up** while the trigger is held, before the pie opens, see
-//!   [`icons_to_warm`] and `Msg::Warm`.
+//!   [`icons_to_warm`] and `Msg::Warm`. Only the first frame ([`icons_on_first_frame`]) is read on
+//!   the UI thread; the app icons of submenus go to the worker thread.
 //! * It is **trimmed** when the UI goes to sleep ([`IconCache::keep_only`]): what the next pie
 //!   needs first ([`icons_to_keep_asleep`]) stays, so the first press after a long idle time finds
 //!   its icons decoded instead of decoding them while the hold timer runs.
@@ -57,6 +58,19 @@ const WORKERS: usize = if matches!(crate::platform::OS, crate::platform::Os::Mac
 } else {
     2
 };
+
+/// What an [`IconCache`] holds, see [`IconCache::stats`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CacheStats {
+    /// Entries, including the remembered failures.
+    pub entries: usize,
+    /// Entries whose icon could not be loaded.
+    pub failed: usize,
+    /// Bytes of the textures (4 per pixel).
+    pub texture_bytes: usize,
+    /// App icons asked of the worker and not answered yet.
+    pub pending: usize,
+}
 
 /// Where an app icon asked for with [`IconCache::get_app_async`] stands.
 pub enum IconState {
@@ -208,6 +222,44 @@ impl IconCache {
     /// An empty cache.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// What the cache holds, for the diagnostic log. Walks the entries, so it is only called while
+    /// the log is on (see [`IconCache::log_stats`]).
+    pub fn stats(&self) -> CacheStats {
+        let mut s = CacheStats {
+            pending: self.pending.len(),
+            ..CacheStats::default()
+        };
+        for e in self.lru.values() {
+            s.entries += 1;
+            match &e.tex {
+                Some(t) => {
+                    let [w, h] = t.size();
+                    s.texture_bytes += w * h * 4;
+                }
+                None => s.failed += 1,
+            }
+        }
+        s
+    }
+
+    /// Writes a `mem.icon_cache` line (how many icons, how many failed, the bytes of the textures,
+    /// how many are still being read) when the memory log is on. `stage` says when.
+    pub fn log_stats(&self, stage: &'static str) {
+        if !crate::ui::memlog::enabled() {
+            return;
+        }
+        let s = self.stats();
+        diag::log!(
+            "mem",
+            "icon_cache",
+            stage,
+            entries = s.entries,
+            failed = s.failed,
+            texture_kib = s.texture_bytes / 1024,
+            pending = s.pending
+        );
     }
 
     /// Number of cached icons (including remembered failures).
@@ -404,6 +456,36 @@ pub fn icons_to_keep_asleep(c: &Config) -> Vec<String> {
                 out.push(icon);
             }
         }
+    }
+    out
+}
+
+/// The icon strings the very first frame of the pie of `profile` paints: the icon of the active
+/// mode, the app icon of the center and the top ring. Submenus are not in it. This is the part of
+/// [`icons_to_warm`] that is read on the UI thread while the hold timer runs; the rest (the icons
+/// of submenus, which are on screen only after the pointer stays on a slice) is read on the worker
+/// thread, so a press with many app icons no longer reads them all one after another in the frame
+/// that has to open the pie. At most [`CAPACITY`] strings.
+pub fn icons_on_first_frame(c: &Config, profile: usize, target: Option<&str>) -> Vec<String> {
+    let Some(p) = c.profiles.get(profile) else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = Vec::new();
+    let mut add = |s: &str| {
+        if !s.is_empty() && out.len() < CAPACITY && !out.iter().any(|o| o == s) {
+            out.push(s.to_string());
+        }
+    };
+    if let Some(i) = p.active_item() {
+        add(&i.icon);
+    }
+    if c.center_app_icon
+        && let Some(b) = appicon::bundle_for(&p.apps, target)
+    {
+        add(&appicon::icon_string(c.app_icon_style, b));
+    }
+    for it in &p.items {
+        add(&it.icon);
     }
     out
 }
@@ -726,6 +808,34 @@ mod tests {
             "no duplicates"
         );
         assert!(icons_to_warm(&c, 7, None).is_empty(), "unknown profile");
+    }
+
+    #[test]
+    fn the_first_frame_list_is_the_ring_the_center_and_no_submenu() {
+        use crate::config::{Action, Config, Item, Profile};
+        let c = Config {
+            center_app_icon: true,
+            profiles: vec![Profile {
+                name: "App".into(),
+                apps: vec!["com.example.App".into()],
+                items: vec![
+                    Item::run("A", "~/a.png", Action::Nothing),
+                    Item::submenu("S", "S", vec![Item::run("B", "~/b.png", Action::Nothing)]),
+                    Item::run("Dup", "~/a.png", Action::Nothing),
+                ],
+                active: vec![],
+            }],
+            ..Default::default()
+        };
+        let first = icons_on_first_frame(&c, 0, Some("com.example.App"));
+        let has = |icon: &str| first.iter().any(|s| s == icon);
+        assert!(has("app:com.example.App"), "the center");
+        assert!(has("~/a.png") && has("S"), "the ring");
+        assert!(!has("~/b.png"), "a submenu waits for the worker");
+        assert_eq!(first.iter().filter(|s| *s == "~/a.png").count(), 1);
+        let all = icons_to_warm(&c, 0, Some("com.example.App"));
+        assert!(first.iter().all(|i| all.contains(i)), "in the warm list");
+        assert!(icons_on_first_frame(&c, 7, None).is_empty(), "no profile");
     }
 
     #[test]

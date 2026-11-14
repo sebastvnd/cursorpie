@@ -157,7 +157,7 @@
 //!
 //! The window is hidden almost all the time, and egui does not repaint a hidden window, so the idle
 //! cost is already near zero. What stays allocated is *state*: decoded icon textures and the
-//! Settings working copy. Four mechanisms keep that small without making the pie slower.
+//! Settings working copy. Five mechanisms keep that small without making the pie slower.
 //!
 //! **1. A bounded icon cache** ([`ui::icons`](crate::ui::icons), built on [`cache::Lru`](crate::cache::Lru)).
 //! Decoding an app icon (a multi-size TIFF from macOS) or scaling an image file takes far longer
@@ -215,6 +215,20 @@
 //! activity (`Sleeper::poke`), otherwise the first press after a long idle time could load icons
 //! and have them dropped by the sleep that was already due.
 //!
+//! **5. Trim.** Sleep waits `sleep_after_s` and needs a frame of the window, and a press can
+//! allocate far more than it keeps: on macOS one app icon is a multi-size TIFF of several MiB
+//! that is copied, decoded and reduced to 128 px, and libmalloc keeps the freed blocks in a cache
+//! that it empties only slowly, as other large blocks come and go. A pie with a dozen app icons
+//! showed hundreds of MiB in Activity Monitor that nothing used, falling only at the next press.
+//! So the icon loader ([`appicon`](crate::ui::appicon)) gives the pages back at once after a big
+//! source (`BIG_SOURCE`, 1 MiB), and tells [`ui::trim`](crate::ui::trim) about every icon it
+//! made. `trim` is a thread of its own with a small state machine ([`Debt`](crate::ui::trim::Debt)):
+//! two seconds after the last icon, and after the pie or Settings went away, it calls
+//! [`platform::release_unused_memory`](crate::platform::release_unused_memory). It needs no frame
+//! and never runs while something is on screen. The icons of submenus are not read in the hold
+//! timer any more: [`icons_on_first_frame`](crate::ui::icons::icons_on_first_frame) names what the
+//! first frame paints, the rest goes to the icon worker thread.
+//!
 //! **Sleep must never make the next press slow.** The program exists to answer one press after
 //! hours of doing nothing, so what sleep frees is only what the next press does not touch: icons
 //! of other profiles, the editor, allocator slack. Two things were tried and are wrong. Emptying the
@@ -229,15 +243,23 @@
 //! | State | Freed when Settings closes | Freed when the UI sleeps | Never freed |
 //! |---|---|---|---|
 //! | `App::edit` (config copy), undo history, picker lists, backup list, `Ed::add_catalog` | yes | yes | |
-//! | icon textures | no (only changed files are re-read) | all but the general pie's (`icons_to_keep_asleep`) | the general pie's |
+//! | icon textures | all but the general pie's (`icons_to_keep_asleep`), at once | all but the general pie's (`icons_to_keep_asleep`) | the general pie's |
 //! | the live config, side-button state, gesture state | | | yes |
-//! | egui font atlas | rebuilt, but only if zoomed text was drawn (`fonts::reset_atlas`) | rebuilt, same condition | the glyphs of the normal sizes |
+//! | egui font atlas | rebuilt on every close (`fonts::reset_atlas`) | rebuilt, only if zoomed text was drawn | the glyphs of the normal sizes |
 //! | GPU surface | | | yes |
 //! | `App::edit.flows`, `App::run_report`, the Flow tab's selection and sheets | yes | yes | |
 //!
 //! egui never evicts a glyph from its atlas, so **never lay text out at a size taken from user input**
 //! (a zoom, a slider) without snapping it to a short ladder: the Flow canvas uses `crisp_scale`, 4 sizes per
 //! doubling. A size that comes from a continuous value cuts a whole new set of glyphs per value.
+//!
+//! **A hidden window frees nothing by itself.** eframe runs no egui pass and paints nothing while
+//! the window is hidden, only `App::logic`. Dropped textures, the font atlas that `reset_atlas` replaced
+//! and every other free that rides on a pass are therefore carried out only when the window next
+//! shows, and a `malloc_trim` before that finds nothing to give back. So `App::close_settings` does
+//! not hide the window at once: `App::begin_close_flush` keeps it on screen, click-through and empty,
+//! for a few frames, and `App::finish_close` then hides it and trims the heap. Anything that frees a
+//! large amount of memory while the window is hidden must do the same.
 //!
 //! `Config::sleep_after_s` sets the idle time (0 = never sleep). Rules for new code: a cache must
 //! be bounded, must be cleared (or trimmed to what the next press needs) in `enter_sleep`, and must never be filled on the frame that opens

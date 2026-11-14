@@ -44,6 +44,7 @@
 //! | `ensure_installed`, `handle_command_line`, `single_instance` | Windows install step, `--uninstall`, one running copy (no-ops elsewhere) |
 //! | `wait_for_login_ready` | after a login start (`--autostart`) wait for the desktop (Windows only, no-op elsewhere) |
 //! | `release_unused_memory` | give freed pages back to the OS, without evicting what the next press needs |
+//! | `memory_use` | the memory the program holds, as the OS counts it ([`MemoryUse`]); only read for the diagnostic log (category `mem`) |
 //! | `stay_responsive` | keep the OS from throttling the hidden program (App Nap on macOS, power throttling on Windows; no-op on Linux) |
 //! | [`layout`] | keyboard-layout snapshot |
 //!
@@ -335,7 +336,8 @@ pub enum FileKind {
 
 /// The icon of an app as the OS hands it out.
 pub enum NativeIcon {
-    /// A multi-page TIFF (macOS). Decoded by [`ui::appicon`](crate::ui::appicon).
+    /// A multi-page TIFF with every size of the icon (macOS, only when the system gives no single
+    /// picture: it is about 70 MiB for one icon). Decoded by [`ui::appicon`](crate::ui::appicon).
     Tiff(Vec<u8>),
     /// Straight (not premultiplied) RGBA, `width * height * 4` bytes.
     Rgba {
@@ -343,6 +345,20 @@ pub enum NativeIcon {
         height: u32,
         data: Vec<u8>,
     },
+}
+
+/// How much memory the program holds, as the operating system counts it. See [`memory_use`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MemoryUse {
+    /// Bytes in RAM now.
+    pub resident: u64,
+    /// The highest `resident` so far.
+    pub peak: u64,
+    /// The number the system's own monitor shows for the program: `phys_footprint` on macOS
+    /// (Activity Monitor's "Memory"), private commit on Windows, anonymous resident memory on
+    /// Linux. This is the one to watch: it is what grows when something is held that the program
+    /// does not need.
+    pub footprint: u64,
 }
 
 /// A haptic pattern for a trackpad (macOS: `NSHapticFeedbackManager`; other systems ignore it).

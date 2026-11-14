@@ -5,6 +5,9 @@ use crate::platform::{NativeIcon, ScreenRect, spawn_reaped};
 use core_graphics::event::CGEvent;
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 use core_graphics::geometry::CGPoint;
+use objc2::runtime::{AnyObject, Sel};
+use objc2::sel;
+use std::ffi::c_void;
 use std::process::Command;
 use std::time::Duration;
 
@@ -119,9 +122,175 @@ pub fn app_icon_tiff(bundle: &str) -> Option<Vec<u8>> {
     })
 }
 
-/// The icon of the app with this bundle id, as the TIFF macOS provides (see [`app_icon_tiff`]).
+/// Edge (px) of the bitmap an app icon is drawn into by [`app_icon_rgba`]. The pie reduces it to
+/// 128 px, so this leaves room for a clean reduction and nothing more.
+const ICON_PX: usize = 256;
+
+/// A rectangle as Core Graphics takes it (`CGRect`: `CGFloat` is a `f64` on every Mac we run on).
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CgRect {
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+}
+
+unsafe extern "C" {
+    /// The trampoline every message send goes through. It is cast to the real signature at the
+    /// one call that needs it (a typed `msg_send!` would need Cargo features of `objc2-app-kit`
+    /// for `CGImage`, and checks the return type against `^{CGImage=}`).
+    fn objc_msgSend();
+}
+
+#[link(name = "CoreGraphics", kind = "framework")]
+unsafe extern "C" {
+    fn CGColorSpaceCreateDeviceRGB() -> *mut c_void;
+    fn CGColorSpaceRelease(space: *mut c_void);
+    fn CGBitmapContextCreate(
+        data: *mut c_void,
+        width: usize,
+        height: usize,
+        bits_per_component: usize,
+        bytes_per_row: usize,
+        space: *mut c_void,
+        bitmap_info: u32,
+    ) -> *mut c_void;
+    fn CGContextSetInterpolationQuality(ctx: *mut c_void, quality: i32);
+    fn CGContextDrawImage(ctx: *mut c_void, rect: CgRect, image: *const c_void);
+    fn CGContextRelease(ctx: *mut c_void);
+}
+
+/// `kCGImageAlphaPremultipliedLast`: R, G, B, A with the color already multiplied by the alpha.
+const PREMULTIPLIED_LAST: u32 = 1;
+/// `kCGInterpolationHigh`.
+const INTERPOLATION_HIGH: i32 = 3;
+
+/// The icon of an app drawn at **one size**, as straight RGBA (`ICON_PX` x `ICON_PX`). None if
+/// the app is not installed or the system gives no usable picture.
+///
+/// This is what the pie uses instead of [`app_icon_tiff`]. `iconForFile` hands out an image with
+/// every size macOS has for the app, and `TIFFRepresentation` writes all of them out: about 70 MiB
+/// for one icon (the diagnostic log of a press showed `source_bytes` of 73949448 for each of six
+/// icons), which AppKit and Icon Services keep in caches that the allocator cannot give back.
+/// Asking the image for a single picture at the size we need costs a few hundred KiB.
+pub fn app_icon_rgba(bundle: &str) -> Option<NativeIcon> {
+    use objc2::rc::autoreleasepool;
+    use objc2_app_kit::{NSImage, NSWorkspace};
+    use objc2_foundation::NSString;
+
+    autoreleasepool(|_| {
+        let ws = NSWorkspace::sharedWorkspace();
+        let url = ws.URLForApplicationWithBundleIdentifier(&NSString::from_str(bundle))?;
+        let path = url.path()?;
+        let icon = ws.iconForFile(&path);
+        let object = &*icon as *const NSImage as *const AnyObject;
+        // SAFETY: `object` is a live NSImage for the whole closure (`icon` is not dropped before
+        // it ends), and the picture it hands out is used before the pool is drained.
+        let data = unsafe { draw_icon(object) }?;
+        Some(NativeIcon::Rgba {
+            width: ICON_PX as u32,
+            height: ICON_PX as u32,
+            data,
+        })
+    })
+}
+
+/// Asks `icon` (an `NSImage`) for the picture that suits an `ICON_PX` square and draws it into a
+/// bitmap of that size. Straight RGBA, or None when the image gives no picture or it is empty.
+///
+/// # Safety
+/// `icon` must point to a live `NSImage`.
+unsafe fn draw_icon(icon: *const AnyObject) -> Option<Vec<u8>> {
+    type ProposedRect = unsafe extern "C" fn(
+        *const AnyObject,
+        Sel,
+        *mut CgRect,
+        *const c_void,
+        *const c_void,
+    ) -> *const c_void;
+    // SAFETY: `objc_msgSend` takes the receiver, the selector and the arguments of the method,
+    // and `-CGImageForProposedRect:context:hints:` is declared exactly like `ProposedRect`.
+    let send = unsafe { std::mem::transmute::<unsafe extern "C" fn(), ProposedRect>(objc_msgSend) };
+    let side = ICON_PX as f64;
+    let mut proposed = CgRect {
+        x: 0.0,
+        y: 0.0,
+        w: side,
+        h: side,
+    };
+    // A +0 reference, valid until the autorelease pool of the caller is drained: it is never
+    // retained or released here.
+    // SAFETY: see above; a null context and no hints are allowed.
+    let image = unsafe {
+        send(
+            icon,
+            sel!(CGImageForProposedRect:context:hints:),
+            &mut proposed,
+            std::ptr::null(),
+            std::ptr::null(),
+        )
+    };
+    if image.is_null() {
+        return None;
+    }
+
+    let mut buf = vec![0u8; ICON_PX * ICON_PX * 4];
+    // SAFETY: the bitmap context draws into `buf`, which is `ICON_PX * 4` bytes wide and
+    // `ICON_PX` tall, and `buf` outlives it: the context is released before `buf` is used again.
+    unsafe {
+        let space = CGColorSpaceCreateDeviceRGB();
+        if space.is_null() {
+            return None;
+        }
+        let ctx = CGBitmapContextCreate(
+            buf.as_mut_ptr().cast(),
+            ICON_PX,
+            ICON_PX,
+            8,
+            ICON_PX * 4,
+            space,
+            PREMULTIPLIED_LAST,
+        );
+        CGColorSpaceRelease(space);
+        if ctx.is_null() {
+            return None;
+        }
+        CGContextSetInterpolationQuality(ctx, INTERPOLATION_HIGH);
+        let whole = CgRect {
+            x: 0.0,
+            y: 0.0,
+            w: side,
+            h: side,
+        };
+        CGContextDrawImage(ctx, whole, image);
+        CGContextRelease(ctx);
+    }
+    if buf.as_chunks::<4>().0.iter().all(|px| px[3] == 0) {
+        return None; // nothing was drawn: let the caller use the TIFF
+    }
+    unpremultiply(&mut buf);
+    Some(buf)
+}
+
+/// Turns premultiplied RGBA (what a bitmap context writes) into straight RGBA, in place.
+fn unpremultiply(rgba: &mut [u8]) {
+    for px in rgba.as_chunks_mut::<4>().0 {
+        let a = u32::from(px[3]);
+        if a == 0 || a == 255 {
+            continue;
+        }
+        for c in &mut px[..3] {
+            *c = ((u32::from(*c) * 255 + a / 2) / a).min(255) as u8;
+        }
+    }
+}
+
+/// The icon of the app with this bundle id: one picture at the size the pie needs
+/// ([`app_icon_rgba`]) and, only when the system gives none, the multi-size TIFF
+/// ([`app_icon_tiff`]).
 pub fn app_icon(bundle: &str) -> Option<NativeIcon> {
-    app_icon_tiff(bundle).map(NativeIcon::Tiff)
+    app_icon_rgba(bundle).or_else(|| app_icon_tiff(bundle).map(NativeIcon::Tiff))
 }
 
 /// Hides the Dock icon / app switcher entry (same effect as LSUIElement, also when run via `cargo run`).
@@ -209,4 +378,19 @@ pub fn display_rects() -> Vec<ScreenRect> {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unpremultiply;
+
+    #[test]
+    fn unpremultiply_restores_the_color_and_leaves_opaque_and_clear_pixels() {
+        // half transparent white (255 * 128 / 255 = 128), opaque red, fully clear
+        let mut px = [128, 128, 128, 128, 255, 0, 0, 255, 0, 0, 0, 0];
+        unpremultiply(&mut px);
+        assert_eq!(&px[..4], &[255, 255, 255, 128]);
+        assert_eq!(&px[4..8], &[255, 0, 0, 255]);
+        assert_eq!(&px[8..], &[0, 0, 0, 0]);
+    }
 }

@@ -74,6 +74,10 @@ An icon can be text, an emoji or an image (`.png`, `.jpg`, `.jpeg`, `.webp`); a 
 - An image over 40 megapixels or 64 MB, or a file that is not an image, is refused with a message.
 - The **Mine** page of the picker lists the images in the `icons` folder (up to 120 files of at most 2 MB each) and says
   how many it left out.
+- To delete an image you imported, open the **Mine** page (or **All**) and either drag the image onto the trash strip
+  at the bottom of the picker, or point at it and press **Delete** (**Backspace** on a Mac keyboard). Only the copy in
+  the `icons` folder is removed, never the original file, and it cannot be undone. A slice that still used it shows
+  `?` until you pick another icon, and the status bar says how many did.
 - The pie size (140 to 360 px), accent color and sounds are adjustable. An optional soft tick plays when the hovered
   slice changes.
 

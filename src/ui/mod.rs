@@ -10,6 +10,8 @@
 //! | [`appicon`] | real app icons, reduced to white glyphs |
 //! | [`icons`] | the bounded texture cache for icons, shared by the pie and Settings |
 //! | [`sleep`] | the idle policy that frees caches and Settings state |
+//! | [`memlog`] | memory marks for the diagnostic log (category `mem`): free while the log is off |
+//! | [`trim`] | gives freed memory back to the OS soon after the pie was used, from a thread of its own |
 //! | [`draw`] | drawing helpers shared by the pie and Settings: anti-aliased slices, icon loading, easing, the pie palette |
 //! | [`fonts`] | Inter for text and Phosphor for icons, compiled into the binary |
 //! | [`symbols`] | the names and glyphs of the icon set, and the `ico:` slice icon strings |
@@ -25,9 +27,11 @@ pub mod fonts;
 pub mod hud;
 pub mod iconfit;
 pub mod icons;
+pub mod memlog;
 pub mod pie;
 pub mod screen;
 pub mod settings;
 pub mod sleep;
 pub mod symbols;
 pub mod tray;
+pub mod trim;

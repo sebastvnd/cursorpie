@@ -166,6 +166,12 @@ pub struct App {
     /// Idle clock that decides when caches and the Settings copy are freed
     pub sleeper: Sleeper,
 
+    /// Set while the window, already click-through and empty, is kept on screen for a few more
+    /// frames after Settings closed: frames left, and since when. A hidden window runs no egui
+    /// pass and paints nothing, so what Settings freed (textures, the old font atlas) is only given
+    /// back by a pass that really paints (see `App::begin_close_flush`).
+    pub close_flush: Option<(u8, Instant)>,
+
     pub tray: Option<TrayHandles>,
 }
 
@@ -177,6 +183,9 @@ impl App {
         win: f32,
         tray: Option<TrayHandles>,
     ) -> Self {
+        // the memory log: the first mark, and the sampler that writes one every 30 s
+        crate::ui::memlog::start_sampler();
+        crate::ui::memlog::mark("app_new");
         let edit = cfg().clone();
         Self {
             rx,
@@ -224,6 +233,7 @@ impl App {
             panel_queue: std::collections::VecDeque::new(),
             welcome: None,
             sleeper: Sleeper::new(Instant::now()),
+            close_flush: None,
             tray,
         }
     }
@@ -278,6 +288,7 @@ impl eframe::App for App {
             self.handle_msg(ctx, msg);
         }
         self.step_show_wait(ctx);
+        self.watch_close_flush(ctx);
         self.step_repaint_burst(ctx);
         self.step_hud(ctx);
         self.step_panel(ctx);
@@ -323,10 +334,16 @@ impl eframe::App for App {
             // just mapped: the compositor has no buffer of ours yet, keep it empty a little longer
             self.settle_frames -= 1;
             ui.ctx().request_repaint();
+        } else if self.close_flush.is_some() {
+            // Settings just closed: draw nothing, but let this pass paint so the textures and the
+            // font atlas it freed are really released before the window is hidden
+            self.step_close_flush(&ui.ctx().clone());
         } else if self.settings_open && self.welcome.is_some() {
             self.welcome_ui(ui);
         } else if self.settings_open {
-            self.settings_ui(ui);
+            // the ids below are salted with the opening: scroll offsets do not outlive the window
+            let session = self.ed.session;
+            ui.push_id(("settings_session", session), |ui| self.settings_ui(ui));
         } else if self.panel.is_some() && !self.pie_open {
             self.panel_ui(ui);
         } else if self.hud.is_some() && !self.pie_open {

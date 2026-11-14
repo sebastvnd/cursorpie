@@ -10,6 +10,7 @@ pub(crate) mod evdev_io;
 pub mod icontheme;
 pub mod inputdev;
 pub mod launch;
+pub mod procmem;
 pub mod refresh;
 pub mod roles;
 pub mod scale;

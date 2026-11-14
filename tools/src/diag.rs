@@ -180,6 +180,32 @@ pub const EXPECTED: &[Expected] = &[
         ev: "shell_execute",
         fields: &["ok", "code"],
     },
+    // what the memory findings of `logview::memory_findings` read
+    Expected {
+        cat: "mem",
+        ev: "mark",
+        fields: &["stage", "footprint_mb", "delta_mb"],
+    },
+    Expected {
+        cat: "mem",
+        ev: "high",
+        fields: &["stage", "footprint_mb"],
+    },
+    Expected {
+        cat: "mem",
+        ev: "trim",
+        fields: &["released_mb", "before_mb", "after_mb"],
+    },
+    Expected {
+        cat: "mem",
+        ev: "icon_cost",
+        fields: &["grew_mb"],
+    },
+    Expected {
+        cat: "ui",
+        ev: "icon_decode",
+        fields: &["source_bytes"],
+    },
 ];
 
 // ------------------------------------------------------------------------------------ reading

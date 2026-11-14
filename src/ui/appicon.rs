@@ -150,6 +150,11 @@ const MAX_NATIVE: u32 = 4096;
 /// Size (px) of the icon texture. The pie shows it at about a third of that.
 const SIZE: u32 = 128;
 
+/// A source (the TIFF macOS hands out, the bitmap of another OS) of at least this many bytes makes
+/// the allocator give its pages back right after the icon is made, instead of leaving them in its
+/// cache of freed blocks (see [`ui::trim`](crate::ui::trim)). Smaller ones are left to the timer.
+const BIG_SOURCE: usize = 1 << 20;
+
 /// Which app's icon a pie shows: the app being targeted if it belongs to the profile, otherwise
 /// the first app of the profile. None for a profile without apps (the general pie).
 pub fn bundle_for<'a>(apps: &'a [String], target: Option<&str>) -> Option<&'a str> {
@@ -176,26 +181,47 @@ pub fn load(bundle: &str, style: AppIconStyle) -> Option<egui::ColorImage> {
 pub fn load_tone(bundle: &str, tone: SliceTone) -> Option<egui::ColorImage> {
     // One odd icon (a broken resource, an unexpected size) must cost that icon only, not the app:
     // a panic here would end the whole process, as the UI thread has no one to catch it.
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    // how far the footprint grew while this one icon was made (None while the memory log is off):
+    // an icon that costs tens of MiB is the kind of thing that went unseen before
+    let footprint_before = crate::ui::memlog::footprint();
+    let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         load_tone_inner(bundle, tone)
     }))
     .unwrap_or_else(|_| {
         eprintln!("CursorPie: app icon for {bundle}: decoding failed, the icon is left out");
         None
-    })
+    });
+    // Whatever was read and decoded for this icon is freed by now. Ask for it to be handed back to
+    // the OS a moment after the pie is done, whichever thread this ran on.
+    crate::ui::trim::note();
+    if let Some(grew_mb) = crate::ui::memlog::grew_mb(footprint_before) {
+        diag::log!("mem", "icon_cost", grew_mb, made = out.is_some());
+    }
+    out
 }
 
 fn load_tone_inner(bundle: &str, tone: SliceTone) -> Option<egui::ColorImage> {
-    let img = resize_straight(&native_image(bundle)?);
+    let (native, source_bytes) = native_image(bundle)?;
+    let small = resize_straight(&native);
+    drop(native);
     let img = match tone {
-        SliceTone::Color => img,
-        SliceTone::White => to_glyph(&img),
-        SliceTone::Black => to_black(&img),
+        SliceTone::Color => small,
+        SliceTone::White => to_glyph(&small),
+        SliceTone::Black => to_black(&small),
     };
-    Some(egui::ColorImage::from_rgba_unmultiplied(
+    let out = egui::ColorImage::from_rgba_unmultiplied(
         [img.width() as usize, img.height() as usize],
         img.as_raw(),
-    ))
+    );
+    drop(img);
+    // A big source (several MiB of TIFF, copied and decoded) must not wait in the allocator's cache
+    // of freed blocks while the next icon of the same press is read: a pie with a dozen app icons
+    // held hundreds of MiB that way. Everything this icon used is freed here, so give it back now.
+    if source_bytes >= BIG_SOURCE {
+        let _t = diag::timed!("ui", "icon_relief", source_bytes = source_bytes);
+        platform::release_unused_memory();
+    }
+    Some(out)
 }
 
 /// The texture image for an app icon string of any of the three prefixes of [`SliceTone`]. None for
@@ -205,15 +231,26 @@ pub fn load_string(icon: &str) -> Option<egui::ColorImage> {
     load_tone(bundle, tone)
 }
 
-/// The icon of `bundle` as the system gives it, decoded to straight RGBA.
-fn native_image(bundle: &str) -> Option<RgbaImage> {
+/// The icon of `bundle` as the system gives it, decoded to straight RGBA, and the size in bytes of
+/// what the system handed over (the whole multi-size TIFF on macOS), which is freed before this
+/// returns. The size tells the caller how much the allocator has to give back.
+fn native_image(bundle: &str) -> Option<(RgbaImage, usize)> {
     let Some(icon) = platform::app_icon(bundle) else {
         eprintln!("CursorPie: app icon for {bundle}: the system returned no icon (app not found?)");
         return None;
     };
     match icon {
         platform::NativeIcon::Tiff(data) => match decode_best(&data) {
-            Ok(img) => Some(img),
+            Ok(img) => {
+                // the numbers that tell how heavy an icon is: the TIFF as a whole and the page used
+                diag::log!(
+                    "ui",
+                    "icon_decode",
+                    source_bytes = data.len(),
+                    page_px = img.width()
+                );
+                Some((img, data.len()))
+            }
             Err(why) => {
                 eprintln!(
                     "CursorPie: app icon for {bundle}: cannot decode the TIFF ({} bytes): {why}",
@@ -232,7 +269,10 @@ fn native_image(bundle: &str) -> Option<RgbaImage> {
                 eprintln!("CursorPie: app icon for {bundle}: unusable size {width}x{height}");
                 return None;
             }
-            RgbaImage::from_raw(width, height, data)
+            let bytes = data.len();
+            // the same numbers as for a TIFF: what the system handed over and the width used
+            diag::log!("ui", "icon_decode", source_bytes = bytes, page_px = width);
+            RgbaImage::from_raw(width, height, data).map(|img| (img, bytes))
         }
     }
 }

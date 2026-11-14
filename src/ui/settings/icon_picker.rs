@@ -21,7 +21,13 @@ use eframe::egui::{self, Align2, Color32, FontId, Vec2};
 pub(super) struct Picked {
     pub chosen: Option<String>,
     pub pick_file: bool,
+    /// An image of "Mine" to delete from the icons folder: it was dragged onto the trash, or the
+    /// Delete key was pressed over it.
+    pub delete: Option<String>,
 }
+
+/// Height of the strip at the bottom of the grid where an image is dropped to delete it.
+const TRASH_H: f32 = 44.0;
 
 /// Most image files decoded in one frame while the grid fills up. Tiles still waiting show "…"
 /// and are loaded on the following frames (the picker asks for them with `request_repaint`).
@@ -46,6 +52,7 @@ pub(super) fn icon_picker(
     let mut out = Picked {
         chosen: None,
         pick_file: false,
+        delete: None,
     };
     let mine = CATEGORIES.len() + 1;
 
@@ -134,9 +141,19 @@ pub(super) fn icon_picker(
     let (tile_w, gap) = (54.0_f32, 10.0_f32);
     let cols = (((w - 12.0) + gap) / (tile_w + gap)).floor().max(1.0) as usize;
     let total_rows = cells.len().div_ceil(cols);
-    let h = ui.available_height().max(80.0);
+    // the trash strip is drawn under the grid whenever the grid holds images of the user
+    let has_mine = cells.iter().any(|c| matches!(c, Cell::Mine(_)));
+    let reserve = if has_mine { TRASH_H + GAP } else { 0.0 };
+    let h = (ui.available_height() - reserve).max(80.0);
     let mut loads_left = LOADS_PER_FRAME;
     let mut pending = false;
+    // the image being dragged (and, the frame it is let go, the image to drop)
+    let mut dragging: Option<String> = None;
+    let mut released: Option<String> = None;
+    // Delete (or Backspace, which is the "delete" key of a Mac) over an image removes it, unless
+    // a text field is being typed in
+    let delete_key = !ctx.egui_wants_keyboard_input()
+        && ctx.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace));
     // `show_rows` takes the row distance from the spacing of the Ui it is called on, so the gap is
     // set on a scope around the scroll area (nothing else is drawn after the grid).
     ui.scope(|ui| {
@@ -186,8 +203,13 @@ pub(super) fn icon_picker(
                                         }
                                         ed.icon_for(ctx, &path)
                                     };
-                                    let (rect, resp) =
-                                        tile(ui, Vec2::splat(tile_w), *icon == path, accent);
+                                    let (rect, resp) = tile_sense(
+                                        ui,
+                                        Vec2::splat(tile_w),
+                                        *icon == path,
+                                        accent,
+                                        egui::Sense::click_and_drag(),
+                                    );
                                     if waiting {
                                         pending = true;
                                         ui.painter().text(
@@ -207,7 +229,19 @@ pub(super) fn icon_picker(
                                             pal().text,
                                         );
                                     }
-                                    if resp.on_hover_text(file).clicked() {
+                                    if resp.dragged() {
+                                        dragging = Some(path.clone());
+                                    }
+                                    if resp.drag_stopped() {
+                                        released = Some(path.clone());
+                                    }
+                                    if delete_key && resp.hovered() {
+                                        out.delete = Some(path.clone());
+                                    }
+                                    let tip = format!(
+                                        "{file}\nDrag to the trash, or press Delete, to remove it"
+                                    );
+                                    if resp.on_hover_text(tip).clicked() {
                                         out.chosen = Some(path.clone());
                                     }
                                 }
@@ -221,5 +255,74 @@ pub(super) fn icon_picker(
         ctx.request_repaint(); // the tiles that had to wait are loaded on the next frame
     }
 
+    if has_mine {
+        ui.add_space(GAP);
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(w, TRASH_H), egui::Sense::hover());
+        let pointer = ctx.input(|i| i.pointer.latest_pos());
+        let over = dragging.is_some() && pointer.is_some_and(|p| rect.contains(p));
+        trash_strip(ui, rect, dragging.is_some(), over);
+        if let Some(path) = &dragging {
+            // a copy of the image follows the pointer, above everything
+            if let Some(p) = pointer {
+                let painter = ctx.layer_painter(egui::LayerId::new(
+                    egui::Order::Tooltip,
+                    egui::Id::new("icon_drag_ghost"),
+                ));
+                let tex = ed.icon_for(ctx, path);
+                draw_icon(&painter, tex.as_ref(), path, p, 40.0, pal().text);
+            }
+            ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+            ctx.request_repaint();
+        }
+        // let go over the trash: delete (anywhere else the image simply stays where it was)
+        if let Some(path) = released
+            && pointer.is_some_and(|p| rect.contains(p))
+        {
+            out.delete = Some(path);
+        }
+    }
+
     out
+}
+
+/// The strip under the grid: a hint while nothing is dragged, a red drop target while an image is.
+fn trash_strip(ui: &egui::Ui, rect: egui::Rect, dragging: bool, over: bool) {
+    let p = pal();
+    let painter = ui.painter();
+    let radius = egui::CornerRadius::same(14);
+    let (fill, line, ink) = match (dragging, over) {
+        (true, true) => (p.bad.gamma_multiply(0.28), p.bad, p.bad),
+        (true, false) => (p.bad.gamma_multiply(0.10), p.bad.gamma_multiply(0.6), p.bad),
+        _ => (p.idle, Color32::TRANSPARENT, p.muted),
+    };
+    painter.rect(
+        rect,
+        radius,
+        fill,
+        egui::Stroke::new(if dragging { 1.5 } else { 0.0 }, line),
+        egui::StrokeKind::Inside,
+    );
+    let label = if over {
+        "Let go to delete"
+    } else if dragging {
+        "Drop here to delete"
+    } else {
+        "Drag an image here, or press Delete over it, to remove it"
+    };
+    let y = rect.center().y;
+    draw_icon(
+        painter,
+        None,
+        "ico:trash",
+        egui::pos2(rect.left() + 26.0, y),
+        20.0,
+        ink,
+    );
+    painter.text(
+        egui::pos2(rect.left() + 46.0, y),
+        Align2::LEFT_CENTER,
+        label,
+        FontId::proportional(13.0),
+        ink,
+    );
 }

@@ -2,6 +2,64 @@
 
 ## Unreleased
 
+## 0.8.15
+
+- **New: memory in the diagnostic log (category `mem`).** A memory problem is only a number that is too big at some
+  moment, so the log now writes it where memory is gained or given back: a `mark` with the footprint (the number
+  Activity Monitor, Task Manager and `top` show) at the start, the press, the pie opening and closing, Settings
+  opening and closing, sleep, and every 30 s; the cost of each app icon (`icon_cost`); what the icon cache holds
+  (`icon_cache`); the trim thread's result with the footprint before and after (`trim`); and image files that decode
+  to 4 MiB or more (`big_image`). `cargo tools diag` now names the step that raised the footprint by more than 64 MiB,
+  an app icon that was handed over at more than 8 MiB, a trim that gave nothing back while the footprint was large,
+  and a footprint that kept rising while idle. Off unless `mem` (or `all`) is in `CURSORPIE_DEBUG`, and compiled away
+  in a release build without `debug-log`. See "Watch the memory" in `docs/DEBUGGING.md`.
+
+- **Fixed: the first pie after the start still took the memory up to about 500 MB (macOS).** The diagnostic log of
+  such a press showed what the first fix could not reach: every app icon was a TIFF of **73,949,448 bytes** (about
+  70 MiB: `iconForFile` plus `TIFFRepresentation` write out every size macOS has for the app, and the copy into a
+  `Vec` doubles it), six of them in 0.7 s, and `icon_relief` and `trim` found nothing to give back (the memory is held
+  by AppKit and Icon Services, not by the allocator's cache of freed blocks). Only one 128 px page of those 70 MiB
+  was ever used. The app icon is now drawn at one size (256 px, about 256 KiB) with
+  `-[NSImage CGImageForProposedRect:context:hints:]`; the multi-size TIFF is read only when the system gives no
+  picture. `icon_decode` now shows `source_bytes` of 262144 for such an icon.
+
+- **Fixed: the pie made CursorPie's memory jump to about 500 MB and fall back only very slowly.** Showing the pie
+  read the icon of every app slice, and on macOS each one is a multi-size TIFF of several MiB that is copied and
+  decoded; the freed blocks stayed in the allocator's cache and were handed back only after `sleep_after_s`
+  (60 s) or when the next press allocated again. Now (1) the allocator is asked to give the pages back right after
+  each big icon, (2) a small thread (`ui::trim`) does the same two seconds after the last icon and after the pie
+  closed, without needing a frame of the hidden window, and (3) only the icons of the first frame (the ring, the
+  center, the active mode) are read on the UI thread while the hold timer runs; the app icons of submenus are read
+  on the icon worker thread. The debug log has `icon_decode`, `icon_relief` and `trim` events to check the numbers.
+
+- **Fixed: the memory of Settings was not given back after closing it.** Opening Settings (or a Flow) raised the RAM to
+  about 400 MB and closing it brought it down by a few MB only, even after a long wait; it fell to about 120 MB only
+  after the trigger was pressed once (even without the pie opening). The cause: while its window is hidden, eframe
+  runs no egui pass and paints nothing, so the textures Settings had freed and the font atlas it had replaced were
+  only released by the next pass that paints, and the heap was trimmed before that. Closing Settings now keeps the
+  (empty, click-through) window on screen for three frames, drops the icons that only Settings showed at once, then
+  hides the window and trims the heap. The icons of the other profiles are decoded again when the trigger is pressed,
+  as after an idle sleep.
+
+- **Fixed: Settings came back half reset.** Closing and opening Settings again went back to the Menu tab, but the page
+  kept its scroll position (scroll down Behavior, close, open: the page was still scrolled, and General and About
+  shared the same position too). Each opening now starts clean: the first tab (About when it was opened from there),
+  and every page at the top. Each of Behavior, General and About also keeps its own scroll position while the window
+  is open.
+
+- **New: delete an imported icon image from the icon picker.** An image in the **Mine** list can now be removed
+  without opening the `icons` folder: drag it onto the trash strip that appears under the grid, or point at it and
+  press Delete (Backspace on a Mac keyboard; ignored while a text field has the keyboard). Only images that sit
+  directly in the icons folder are ever deleted, never the original of an imported picture or a file chosen in place,
+  and the status bar says how many slices were still using the image (they show `?` until another icon is chosen).
+
+- **Fixed: the browser extension did not know the open tabs until a tab was clicked.** When CursorPie started after the
+  browser, the native messaging host ended at once (the app was not there yet) and the extension only tried again a
+  minute later or at the next tab event, so *Open URL* slices showed no badges until the person clicked a tab. The
+  host now waits for the app (and again after the app restarts) and keeps the browser's port open; the app greets each
+  new connection with a `sync` message and the extension answers with `hello` and the full list of tabs at once. An
+  extension from before this change ignores `sync` and behaves as before until it is reloaded.
+
 ## 0.8.14
 
 - **The Windows setup now says that programs running as administrator ignore the pie.** Many people thought

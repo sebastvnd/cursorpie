@@ -49,7 +49,9 @@ message ignores it, so the update that first brings the message still needs one 
    * Chrome, Edge, Brave, Vivaldi: the extensions page, *Developer mode*, *Load unpacked*, the `chromium` folder;
    * Firefox: `about:debugging`, *This Firefox*, *Load Temporary Add-on*, `manifest.json` of the `firefox` folder. A
      temporary add-on is forgotten when Firefox closes. A permanent one needs a **signed** copy (see below).
-3. The extension connects within a minute (it retries every minute while CursorPie is not running). The line under the
+3. The extension connects at once when CursorPie is running, and a moment after it starts otherwise: the host the browser
+   started waits for the app and the app sends `{"type":"sync"}` to each new connection, which makes the extension say
+   `hello` and send the open tabs without waiting for a tab event. The line under the
    switch then reads *Connected: Chrome (12 tabs)*. If it does not: reload the extension, or restart the browser.
 4. Open a page, then hover its *Open URL* slice: the two badges appear.
 

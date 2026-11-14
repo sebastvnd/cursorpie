@@ -259,6 +259,12 @@ pub(super) fn item_inspector(
             pick_icon(env, &path);
             ed.picking_icon = false;
         }
+        if let Some(file) = r.delete {
+            // one small file: removed here; the UI thread says what it was (and who used it)
+            let error = super::icon_catalog::delete_user_icon(&file).err();
+            let _ = env.tx.send(Msg::IconDeleted { file, error });
+            env.ctx.request_repaint();
+        }
         if floating.close {
             ed.picking_icon = false;
         }

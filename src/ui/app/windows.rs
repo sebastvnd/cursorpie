@@ -78,6 +78,7 @@ impl App {
     pub fn close_settings(&mut self, ctx: &egui::Context, save: bool) {
         // how long closing took (saving is most of it) and whether the edits were kept
         let _t = diag::timed!("ui", "close_settings", save = save);
+        crate::ui::memlog::mark("close_settings");
         self.ed.stop_recording();
         self.ed.scan = None;
         self.confirm_quit = false;
@@ -88,6 +89,12 @@ impl App {
         }
         self.ed.icons.revalidate(); // re-read only the images that changed on disk
         self.release_editor(); // the next open copies the config again
+        // The icon picker and the app pickers decoded hundreds of textures that only Settings
+        // showed. Free them now, not after the idle time: the pie's own icons are kept and the
+        // other profiles' are decoded again by `App::warm` when the trigger is pressed.
+        self.ed
+            .icons
+            .keep_only(&crate::ui::icons::icons_to_keep_asleep(&cfg()));
         // Settings cuts glyphs at many sizes and in several fonts (text, icons, emoji fallbacks),
         // and egui never gives one back: rebuild the atlas on every close, not only after zoomed
         // text. The few glyphs of the pie are cut again when it is drawn.
@@ -103,13 +110,15 @@ impl App {
         self.anim = 0.0;
         self.visible = false;
 
-        let w = crate::geometry::window_size(self.win);
-        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize([w, w].into()));
         ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(true));
         ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
             egui::WindowLevel::AlwaysOnTop,
         ));
-        self.hide_root(ctx);
+        // The window is not hidden yet: a hidden window runs no egui pass and paints nothing, so
+        // the textures and the font atlas freed above would stay allocated until the next time
+        // the pie shows (the RAM of Settings stayed for as long as nobody pressed the trigger).
+        // `finish_close` resizes and hides it after a few empty frames.
+        self.begin_close_flush(ctx);
         self.sleep_step(ctx); // the idle clock starts now
     }
 
@@ -264,6 +273,7 @@ impl App {
             }
             return;
         }
+        crate::ui::memlog::mark("open_settings");
         let was_visible = self.visible;
         self.drop_hud(ctx);
         self.drop_panel(ctx, true);
@@ -277,6 +287,8 @@ impl App {
         self.ed.icons.revalidate();
         self.ed.profile = 0;
         self.ed.reset_nav();
+        // a fresh start: first tab (or About), and every page scrolled to the top
+        self.ed.session = self.ed.session.wrapping_add(1);
         self.ed.tab = if about { Tab::About } else { Tab::Menu };
         self.edit = cfg().clone();
         self.edit.launch_at_login = platform::launch_at_login_enabled();
@@ -518,6 +530,7 @@ impl App {
             self.pie_blocked(ctx, x, y, false);
             return;
         }
+        crate::ui::memlog::mark("show_pie");
         // the pie takes the window over from a notice or a panel that is still on screen
         self.drop_hud(ctx);
         self.drop_panel(ctx, false);

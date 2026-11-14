@@ -479,7 +479,10 @@ impl App {
                 // Flow: a toolbar and a canvas that scrolls by itself, no outer scroll area
                 self.flow_tab(ui, &ctx);
             } else {
+                // one scroll state per page: Behavior, General and About used to share one, so a page
+                // opened after a long one came up scrolled to where the other had been left
                 egui::ScrollArea::vertical()
+                    .id_salt(section_info(self.ed.tab).1)
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         // the page keeps a readable width and sits in the middle of the body

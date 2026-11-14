@@ -295,6 +295,11 @@ pub struct Ed {
     pub add_catalog: Option<AddCatalog>,
     /// the icon picker is open (it temporarily replaces the inspector)
     pub picking_icon: bool,
+    /// Counts the times Settings was opened. It salts the ids of everything drawn in Settings, so
+    /// each opening starts with every scroll area at the top (egui keeps the scroll offset of an id
+    /// for ever, even while the window is closed) instead of only the tab and the profile going
+    /// back to their first value.
+    pub session: u64,
     pub icon_query: String,
     /// 0 = all, 1..=N = category, N+1 = the user's own icons
     pub icon_cat: usize,
@@ -416,6 +421,7 @@ impl Ed {
             adding: false,
             drag: None,
             trash_rect: None,
+            session: 0,
             add_catalog: None,
             picking_icon: false,
             icon_query: String::new(),

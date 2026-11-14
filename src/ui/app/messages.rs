@@ -4,7 +4,7 @@ use super::App;
 use crate::config::flow::{add_flow, import_flow_report, merge_flows};
 use crate::config::share::{add_profile, import_file_with_flows};
 use crate::config::{
-    Action, Flow, ItemKind, MAX_CONFIG_FILE_BYTES, NodeKind, cfg, has_commands, icons_dir,
+    Action, Flow, Item, ItemKind, MAX_CONFIG_FILE_BYTES, NodeKind, cfg, has_commands, icons_dir,
     item_at_mut, parse_config, profile_has_commands, read_text_capped, tilde,
 };
 use crate::msg::Msg;
@@ -115,6 +115,7 @@ impl App {
                     was_open = self.pie_open,
                     was_visible = self.visible
                 );
+                crate::ui::memlog::mark("hide_pie");
                 self.hover = None;
                 self.pie_open = false;
                 self.preview_until = None;
@@ -172,6 +173,27 @@ impl App {
                 self.ed.reload_user_icons();
                 if let Some(note) = note {
                     self.say(note);
+                }
+            }
+            Msg::IconDeleted { file, error } => {
+                self.ed.icons.revalidate();
+                self.ed.reload_user_icons();
+                let name = file_label(&file);
+                match error {
+                    Some(why) => self.say(why),
+                    None => {
+                        let used: usize = self
+                            .edit
+                            .profiles
+                            .iter()
+                            .map(|p| count_icon(&p.items, &file))
+                            .sum();
+                        self.say(match used {
+                            0 => format!("Deleted {name}."),
+                            1 => format!("Deleted {name}. One slice used it and now shows ?."),
+                            n => format!("Deleted {name}. {n} slices used it and now show ?."),
+                        });
+                    }
                 }
             }
             Msg::IconRefused { file, lines } => {
@@ -380,4 +402,18 @@ impl App {
             }
         }
     }
+}
+
+/// How many slices, submenus included, have `icon` as their icon.
+fn count_icon(items: &[Item], icon: &str) -> usize {
+    items
+        .iter()
+        .map(|it| {
+            usize::from(it.icon == icon)
+                + match &it.kind {
+                    ItemKind::Submenu(children) => count_icon(children, icon),
+                    _ => 0,
+                }
+        })
+        .sum()
 }
