@@ -326,6 +326,7 @@ impl Config {
             settings_hold_ms: 1200,
             pie_size: 200.0,
             accent: [90, 120, 94],
+            theme: super::ThemeColors::default(),
             trigger_button: 2,
             flick: false,
             sound: false,

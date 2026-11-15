@@ -86,3 +86,9 @@ pub fn create_private_file(path: &Path) -> io::Result<File> {
         .truncate(true)
         .open(path)
 }
+
+/// Whether `e` says the disk is full: `ERROR_DISK_FULL` (112), `ERROR_HANDLE_DISK_FULL` (39) or
+/// `ERROR_DISK_QUOTA_EXCEEDED` (1295).
+pub fn is_disk_full(e: &io::Error) -> bool {
+    matches!(e.raw_os_error(), Some(112 | 39 | 1295))
+}

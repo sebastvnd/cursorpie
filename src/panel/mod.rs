@@ -28,6 +28,6 @@ pub mod spec;
 pub use broker::{Request, Source, ask, ask_in_background, close, patch, release, set_notifier};
 pub use form::{Field, Form, Outcome, PanelResult, Patch, Value};
 pub use spec::{
-    Button, ButtonAlign, Icon, Layout, Opt, PanelSpec, Place, ShowIf, SpecError, TextStyle, Tone,
-    Widget, declared_vars,
+    Button, ButtonAlign, Icon, Layout, Opt, Padding, PanelSpec, Place, ShowIf, SpecError,
+    TextStyle, Tone, Widget, declared_vars,
 };

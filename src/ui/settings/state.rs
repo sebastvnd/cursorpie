@@ -353,6 +353,17 @@ pub struct Ed {
     pub flow_untidy: std::collections::BTreeSet<String>,
     /// Flow tab: the selected block
     pub flow_sel: Option<u32>,
+    /// Flow tab: the blocks selected together (a drag over the empty canvas, Shift or Ctrl/Cmd +
+    /// click, Ctrl/Cmd + A). Only used for two blocks or more, and then `flow_sel` is `None`: one
+    /// selected block is `flow_sel` alone, as before (the inspector shows that one).
+    pub flow_multi: std::collections::BTreeSet<u32>,
+    /// Flow tab: where the selection box started, on the canvas, while one is being dragged
+    pub flow_marquee: Option<egui::Pos2>,
+    /// Flow tab: what was already selected when the selection box started with Shift or Ctrl/Cmd
+    /// held (the box adds to it)
+    pub flow_marquee_base: std::collections::BTreeSet<u32>,
+    /// Flow tab: the header of a selected group is being dragged, so the whole group moves
+    pub flow_group: bool,
     /// Flow tab: the inspector (at the right of the canvas) stays open without a selected block
     /// (the button of the canvas bar)
     pub flow_insp: bool,
@@ -372,6 +383,9 @@ pub struct Ed {
     pub flow_var: Option<String>,
     /// Flow tab: a block the canvas has to bring to the middle of its view on the next frame
     pub flow_focus: Option<u32>,
+    /// Flow tab: the middle of the visible canvas, in the coordinates of the blocks (a block added
+    /// with nothing selected is put here, loose)
+    pub flow_center: egui::Pos2,
     /// Flow tab: the block and output a wire is being dragged from
     pub flow_wire: Option<(u32, crate::config::Port)>,
     /// Flow tab: the list of blocks the right button opened on the canvas, while it is open
@@ -450,7 +464,12 @@ impl Ed {
             flow_side_leave: None,
             flow_side_rect: egui::Rect::NOTHING,
             flow_untidy: std::collections::BTreeSet::new(),
+            flow_center: egui::Pos2::new(240.0, 160.0),
             flow_sel: None,
+            flow_multi: std::collections::BTreeSet::new(),
+            flow_marquee: None,
+            flow_marquee_base: std::collections::BTreeSet::new(),
+            flow_group: false,
             flow_insp: false,
             flow_insp_vars: false,
             flow_insp_blocks: false,
@@ -510,6 +529,9 @@ impl Ed {
     /// kit request, which the person may come back to.
     pub fn release_flow_state(&mut self) {
         self.flow_sel = None;
+        self.flow_multi.clear();
+        self.flow_marquee = None;
+        self.flow_group = false;
         self.flow_wire = None;
         self.flow_focus = None;
         self.flow_var = None;
@@ -523,6 +545,29 @@ impl Ed {
         self.flow_search = String::new();
         self.flow_side = false;
         self.flow_side_leave = None;
+    }
+
+    /// Every selected block of the canvas: the one, or the group.
+    pub fn selected_ids(&self) -> std::collections::BTreeSet<u32> {
+        let mut all = self.flow_multi.clone();
+        all.extend(self.flow_sel);
+        all
+    }
+
+    /// Whether block `id` is selected, alone or in the group.
+    pub fn is_selected(&self, id: u32) -> bool {
+        self.flow_sel == Some(id) || self.flow_multi.contains(&id)
+    }
+
+    /// Selects exactly these blocks: none, one (the one the inspector shows) or a group.
+    pub fn set_selection(&mut self, ids: std::collections::BTreeSet<u32>) {
+        self.flow_multi.clear();
+        self.flow_sel = None;
+        match ids.len() {
+            0 => {}
+            1 => self.flow_sel = ids.into_iter().next(),
+            _ => self.flow_multi = ids,
+        }
     }
 
     /// Closes the list of blocks of the canvas. Returns whether it was open.
@@ -573,6 +618,13 @@ impl Ed {
         {
             self.flow_sel = None;
         }
+        if let Some(f) = edit.flows.get(self.flow) {
+            self.flow_multi.retain(|id| f.node(*id).is_some());
+        } else {
+            self.flow_multi.clear();
+        }
+        self.flow_marquee = None;
+        self.flow_group = false;
         let ring_len = edit
             .profiles
             .get(self.profile)

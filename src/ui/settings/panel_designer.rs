@@ -30,11 +30,11 @@ use crate::panel::design::{self, Kind};
 use crate::panel::layout::{self, card_size, header_height};
 use crate::panel::spec::{
     BUTTON_H_MAX, BUTTON_RADIUS_MAX, BUTTON_W_MAX, ButtonSide, DEFAULT_TIMEOUT_S, HEIGHT_MAX,
-    HEIGHT_MIN, MAX_GROUP_BUTTONS, MAX_TIMEOUT_S, SPACER_DEFAULT, SPACER_MAX, SPACER_MIN,
-    WIDTH_DEFAULT, WIDTH_MAX, WIDTH_MIN, default_buttons, format_hex, parse_hex,
+    HEIGHT_MIN, MAX_GROUP_BUTTONS, MAX_TIMEOUT_S, PADDING_MAX, SPACER_DEFAULT, SPACER_MAX,
+    SPACER_MIN, WIDTH_DEFAULT, WIDTH_MAX, WIDTH_MIN, default_buttons, format_hex, parse_hex,
 };
 use crate::panel::{
-    Button, ButtonAlign, Form, Icon, Layout as ListLayout, Opt, PanelSpec, Place, ShowIf,
+    Button, ButtonAlign, Form, Icon, Layout as ListLayout, Opt, Padding, PanelSpec, Place, ShowIf,
     TextStyle as Style, Tone, Widget,
 };
 use crate::ui::{fonts, symbols};
@@ -109,6 +109,10 @@ pub struct PanelDesign {
     body_scroll: panel_form::BodyScroll,
     /// What was picked in the list and has to be brought into view in the middle (frames left).
     show: Option<(Sel, u8)>,
+    /// A button of a grid that was picked on its own (in the middle, or in the list of the grid):
+    /// the widget and the button. Delete and the trash of the bottom bar then remove that button
+    /// and not the whole grid. Any other pick of the list or of the middle lets go of it.
+    inner: Option<(usize, usize)>,
 }
 
 impl PanelDesign {
@@ -130,6 +134,7 @@ impl PanelDesign {
             zoom: 1.0,
             body_scroll: panel_form::BodyScroll::default(),
             show: None,
+            inner: None,
         };
         d.reload(message);
         d
@@ -149,6 +154,7 @@ impl PanelDesign {
         }
         self.written = message.to_string();
         self.options_for = None;
+        self.inner = None;
         self.dirty = true;
         self.sel = match self.sel {
             Sel::Widget(i) if i < self.spec.widgets.len() => Sel::Widget(i),
@@ -160,6 +166,7 @@ impl PanelDesign {
     /// Selects something and has the middle scroll to it (a pick in the list, a new widget).
     fn select(&mut self, sel: Sel) {
         self.select_in_place(sel);
+        self.inner = None;
         self.show = Some((sel, SHOW_TRIES));
     }
 
@@ -168,6 +175,7 @@ impl PanelDesign {
         if self.sel != sel {
             self.sel = sel;
             self.options_for = None;
+            self.inner = None;
         }
     }
 
@@ -283,6 +291,18 @@ pub(in crate::ui::settings) fn panel_design_sheet(
 
 fn draw(ui: &mut egui::Ui, d: &mut PanelDesign, accent: Color32) -> bool {
     let mut changed = false;
+    // Delete or Backspace removes what is selected, like on the canvas of a flow, unless a field is
+    // being typed in or a list is open
+    let ctx = ui.ctx().clone();
+    if !ctx.egui_wants_keyboard_input()
+        && !egui::Popup::is_any_open(&ctx)
+        && ctx.input_mut(|i| {
+            i.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
+                || i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
+        })
+    {
+        changed |= delete_selected(d);
+    }
     let area = ui.available_rect_before_wrap();
     let left = Rect::from_min_size(area.min, vec2(LEFT_W, area.height()));
     let right = Rect::from_min_max(pos2(area.max.x - RIGHT_W, area.min.y), area.max);
@@ -299,6 +319,14 @@ fn draw(ui: &mut egui::Ui, d: &mut PanelDesign, accent: Color32) -> bool {
     ui.scope_builder(UiBuilder::new().max_rect(right), |ui| {
         changed |= right_column(ui, d, accent);
     });
+    // a button picked in the list of a grid (the inspector says so through the context)
+    let pick_key = egui::Id::new(INNER_PICK);
+    if let Some((w, j)) = ctx.data(|dd| dd.get_temp::<(usize, usize)>(pick_key)) {
+        ctx.data_mut(|dd| dd.insert_temp(pick_key, (usize::MAX, 0usize)));
+        if d.sel == Sel::Widget(w) {
+            d.inner = Some((w, j));
+        }
+    }
     if changed {
         d.dirty = true;
     }
@@ -376,9 +404,20 @@ fn menu_popup<R>(
     width: f32,
     add_contents: impl FnOnce(&mut egui::Ui) -> R,
 ) -> Option<R> {
+    menu_popup_at(trigger, width, egui::RectAlign::BOTTOM_START, add_contents)
+}
+
+/// [`menu_popup`] where the menu opens at `align` of the trigger (over it, for a trigger at the
+/// bottom of the sheet).
+fn menu_popup_at<R>(
+    trigger: &egui::Response,
+    width: f32,
+    align: egui::RectAlign,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> Option<R> {
     egui::Popup::from_toggle_button_response(trigger)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-        .align(egui::RectAlign::BOTTOM_START)
+        .align(align)
         .gap(6.0)
         .width(width)
         .frame(popup_frame())
@@ -466,6 +505,27 @@ struct RowOut {
     /// Something of the same list was dropped on this row: where it came from, and whether it was
     /// let go on the lower half of the row.
     dropped: Option<(usize, bool)>,
+    /// It was let go over the trash of the bottom bar.
+    trashed: bool,
+}
+
+/// Where the pick of a button of a grid is passed from the inspector to the designer.
+const INNER_PICK: &str = "panel_design_inner_pick";
+
+/// Where the trash of the bottom bar was drawn last (to tell, when something is let go, whether it
+/// landed there), and whether a row or a widget is being dragged now (the trash lights up).
+fn trash_key() -> egui::Id {
+    egui::Id::new("panel_design_trash")
+}
+fn drag_key() -> egui::Id {
+    egui::Id::new("panel_design_dragging")
+}
+
+/// Whether the pointer is over the trash of the bottom bar.
+fn pointer_on_trash(ctx: &egui::Context) -> bool {
+    let at = ctx.input(|i| i.pointer.latest_pos());
+    let zone = ctx.data(|d| d.get_temp::<Rect>(trash_key()));
+    matches!((at, zone), (Some(p), Some(r)) if r.contains(p))
 }
 
 /// A [`list_row`] that can be picked up and dropped on another row of the same `list`. While
@@ -485,7 +545,9 @@ fn drag_row(
     }
     if resp.dragged() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        ui.ctx().data_mut(|d| d.insert_temp(drag_key(), true));
     }
+    let trashed = resp.drag_stopped() && pointer_on_trash(ui.ctx());
     let lower = ui
         .input(|i| i.pointer.latest_pos())
         .is_some_and(|p| p.y > resp.rect.center().y);
@@ -503,10 +565,12 @@ fn drag_row(
     let dropped = resp
         .dnd_release_payload::<RowDrag>()
         .filter(|p| p.list == list)
+        .filter(|_| !trashed)
         .map(|p| (p.index, lower));
     RowOut {
         clicked: resp.clicked(),
         dropped,
+        trashed,
     }
 }
 
@@ -527,6 +591,55 @@ fn drop_slot(rects: &[Rect], y: f32) -> Option<(usize, bool)> {
 }
 
 // ------------------------------------------------------------------ left: add and structure
+
+/// The kinds of widget to add: two even columns of one-line rows, read left to right. Returns the
+/// one picked (and closes the menu it is in).
+fn kind_menu(ui: &mut egui::Ui, accent: Color32) -> Option<Kind> {
+    let mut picked = None;
+    ui.spacing_mut().item_spacing = vec2(6.0, 2.0);
+    for pair in Kind::ALL.chunks(2) {
+        ui.columns(2, |cols| {
+            for (col, kind) in cols.iter_mut().zip(pair) {
+                if list_row(col, kind_icon(*kind), kind.label(), false, accent)
+                    .on_hover_text(kind.hint())
+                    .clicked()
+                {
+                    picked = Some(*kind);
+                    col.close();
+                }
+            }
+        });
+    }
+    picked
+}
+
+/// Removes what is selected: the button of a grid that was picked on its own, else the widget or
+/// the button at the bottom (the panel itself stays).
+fn delete_selected(d: &mut PanelDesign) -> bool {
+    if let Some((w, j)) = d.inner
+        && remove_inner(d, w, j)
+    {
+        return true;
+    }
+    match d.sel {
+        Sel::Panel => false,
+        sel => run_act(d, sel, Act::Remove),
+    }
+}
+
+/// Removes button `j` of the grid `w`.
+fn remove_inner(d: &mut PanelDesign, w: usize, j: usize) -> bool {
+    d.inner = None;
+    let Some(Widget::Buttons { buttons, .. }) = d.spec.widgets.get_mut(w) else {
+        return false;
+    };
+    if j >= buttons.len() {
+        return false;
+    }
+    buttons.remove(j);
+    d.note = None;
+    true
+}
 
 fn add_widget(d: &mut PanelDesign, kind: Kind) -> bool {
     let at = match d.sel {
@@ -558,25 +671,10 @@ fn left_column(ui: &mut egui::Ui, d: &mut PanelDesign, accent: Color32) -> bool 
         ui.spacing_mut().item_spacing.x = 6.0;
         let add = button(ui, Look::Primary(accent), Some(symbols::PLUS), "Add");
         // two even columns of one-line rows, read left to right, no title: a plain menu
-        let added = menu_popup(&add, 292.0, |ui| {
-            let mut added = false;
-            ui.spacing_mut().item_spacing = vec2(6.0, 2.0);
-            for pair in Kind::ALL.chunks(2) {
-                ui.columns(2, |cols| {
-                    for (col, kind) in cols.iter_mut().zip(pair) {
-                        if list_row(col, kind_icon(*kind), kind.label(), false, accent)
-                            .on_hover_text(kind.hint())
-                            .clicked()
-                        {
-                            added |= add_widget(d, *kind);
-                            col.close();
-                        }
-                    }
-                });
-            }
-            added
-        });
-        changed |= added.unwrap_or(false);
+        let added = menu_popup(&add, 292.0, |ui| kind_menu(ui, accent));
+        if let Some(Some(kind)) = added {
+            changed |= add_widget(d, kind);
+        }
 
         let from = button(ui, Look::Plain, Some(symbols::SQUARES_FOUR), "Templates");
         let picked = menu_popup(&from, 250.0, |ui| {
@@ -592,6 +690,7 @@ fn left_column(ui: &mut egui::Ui, d: &mut PanelDesign, accent: Color32) -> bool 
                     d.spec = spec;
                     d.unreadable = None;
                     d.options_for = None;
+                    d.inner = None;
                     d.sel = Sel::Panel;
                     d.body_scroll.offset = 0.0;
                     picked = true;
@@ -606,6 +705,8 @@ fn left_column(ui: &mut egui::Ui, d: &mut PanelDesign, accent: Color32) -> bool 
     section_title(ui, "Structure");
 
     let mut pick = None;
+    // a row let go over the trash of the bottom bar
+    let mut trashed: Option<Sel> = None;
     // a row dropped on another one: (is it a widget, from, over, below)
     let mut moved: Option<(bool, usize, usize, bool)> = None;
     egui::ScrollArea::vertical()
@@ -653,6 +754,9 @@ fn left_column(ui: &mut egui::Ui, d: &mut PanelDesign, accent: Color32) -> bool 
                 if let Some((from, after)) = out.dropped {
                     moved = Some((true, from, i, after));
                 }
+                if out.trashed {
+                    trashed = Some(Sel::Widget(i));
+                }
             }
             ui.add_space(GAP);
             section_title(ui, "Buttons");
@@ -681,6 +785,9 @@ fn left_column(ui: &mut egui::Ui, d: &mut PanelDesign, accent: Color32) -> bool 
                 if let Some((from, after)) = out.dropped {
                     moved = Some((false, from, i, after));
                 }
+                if out.trashed {
+                    trashed = Some(Sel::Button(i));
+                }
             }
             if let Some(b) = design::new_button(&d.spec)
                 && button(ui, Look::Soft, Some(symbols::PLUS), "Add button").clicked()
@@ -703,6 +810,10 @@ fn left_column(ui: &mut egui::Ui, d: &mut PanelDesign, accent: Color32) -> bool 
             changed = true;
         }
     }
+    if let Some(sel) = trashed {
+        changed |= run_act(d, sel, Act::Remove);
+        pick = None;
+    }
     if let Some(sel) = pick {
         d.select(sel);
     }
@@ -716,6 +827,10 @@ fn preview_column(ui: &mut egui::Ui, d: &mut PanelDesign, rect: Rect, accent: Co
     let mut next = None;
     // the selected widget was dragged by its grip to another place
     let mut changed = false;
+    // what the bottom bar asked for, a widget let go over its trash, a button of a grid picked
+    let bar_act: BarAct;
+    let mut trash_widget: Option<usize> = None;
+    let mut inner_pick: Option<(usize, usize)> = None;
     {
         let PanelDesign {
             preview,
@@ -726,6 +841,7 @@ fn preview_column(ui: &mut egui::Ui, d: &mut PanelDesign, rect: Rect, accent: Co
             zoom,
             body_scroll,
             show,
+            inner: grid_pick,
             ..
         } = d;
         let Some(p) = preview.as_mut() else {
@@ -833,7 +949,7 @@ fn preview_column(ui: &mut egui::Ui, d: &mut PanelDesign, rect: Rect, accent: Co
         }
 
         // a click selects what it landed on
-        let inner = card.shrink(layout::PAD);
+        let inner = panel_form::inner_rect(card, &p.shown);
         let head = Rect::from_min_size(inner.min, vec2(inner.width(), header_height(&p.shown)));
         let foot_top = inner.max.y - layout::footer_height(&p.shown);
 
@@ -908,6 +1024,19 @@ fn preview_column(ui: &mut egui::Ui, d: &mut PanelDesign, rect: Rect, accent: Co
             p.form.on.insert(id.clone());
         }
         if let Some(id) = pressed {
+            // a button of a grid is picked on its own too (Delete removes just that one)
+            inner_pick = spec.widgets.iter().enumerate().find_map(|(wi, w)| match w {
+                Widget::Buttons { buttons, .. } => {
+                    buttons.iter().position(|b| b.id == id).map(|j| (wi, j))
+                }
+                _ => None,
+            });
+            if let Some((wi, j)) = inner_pick {
+                // the list of the grid in the inspector shows it as the one picked
+                ctx.data_mut(|dd| {
+                    dd.insert_temp(egui::Id::new(("panel_design_grid_button", wi)), j)
+                });
+            }
             // a button of the bottom row, or one of a grid (which selects the grid)
             next = spec
                 .buttons
@@ -942,15 +1071,18 @@ fn preview_column(ui: &mut egui::Ui, d: &mut PanelDesign, rect: Rect, accent: Co
                 egui::StrokeKind::Outside,
             );
         }
-        // a grip beside the selected widget: drag it up or down to move the widget
+        // a grip beside the selected widget: drag it up or down to move the widget, or onto the
+        // trash of the bottom bar to remove it
+        let mut grip_dragging = false;
         if let Sel::Widget(si) = *sel
             && let Some(r) = rects.get(si).copied().filter(|r| r.is_finite())
         {
             let sr = to_screen * r;
-            let grip = Rect::from_center_size(
-                pos2(on_screen.min.x - 16.0, sr.center().y),
-                vec2(20.0, 30.0),
-            );
+            // always inside the preview, so it can be reached however far the panel is zoomed or
+            // scrolled (a widget that is out of view has its grip at the edge)
+            let gx = (on_screen.min.x - 16.0).max(rect.min.x + 12.0);
+            let gy = sr.center().y.max(rect.min.y + 24.0).min(rect.max.y - 72.0);
+            let grip = Rect::from_center_size(pos2(gx, gy), vec2(20.0, 30.0));
             let resp = ui.interact(grip, ui.id().with("panel_design_grip"), Sense::drag());
             let hot = resp.hovered() || resp.dragged();
             let clip = ui.painter().with_clip_rect(rect);
@@ -970,9 +1102,16 @@ fn preview_column(ui: &mut egui::Ui, d: &mut PanelDesign, rect: Rect, accent: Co
                     egui::CursorIcon::Grab
                 });
             }
+            grip_dragging = resp.dragged();
             if resp.dragged() || resp.drag_stopped() {
                 let pointer = ctx.input(|i| i.pointer.latest_pos());
-                let slot = pointer.and_then(|p| drop_slot(rects, (to_screen.inverse() * p).y));
+                let on_trash = pointer_on_trash(&ctx);
+                let slot = pointer
+                    .and_then(|p| drop_slot(rects, (to_screen.inverse() * p).y))
+                    .filter(|_| !on_trash);
+                if resp.drag_stopped() && on_trash {
+                    trash_widget = Some(si);
+                }
                 if resp.dragged()
                     && let Some((over, after)) = slot
                     && let Some(target) = rects.get(over).filter(|t| t.is_finite())
@@ -983,8 +1122,8 @@ fn preview_column(ui: &mut egui::Ui, d: &mut PanelDesign, rect: Rect, accent: Co
                         target.min.y - GAP / 2.0
                     };
                     let line = [
-                        to_screen * pos2(card.min.x + layout::PAD, y),
-                        to_screen * pos2(card.max.x - layout::PAD, y),
+                        to_screen * pos2(inner.min.x, y),
+                        to_screen * pos2(inner.max.x, y),
                     ];
                     painter.line_segment(line, Stroke::new(3.0, accent));
                 }
@@ -997,17 +1136,50 @@ fn preview_column(ui: &mut egui::Ui, d: &mut PanelDesign, rect: Rect, accent: Co
                 }
             }
         }
-        zoom_bar(ui, rect, zoom, problem.as_deref());
+        // what a click on the trash of the bottom bar removes (None: nothing is selected)
+        let remove = match (*grid_pick, *sel) {
+            (Some(_), _) => Some("Remove the selected button (Delete)"),
+            (None, Sel::Panel) => None,
+            (None, Sel::Widget(_)) => Some("Remove the selected element (Delete)"),
+            (None, Sel::Button(_)) => Some("Remove the selected button (Delete)"),
+        };
+        let dragging = grip_dragging
+            || ctx
+                .data(|dd| dd.get_temp::<bool>(drag_key()))
+                .unwrap_or(false);
+        ctx.data_mut(|dd| dd.insert_temp(drag_key(), false));
+        bar_act = zoom_bar(ui, rect, zoom, problem.as_deref(), dragging, remove, accent);
     }
     if let Some(sel) = next {
         // a click on the panel itself: it is already in view
         d.select_in_place(sel);
     }
+    if let Some(pick) = inner_pick {
+        d.inner = Some(pick);
+    }
+    match bar_act {
+        BarAct::Add(kind) => changed |= add_widget(d, kind),
+        BarAct::Delete => changed |= delete_selected(d),
+        BarAct::None => {}
+    }
+    if let Some(si) = trash_widget {
+        changed |= run_act(d, Sel::Widget(si), Act::Remove);
+    }
     changed
 }
 
-/// The small capsule at the bottom middle of the preview: zoom out, the zoom (a press goes back to
-/// 100%), zoom in. When the panel is not valid, the reason is shown right above the capsule.
+/// What the bottom bar asks for.
+enum BarAct {
+    None,
+    /// A widget of this kind was picked in its "Add element" menu.
+    Add(Kind),
+    /// The trash was clicked: remove what is selected.
+    Delete,
+}
+
+/// The small capsule at the bottom middle of the preview: add an element, a trash (a click removes
+/// what is selected; a row of the list or the widget being dragged by its grip is removed when
+/// let go over it), zoom out, the zoom (a press goes back to 100%), zoom in. When the panel is not valid, the reason is shown right above the capsule.
 ///
 /// It is an area of its own, above everything: the panel in the middle is a layer of its own (so it
 /// can be zoomed) and is drawn over whatever the page itself draws, so a capsule drawn in the page
@@ -1017,7 +1189,15 @@ fn preview_column(ui: &mut egui::Ui, d: &mut PanelDesign, rect: Rect, accent: Co
 /// The reason is an area of its own too, stacked over the capsule and wrapped to the width of the
 /// preview: drawn in the page at the bottom it was covered by the capsule, and a long reason was cut
 /// at the edges instead of wrapping.
-fn zoom_bar(ui: &mut egui::Ui, rect: Rect, zoom: &mut f32, problem: Option<&str>) {
+fn zoom_bar(
+    ui: &mut egui::Ui,
+    rect: Rect,
+    zoom: &mut f32,
+    problem: Option<&str>,
+    dragging: bool,
+    remove: Option<&str>,
+    accent: Color32,
+) -> BarAct {
     /// The room the capsule takes from the bottom of the preview (its height and the gap below it).
     const BAR_ROOM: f32 = 20.0 + 40.0;
     if let Some(text) = problem {
@@ -1041,13 +1221,14 @@ fn zoom_bar(ui: &mut egui::Ui, rect: Rect, zoom: &mut f32, problem: Option<&str>
                     });
             });
     }
+    let mut act = BarAct::None;
     egui::Area::new(egui::Id::new("panel_design_zoom_bar"))
         .order(egui::Order::Tooltip)
         .pivot(Align2::CENTER_BOTTOM)
         .fixed_pos(pos2(rect.center().x, rect.max.y - 14.0))
         .constrain(false)
         .show(ui.ctx(), |ui| {
-            egui::Frame::new()
+            let out = egui::Frame::new()
                 .fill(pal().card)
                 .stroke(Stroke::new(1.0, pal().border))
                 .corner_radius(PILL)
@@ -1056,6 +1237,59 @@ fn zoom_bar(ui: &mut egui::Ui, rect: Rect, zoom: &mut f32, problem: Option<&str>
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 4.0;
+                        // add an element: a round "+" (its menu opens over the bar, below)
+                        let add = round_button(
+                            ui,
+                            Look::Primary(accent),
+                            symbols::PLUS,
+                            "Add element",
+                            true,
+                            CONTROL_H,
+                        );
+                        // the trash: a click removes what is selected, and a row or a widget
+                        // dragged here is removed when let go
+                        let (cell, resp) =
+                            ui.allocate_exact_size(vec2(CONTROL_H, CONTROL_H), Sense::click());
+                        ui.ctx()
+                            .data_mut(|d| d.insert_temp(trash_key(), cell.expand(6.0)));
+                        let over = dragging && pointer_on_trash(ui.ctx());
+                        let fill = if over {
+                            wash(pal().bad, 0.32)
+                        } else if dragging {
+                            wash(pal().bad, 0.16)
+                        } else if resp.hovered() && remove.is_some() {
+                            wash(pal().bad, 0.12)
+                        } else {
+                            Color32::TRANSPARENT
+                        };
+                        ui.painter().rect_filled(cell, PILL, fill);
+                        if dragging {
+                            ui.painter().rect_stroke(
+                                cell,
+                                PILL,
+                                Stroke::new(1.5, pal().bad),
+                                egui::StrokeKind::Inside,
+                            );
+                        }
+                        let ink = if dragging || remove.is_some() {
+                            pal().bad
+                        } else {
+                            pal().muted
+                        };
+                        fonts::paint_icon(
+                            ui.painter(),
+                            cell.center(),
+                            symbols::TRASH,
+                            17.0,
+                            ink,
+                            false,
+                        );
+                        let tip = remove.unwrap_or("Drag an element here to remove it");
+                        if resp.on_hover_text(tip).clicked() && remove.is_some() {
+                            act = BarAct::Delete;
+                        }
+                        let (bar, _) = ui.allocate_exact_size(vec2(1.0, 20.0), Sense::hover());
+                        ui.painter().rect_filled(bar, 0.0, pal().border);
                         if icon_button(ui, symbols::MINUS, "Zoom out", *zoom > ZOOM_MIN + 0.001)
                             .clicked()
                         {
@@ -1073,9 +1307,23 @@ fn zoom_bar(ui: &mut egui::Ui, rect: Rect, zoom: &mut f32, problem: Option<&str>
                         {
                             *zoom = (*zoom * ZOOM_STEP).clamp(ZOOM_MIN, ZOOM_MAX);
                         }
-                    });
+                        add
+                    })
+                    .inner
                 });
+            // the menu is anchored to the whole capsule, not to the "+" in it, so it opens
+            // centered over the bar (egui places a popup by `interact_rect` too)
+            let mut anchor = out.inner;
+            anchor.rect = out.response.rect;
+            anchor.interact_rect = out.response.rect;
+            let picked = menu_popup_at(&anchor, 292.0, egui::RectAlign::TOP, |ui| {
+                kind_menu(ui, accent)
+            });
+            if let Some(Some(kind)) = picked {
+                act = BarAct::Add(kind);
+            }
         });
+    act
 }
 
 // ------------------------------------------------------------------ right: the inspector
@@ -1293,6 +1541,8 @@ fn panel_fields(ui: &mut egui::Ui, d: &mut PanelDesign, accent: Color32) -> bool
         c = true;
     }
 
+    c |= padding_fields(ui, spec);
+
     field_label(ui, "Gives up after (0 = never)");
     let mut secs = spec.timeout_s.unwrap_or(DEFAULT_TIMEOUT_S);
     if ui
@@ -1384,6 +1634,102 @@ fn panel_fields(ui: &mut egui::Ui, d: &mut PanelDesign, accent: Color32) -> bool
             d.sel = Sel::Button(0);
             c = true;
         }
+    }
+    c
+}
+
+/// A label and a number of points for one edge of the padding.
+fn pad_box(ui: &mut egui::Ui, label: &str, v: &mut f64) -> bool {
+    field_label(ui, label);
+    ui.add_sized(
+        [ui.available_width(), CONTROL_H],
+        egui::DragValue::new(v)
+            .range(0.0..=f64::from(PADDING_MAX))
+            .speed(0.5)
+            .max_decimals(0)
+            .suffix(" pt"),
+    )
+    .changed()
+}
+
+/// Stores one side of the padding: the usual space is not written.
+fn set_pad(slot: &mut Option<f32>, v: f64) {
+    let v = v as f32;
+    *slot = ((v - layout::PAD).abs() >= 0.5).then_some(v.round());
+}
+
+/// The space between the edge of the card and its content: one number for every side, two (left
+/// and right, top and bottom) or one for each side, so that a single side can be changed too.
+fn padding_fields(ui: &mut egui::Ui, spec: &mut PanelSpec) -> bool {
+    let now = layout::insets(spec);
+    let before = [now.top, now.right, now.bottom, now.left].map(f64::from);
+    let mut v = before;
+    // the least the sides need to be shown as they are: 0 one number, 1 two, 2 four
+    let needed: u8 = if v.iter().all(|x| *x == v[0]) {
+        0
+    } else if v[0] == v[2] && v[1] == v[3] {
+        1
+    } else {
+        2
+    };
+    let key = egui::Id::new("panel_design_padding_mode");
+    let mut mode = ui.data(|d| d.get_temp::<u8>(key)).unwrap_or(0).max(needed);
+    field_label(ui, "Space between the edge and the content");
+    let items = [(None, "All"), (None, "H and V"), (None, "Each side")];
+    if let Some(k) = segmented(ui, &items, usize::from(mode)) {
+        mode = k as u8;
+        // a mode with fewer numbers makes the sides alike again
+        if mode == 0 {
+            v = [v[0]; 4];
+        } else if mode == 1 {
+            v[2] = v[0];
+            v[3] = v[1];
+        }
+    }
+    match mode {
+        0 => {
+            if pad_box(ui, "All sides", &mut v[0]) {
+                v = [v[0]; 4];
+            }
+        }
+        1 => {
+            let (h, t) = ui.columns(2, |cols| {
+                let h = pad_box(&mut cols[0], "Left and right", &mut v[1]);
+                let t = pad_box(&mut cols[1], "Top and bottom", &mut v[0]);
+                (h, t)
+            });
+            if h {
+                v[3] = v[1];
+            }
+            if t {
+                v[2] = v[0];
+            }
+        }
+        _ => {
+            ui.columns(2, |cols| {
+                pad_box(&mut cols[0], "Top", &mut v[0]);
+                pad_box(&mut cols[1], "Right", &mut v[1]);
+            });
+            ui.columns(2, |cols| {
+                pad_box(&mut cols[0], "Bottom", &mut v[2]);
+                pad_box(&mut cols[1], "Left", &mut v[3]);
+            });
+        }
+    }
+    ui.data_mut(|d| d.insert_temp(key, mode));
+    let mut c = false;
+    if v != before {
+        let p = &mut spec.padding;
+        set_pad(&mut p.top, v[0]);
+        set_pad(&mut p.right, v[1]);
+        set_pad(&mut p.bottom, v[2]);
+        set_pad(&mut p.left, v[3]);
+        c = true;
+    }
+    if spec.padding != Padding::default() && button(ui, Look::Plain, None, "Usual space").clicked()
+    {
+        spec.padding = Padding::default();
+        c = true;
     }
     c
 }
@@ -1622,6 +1968,8 @@ fn grid_buttons_editor(
     sel = sel.min(buttons.len().saturating_sub(1));
     let list = LIST_GRID + grid as u64;
     let mut dropped = None;
+    // a row let go over the trash of the bottom bar
+    let mut trashed = None;
     ui.scope(|ui| {
         ui.spacing_mut().item_spacing.y = 2.0;
         for (i, b) in buttons.iter().enumerate() {
@@ -1636,12 +1984,25 @@ fn grid_buttons_editor(
             let out = drag_row(ui, icon, &text, sel == i, accent, list, i);
             if out.clicked {
                 sel = i;
+                // picked on its own: Delete removes this button, not the grid
+                ui.ctx()
+                    .data_mut(|d| d.insert_temp(egui::Id::new(INNER_PICK), (grid, i)));
             }
             if let Some((from, after)) = out.dropped {
                 dropped = Some((from, i, after));
             }
+            if out.trashed {
+                trashed = Some(i);
+            }
         }
     });
+    if let Some(i) = trashed
+        && i < buttons.len()
+    {
+        buttons.remove(i);
+        sel = sel.min(buttons.len().saturating_sub(1));
+        c = true;
+    }
     if let Some((from, over, after)) = dropped
         && let Some(to) = design::drop_target(buttons.len(), from, over, after)
         && design::move_item(buttons, from, to)
@@ -2287,5 +2648,48 @@ mod tests {
         assert!(run_act(&mut d, Sel::Button(1), Act::Remove));
         assert!(run_act(&mut d, Sel::Button(0), Act::Remove));
         assert_eq!(d.sel, Sel::Panel, "nothing left to select");
+    }
+
+    #[test]
+    fn delete_removes_the_selected_widget_button_or_the_button_of_a_grid() {
+        let mut d = PanelDesign::load(
+            0,
+            1,
+            r#"{"widgets":[{"type":"toggle","id":"a"},{"type":"toggle","id":"b"}],"buttons":[{"id":"x"}]}"#,
+        );
+        assert!(!delete_selected(&mut d), "the panel itself stays");
+        d.select(Sel::Widget(0));
+        assert!(delete_selected(&mut d));
+        assert_eq!(d.spec.widgets.len(), 1);
+        d.select(Sel::Button(0));
+        assert!(delete_selected(&mut d));
+        assert!(d.spec.buttons.is_empty());
+
+        assert!(add_widget(&mut d, Kind::Buttons));
+        let grid = d.spec.widgets.len() - 1;
+        let before = match &d.spec.widgets[grid] {
+            Widget::Buttons { buttons, .. } => buttons.len(),
+            _ => unreachable!(),
+        };
+        assert!(before >= 2, "a new grid has some buttons");
+        // picked on its own: only that button goes
+        d.inner = Some((grid, 0));
+        assert!(delete_selected(&mut d));
+        match &d.spec.widgets[grid] {
+            Widget::Buttons { buttons, .. } => assert_eq!(buttons.len(), before - 1),
+            _ => unreachable!(),
+        }
+        assert_eq!(d.inner, None);
+        // not picked on its own: the whole grid goes
+        assert!(delete_selected(&mut d));
+        assert_eq!(d.spec.widgets.len(), grid);
+    }
+
+    #[test]
+    fn a_pick_in_the_list_lets_go_of_the_button_of_a_grid() {
+        let mut d = PanelDesign::load(0, 1, r#"{"widgets":[{"type":"toggle","id":"a"}]}"#);
+        d.inner = Some((0, 0));
+        d.select(Sel::Widget(0));
+        assert_eq!(d.inner, None);
     }
 }

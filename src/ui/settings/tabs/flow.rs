@@ -15,7 +15,10 @@
 //! system); the right button anywhere on the canvas (on the empty background, on a block or on
 //! one of its fields) opens the same list at the pointer. It opens on the press, not on the
 //! release, so a slow click or a trackpad that moves a little still opens it ([`canvas_menu`]).
-//! *Tidy* lines the blocks up in columns, left to right, without any of them covering another.
+//! *Tidy* lines the blocks up, without any of them covering another, in one of three ways
+//! ([`TidyStyle`]): in columns, left to right; downwards, one under the other with what a block
+//! decides on beside it; or a mix of the two, where a plain run of blocks goes left to right and
+//! the blocks that decide (a ladder of *If / else*) go down.
 //!
 //! A wire that cannot work is **red**, one that probably is a mistake **amber**, each with a `!`
 //! in the middle whose tooltip says why, and the block it leads to has the same mark on its
@@ -72,7 +75,7 @@ use eframe::egui::{
     self, Align2, Color32, FontId, PointerButton, Pos2, Rect, RichText, Sense, Shape, Stroke,
     StrokeKind, UiBuilder, Vec2, emath::TSTransform, layers::ShapeIdx, pos2, vec2,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 
@@ -98,8 +101,26 @@ const STATUS_H: f32 = 30.0;
 /// Space between two columns of blocks, and between two blocks of a column, after *Tidy*.
 const TIDY_COL_GAP: f32 = 90.0;
 const TIDY_ROW_GAP: f32 = 28.0;
+/// Space between two rows of blocks when they are laid out downwards: a wire that goes from the
+/// right side of a block to the left side of the one under it needs the room to turn.
+const TIDY_TREE_ROW_GAP: f32 = 44.0;
 /// Where the first column of blocks starts after *Tidy*.
 const TIDY_ORIGIN: f32 = 40.0;
+
+/// How *Tidy* lines the blocks up.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum TidyStyle {
+    /// Columns, left to right: the blocks the same number of wires from *Start* share a column.
+    Columns,
+    /// Downwards: a run of blocks goes down, one under the other. A block that decides has the
+    /// blocks of its first output (*then*, the body of a loop) beside it, to the right, and what
+    /// its second output leads to (*else*, what follows a loop) goes on below.
+    Down,
+    /// A mix: a plain run of blocks goes left to right, and a block that decides has the blocks
+    /// of its first output beside it while the second (*else*) goes on below, so a ladder of
+    /// *If / else* is a column with its actions in the next one.
+    Mixed,
+}
 
 /// What the toolbar (or the empty page) asked for this frame.
 pub(super) enum Do {
@@ -113,8 +134,8 @@ pub(super) enum Do {
     Export,
     Pick(usize),
     ResetView,
-    /// Line the blocks up in columns so none covers another
-    Tidy,
+    /// Line the blocks up (in the given way) so none covers another
+    Tidy(TidyStyle),
     Add(NodeKind),
     /// Add a step at the end of the list of steps
     AddStep(NodeKind),
@@ -282,6 +303,9 @@ pub(super) fn notice(tx: &Sender<Msg>, ctx: &egui::Context, text: impl Into<Stri
 pub(super) fn select_flow(ed: &mut Ed, i: usize) {
     ed.flow = i;
     ed.flow_sel = None;
+    ed.flow_multi.clear();
+    ed.flow_marquee = None;
+    ed.flow_group = false;
     ed.flow_var = None;
     ed.flow_focus = None;
     ed.flow_wire = None;
@@ -509,6 +533,7 @@ fn canvas_menu(
         && can_add
         && view.contains(p)
         && !ed.sheet_open()
+        && !choice_sheet_open(ctx)
         && ed.recording.is_none()
         && !egui::Popup::is_any_open(ctx)
         && !ed.flow_menu.is_some_and(|m| m.rect.contains(p))
@@ -668,9 +693,9 @@ pub(super) fn run(todo: Do, ctx: &egui::Context, edit: &mut Config, ed: &mut Ed,
                 ed.flow_insp_vars = true;
             }
         }
-        Do::Tidy => {
+        Do::Tidy(style) => {
             if let Some(flow) = edit.flows.get_mut(ed.flow) {
-                tidy(flow);
+                tidy_with(flow, style);
             }
             ed.flow_menu = None;
             ed.flow_zoom = 1.0;
@@ -698,17 +723,47 @@ pub(super) fn run(todo: Do, ctx: &egui::Context, edit: &mut Config, ed: &mut Ed,
         }
         Do::Add(kind) => {
             let sel = ed.flow_sel;
+            let center = ed.flow_center;
             if let Some(flow) = edit.flows.get_mut(ed.flow)
                 && flow.nodes.len() < MAX_FLOW_NODES
             {
-                // nothing can follow a block without an output: the new one goes before End instead
+                // a block that was clicked and has an output gets the new one behind it; with
+                // nothing clicked (or a block nothing can follow, like End) the new block is
+                // loose: no wire, in the middle of what the person sees
                 let sel =
                     sel.filter(|id| flow.node(*id).is_some_and(|n| !n.kind.outputs().is_empty()));
-                let id = flow.add_after(sel, kind);
+                let id = if sel.is_some() {
+                    flow.add_after(sel, kind)
+                } else {
+                    let (x, y) = free_spot(flow, &kind, center);
+                    flow.add_at(kind, x, y)
+                };
                 ed.flow_sel = Some(id);
             }
         }
     }
+}
+
+/// Where a loose block goes: its middle on `center`, moved down and to the right while another
+/// block sits on that very place, so a few blocks added in a row do not pile up.
+fn free_spot(flow: &Flow, kind: &NodeKind, center: Pos2) -> (f32, f32) {
+    let (w, h) = (kind.width(), node_h(kind));
+    let (mut x, mut y) = (center.x - w / 2.0, center.y - h / 2.0);
+    if !x.is_finite() || !y.is_finite() {
+        (x, y) = (40.0, 40.0);
+    }
+    for _ in 0..40 {
+        if !flow
+            .nodes
+            .iter()
+            .any(|n| (n.x - x).abs() < 30.0 && (n.y - y).abs() < 30.0)
+        {
+            break;
+        }
+        x += 32.0;
+        y += 32.0;
+    }
+    (x, y)
 }
 
 // ------------------------------------------------------------------ drawing
@@ -799,6 +854,122 @@ fn node_h(kind: &NodeKind) -> f32 {
 /// the last column of the walk, the blocks no wire reaches in a column of their own after it. In
 /// a column the blocks sit one under another, in the order the walk found them, with a gap, so
 /// none covers another and the same flow always looks the same.
+pub(super) fn tidy_with(flow: &mut Flow, style: TidyStyle) {
+    match style {
+        TidyStyle::Columns => tidy(flow),
+        TidyStyle::Down => tidy_tree(flow, true),
+        TidyStyle::Mixed => tidy_tree(flow, false),
+    }
+}
+
+/// The block `to` leads to, if it is one that is still to be placed (not *End*, which goes last).
+fn unplaced(
+    flow: &Flow,
+    cell: &BTreeMap<u32, (usize, usize)>,
+    end_id: Option<u32>,
+    to: Option<u32>,
+) -> Option<u32> {
+    to.filter(|t| Some(*t) != end_id && !cell.contains_key(t) && flow.node(*t).is_some())
+}
+
+/// Puts block `id` in the cell (`col`, `row`) and, from it, every block it leads to that has no
+/// cell yet. Returns the row under the last one used, so what comes next can start there.
+///
+/// A block with one way on is followed by the block it leads to: under it when `down`, to its
+/// right if not. A block with two (*then* and *else*, the body of a loop and what follows it) has
+/// the blocks of its first output laid out beside it, in the next column, and goes on below with
+/// the second, under the whole of what stands beside it, so the two never share a cell.
+fn lay_tree(
+    flow: &Flow,
+    id: u32,
+    (col, row): (usize, usize),
+    down: bool,
+    end_id: Option<u32>,
+    cell: &mut BTreeMap<u32, (usize, usize)>,
+) -> usize {
+    if Some(id) == end_id || cell.contains_key(&id) {
+        return row;
+    }
+    let Some(n) = flow.node(id) else { return row };
+    cell.insert(id, (col, row));
+    let [next, alt] = n.wires();
+    match (
+        unplaced(flow, cell, end_id, next),
+        unplaced(flow, cell, end_id, alt),
+    ) {
+        (None, None) => row + 1,
+        (Some(to), None) | (None, Some(to)) => {
+            // a block with two outputs keeps its first one beside it even when the second leads
+            // nowhere, so the last *If / else* of a ladder is laid out like the ones above it
+            let beside = !down || (n.kind.outputs().len() > 1 && next.is_some());
+            let at = if beside {
+                (col + 1, row)
+            } else {
+                (col, row + 1)
+            };
+            lay_tree(flow, to, at, down, end_id, cell).max(row + 1)
+        }
+        (Some(side), Some(below)) => {
+            let side_end = lay_tree(flow, side, (col + 1, row), down, end_id, cell).max(row + 1);
+            let below_end = lay_tree(flow, below, (col, side_end), down, end_id, cell);
+            side_end.max(below_end)
+        }
+    }
+}
+
+/// *Tidy* for the two ways that go down (see [`TidyStyle`]): every block gets a cell of a grid
+/// (see `lay_tree`), a column is as wide as its widest block and a row as high as its highest.
+/// *End* goes after the last column, on the first row; the blocks no wire reaches go below
+/// everything, one to a row.
+fn tidy_tree(flow: &mut Flow, down: bool) {
+    let end_id = flow.end().map(|n| n.id);
+    let mut cell: BTreeMap<u32, (usize, usize)> = BTreeMap::new();
+    if let Some(start) = flow.start().map(|n| n.id) {
+        lay_tree(flow, start, (0, 0), down, end_id, &mut cell);
+    }
+    let first_loose_row = cell.values().map(|c| c.1 + 1).max().unwrap_or(0);
+    let loose: Vec<u32> = flow
+        .nodes
+        .iter()
+        .map(|n| n.id)
+        .filter(|id| Some(*id) != end_id && !cell.contains_key(id))
+        .collect();
+    for (row, id) in (first_loose_row..).zip(loose) {
+        cell.insert(id, (0, row));
+    }
+    if let Some(end) = end_id {
+        let col = cell.values().map(|c| c.0 + 1).max().unwrap_or(0);
+        cell.insert(end, (col, 0));
+    }
+    let cols = cell.values().map(|c| c.0 + 1).max().unwrap_or(0);
+    let rows = cell.values().map(|c| c.1 + 1).max().unwrap_or(0);
+    let (mut wide, mut high) = (vec![0.0f32; cols], vec![0.0f32; rows]);
+    for (id, &(c, r)) in &cell {
+        if let Some(n) = flow.node(*id) {
+            wide[c] = wide[c].max(n.kind.width());
+            high[r] = high[r].max(node_h(&n.kind));
+        }
+    }
+    let mut xs = Vec::with_capacity(cols);
+    let mut x = TIDY_ORIGIN;
+    for w in &wide {
+        xs.push(x);
+        x += w + TIDY_COL_GAP;
+    }
+    let mut ys = Vec::with_capacity(rows);
+    let mut y = TIDY_ORIGIN;
+    for h in &high {
+        ys.push(y);
+        y += h + TIDY_TREE_ROW_GAP;
+    }
+    for n in &mut flow.nodes {
+        if let Some(&(c, r)) = cell.get(&n.id) {
+            n.x = xs[c];
+            n.y = ys[r];
+        }
+    }
+}
+
 pub(super) fn tidy(flow: &mut Flow) {
     let mut depth: BTreeMap<u32, usize> = BTreeMap::new();
     let mut order: Vec<u32> = Vec::new();
@@ -958,13 +1129,26 @@ pub(super) fn pick<T: Copy + PartialEq>(
     label: fn(T) -> &'static str,
     current: &mut T,
 ) {
+    pick_titled(ui, width, "Choose an option", all, label, current);
+}
+
+/// [`pick`] whose list, when it is long enough to open in a sheet with a search box, is called
+/// `title`.
+pub(super) fn pick_titled<T: Copy + PartialEq>(
+    ui: &mut egui::Ui,
+    width: f32,
+    title: &str,
+    all: &[T],
+    label: fn(T) -> &'static str,
+    current: &mut T,
+) {
     let labels: Vec<&str> = all.iter().map(|t| label(*t)).collect();
     let at = all.iter().position(|t| t == current).unwrap_or(0);
     // the list is as wide as its longest name needs, even when the pill is small
     let longest = labels.iter().map(|l| l.chars().count()).max().unwrap_or(0);
     let list = longest as f32 * 8.0 + 64.0;
     let shown = labels.get(at).copied().unwrap_or("");
-    if let Some(i) = select_wide(ui, width, list, shown, &labels, at)
+    if let Some(i) = select_wide_titled(ui, width, list, title, shown, &labels, at)
         && let Some(v) = all.get(i)
     {
         *current = *v;
@@ -1202,7 +1386,14 @@ pub(super) fn controls(
         }
         NodeKind::Native { op, a, b } => {
             let w = ui.available_width();
-            pick(ui, w, &NativeOp::ALL, NativeOp::label, op);
+            pick_titled(
+                ui,
+                w,
+                "Choose a system action",
+                &NativeOp::ALL,
+                NativeOp::label,
+                op,
+            );
             let (ha, hb) = op.hints();
             if matches!(op, NativeOp::OpenAppSmart | NativeOp::OpenUrlSmart) {
                 // the app from the list of installed apps (or typed), the way to open it from a list
@@ -1291,14 +1482,33 @@ pub(super) fn controls(
     }
 }
 
-/// Points along a smooth wire from the output dot `a` to the input dot `b`.
+/// Points along a smooth wire from the output dot `a` to the input dot `b`, as it is when the
+/// canvas is not zoomed (see `wire_points_at`).
+#[cfg(test)]
 fn wire_points(a: Pos2, b: Pos2) -> Vec<Pos2> {
-    let dx = ((b.x - a.x).abs() * 0.5).max(48.0);
+    wire_points_at(a, b, 1.0)
+}
+
+/// Points along a smooth wire from the output dot `a` to the input dot `b`, on a canvas zoomed by
+/// `zoom`. The wire is a curve, drawn as short straight pieces; they are cut so that each one is
+/// a few pixels on the screen, whatever the zoom and the length of the wire. A fixed count made
+/// the pieces long enough to see as corners when the canvas is zoomed in or the wire is long.
+fn wire_points_at(a: Pos2, b: Pos2, zoom: f32) -> Vec<Pos2> {
+    let run = (b.x - a.x).abs() * 0.5;
+    // a wire that goes backwards (the input is left of the output) leaves and arrives with a
+    // short reach, so it makes a tight S and not a loop as wide as the distance between the dots
+    let dx = if b.x >= a.x {
+        run.max(48.0)
+    } else {
+        run.clamp(48.0, 140.0)
+    };
     let (c1, c2) = (a + vec2(dx, 0.0), b - vec2(dx, 0.0));
-    const N: usize = 24;
-    (0..=N)
+    // the length of the control polygon is never shorter than the curve
+    let reach = (c1 - a).length() + (c2 - c1).length() + (b - c2).length();
+    let n = ((reach * zoom.clamp(0.05, 16.0) / 4.0).ceil() as usize).clamp(24, 600);
+    (0..=n)
         .map(|i| {
-            let t = i as f32 / N as f32;
+            let t = i as f32 / n as f32;
             let u = 1.0 - t;
             let (w0, w1, w2, w3) = (u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t);
             pos2(
@@ -1310,8 +1520,11 @@ fn wire_points(a: Pos2, b: Pos2) -> Vec<Pos2> {
 }
 
 /// Draws a wire.
-fn draw_wire(painter: &egui::Painter, a: Pos2, b: Pos2, color: Color32, width: f32) {
-    painter.add(Shape::line(wire_points(a, b), Stroke::new(width, color)));
+fn draw_wire(painter: &egui::Painter, a: Pos2, b: Pos2, color: Color32, width: f32, zoom: f32) {
+    painter.add(Shape::line(
+        wire_points_at(a, b, zoom),
+        Stroke::new(width, color),
+    ));
 }
 
 /// Whether `shape` is, or holds, a text.
@@ -1443,12 +1656,19 @@ pub(in crate::ui::settings) fn crisp_text(
     });
 }
 
+/// Whether a drag of the empty canvas moves it (Space is held and no field is being typed in).
+fn pans_with_drag(ctx: &egui::Context) -> bool {
+    ctx.input(|i| i.key_down(egui::Key::Space)) && !ctx.egui_wants_keyboard_input()
+}
+
 /// Moves and zooms the canvas the way a node editor does:
 /// * drag the empty canvas, or hold the middle button anywhere on it, to move;
 /// * a mouse wheel or two fingers on a trackpad move it too;
 /// * Alt (Option) + scroll, a pinch, or Ctrl/Cmd + scroll zoom around the pointer.
 fn view_input(ctx: &egui::Context, ed: &mut Ed, rect: Rect, bg: &egui::Response) {
-    if ed.sheet_open() {
+    // a sheet, or the sheet of a long list (see `choice_sheet`), is over the canvas: the wheel, the
+    // trackpad and the middle button belong to it, not to the canvas under it
+    if ed.sheet_open() || choice_sheet_open(ctx) {
         ed.flow_mid = false;
         crate::tap::FLOW_CANVAS_HOVER.store(false, Ordering::SeqCst);
         return;
@@ -1472,7 +1692,9 @@ fn view_input(ctx: &egui::Context, ed: &mut Ed, rect: Rect, bg: &egui::Response)
     // open; over this canvas it is let through, so holding it can move the canvas.
     crate::tap::FLOW_CANVAS_HOVER.store(over, Ordering::SeqCst);
 
-    if bg.dragged_by(PointerButton::Primary) {
+    // a drag of the empty canvas draws a selection box (see `canvas`); with Space held it moves the
+    // canvas instead
+    if pans_with_drag(ctx) && bg.dragged_by(PointerButton::Primary) {
         ed.flow_pan += bg.drag_delta();
         ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
     }
@@ -1512,6 +1734,19 @@ fn view_input(ctx: &egui::Context, ed: &mut Ed, rect: Rect, bg: &egui::Response)
         ed.flow_pan = at - scene_at * new;
         ed.flow_zoom = new;
     }
+}
+
+/// The blocks a selection box leaves selected: the ones it touches, and, when `base` (what was
+/// selected before the box, empty unless Shift or Ctrl/Cmd was held) has some, the touched ones
+/// that were in it are taken out and the others are added, as the box of a file manager does.
+fn marquee_pick(base: &BTreeSet<u32>, touched: &[u32]) -> BTreeSet<u32> {
+    let mut chosen = base.clone();
+    for &id in touched {
+        if !chosen.remove(&id) {
+            chosen.insert(id);
+        }
+    }
+    chosen
 }
 
 /// Draws the canvas of `flow`: the grid, the wires, the blocks with their controls, and handles
@@ -1579,9 +1814,11 @@ fn canvas(
         );
         view_input(ctx, ed, view, &bg);
         // a click on the empty canvas lets go of the block and closes the inspector (and stops
-        // following a variable, which is only drawn while the inspector is there)
-        if bg.clicked() {
+        // following a variable, which is only drawn while the inspector is there); with Shift or
+        // Ctrl/Cmd held it leaves the selection alone, as in a file manager
+        if bg.clicked() && !ctx.input(|i| i.modifiers.shift || i.modifiers.command) {
             ed.flow_sel = None;
+            ed.flow_multi.clear();
             ed.flow_insp = false;
             ed.flow_var = None;
         }
@@ -1594,21 +1831,199 @@ fn canvas(
         }
         let to_global = TSTransform::new(rect.min.to_vec2() + ed.flow_pan, ed.flow_zoom);
         let from_global = to_global.inverse();
+        ed.flow_center = from_global * view.center();
 
-        // Delete or Backspace removes the selected block, unless a field is being typed in, a
-        // shortcut is being recorded or a list is open (Start and End stay: remove_node refuses)
-        if let Some(id) = ed.flow_sel
-            && !ctx.egui_wants_keyboard_input()
+        // a group exists only while no single block is selected: whatever selected one block (a
+        // click, the inspector, a wire dragged out of a dot) ends the group
+        if ed.flow_sel.is_some() {
+            ed.flow_multi.clear();
+        }
+        let keys_free = !ctx.egui_wants_keyboard_input()
             && ed.recording.is_none()
             && !ed.sheet_open()
+            && !choice_sheet_open(ctx)
             && !egui::Popup::is_any_open(ctx)
-            && ed.flow_menu.is_none()
+            && ed.flow_menu.is_none();
+        // Delete or Backspace removes the selected blocks, unless a field is being typed in, a
+        // shortcut is being recorded or a list is open (Start and End stay: remove_node refuses)
+        if keys_free
+            && !ed.selected_ids().is_empty()
             && ctx.input_mut(|i| {
                 i.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
                     || i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
             })
         {
-            ops.push(Op::Remove(id));
+            for id in ed.selected_ids() {
+                ops.push(Op::Remove(id));
+            }
+        }
+        // Ctrl/Cmd + A selects every block
+        if keys_free
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::A))
+        {
+            ed.set_selection(flow.nodes.iter().map(|n| n.id).collect());
+        }
+        // A press on the empty canvas is also followed here, by where the blocks are and not by what
+        // egui says the pointer is over, so that a click that lets go of the selection and a drag
+        // that draws the box work even when the background (`bg`) does not get the press, as when
+        // the layer of the blocks covers it. Whatever `bg` does as well is the same, so none of it
+        // is done twice.
+        let press_key = egui::Id::new(("flow_empty_press", fi));
+        {
+            let (pressed, down, latest, mods) = ctx.input(|i| {
+                (
+                    i.pointer.primary_pressed(),
+                    i.pointer.primary_down(),
+                    i.pointer.latest_pos(),
+                    i.modifiers,
+                )
+            });
+            let additive = mods.shift || mods.command;
+            let mut press: Option<Pos2> = ctx
+                .data(|d| d.get_temp::<Option<Pos2>>(press_key))
+                .flatten();
+            if pressed {
+                press = None;
+                if let Some(p) = latest
+                    && view.contains(p)
+                    && !pans_with_drag(ctx)
+                    && !ed.sheet_open()
+                    && !choice_sheet_open(ctx)
+                    && !egui::Popup::is_any_open(ctx)
+                    && ed.flow_menu.is_none()
+                {
+                    // not when something floats over the canvas there (the bar, a list)
+                    let base_l = ui.layer_id();
+                    let scene_l = egui::LayerId::new(base_l.order, ui.id().with(("flow_scene", fi)));
+                    let covered = ctx
+                        .layer_id_at(p)
+                        .is_some_and(|l| l != scene_l && l != base_l && l.order >= base_l.order);
+                    // what is not empty: a block, its dots (half of each sticks out of its sides)
+                    // and the "+" of an output with nothing plugged in; nothing else around it
+                    let q = from_global * p;
+                    let on_block = flow.nodes.iter().any(|n| {
+                        let top = pos2(n.x, n.y);
+                        let size = vec2(n.kind.width(), node_h(&n.kind));
+                        let half = PORT_HIT / 2.0;
+                        Rect::from_min_size(top, size).expand2(vec2(half, 0.0)).contains(q)
+                            || n.kind.outputs().iter().any(|&port| {
+                                n.wire(port).is_none()
+                                    && Rect::from_center_size(
+                                        out_pos(top, size, port) + vec2(34.0, 0.0),
+                                        Vec2::splat(24.0),
+                                    )
+                                    .contains(q)
+                            })
+                    });
+                    if !covered && !on_block {
+                        press = Some(p);
+                    }
+                }
+            }
+            if let Some(from) = press {
+                if down {
+                    // moved far enough to be a drag, not a click: the box starts where it was pressed
+                    if ed.flow_marquee.is_none()
+                        && !pans_with_drag(ctx)
+                        && latest.is_some_and(|p| (p - from).length() > 6.0)
+                    {
+                        ed.flow_marquee_base = if additive {
+                            ed.selected_ids()
+                        } else {
+                            BTreeSet::new()
+                        };
+                        if !additive {
+                            ed.set_selection(BTreeSet::new());
+                        }
+                        ed.flow_marquee = Some(from_global * from);
+                    }
+                } else {
+                    // let go: a click that did not move lets go of the selection and closes the
+                    // inspector (with Shift or Ctrl/Cmd held the selection stays)
+                    if !additive && latest.is_none_or(|p| (p - from).length() <= 6.0) {
+                        ed.flow_sel = None;
+                        ed.flow_multi.clear();
+                        ed.flow_insp = false;
+                        ed.flow_var = None;
+                    }
+                    press = None;
+                }
+            }
+            ctx.data_mut(|d| d.insert_temp(press_key, press));
+        }
+        // a drag that starts on the empty canvas draws a box; the blocks it touches are selected
+        // (with Shift or Ctrl/Cmd held they are added to what was selected, or taken out of it
+        // when they were selected already)
+        if bg.drag_started_by(PointerButton::Primary)
+            && ed.flow_marquee.is_none()
+            && !pans_with_drag(ctx)
+            && !ed.sheet_open()
+            && !choice_sheet_open(ctx)
+            && let Some(p) = ctx.input(|i| i.pointer.press_origin())
+        {
+            let additive = ctx.input(|i| i.modifiers.shift || i.modifiers.command);
+            ed.flow_marquee_base = if additive {
+                ed.selected_ids()
+            } else {
+                BTreeSet::new()
+            };
+            if !additive {
+                ed.set_selection(BTreeSet::new());
+            }
+            ed.flow_marquee = Some(from_global * p);
+        }
+        if let Some(start) = ed.flow_marquee {
+            if ctx.input(|i| i.pointer.primary_down()) {
+                if let Some(cur) = ctx
+                    .input(|i| i.pointer.latest_pos())
+                    .map(|p| from_global * p)
+                {
+                    let boxed = Rect::from_two_pos(start, cur);
+                    let touched: Vec<u32> = flow
+                        .nodes
+                        .iter()
+                        .filter(|n| {
+                            boxed.intersects(Rect::from_min_size(
+                                pos2(n.x, n.y),
+                                vec2(n.kind.width(), node_h(&n.kind)),
+                            ))
+                        })
+                        .map(|n| n.id)
+                        .collect();
+                    let chosen = marquee_pick(&ed.flow_marquee_base, &touched);
+                    // kept as a group even for one block while the box is dragged: a block alone
+                    // would open the inspector and shrink the canvas under the pointer
+                    if chosen != ed.flow_multi {
+                        ed.flow_sel = None;
+                        ed.flow_multi = chosen;
+                    }
+                }
+                ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
+                ctx.request_repaint();
+            } else {
+                ed.flow_marquee = None;
+                ed.flow_marquee_base.clear();
+                // let go: one block is the selected block again (the inspector shows it)
+                let ids = ed.selected_ids();
+                ed.set_selection(ids);
+            }
+        }
+        // the header of a selected group is being dragged: the whole group follows the pointer,
+        // moved before anything is drawn so the blocks stay where they are to each other
+        if ed.flow_group {
+            if ctx.input(|i| i.pointer.primary_down()) {
+                let d = ctx.input(|i| i.pointer.delta()) / ed.flow_zoom;
+                if d != Vec2::ZERO {
+                    for n in flow.nodes.iter_mut() {
+                        if ed.flow_multi.contains(&n.id) {
+                            n.x = (n.x + d.x).clamp(-COORD_LIMIT, COORD_LIMIT);
+                            n.y = (n.y + d.y).clamp(-COORD_LIMIT, COORD_LIMIT);
+                        }
+                    }
+                }
+            } else {
+                ed.flow_group = false;
+            }
         }
         // the right button anywhere on the canvas: the list of blocks to add, and the new block
         // goes where the pointer was
@@ -1659,6 +2074,7 @@ fn canvas(
         let ui = &mut scene;
         let painter = ui.painter().clone();
         let origin = Pos2::ZERO;
+        let zoom = ed.flow_zoom;
 
         // the blocks a run can get to; the others are marked and their wires are dim
         let reach_ids: Vec<u32> = flow.reachable().iter().map(|n| n.id).collect();
@@ -1707,9 +2123,9 @@ fn canvas(
                         Some(Severity::Warning) => (AMBER, 3.0),
                         None => (color, 2.5),
                     };
-                    draw_wire(&painter, *a, *b, color, width);
+                    draw_wire(&painter, *a, *b, color, width, zoom);
                     if sev.is_some() {
-                        let pts = wire_points(*a, *b);
+                        let pts = wire_points_at(*a, *b, zoom);
                         if let Some(&mid) = pts.get(pts.len() / 2) {
                             painter.circle_filled(mid, 8.0, color);
                             painter.text(
@@ -1776,7 +2192,7 @@ fn canvas(
                 };
                 let p = origin + vec2(a.x + a.kind.width(), a.y + 6.0);
                 let q = origin + vec2(b.x, b.y + 6.0);
-                let pts = wire_points(p, q);
+                let pts = wire_points_at(p, q, zoom);
                 for s in Shape::dashed_line(&pts, Stroke::new(2.5, READS_C), 7.0, 5.0) {
                     painter.add(s);
                 }
@@ -1785,10 +2201,9 @@ fn canvas(
         }
 
         // the blocks; the selected one last, so it is on top
-        let sel = ed.flow_sel;
         let wiring = ed.flow_wire;
         let mut order: Vec<usize> = (0..flow.nodes.len()).collect();
-        order.sort_by_key(|&i| Some(flow.nodes[i].id) == sel);
+        order.sort_by_key(|&i| ed.is_selected(flow.nodes[i].id));
         for i in order {
             let id = flow.nodes[i].id;
             let is_start = matches!(flow.nodes[i].kind, NodeKind::Start);
@@ -1802,20 +2217,51 @@ fn canvas(
             let head = Rect::from_min_size(top, vec2(size.x, HEAD_H));
             let hr = ui.interact(head, egui::Id::new(("flow_head", fi, id)), Sense::click_and_drag());
             if hr.clicked() || hr.drag_started() {
-                ed.flow_sel = Some(id);
+                let (shift, command) = ctx.input(|i| (i.modifiers.shift, i.modifiers.command));
+                if (shift || command) && hr.clicked() {
+                    // Shift or Ctrl/Cmd + click adds the block to the selection, or takes it out
+                    let mut chosen = ed.selected_ids();
+                    if !chosen.remove(&id) {
+                        chosen.insert(id);
+                    }
+                    // kept as a group even for one block (or none): a block alone would open the
+                    // inspector and shrink the canvas under the pointer while more are picked
+                    ed.flow_sel = None;
+                    ed.flow_multi = chosen;
+                } else if (shift || command) && !ed.is_selected(id) {
+                    // Shift or Ctrl/Cmd + drag of a block that is not selected: it joins the
+                    // selection and the whole group follows the pointer
+                    let mut chosen = ed.selected_ids();
+                    chosen.insert(id);
+                    ed.flow_sel = None;
+                    ed.flow_multi = chosen;
+                    ed.flow_group = true;
+                } else if ed.flow_multi.contains(&id) {
+                    // part of a group: a click alone narrows the selection to this block, a drag
+                    // moves the whole group
+                    if hr.clicked() {
+                        ed.set_selection(BTreeSet::from([id]));
+                    } else {
+                        ed.flow_group = true;
+                    }
+                } else {
+                    ed.flow_sel = Some(id);
+                }
             }
             if hr.dragged_by(PointerButton::Primary) {
-                let d = hr.drag_delta();
-                let n = &mut flow.nodes[i];
-                n.x = (n.x + d.x).clamp(-COORD_LIMIT, COORD_LIMIT);
-                n.y = (n.y + d.y).clamp(-COORD_LIMIT, COORD_LIMIT);
-                top += d;
                 ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+                if !(ed.flow_group && ed.flow_multi.contains(&id)) {
+                    let d = hr.drag_delta();
+                    let n = &mut flow.nodes[i];
+                    n.x = (n.x + d.x).clamp(-COORD_LIMIT, COORD_LIMIT);
+                    n.y = (n.y + d.y).clamp(-COORD_LIMIT, COORD_LIMIT);
+                    top += d;
+                }
             }
 
             let body_rect = Rect::from_min_size(top, size);
             let head = Rect::from_min_size(top, vec2(size.x, HEAD_H));
-            let selected = ed.flow_sel == Some(id);
+            let selected = ed.is_selected(id);
             let (icon, title) = kind_info(&flow.nodes[i].kind);
             let color = tint(&flow.nodes[i].kind, accent);
 
@@ -2117,16 +2563,32 @@ fn canvas(
                     && in_view
                     && ctx.input(|i| i.pointer.primary_pressed())
                     && pointer.is_some_and(|p| body_rect.contains(p))
+                    && !ed.flow_multi.contains(&id)
+                    && !ctx.input(|i| i.modifiers.shift || i.modifiers.command)
                 {
                     ed.flow_sel = Some(id);
                 }
             }
         }
 
+        // the selection box
+        if let Some(start) = ed.flow_marquee
+            && let Some(cur) = pointer
+        {
+            let boxed = Rect::from_two_pos(start, cur);
+            painter.rect_filled(boxed, 2.0, accent.gamma_multiply(0.12));
+            painter.rect_stroke(
+                boxed,
+                2.0,
+                Stroke::new(1.2 / ed.flow_zoom.max(0.1), accent),
+                StrokeKind::Middle,
+            );
+        }
+
         // a wire being dragged, and where it ends
         if let Some(from) = ed.flow_wire {
             if let (Some(p), Some(a)) = (pointer, outs.get(&from)) {
-                draw_wire(&painter, *a, p, accent.gamma_multiply(0.75), 2.0);
+                draw_wire(&painter, *a, p, accent.gamma_multiply(0.75), 2.0, zoom);
             }
             if ctx.input(|i| i.pointer.any_down()) {
                 ctx.request_repaint();
@@ -2148,14 +2610,20 @@ fn canvas(
             .count();
         // the hint line, in the strip under the blocks; the longest of these that fits the width
         // is the one shown, so it never runs out of the canvas
-        let head = format!(
+        let mut head = format!(
             "{steps} step{} \u{b7} {}%",
             if steps == 1 { "" } else { "s" },
             (ed.flow_zoom * 100.0).round()
         );
+        if ed.flow_multi.len() > 1 {
+            head = format!("{head} \u{b7} {} selected", ed.flow_multi.len());
+        }
         let hints = [
             format!(
-                "{head} \u{b7} right-click adds a block \u{b7} Alt + scroll or pinch zooms \u{b7} middle button or two fingers moves"
+                "{head} \u{b7} right-click adds a block \u{b7} drag to select \u{b7} Shift + click adds or removes \u{b7} Alt + scroll or pinch zooms \u{b7} middle button, Space + drag or two fingers moves"
+            ),
+            format!(
+                "{head} \u{b7} right-click adds a block \u{b7} drag to select \u{b7} Shift + click adds or removes \u{b7} Alt + scroll zooms"
             ),
             format!("{head} \u{b7} right-click adds a block \u{b7} Alt + scroll zooms"),
             head,
@@ -2259,6 +2727,7 @@ pub(super) fn apply_ops(
                     if ed.flow_sel == Some(id) {
                         ed.flow_sel = None;
                     }
+                    ed.flow_multi.remove(&id);
                     ed.stop_recording();
                 }
             }
@@ -2300,6 +2769,133 @@ mod tests {
     use super::*;
     use crate::ui::app::{CARD_SIZE, WIN_MARGIN};
     use crate::ui::settings::Tab;
+
+    /// Start, three *If / else* each with an action on *then* and the next *If / else* on *else*,
+    /// and the actions leading to End.
+    fn ladder() -> (Flow, [u32; 3], [u32; 3]) {
+        let mut flow = Flow::new("flow-1", "Ladder");
+        let start = flow.start().unwrap().id;
+        let end = flow.end().unwrap().id;
+        let mut ifs = [0; 3];
+        let mut acts = [0; 3];
+        for i in 0..3 {
+            ifs[i] = flow.add_at(NodeKind::Branch(Cond::default()), 0.0, 0.0);
+            acts[i] = flow.add_at(NodeKind::Wait(0), 0.0, 0.0);
+            assert!(flow.connect(ifs[i], Port::Next, acts[i]));
+            assert!(flow.connect(acts[i], Port::Next, end));
+        }
+        assert!(flow.connect(start, Port::Next, ifs[0]));
+        assert!(flow.connect(ifs[0], Port::Alt, ifs[1]));
+        assert!(flow.connect(ifs[1], Port::Alt, ifs[2]));
+        (flow, ifs, acts)
+    }
+
+    fn no_block_covers_another(flow: &Flow) {
+        let rect = |n: &FlowNode| {
+            Rect::from_min_size(pos2(n.x, n.y), vec2(n.kind.width(), node_h(&n.kind)))
+        };
+        for (i, a) in flow.nodes.iter().enumerate() {
+            assert!(a.x >= TIDY_ORIGIN && a.y >= TIDY_ORIGIN, "{a:?}");
+            for b in flow.nodes.iter().skip(i + 1) {
+                assert!(
+                    !rect(a).intersects(rect(b)),
+                    "{:?} covers {:?}",
+                    a.kind,
+                    b.kind
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn tidy_down_stacks_a_ladder_and_puts_the_actions_beside_it() {
+        for style in [TidyStyle::Down, TidyStyle::Mixed] {
+            let (mut flow, ifs, acts) = ladder();
+            tidy_with(&mut flow, style);
+            no_block_covers_another(&flow);
+            let at = |id: u32| {
+                let n = flow.node(id).unwrap();
+                (n.x, n.y)
+            };
+            // the *If / else* blocks are one column, one under the other
+            assert_eq!(at(ifs[0]).0, at(ifs[1]).0, "{style:?}");
+            assert_eq!(at(ifs[1]).0, at(ifs[2]).0, "{style:?}");
+            assert!(at(ifs[0]).1 < at(ifs[1]).1 && at(ifs[1]).1 < at(ifs[2]).1);
+            // each action is beside its block, in the next column
+            for i in 0..3 {
+                assert!(at(acts[i]).0 > at(ifs[i]).0, "{style:?}");
+                assert_eq!(at(acts[i]).1, at(ifs[i]).1, "{style:?}");
+            }
+            // End is after every column
+            let end = flow.end().unwrap();
+            assert!(flow.nodes.iter().all(|n| n.id == end.id || n.x < end.x));
+            // the same flow always gets the same places
+            let once = flow.clone();
+            tidy_with(&mut flow, style);
+            assert_eq!(flow, once);
+        }
+    }
+
+    #[test]
+    fn a_plain_run_goes_down_or_across_by_the_style() {
+        let mut flow = Flow::new("flow-1", "Run");
+        let mut last = None;
+        for _ in 0..4 {
+            last = Some(flow.add_after(last, NodeKind::Wait(0)));
+        }
+        let start = flow.start().unwrap().id;
+        let run: Vec<u32> =
+            std::iter::successors(Some(start), |id| flow.node(*id).and_then(|n| n.next))
+                .take_while(|id| Some(*id) != flow.end().map(|n| n.id))
+                .collect();
+        assert!(run.len() >= 5);
+        tidy_with(&mut flow, TidyStyle::Down);
+        no_block_covers_another(&flow);
+        for w in run.windows(2) {
+            let (a, b) = (flow.node(w[0]).unwrap(), flow.node(w[1]).unwrap());
+            assert_eq!(a.x, b.x);
+            assert!(b.y > a.y);
+        }
+        tidy_with(&mut flow, TidyStyle::Mixed);
+        no_block_covers_another(&flow);
+        for w in run.windows(2) {
+            let (a, b) = (flow.node(w[0]).unwrap(), flow.node(w[1]).unwrap());
+            assert_eq!(a.y, b.y);
+            assert!(b.x > a.x);
+        }
+    }
+
+    #[test]
+    fn tidy_down_places_every_block_of_a_messy_flow_without_covering() {
+        let mut flow = Flow::new("flow-1", "Demo");
+        let mut last = None;
+        for kind in every_kind()
+            .into_iter()
+            .filter(|k| !matches!(k, NodeKind::Start | NodeKind::End | NodeKind::Stop))
+        {
+            last = Some(flow.add_after(last, kind));
+        }
+        for style in [TidyStyle::Down, TidyStyle::Mixed] {
+            for n in &mut flow.nodes {
+                n.x = 0.0;
+                n.y = 0.0;
+            }
+            tidy_with(&mut flow, style);
+            no_block_covers_another(&flow);
+        }
+    }
+
+    #[test]
+    fn a_selection_box_adds_to_the_selection_or_takes_out_of_it() {
+        let none = BTreeSet::new();
+        let had = BTreeSet::from([1, 2]);
+        // no modifier: the box selects what it touches
+        assert_eq!(marquee_pick(&none, &[2, 3]), BTreeSet::from([2, 3]));
+        assert!(marquee_pick(&none, &[]).is_empty());
+        // Shift or Ctrl/Cmd: what it touches is added, or taken out when it was selected
+        assert_eq!(marquee_pick(&had, &[2, 3]), BTreeSet::from([1, 3]));
+        assert_eq!(marquee_pick(&had, &[]), had);
+    }
 
     #[test]
     fn every_way_to_open_in_the_list_is_a_word_the_block_reads() {
@@ -2357,6 +2953,16 @@ mod tests {
         // a wire that goes backwards still leaves to the right and arrives from the left
         let back = wire_points(pos2(300.0, 20.0), pos2(10.0, 20.0));
         assert!(back[1].x > 300.0 - 1.0);
+        // a far wire goes back with a short reach, not as wide as the distance
+        let far = wire_points(pos2(1500.0, 20.0), pos2(10.0, 20.0));
+        assert!(far.iter().all(|p| p.x < 1500.0 + 140.0));
+        // zoomed in, the pieces stay short on the screen: more of them
+        let near = wire_points_at(a, b, 1.0);
+        let big = wire_points_at(a, b, 4.0);
+        assert!(big.len() > near.len());
+        for w in big.windows(2) {
+            assert!((w[1] - w[0]).length() * 4.0 < 8.0);
+        }
     }
 
     /// One block of every kind.
@@ -2452,6 +3058,22 @@ mod tests {
             NodeKind::Call(String::new()),
             NodeKind::Stop,
         ]
+    }
+
+    #[test]
+    fn a_block_added_with_nothing_selected_is_loose_and_does_not_pile_up() {
+        let mut f = Flow::new("t", "t");
+        let wired = f.nodes.iter().filter(|n| n.next.is_some()).count();
+        let (x1, y1) = free_spot(&f, &NodeKind::Wait(1), pos2(600.0, 400.0));
+        f.add_at(NodeKind::Wait(1), x1, y1);
+        let (x2, y2) = free_spot(&f, &NodeKind::Wait(1), pos2(600.0, 400.0));
+        f.add_at(NodeKind::Wait(1), x2, y2);
+        assert!(x2 > x1 && y2 > y1, "the second one moves off the first");
+        assert_eq!(
+            f.nodes.iter().filter(|n| n.next.is_some()).count(),
+            wired,
+            "nothing was wired"
+        );
     }
 
     #[test]

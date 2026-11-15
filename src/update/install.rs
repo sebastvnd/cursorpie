@@ -301,6 +301,8 @@ pub enum InstallError {
     Corrupt,
     /// The package could not be opened, or does not hold CursorPie.
     Unpack,
+    /// The disk has no room for the download or for the new copy.
+    NoSpace,
     /// The downloaded program does not start on this system.
     SelfTest,
     /// The step that swaps the files could not be started.
@@ -323,6 +325,9 @@ impl InstallError {
                 "The download is not the file the release published, so it was thrown away."
             }
             InstallError::Unpack => "The downloaded package could not be opened.",
+            InstallError::NoSpace => {
+                "There is not enough free disk space to install the update. Free some space and try again."
+            }
             InstallError::SelfTest => "The downloaded program does not start on this system.",
             InstallError::Launch => "The step that replaces CursorPie could not be started.",
         }
@@ -405,6 +410,20 @@ fn succeeds(program: impl AsRef<std::ffi::OsStr>, args: &[&std::ffi::OsStr]) -> 
         .is_ok_and(|s| s.success())
 }
 
+/// Runs `program` with `args` and no input or output; how it ended (`None`: it could not be started
+/// or was ended by a signal). For the steps whose failure the person is told about in one sentence
+/// only: the code goes to the log.
+fn exit_code(program: impl AsRef<std::ffi::OsStr>, args: &[&std::ffi::OsStr]) -> Option<i32> {
+    Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .ok()
+        .and_then(|s| s.code())
+}
+
 /// Starts `program --selftest` (see [`SELFTEST_ARG`]): whether the program runs on this system.
 fn starts(program: &Path) -> bool {
     succeeds(program, &[std::ffi::OsStr::new(SELFTEST_ARG)])
@@ -414,7 +433,10 @@ fn starts(program: &Path) -> bool {
 fn stage_mac(package: &Path, target: &Path, dir: &Path) -> Result<PathBuf, InstallError> {
     use std::ffi::OsStr;
     let mount = dir.join("mount");
-    fs::create_dir_all(&mount).map_err(|_| InstallError::Unpack)?;
+    fs::create_dir_all(&mount).map_err(|_| {
+        diag::log!("ui", "unpack_failed", step = "mount_dir");
+        InstallError::Unpack
+    })?;
     let attach = [
         "attach",
         "-nobrowse",
@@ -427,7 +449,9 @@ fn stage_mac(package: &Path, target: &Path, dir: &Path) -> Result<PathBuf, Insta
     let mut args: Vec<&OsStr> = attach.iter().map(|a| OsStr::new(*a)).collect();
     args.push(mount.as_os_str());
     args.push(package.as_os_str());
-    if !succeeds("hdiutil", &args) {
+    let attached = exit_code("hdiutil", &args);
+    if attached != Some(0) {
+        diag::log!("ui", "unpack_failed", step = "attach", code = attached);
         return Err(InstallError::Unpack);
     }
     let staged = sibling(target, NEW_SUFFIX);
@@ -461,12 +485,15 @@ fn stage_mac(package: &Path, target: &Path, dir: &Path) -> Result<PathBuf, Insta
 fn copy_app(app: &Path, staged: &Path) -> Result<(), InstallError> {
     let program = app.join("Contents").join("MacOS").join(APP_NAME);
     if !program.is_file() {
+        diag::log!("ui", "unpack_failed", step = "no_program");
         return Err(InstallError::Unpack);
     }
     let _ = fs::remove_dir_all(staged);
-    if succeeds("ditto", &[app.as_os_str(), staged.as_os_str()]) {
+    let copied = exit_code("ditto", &[app.as_os_str(), staged.as_os_str()]);
+    if copied == Some(0) {
         Ok(())
     } else {
+        diag::log!("ui", "unpack_failed", step = "copy", code = copied);
         let _ = fs::remove_dir_all(staged);
         Err(InstallError::Unpack)
     }
@@ -547,6 +574,46 @@ fn stage(
 // ---------------------------------------------------------------------------- the worker
 
 /// Folder of the downloaded package, emptied and made again.
+/// How much room an update needs: the download, the copy next to the installed one and some slack,
+/// from the size of the package (at least [`MIN_FREE_BYTES`]).
+fn space_needed(package_bytes: u64) -> u64 {
+    package_bytes.saturating_mul(3).max(MIN_FREE_BYTES)
+}
+
+/// The least room an update is checked for.
+const MIN_FREE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Writes `bytes` of zeros to a file in `folder` and removes it again: the way to ask a disk whether
+/// it has the room, the same on every OS (the system calls that report it differ, and a
+/// subprocess such as `curl`, `ditto` or `tar` that ran out of room only says that it failed).
+fn probe_space(folder: &Path, bytes: u64) -> io::Result<()> {
+    use std::io::Write;
+    let probe = folder.join(".cursorpie-space-check");
+    let result = (|| {
+        let mut file = fs::File::create(&probe)?;
+        let chunk = vec![0u8; 1024 * 1024];
+        let mut left = bytes;
+        while left > 0 {
+            let n = usize::try_from(left.min(chunk.len() as u64)).unwrap_or(chunk.len());
+            file.write_all(&chunk[..n])?;
+            left -= n as u64;
+        }
+        file.sync_all()
+    })();
+    let _ = fs::remove_file(&probe);
+    result
+}
+
+/// Whether one of `folders` has no room for `bytes`. A folder that cannot be probed for another
+/// reason (permissions, a missing folder) does not count: that is not a full disk.
+fn is_short_of_space(folders: &[&Path], bytes: u64) -> bool {
+    folders.iter().any(|f| {
+        probe_space(f, bytes)
+            .err()
+            .is_some_and(|e| platform::is_disk_full(&e))
+    })
+}
+
 fn fresh_updates_dir() -> io::Result<PathBuf> {
     let dir = app_support_dir().join(UPDATES_DIR);
     let _ = fs::remove_dir_all(&dir);
@@ -652,16 +719,52 @@ pub fn prepare() -> Result<Staged, InstallError> {
         .ok_or(InstallError::NoPackage)?;
     let expected = expected_checksum(&release, asset)?;
 
-    let dir = fresh_updates_dir().map_err(|_| InstallError::NotInstalled)?;
+    let dir = fresh_updates_dir().map_err(|e| {
+        if platform::is_disk_full(&e) {
+            InstallError::NoSpace
+        } else {
+            InstallError::NotInstalled
+        }
+    })?;
     let package = dir.join(name);
     let url = asset_url(&release, name);
-    http::download(&url, &package, DOWNLOAD_TIMEOUT_S, MAX_PACKAGE_BYTES)?;
-    let outcome = verify(&package, asset.size, &expected)
-        .and_then(|()| stage(release.version, os, package, target, &dir, needs_password));
-    if outcome.is_err() {
+    // A program that ran out of room (`curl`, `ditto`, `tar`) only says that it failed, which would
+    // be told as "no connection" or "could not be opened". So when one of those ends badly the
+    // disks are asked whether they have room, and the person is told when they have not.
+    let room = space_needed(asset.size);
+    let failed = |e: InstallError| {
+        let full = matches!(
+            e,
+            InstallError::Network(Failure::Unreachable) | InstallError::Unpack
+        ) && is_short_of_space(&[dir.as_path(), target_folder(&target)], room);
         let _ = fs::remove_dir_all(&dir);
+        if full {
+            diag::log!("ui", "no_space", needed_mb = room / (1024 * 1024));
+            InstallError::NoSpace
+        } else {
+            e
+        }
+    };
+    if let Err(e) = http::download(&url, &package, DOWNLOAD_TIMEOUT_S, MAX_PACKAGE_BYTES) {
+        return Err(failed(InstallError::from(e)));
     }
-    outcome
+    verify(&package, asset.size, &expected)
+        .and_then(|()| {
+            stage(
+                release.version,
+                os,
+                package,
+                target.clone(),
+                &dir,
+                needs_password,
+            )
+        })
+        .map_err(failed)
+}
+
+/// The folder the installed copy lives in (the new copy is made next to it).
+fn target_folder(target: &Path) -> &Path {
+    target.parent().unwrap_or(target)
 }
 
 /// Runs [`prepare`] on a worker thread; the result arrives as [`Msg::UpdateStaged`].
@@ -1105,6 +1208,39 @@ mod tests {
     }
 
     #[test]
+    fn the_room_asked_for_is_three_packages_and_never_less_than_the_floor() {
+        assert_eq!(space_needed(0), MIN_FREE_BYTES);
+        assert_eq!(space_needed(100 * 1024 * 1024), 300 * 1024 * 1024);
+        assert_eq!(space_needed(u64::MAX), u64::MAX);
+    }
+
+    #[test]
+    fn a_probe_of_a_disk_with_room_succeeds_and_leaves_nothing_behind() {
+        let dir = std::env::temp_dir().join(format!("cursorpie-probe-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        assert!(probe_space(&dir, 3 * 1024 * 1024 + 17).is_ok());
+        assert!(!is_short_of_space(&[dir.as_path()], 1024));
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_folder_that_cannot_be_probed_is_not_called_a_full_disk() {
+        let missing = std::env::temp_dir().join("cursorpie-no-such-folder-for-probe");
+        assert!(probe_space(&missing, 1024).is_err());
+        assert!(!is_short_of_space(&[missing.as_path()], 1024));
+    }
+
+    #[test]
+    fn a_full_disk_is_told_from_the_code_of_the_error() {
+        // ENOSPC on the Unix systems, ERROR_DISK_FULL on Windows
+        let full = if platform::OS == Os::Windows { 112 } else { 28 };
+        assert!(platform::is_disk_full(&io::Error::from_raw_os_error(full)));
+        assert!(!platform::is_disk_full(&io::Error::from_raw_os_error(2)));
+        assert!(!platform::is_disk_full(&io::Error::other("x")));
+    }
+
+    #[test]
     fn every_error_has_its_own_sentence() {
         let all = [
             InstallError::NoPackage,
@@ -1113,6 +1249,7 @@ mod tests {
             InstallError::Network(Failure::Unreachable),
             InstallError::Corrupt,
             InstallError::Unpack,
+            InstallError::NoSpace,
             InstallError::SelfTest,
             InstallError::Launch,
         ];

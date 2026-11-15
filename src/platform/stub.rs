@@ -211,6 +211,10 @@ pub fn create_private_file(path: &Path) -> std::io::Result<std::fs::File> {
         .truncate(true)
         .open(path)
 }
+/// `ENOSPC`, as on the Unix systems.
+pub fn is_disk_full(e: &std::io::Error) -> bool {
+    e.raw_os_error() == Some(28)
+}
 /// Nothing is installed.
 pub fn collect_installed_apps() -> Vec<crate::platform::installed::InstalledApp> {
     Vec::new()

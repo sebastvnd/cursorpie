@@ -6,11 +6,43 @@
 //! The numbers are in points and match what `ui::settings::panel_form` draws.
 
 use super::spec::{
-    Button, ButtonAlign, ButtonSide, Layout, Opt, PanelSpec, SPACER_DEFAULT, TextStyle, Widget,
+    Button, ButtonAlign, ButtonSide, Layout, Opt, PADDING_MAX, PanelSpec, SPACER_DEFAULT,
+    TextStyle, Widget,
 };
 
-/// Space between the edge of the card and its content.
+/// Space between the edge of the card and its content, on a side that says nothing else.
 pub const PAD: f32 = 18.0;
+
+/// The space between the edge of the card and its content on each side (`PanelSpec::padding`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Insets {
+    pub top: f32,
+    pub right: f32,
+    pub bottom: f32,
+    pub left: f32,
+}
+
+impl Insets {
+    /// Left and right together.
+    pub fn horizontal(&self) -> f32 {
+        self.left + self.right
+    }
+}
+
+/// The padding of `spec`, side by side: what it says, else [`PAD`].
+pub fn insets(spec: &PanelSpec) -> Insets {
+    let side = |v: Option<f32>| {
+        v.filter(|x| x.is_finite())
+            .map_or(PAD, |x| x.clamp(0.0, PADDING_MAX))
+    };
+    let p = &spec.padding;
+    Insets {
+        top: side(p.top),
+        right: side(p.right),
+        bottom: side(p.bottom),
+        left: side(p.left),
+    }
+}
 /// Space between two widgets.
 pub const GAP: f32 = 12.0;
 /// Height of the header: the badge and the title.
@@ -224,7 +256,9 @@ pub fn header_height(spec: &PanelSpec) -> f32 {
 
 /// The height of everything between the header and the buttons.
 pub fn body_height(spec: &PanelSpec) -> f32 {
-    let width = spec.width_or_default();
+    // `widget_height` takes the width of the card and removes the usual padding from it; the card
+    // is `left + right` of padding narrower here, so what it works with is that much less wide
+    let width = spec.width_or_default() - insets(spec).horizontal() + 2.0 * PAD;
     let n = spec.widgets.len();
     spec.widgets
         .iter()
@@ -241,9 +275,17 @@ pub fn footer_row_height(spec: &PanelSpec) -> f32 {
     spec.buttons.iter().map(button_height).fold(0.0, f32::max)
 }
 
-/// The height of the row of buttons, with the line for a notice under it.
+/// Whether a press of a button can be refused with a notice (a required box is empty).
+pub fn can_refuse(spec: &PanelSpec) -> bool {
+    spec.widgets
+        .iter()
+        .any(|w| matches!(w, Widget::Input { required: true, .. }))
+}
+
+/// The height of the row of buttons, with the line for a notice under it when the panel can have
+/// one (without such a line the buttons are as close to the bottom as the padding says).
 pub fn footer_height(spec: &PanelSpec) -> f32 {
-    footer_row_height(spec) + NOTICE_H
+    footer_row_height(spec) + if can_refuse(spec) { NOTICE_H } else { 0.0 }
 }
 
 /// Where each button of the row at the bottom goes in a row `row_w` wide: `(x, width)` from the
@@ -348,7 +390,14 @@ pub fn content_height(spec: &PanelSpec) -> f32 {
     } else {
         GAP + 4.0
     };
-    let h = PAD + header_height(spec) + gap_after_header + body + GAP + footer_height(spec) + PAD;
+    let ins = insets(spec);
+    let h = ins.top
+        + header_height(spec)
+        + gap_after_header
+        + body
+        + GAP
+        + footer_height(spec)
+        + ins.bottom;
     h.ceil()
 }
 
@@ -365,6 +414,25 @@ mod tests {
 
     fn spec(json: &str) -> PanelSpec {
         PanelSpec::parse(json).expect("a good panel")
+    }
+
+    #[test]
+    fn the_padding_of_each_side_decides_the_height_and_the_room_of_the_content() {
+        let base = spec(r#"{"title":"x","widgets":[{"type":"input","id":"a"}]}"#);
+        let tight = spec(
+            r#"{"title":"x","padding":{"top":0,"bottom":0},"widgets":[{"type":"input","id":"a"}]}"#,
+        );
+        assert_eq!(content_height(&base) - content_height(&tight), 2.0 * PAD);
+        let ins = insets(&tight);
+        assert_eq!(
+            (ins.top, ins.right, ins.bottom, ins.left),
+            (0.0, PAD, 0.0, PAD)
+        );
+        // only what is said changes, and a wild number is held to the limits
+        let wild = spec(r#"{"padding":{"left":500,"right":-3}}"#);
+        let ins = insets(&wild);
+        assert_eq!((ins.left, ins.right, ins.top), (PADDING_MAX, 0.0, PAD));
+        assert_eq!(insets(&base), insets(&PanelSpec::default()));
     }
 
     #[test]
@@ -477,7 +545,15 @@ mod tests {
         assert_eq!(grid_row_heights(*columns, buttons), vec![48.0, 28.0]);
         assert_eq!(grid_height(*columns, buttons), 48.0 + BTN_GAP + 28.0);
         assert_eq!(footer_row_height(&s), 52.0);
-        assert_eq!(footer_height(&s), 52.0 + NOTICE_H);
+        assert_eq!(
+            footer_height(&s),
+            52.0,
+            "no required box, no line for a notice"
+        );
+        let required = spec(
+            r#"{"widgets":[{"type":"input","id":"a","required":true}],"buttons":[{"id":"ok"}]}"#,
+        );
+        assert_eq!(footer_height(&required), CONTROL_H + NOTICE_H);
         let plain = spec(r#"{"buttons":[{"id":"ok","label":"OK"}]}"#);
         assert_eq!(footer_row_height(&plain), CONTROL_H);
     }

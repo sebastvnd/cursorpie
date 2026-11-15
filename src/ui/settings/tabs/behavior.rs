@@ -327,6 +327,34 @@ impl App {
             row_wide(ui, "Accent color", "", 330.0, |ui| {
                 accent_picker(ui, &mut cfg.accent)
             });
+            // the colors of the appearance in use: the light and the dark ones are kept apart
+            let dark = crate::ui::draw::dark();
+            let at = usize::from(dark);
+            let mode = cfg.theme.mode_mut(dark);
+            section_title(
+                ui,
+                if dark {
+                    "Colors of the dark appearance"
+                } else {
+                    "Colors of the light appearance"
+                },
+            );
+            row_wide(ui, "Page background", "Behind the panels.", 260.0, |ui| {
+                swatch_picker(ui, &mut mode.page, PAGES[at])
+            });
+            row_wide(ui, "Panels", "The cards and popups.", 260.0, |ui| {
+                swatch_picker(ui, &mut mode.panel, PANELS[at])
+            });
+            row_wide(
+                ui,
+                "Sidebar",
+                "The column with the sections.",
+                260.0,
+                |ui| swatch_picker(ui, &mut mode.sidebar, SIDEBARS[at]),
+            );
+            row_wide(ui, "Text", "Kept readable on every surface.", 260.0, |ui| {
+                swatch_picker(ui, &mut mode.text, TEXTS[at])
+            });
             toggle_row(
                 ui,
                 &mut cfg.sound,

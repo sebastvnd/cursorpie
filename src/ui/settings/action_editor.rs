@@ -188,7 +188,14 @@ pub(in crate::ui::settings) fn browser_fields(ui: &mut egui::Ui, spec: &mut Stri
         } else {
             format!("Unknown: {name}. Choose one\u{2026}")
         };
-        if let Some(i) = select(ui, width, &shown, &names, usize::MAX) {
+        if let Some(i) = select_search(
+            ui,
+            width,
+            "Choose a browser command",
+            &shown,
+            &names,
+            usize::MAX,
+        ) {
             *spec = CATALOG[i].id.to_string();
         }
         return;
@@ -204,7 +211,14 @@ pub(in crate::ui::settings) fn browser_fields(ui: &mut egui::Ui, spec: &mut Stri
         ui.available_width().max(170.0)
     };
     let mut new_name = name.clone();
-    if let Some(i) = select(ui, list_width, shown, &names, now) {
+    if let Some(i) = select_search(
+        ui,
+        list_width,
+        "Choose a browser command",
+        shown,
+        &names,
+        now,
+    ) {
         new_name = CATALOG[i].id.to_string();
     }
     let mut new_arg = arg;

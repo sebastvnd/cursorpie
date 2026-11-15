@@ -2,6 +2,73 @@
 
 ## Unreleased
 
+## 0.8.17
+
+- **Added: the colors of Settings can be chosen, not only the accent.** *Look & feel* in *Behavior* has *Page
+  background*, *Panels*, *Sidebar* and *Text*, each with a row of suggested sage-tinted colors, like the accent, and a
+  color picker for any other. The first suggestion is the color the appearance comes with and puts it back. The light and
+  the dark appearance have colors of their own, so changing one never changes the other; the rows are those of the
+  appearance in use. What depends on a color (the controls, the hairlines, the secondary text) follows it, and the text
+  is always moved just far enough to read on every surface. The choice is previewed before it is saved and is kept in
+  `config.json` as `"theme": { "dark": { "page": [r, g, b] } }`; a color left out keeps the one of the appearance.
+
+- **Added: the space around the content of a panel can be set, on all four sides, two, or just one.** The *Panel*
+  inspector of the designer has *Space between the edge and the content*: *All* is one number, *H and V* is two (left and
+  right, top and bottom) and *Each side* is four, so a single side can be changed (`"padding": { "bottom": 6 }` in the
+  description; a side left out keeps the usual 18 points, the most is 60). *Usual space* puts it back. The line under
+  the buttons that is kept for a notice ("Fill in ... first") is now only there when the panel has a required box, so a
+  panel without one no longer has a gap under its buttons on top of the padding.
+
+- **Fixed: the panel designer needed a scroll to remove an element, and widgets could not be dragged.** Removing a
+  button of a grid meant scrolling the inspector to its bottom. Now *Delete* or *Backspace* removes what is selected
+  (unless a field is being typed in or a list is open), like on the canvas of a flow: the widget, the button at the
+  bottom, or the button of a grid that was clicked on its own. The bar at the bottom of the preview has an *Add
+  element* button and a trash: a click on the trash removes the selection, and a row of the list (or the widget being
+  dragged by its grip) is removed when it is let go over the trash. The grip beside the selected widget stays inside the
+  preview however far the panel is zoomed or scrolled, so it can always be reached.
+
+- **Added: two more ways to tidy the Flow canvas, from a list on the tidy button.** *Across* is the layout there was
+  (columns, left to right). *Down* puts a run of blocks one under the other; a block that decides (*If / else*, a loop)
+  has the blocks of its first output (*then*, the body) beside it, to the right, and what its second output leads to
+  (*else*, what follows) goes on below, so a ladder of *If / else* is one column with its actions in the next. *Mixed*
+  does the same for the blocks that decide, but a plain run of blocks goes left to right. No block covers another;
+  *End* goes after the last column; blocks no wire reaches go below everything. The ways are three round cells (a
+  glyph each, the name is the tooltip) that unfold from the tidy button and widen the capsule, as the categories do
+  after the "+", and fold back after a click.
+
+- **Fixed: wires on the Flow canvas showed as corners when zoomed in.** A wire is a curve drawn as short straight
+  pieces, and there were always 24 of them, however long the wire was or how far the canvas was zoomed in, so at a high
+  zoom (or on a long wire) the pieces were long enough to see as a jagged line. The wire is now cut so that each piece
+  is a few pixels on the screen (`wire_points_at`). A wire that goes backwards (the input is left of the output) also
+  leaves and arrives with a shorter reach, so it makes a tight S instead of a loop as wide as the gap between the dots.
+
+- **Fixed: multi-select on the Flow canvas.** Shift (or Ctrl/Cmd) + click on a block that was not selected used to
+  replace the selection with it (the press in the body selected it before the click was read, and the click then took
+  it out again), so blocks could not be added one by one. Now Shift/Ctrl/Cmd + click adds a block to the selection or
+  takes it out, and the group stays a group even when it is down to one block, so the inspector does not open and
+  shrink the canvas while more blocks are picked. Shift/Ctrl/Cmd + click on the empty canvas keeps the selection (it
+  used to clear it), Shift/Ctrl/Cmd + drag of a block that is not selected adds it and moves the whole group, and a
+  selection box drawn with Shift/Ctrl/Cmd held toggles the blocks it touches (adds them, or removes the ones that were
+  selected), like the box of a file manager. The hint line under the canvas mentions Shift + click.
+
+- **Fixed: a click on the empty Flow canvas did not let go of the selection.** The press on the empty canvas is now
+  also followed by where the blocks are, not only by what egui reports under the pointer, so a click on the empty
+  canvas clears the selection (and closes the inspector) and a drag from it draws the selection box, even when the
+  background does not receive the press. Only a block, its dots and the "+" of an output with nothing plugged in count
+  as not empty: the room around a block is empty canvas.
+
+- **Fixed: unclear message when an update fails on a full disk.** When the download or the installation of an update
+  fails and the disk has no room, the About tab now says "There is not enough free disk space to install the update.
+  Free some space and try again." Before, it said the package "could not be opened" or that GitHub could not be
+  reached, because `curl`, `ditto` and `tar` only report that they failed. The disks are now asked, after a failure,
+  whether they have room (a file of the size the update needs is written next to the installed copy and in the updates
+  folder, and removed again); a folder that cannot be written for another reason is not called a full disk. Same on
+  macOS, Windows and Linux; the error codes of each OS live in the platform backends (`platform::is_disk_full`).
+
+- **Added: log lines for a failed macOS update.** `ui:unpack_failed` names the step that made "The downloaded package
+  could not be opened" (`mount_dir`, `attach`, `no_program` or `copy`) with the exit code of `hdiutil` or `ditto`, and
+  `ui:no_space` records the full-disk case. Both are in the table of `docs/DEBUGGING.md`.
+
 ## 0.8.16
 
 - **Platform boundary enforced.** OS conditions (`cfg(target_os)`, `cfg(windows)`, `cfg(unix)`, `cfg!`) and native

@@ -182,7 +182,14 @@ impl App {
         let t = self.settings_anim.clamp(0.0, 1.0);
         let slide = (1.0 - t) * (1.0 - t) * 26.0;
 
-        // a shortcut being recorded in a Wayland session: the window's own keys (see `wayland_keys`)
+        // nothing is being recorded: the modifiers the recorder remembers are stale by the time
+        // the next recording starts (the key that ended the last one was never seen by the window)
+        if self.ed.recording.is_none() {
+            self.ed.key_rec.reset();
+        }
+
+        // a shortcut being recorded in a Wayland session or on Windows: the window's own keys
+        // (see `wayland_keys`; on Windows they back up the keyboard hook)
         if self.ed.recording.is_some()
             && super::wayland_keys::applies()
             && let Some(msg) = super::wayland_keys::capture(&ctx, &mut self.ed.key_rec)

@@ -78,6 +78,9 @@ pub const BUTTON_RADIUS_MAX: u8 = 36;
 pub const HEIGHT_MIN: f32 = 200.0;
 pub const HEIGHT_MAX: f32 = 900.0;
 
+/// Most space between the edge of the card and its content, on one side (points).
+pub const PADDING_MAX: f32 = 60.0;
+
 /// Ids a field may not have: a flow sets these variables itself.
 const RESERVED_IDS: [&str; 3] = ["ok", "index", "code"];
 /// The color of a [`Widget::Color`] that has none (or a bad one).
@@ -551,6 +554,36 @@ impl Button {
     }
 }
 
+/// The space between the edge of the card and what is in it, side by side. A side that is missing
+/// has the usual space (see `layout::PAD`), so `{ "bottom": 4 }` changes only the bottom.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Padding {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub top: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub right: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bottom: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub left: Option<f32>,
+}
+
+impl Padding {
+    /// Every side within 0 to [`PADDING_MAX`]; a side that is not a number is the usual one.
+    pub fn cleaned(self) -> Self {
+        let side = |v: Option<f32>| {
+            v.filter(|x| x.is_finite())
+                .map(|x| x.clamp(0.0, PADDING_MAX))
+        };
+        Self {
+            top: side(self.top),
+            right: side(self.right),
+            bottom: side(self.bottom),
+            left: side(self.left),
+        }
+    }
+}
+
 /// A whole panel.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PanelSpec {
@@ -574,6 +607,10 @@ pub struct PanelSpec {
     /// stay at the bottom).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub height: Option<f32>,
+    /// Space between the edge of the card and its content, per side (0 to 60 points; 18 when a
+    /// side is missing).
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub padding: Padding,
     /// Seconds until the panel gives up (0: never; at most 600; 120 when missing).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timeout_s: Option<u32>,
@@ -1125,6 +1162,7 @@ impl PanelSpec {
             .height
             .filter(|h| h.is_finite())
             .map(|h| h.clamp(HEIGHT_MIN, HEIGHT_MAX));
+        self.padding = self.padding.cleaned();
         self.timeout_s = Some(
             self.timeout_s
                 .unwrap_or(DEFAULT_TIMEOUT_S)
@@ -1407,6 +1445,27 @@ mod tests {
         );
         assert_eq!(parse(r#"{"height":450}"#).unwrap().height, Some(450.0));
         assert_eq!(parse(r#"{"title":"x"}"#).unwrap().height, None);
+    }
+
+    #[test]
+    fn the_padding_is_held_to_its_limits_and_a_side_that_is_missing_stays_missing() {
+        let s = parse(r#"{"padding":{"top":5,"left":999,"bottom":-4}}"#).unwrap();
+        assert_eq!(s.padding.top, Some(5.0));
+        assert_eq!(s.padding.left, Some(PADDING_MAX));
+        assert_eq!(s.padding.bottom, Some(0.0));
+        assert_eq!(s.padding.right, None);
+        assert_eq!(
+            parse(r#"{"title":"x"}"#).unwrap().padding,
+            Padding::default()
+        );
+        // nothing is written for a panel that keeps the usual space
+        let text = serde_json::to_string(&PanelSpec::default()).unwrap();
+        assert!(!text.contains("padding"), "{text}");
+        let text = serde_json::to_string(&s).unwrap();
+        assert!(
+            text.contains(r#""padding":{"top":5.0,"bottom":0.0,"left":60.0}"#),
+            "{text}"
+        );
     }
 
     #[test]

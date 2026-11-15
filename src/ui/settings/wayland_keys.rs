@@ -1,7 +1,11 @@
-//! Recording a shortcut in a Wayland session.
+//! Recording a shortcut from the keys of the Settings window itself (a Wayland session, and Windows).
 //!
-//! On X11, macOS and Windows the event tap hears the key and sends it to Settings
-//! (`tap::keyboard`). A Wayland program cannot hear another program's keys, and CursorPie's
+//! On X11 and macOS the event tap hears the key and sends it to Settings (`tap::keyboard`). On
+//! Windows it does too, but a low-level hook can miss a key (a hook Windows dropped or refused, a
+//! busy hook thread, another program's hook in front of it), and then pressing a key in the
+//! shortcut field did nothing at all. The window has the focus while a shortcut is recorded, so
+//! it reads the keys as well: when the hook hears a key it swallows it and the window never sees
+//! it, and when it does not, the window's own event carries the same shortcut. A Wayland program cannot hear another program's keys, and CursorPie's
 //! Wayland layer never opens a keyboard (the udev rule gives it a mouse and `/dev/uinput`, nothing
 //! more: a rule for keyboards would let every program of the user read what is typed). It does not
 //! need to: while a shortcut is being recorded the Settings window is the one with the focus, so
@@ -16,10 +20,10 @@ use crate::keys::{MOD_ALT, MOD_CMD, MOD_CTRL, MOD_SHIFT, Shortcut};
 use crate::msg::Msg;
 use eframe::egui::{self, Key};
 
-/// Whether this session records shortcuts this way: a Wayland session (the other layers have a tap
-/// that does it).
+/// Whether this session records shortcuts this way: a Wayland session (the other Linux layer has
+/// a tap that does it) and Windows (where it backs up the keyboard hook, see the top of the file).
 pub(super) fn applies() -> bool {
-    crate::platform::linux::wayland::active()
+    cfg!(windows) || crate::platform::linux::wayland::active()
 }
 
 /// The `MOD_*` bit of a modifier key (either side).
@@ -229,6 +233,12 @@ mod tests {
 
     fn key(r: &mut Recorder, k: Key, pressed: bool, held: u8) -> Option<Outcome> {
         r.feed(k, Some(k), pressed, false, held)
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_records_from_the_window_too() {
+        assert!(applies());
     }
 
     #[test]

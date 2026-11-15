@@ -15,9 +15,9 @@ use super::widgets::{
 };
 use crate::panel::form::snap_number;
 use crate::panel::layout::{
-    BAR_H, BTN_GAP, CHIP_H, CONTROL_H, GAP, LIST_ROWS, MULTI_ROWS, PAD, ROW_H, ROW_HINT_H,
-    SEPARATOR_H, button_height, footer_height, footer_row_height, footer_slots, grid_row_heights,
-    group_columns, has_search, header_height, list_height,
+    BAR_H, BTN_GAP, CHIP_H, CONTROL_H, GAP, LIST_ROWS, MULTI_ROWS, ROW_H, ROW_HINT_H, SEPARATOR_H,
+    button_height, footer_height, footer_row_height, footer_slots, grid_row_heights, group_columns,
+    has_search, header_height, insets, list_height,
 };
 use crate::panel::spec::ButtonSide;
 use crate::panel::spec::{
@@ -111,9 +111,18 @@ pub struct BodyScroll {
     pub max: f32,
 }
 
+/// Where the content of a panel is laid out inside `card`: the card less the padding of each side.
+pub fn inner_rect(card: Rect, spec: &PanelSpec) -> Rect {
+    let p = insets(spec);
+    Rect::from_min_max(
+        pos2(card.min.x + p.left, card.min.y + p.top),
+        pos2(card.max.x - p.right, card.max.y - p.bottom),
+    )
+}
+
 /// Where the widgets of a panel are drawn inside `card`: between the header and the buttons.
 pub fn body_rect(card: Rect, spec: &PanelSpec) -> Rect {
-    let inner = card.shrink(PAD);
+    let inner = inner_rect(card, spec);
     let head_bottom = inner.min.y + header_height(spec);
     let foot_top = inner.max.y - footer_height(spec);
     let top = head_bottom
@@ -153,7 +162,7 @@ fn paint(
     window_outline(&painter, card, accent);
 
     let mut event = Event::None;
-    let inner = card.shrink(PAD);
+    let inner = inner_rect(card, &form.spec);
     let head = Rect::from_min_size(inner.min, vec2(inner.width(), header_height(&form.spec)));
     header(ui, head, &form.spec, accent);
 

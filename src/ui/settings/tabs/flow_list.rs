@@ -8,8 +8,8 @@
 //! at the top) for a flow that is wired freely, and it stays the place to see the wires.
 
 use super::flow::{
-    AMBER, Do, browser_by_variable, cond_row, field, kind_info, notice, operands_row, pick, tint,
-    toggle_recording,
+    AMBER, Do, TidyStyle, browser_by_variable, cond_row, field, kind_info, notice, operands_row,
+    pick, tint, toggle_recording,
 };
 use crate::config::flow_check::{Severity, block_issues, check_flow};
 use crate::config::flow_list::{self as outline, Arm, Item, Outline, Spot};
@@ -325,6 +325,114 @@ fn bar_button(ui: &mut egui::Ui, icon: char, tip: &str, tone: Tone) -> egui::Res
         .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+/// Where "the ways to tidy are out" is kept.
+fn tidy_key() -> egui::Id {
+    egui::Id::new("flow_canvas_bar").with("tidy")
+}
+
+/// Whether the ways to line the blocks up are out in the capsule (see [`tidy_strip`]).
+fn tidy_is_open(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(tidy_key()))
+        .unwrap_or(false)
+}
+
+/// The ways to line the blocks up, right after the tidy button: one round cell with a glyph for
+/// each (the name is the tooltip) on a row that unfolds from the button, widening the capsule, the
+/// way the categories unfold after the "+" (see [`category_strip`]). A click on one lines the
+/// blocks up that way and folds the row back; so does a click anywhere else, and a second click on
+/// the button.
+fn tidy_strip(ui: &mut egui::Ui, trigger: &egui::Response) -> Option<TidyStyle> {
+    let ctx = ui.ctx().clone();
+    let mut open = tidy_is_open(&ctx);
+    // where a click fell while the row is out (the row itself is told apart below, where its rect
+    // is known)
+    let clicked_at = if open && !trigger.clicked() {
+        ctx.input(|i| {
+            i.pointer
+                .primary_clicked()
+                .then(|| i.pointer.interact_pos())
+        })
+        .flatten()
+    } else {
+        None
+    };
+    if trigger.clicked() {
+        open = !open;
+        ctx.request_repaint();
+    }
+    let ways = [
+        (
+            symbols::ARROWS_LEFT_RIGHT,
+            "Across: columns, left to right",
+            TidyStyle::Columns,
+        ),
+        (
+            symbols::ARROWS_DOWN_UP,
+            "Down: one under the other, what a block decides beside it",
+            TidyStyle::Down,
+        ),
+        (
+            symbols::ARROW_ELBOW_DOWN_LEFT,
+            "Mixed: runs go across, a ladder of If / else goes down",
+            TidyStyle::Mixed,
+        ),
+    ];
+    let t = ctx.animate_bool_with_time_and_easing(
+        tidy_key().with("unfold"),
+        open,
+        UNFOLD_SECS,
+        egui::emath::easing::cubic_out,
+    );
+    let n = ways.len();
+    let cell = BAR_BTN.x;
+    let full = n as f32 * cell + (n - 1) as f32 * BAR_GAP;
+    let (rect, _) = ui.allocate_exact_size(vec2(full * t, cell), Sense::hover());
+    let mut picked = None;
+    if t > 0.0 {
+        let painter = ui.painter().with_clip_rect(rect);
+        for (i, (icon, tip, style)) in ways.iter().enumerate() {
+            let at = Rect::from_min_size(
+                pos2(rect.min.x + i as f32 * (cell + BAR_GAP), rect.min.y),
+                Vec2::splat(cell),
+            );
+            // the cells answer only once the row is (nearly) out
+            let mut hot = 0.0;
+            if t > 0.6 {
+                let id = tidy_key().with(("way", i));
+                let resp = ui.interact(at.intersect(rect), id, Sense::click());
+                resp.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, *tip)
+                });
+                hot = ctx.animate_bool_with_time(id.with("hot"), resp.hovered(), 0.12);
+                if resp
+                    .on_hover_text(*tip)
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+                {
+                    picked = Some(*style);
+                }
+            }
+            painter.rect_filled(at, PILL, pal().hot.gamma_multiply(hot));
+            fonts::paint_icon(
+                &painter,
+                at.center(),
+                *icon,
+                17.0,
+                pal().muted.lerp_to_gamma(pal().text, hot),
+                false,
+            );
+        }
+    }
+    // a click anywhere but the button and the row folds it back
+    let outside = clicked_at.is_some_and(|p| !trigger.rect.contains(p) && !rect.contains(p));
+    if picked.is_some() || outside {
+        open = false;
+        ctx.request_repaint();
+    }
+    ctx.data_mut(|d| d.insert_temp(tidy_key(), open));
+    picked
+}
+
 /// The button of the capsule that fills the whole display with the Flow tab (and, while it does,
 /// goes back to the window).
 fn full_button(ui: &mut egui::Ui, full: bool) -> egui::Response {
@@ -497,10 +605,11 @@ fn floating_bar(
             // (egui places a popup by `interact_rect`, so that one has to be the capsule's too, or
             // the list lines up with the "+" and sits off to the left)
             let mut anchor = out.inner;
+            let plus_rect = anchor.rect;
             anchor.rect = out.response.rect;
             anchor.interact_rect = out.response.rect;
             if can_add {
-                picked = quick_popup(&anchor, search, id);
+                picked = quick_popup(&anchor, plus_rect, search, id);
             }
         });
     picked
@@ -525,15 +634,19 @@ pub(super) fn canvas_bar(
         let plus = plus_button(ui, can_add, accent, "Add a block");
         category_strip(ui, "flow_canvas_bar", accent);
         bar_divider(ui);
-        if bar_button(
+        let tidy_on = tidy_is_open(ui.ctx());
+        let tidy = bar_button(
             ui,
             symbols::SQUARES_FOUR,
-            "Tidy up: line the blocks up in columns so none covers another",
-            Tone::Plain,
-        )
-        .clicked()
-        {
-            todo = Some(Do::Tidy);
+            "Tidy up: line the blocks up so none covers another",
+            if tidy_on {
+                Tone::Accent(accent)
+            } else {
+                Tone::Plain
+            },
+        );
+        if let Some(style) = tidy_strip(ui, &tidy) {
+            todo = Some(Do::Tidy(style));
         }
         if bar_button(
             ui,
@@ -608,6 +721,11 @@ fn group_key(bar: &str) -> egui::Id {
     egui::Id::new(bar).with("group")
 }
 
+/// Where the row of categories of the bar `bar` was drawn last.
+fn strip_key(bar: &str) -> egui::Id {
+    egui::Id::new(bar).with("strip")
+}
+
 /// The category (an index into [`quick_catalog`]) the open list of `bar` is narrowed to, if any.
 fn picked_group(ctx: &egui::Context, bar: &str) -> Option<usize> {
     ctx.data(|d| d.get_temp::<Option<usize>>(group_key(bar)))
@@ -654,6 +772,8 @@ fn category_strip(ui: &mut egui::Ui, bar: &'static str, accent: Color32) {
     let cell = BAR_BTN.x;
     let full = n as f32 * cell + n.saturating_sub(1) as f32 * BAR_GAP;
     let (rect, _) = ui.allocate_exact_size(vec2(full * t, cell), Sense::hover());
+    // quick_popup needs to know where the row is: a click on a category must keep the list open
+    ctx.data_mut(|d| d.insert_temp(strip_key(bar), rect));
     if t <= 0.0 {
         return;
     }
@@ -1137,7 +1257,11 @@ fn add_menu_in(
     }
     let q = search.trim().to_lowercase();
     let mut first = None;
+    // always MENU_H tall, however few blocks a category or a search leaves: a list that shrinks to
+    // its content jumps in height as the person switches category, and stays small afterwards
     egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .min_scrolled_height(MENU_H)
         .max_height(MENU_H)
         .show(ui, |ui| {
             for (gi, (group, entries)) in quick_catalog().into_iter().enumerate() {
@@ -1192,9 +1316,11 @@ fn add_menu_in(
 /// The "+" list as a popup over `trigger`, centered on it (the floating bars are at the bottom of
 /// the page; a click on `trigger` opens and closes it). While it is open the capsule shows a button
 /// per category (see [`category_strip`]), so a click on one of those must not close the list: the
-/// popup ignores clicks and this closes it itself for a click outside both the list and the capsule.
+/// popup ignores clicks and this closes it itself for a click outside the list, the "+" and the row
+/// of categories (so the other buttons of the capsule, like Tidy up, close it too).
 fn quick_popup(
     trigger: &egui::Response,
+    plus: Rect,
     search: &mut String,
     bar: &'static str,
 ) -> Option<NodeKind> {
@@ -1218,8 +1344,14 @@ fn quick_popup(
         && ctx.input(|i| i.pointer.primary_clicked())
     {
         let at = ctx.input(|i| i.pointer.interact_pos());
-        let inside =
-            at.is_some_and(|p| shown.response.rect.contains(p) || trigger.rect.contains(p));
+        // inside: the list, the "+" (it closes the list itself) and the row of categories. Any
+        // other button of the capsule (Tidy up, view, inspector...) is outside, so it closes it
+        let strip = ctx
+            .data(|d| d.get_temp::<Rect>(strip_key(bar)))
+            .unwrap_or(Rect::NOTHING);
+        let inside = at.is_some_and(|p| {
+            shown.response.rect.contains(p) || plus.contains(p) || strip.contains(p)
+        });
         if !inside {
             egui::Popup::close_id(&ctx, menu_id(bar));
             ctx.request_repaint();

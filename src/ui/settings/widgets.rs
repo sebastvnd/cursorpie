@@ -119,7 +119,7 @@ pub(in crate::ui::settings) enum Look {
 impl Look {
     /// `(fill at rest, fill under the pointer, text color)`.
     fn colors(self) -> (Color32, Color32, Color32) {
-        self.colors_in(pal())
+        self.colors_in(&pal())
     }
 
     /// [`Look::colors`] in the palette `p`.
@@ -1517,7 +1517,31 @@ pub(in crate::ui::settings) fn select(
 ) -> Option<usize> {
     let items: Vec<(Option<char>, &str)> = labels.iter().map(|&l| (None, l)).collect();
     select_with(
-        ui, width, width, None, current, &items, selected, LIST_MAX_H,
+        ui,
+        width,
+        width,
+        None,
+        current,
+        &items,
+        selected,
+        LIST_MAX_H,
+        DEFAULT_TITLE,
+    )
+}
+
+/// [`select`] for a long list: past [`SHEET_ABOVE`] choices the list opens in a sheet called
+/// `title`, with a search box (see [`choice_sheet`]).
+pub(in crate::ui::settings) fn select_search(
+    ui: &mut egui::Ui,
+    width: f32,
+    title: &str,
+    current: &str,
+    labels: &[&str],
+    selected: usize,
+) -> Option<usize> {
+    let items: Vec<(Option<char>, &str)> = labels.iter().map(|&l| (None, l)).collect();
+    select_with(
+        ui, width, width, None, current, &items, selected, LIST_MAX_H, title,
     )
 }
 
@@ -1533,16 +1557,46 @@ pub(in crate::ui::settings) fn select_capped(
 ) -> Option<usize> {
     let items: Vec<(Option<char>, &str)> = labels.iter().map(|&l| (None, l)).collect();
     select_with(
-        ui, width, width, None, current, &items, selected, max_height,
+        ui,
+        width,
+        width,
+        None,
+        current,
+        &items,
+        selected,
+        max_height,
+        DEFAULT_TITLE,
     )
 }
 
 /// [`select`] whose list is wider than the pill: for a small pill (an operator in a row of
 /// fields) whose choices have longer names than the pill can show.
+#[allow(dead_code)]
 pub(in crate::ui::settings) fn select_wide(
     ui: &mut egui::Ui,
     width: f32,
     list_width: f32,
+    current: &str,
+    labels: &[&str],
+    selected: usize,
+) -> Option<usize> {
+    select_wide_titled(
+        ui,
+        width,
+        list_width,
+        DEFAULT_TITLE,
+        current,
+        labels,
+        selected,
+    )
+}
+
+/// [`select_wide`] whose list, when it opens in a sheet, is called `title`.
+pub(in crate::ui::settings) fn select_wide_titled(
+    ui: &mut egui::Ui,
+    width: f32,
+    list_width: f32,
+    title: &str,
     current: &str,
     labels: &[&str],
     selected: usize,
@@ -1557,6 +1611,7 @@ pub(in crate::ui::settings) fn select_wide(
         &items,
         selected,
         LIST_MAX_H,
+        title,
     )
 }
 
@@ -1569,8 +1624,25 @@ pub(in crate::ui::settings) fn select_icons(
     selected: usize,
 ) -> Option<usize> {
     let (icon, label) = items.get(selected).copied().unwrap_or((None, ""));
-    select_with(ui, width, width, icon, label, items, selected, LIST_MAX_H)
+    select_with(
+        ui,
+        width,
+        width,
+        icon,
+        label,
+        items,
+        selected,
+        LIST_MAX_H,
+        DEFAULT_TITLE,
+    )
 }
+
+/// The title of the sheet a long list opens in, when the caller gave none.
+const DEFAULT_TITLE: &str = "Choose an option";
+
+/// A list with more choices than this opens in a sheet with a search box (the way the list of
+/// installed apps does) instead of a drop-down: nobody should scroll through dozens of lines.
+const SHEET_ABOVE: usize = 10;
 
 /// How high the list of a [`select`] gets before it scrolls.
 const LIST_MAX_H: f32 = 340.0;
@@ -1585,9 +1657,15 @@ fn select_with(
     items: &[(Option<char>, &str)],
     selected: usize,
     max_height: f32,
+    title: &str,
 ) -> Option<usize> {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, CONTROL_H), egui::Sense::click());
-    let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp));
+    let as_sheet = items.len() > SHEET_ABOVE;
+    let open = if as_sheet {
+        choice_is_open(ui.ctx(), resp.id)
+    } else {
+        egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&resp))
+    };
     let fill = if open || resp.hovered() {
         pal().hot
     } else {
@@ -1635,6 +1713,9 @@ fn select_with(
     if cut && !open {
         resp = resp.on_hover_text(current);
     }
+    if as_sheet {
+        return choice_sheet(ui.ctx(), &resp, title, items, selected);
+    }
     let mut picked = None;
     egui::Popup::from_toggle_button_response(&resp)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
@@ -1657,6 +1738,131 @@ fn select_with(
                     }
                 });
         });
+    picked
+}
+
+/// Whether the sheet of the long list whose pill has the id `id` is open.
+fn choice_is_open(ctx: &egui::Context, id: egui::Id) -> bool {
+    ctx.data(|d| d.get_temp::<bool>(id.with("choice_open")))
+        .unwrap_or(false)
+}
+
+/// Whether a sheet of a long list was open on the last frame: the canvas of the Flow tab does not
+/// open its own list on a right click then.
+pub(in crate::ui::settings) fn choice_sheet_open(ctx: &egui::Context) -> bool {
+    ctx.data(|d| d.get_temp::<u64>(egui::Id::new("choice_sheet_pass")))
+        .is_some_and(|pass| pass + 1 >= ctx.cumulative_pass_nr())
+}
+
+/// The sheet a long [`select`] list opens in: a search box over the choices, grouped under a small
+/// heading when every name reads `Group: name`. A click on a choice answers it and closes the
+/// sheet; so do the close button, a click outside and Esc. Returns the index that was picked.
+fn choice_sheet(
+    ctx: &egui::Context,
+    pill: &egui::Response,
+    title: &str,
+    items: &[(Option<char>, &str)],
+    selected: usize,
+) -> Option<usize> {
+    let open_id = pill.id.with("choice_open");
+    let query_id = pill.id.with("choice_query");
+    let focus_id = pill.id.with("choice_focus");
+    let mut open = choice_is_open(ctx, pill.id);
+    if pill.clicked() && !open {
+        open = true;
+        ctx.data_mut(|d| {
+            d.insert_temp(open_id, true);
+            d.insert_temp(query_id, String::new());
+            d.insert_temp(focus_id, true);
+        });
+    }
+    if !open {
+        return None;
+    }
+    // read before `data_mut`: that holds the lock of the context, and asking the context for
+    // anything inside it never returns
+    let pass = ctx.cumulative_pass_nr();
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new("choice_sheet_pass"), pass));
+
+    let mut query = ctx
+        .data(|d| d.get_temp::<String>(query_id))
+        .unwrap_or_default();
+    let focus = ctx
+        .data_mut(|d| d.remove_temp::<bool>(focus_id))
+        .unwrap_or(false);
+    let grouped = !items.is_empty() && items.iter().all(|(_, l)| l.contains(": "));
+    let mut picked = None;
+    let (floating, ()) = sheet(
+        ctx,
+        "choice",
+        ctx.content_rect(),
+        Vec2::new(460.0, 540.0),
+        title,
+        |ui| {
+            let field = ui.add(
+                text_field(&mut query)
+                    .desired_width(ui.available_width())
+                    .hint_text("Search"),
+            );
+            if focus {
+                field.request_focus();
+            }
+            ui.add_space(GAP);
+            let q = query.trim().to_lowercase();
+            let shown: Vec<usize> = (0..items.len())
+                .filter(|&i| q.is_empty() || items[i].1.to_lowercase().contains(&q))
+                .collect();
+            // the first hit is taken with Enter
+            if field.lost_focus()
+                && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                && let Some(&i) = shown.first()
+            {
+                picked = Some(i);
+            }
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    let mut last: Option<&str> = None;
+                    for &i in &shown {
+                        let (icon, label) = items[i];
+                        let (group, name) = match label.split_once(": ") {
+                            Some((g, n)) if grouped => (Some(g), n),
+                            _ => (None, label),
+                        };
+                        if let Some(g) = group
+                            && last != Some(g)
+                        {
+                            ui.add_space(6.0);
+                            ui.label(
+                                RichText::new(g.to_uppercase())
+                                    .size(11.0)
+                                    .color(pal().muted),
+                            );
+                            last = Some(g);
+                        }
+                        if select_item(ui, icon, name, i == selected).clicked() {
+                            picked = Some(i);
+                        }
+                    }
+                    if shown.is_empty() {
+                        ui.add_space(8.0);
+                        muted(ui, "Nothing matches your search.");
+                    }
+                });
+        },
+    );
+    let esc = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+    if picked.is_some() || floating.close || esc {
+        ctx.data_mut(|d| {
+            d.remove_temp::<bool>(open_id);
+            d.remove_temp::<String>(query_id);
+            d.remove_temp::<u64>(egui::Id::new("choice_sheet_pass"));
+        });
+    } else {
+        ctx.data_mut(|d| d.insert_temp(query_id, query));
+    }
+    ctx.request_repaint();
     picked
 }
 
@@ -1935,6 +2141,63 @@ pub(in crate::ui::settings) fn accent_picker(ui: &mut egui::Ui, color: &mut [u8;
             .clicked()
         {
             *color = *rgb;
+        }
+    }
+}
+
+/// A row of suggested colors and, after them, the system color picker for any other. `swatches` are
+/// `(name, rgb)`; the first is the color the appearance comes with and means "no color chosen": it is
+/// the lit one while `slot` is `None`, and picking it empties `slot` again.
+pub(in crate::ui::settings) fn swatch_picker(
+    ui: &mut egui::Ui,
+    slot: &mut Option<[u8; 3]>,
+    swatches: &[(&str, [u8; 3])],
+) {
+    ui.spacing_mut().item_spacing.x = 8.0;
+    let default = swatches.first().map_or([0; 3], |s| s.1);
+    // added from the right edge, so the picker comes first and the swatches fill in toward the left
+    let mut rgb = slot.unwrap_or(default);
+    if ui
+        .color_edit_button_srgb(&mut rgb)
+        .on_hover_text("Any color")
+        .changed()
+    {
+        *slot = Some(rgb);
+    }
+    for (i, (name, rgb)) in swatches.iter().enumerate().rev() {
+        let (rect, resp) = ui.allocate_exact_size(Vec2::splat(24.0), egui::Sense::click());
+        let c = Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
+        let on = if i == 0 {
+            slot.is_none()
+        } else {
+            *slot == Some(*rgb)
+        };
+        let painter = ui.painter();
+        painter.circle_filled(rect.center(), 10.0, c);
+        // the pale colors are as light as the panel: a hairline keeps them visible
+        painter.circle_stroke(rect.center(), 10.0, Stroke::new(1.0, pal().border));
+        if on {
+            painter.circle_stroke(rect.center(), 13.0, Stroke::new(2.0, accent_text(c)));
+            fonts::paint_icon(
+                painter,
+                rect.center(),
+                symbols::CHECK,
+                13.0,
+                on_accent(c),
+                false,
+            );
+        }
+        let tip = if i == 0 {
+            format!("{name} (the usual)")
+        } else {
+            (*name).to_string()
+        };
+        if resp
+            .on_hover_text(tip)
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked()
+        {
+            *slot = (i != 0).then_some(*rgb);
         }
     }
 }

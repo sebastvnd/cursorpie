@@ -68,6 +68,7 @@ only, never stored and never sent anywhere. A panel from the extension waits at 
 | `icon` | The badge: `app`, `link`, `file`, `shortcut`, `command`, `browser`, `flow` (default) |
 | `place` | `cursor` (default, next to the pointer), `center`, `top`, `bottom` |
 | `width` | 280 to 640 points (default 380) |
+| `padding` | The space between the edge of the panel and what is in it, in points (0 to 60), for each side: `{ "top": 18, "right": 18, "bottom": 18, "left": 18 }`. A side left out keeps the usual 18, so `{ "bottom": 6 }` changes only the bottom. The designer edits it as one number for all sides, two (left and right, top and bottom) or one for each side |
 | `height` | 200 to 900 points. When missing the panel is as tall as its content needs. When set it keeps that height: a taller content scrolls and the buttons stay at the bottom |
 | `timeout_s` | Seconds until it gives up: `0` never, at most 600, default 120 |
 | `accent` | `#rrggbb` for the badge and the main button; the accent of Settings when missing |

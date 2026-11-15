@@ -394,6 +394,64 @@ fn names_on() -> bool {
     true
 }
 
+/// Colors of one appearance (light or dark) that replace the ones it comes with. A color left out
+/// (`None`) keeps the one of the appearance, and what depends on a color (the hairlines, the
+/// controls, the secondary text) follows it.
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq, Default)]
+#[serde(default)]
+pub struct ModeColors {
+    /// The page behind the panels.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page: Option<[u8; 3]>,
+    /// The panels and the popups.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub panel: Option<[u8; 3]>,
+    /// The sidebar.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sidebar: Option<[u8; 3]>,
+    /// The text.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<[u8; 3]>,
+}
+
+impl ModeColors {
+    /// Whether no color is replaced.
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// The colors the user chose for each appearance. The light and the dark ones are kept apart, so
+/// changing one never changes the other.
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq, Default)]
+#[serde(default)]
+pub struct ThemeColors {
+    #[serde(skip_serializing_if = "ModeColors::is_default")]
+    pub light: ModeColors,
+    #[serde(skip_serializing_if = "ModeColors::is_default")]
+    pub dark: ModeColors,
+}
+
+impl ThemeColors {
+    /// Whether no color is replaced, in either appearance.
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// The colors of the dark appearance, or of the light one.
+    pub fn mode(&self, dark: bool) -> &ModeColors {
+        if dark { &self.dark } else { &self.light }
+    }
+
+    pub fn mode_mut(&mut self, dark: bool) -> &mut ModeColors {
+        if dark {
+            &mut self.dark
+        } else {
+            &mut self.light
+        }
+    }
+}
+
 /// The whole configuration. `#[serde(default)]` keeps older files loadable: every field
 /// missing from a file takes its value from [`Config::default`].
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
@@ -405,6 +463,9 @@ pub struct Config {
     pub settings_hold_ms: u64,
     pub pie_size: f32,
     pub accent: [u8; 3],
+    /// The colors that replace the ones of the light and of the dark appearance.
+    #[serde(skip_serializing_if = "ThemeColors::is_default")]
+    pub theme: ThemeColors,
     /// Mouse button that opens the pie: 2 = middle, 5/6/7 = extra buttons.
     pub trigger_button: i64,
     /// Dragging right after pressing opens the pie instantly (disables middle-drag pass-through).

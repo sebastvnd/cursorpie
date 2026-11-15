@@ -44,3 +44,9 @@ pub fn create_private_file(path: &Path) -> io::Result<File> {
     file.set_permissions(fs::Permissions::from_mode(0o600))?;
     Ok(file)
 }
+
+/// Whether `e` says the disk (or the person's quota) is full: `ENOSPC` is 28 on Linux and macOS;
+/// the quota errors are `EDQUOT` (122 on Linux, 69 on macOS).
+pub fn is_disk_full(e: &io::Error) -> bool {
+    matches!(e.raw_os_error(), Some(28 | 122 | 69))
+}

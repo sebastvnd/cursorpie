@@ -19,9 +19,10 @@
 //!
 //! Change the constants here to re-theme. Other files must not hard-code a color or a radius.
 
-use crate::config::Appearance;
-use crate::ui::draw::contrast;
+use crate::config::{Appearance, ModeColors, ThemeColors};
+use crate::ui::draw::{contrast, luminance};
 use eframe::egui::{self, Color32, CornerRadius, Rect, Stroke, Vec2};
+use std::sync::RwLock;
 
 pub use crate::ui::draw::on_accent;
 
@@ -110,14 +111,47 @@ pub const DARK: Palette = Palette {
     keycap: Color32::from_rgb(84, 91, 86),
 };
 
+/// What [`pal`] hands out: the light and the dark palette with the user's colors in them, and the
+/// colors they were made from, so a frame that changes nothing costs nothing.
+struct Live {
+    light: Palette,
+    dark: Palette,
+    made_from: ThemeColors,
+}
+
+static LIVE: RwLock<Live> = RwLock::new(Live {
+    light: LIGHT,
+    dark: DARK,
+    made_from: ThemeColors {
+        light: ModeColors {
+            page: None,
+            panel: None,
+            sidebar: None,
+            text: None,
+        },
+        dark: ModeColors {
+            page: None,
+            panel: None,
+            sidebar: None,
+            text: None,
+        },
+    },
+});
+
 /// The palette in use. Settings and the pie call this every frame, so the appearance can change
-/// while a window is open.
-pub fn pal() -> &'static Palette {
+/// while a window is open. It is a copy: the colors of the user are in it (see [`apply_appearance`]).
+pub fn pal() -> Palette {
+    let live = LIVE.read().unwrap_or_else(|e| e.into_inner());
     if crate::ui::draw::dark() {
-        &DARK
+        live.dark
     } else {
-        &LIGHT
+        live.light
     }
+}
+
+/// The palette of an appearance as it is without any color of the user.
+pub fn base_palette(dark: bool) -> Palette {
+    if dark { DARK } else { LIGHT }
 }
 
 /// Whether `appearance` is dark right now: `Dark`, or `System` while the system is dark.
@@ -129,9 +163,93 @@ pub fn resolve_dark(appearance: Appearance, system: Option<egui::Theme>) -> bool
     }
 }
 
-/// Picks the palette for this frame from the configured appearance and the system theme.
-pub fn apply_appearance(ctx: &egui::Context, appearance: Appearance) {
+/// `base` with the colors of the user in it. What depends on a color follows it: the cards, the
+/// controls, the hairlines and the rail are a step away from the page and the panel, the secondary
+/// text is the text a step toward the page. The text is then moved just far enough from the
+/// surfaces to read on all of them (7:1, and 4.5:1 for the secondary text), whatever was chosen.
+pub fn with_colors(base: Palette, t: &ModeColors) -> Palette {
+    if t.is_default() {
+        return base;
+    }
+    let rgb = |[r, g, b]: [u8; 3]| Color32::from_rgb(r, g, b);
+    let mut p = base;
+    // away from a surface: toward black on a light page, toward white on a dark one (the chosen
+    // page decides, not the appearance: a light appearance may have a dark page, and the reverse)
+    let page_is_dark = luminance(t.page.map_or(base.bg, rgb)) < 0.18;
+    let shade = if page_is_dark {
+        Color32::WHITE
+    } else {
+        Color32::BLACK
+    };
+    if let Some(c) = t.page {
+        p.bg = rgb(c);
+        p.card =
+            p.bg.lerp_to_gamma(Color32::WHITE, if page_is_dark { 0.07 } else { 0.6 });
+        p.sidebar =
+            p.bg.lerp_to_gamma(shade, if page_is_dark { 0.04 } else { 0.035 });
+    }
+    if let Some(c) = t.panel {
+        p.card = rgb(c);
+    }
+    if let Some(c) = t.sidebar {
+        p.sidebar = rgb(c);
+    }
+    if t.page.is_some() || t.panel.is_some() || t.sidebar.is_some() {
+        p.idle = p.card.lerp_to_gamma(shade, 0.045);
+        p.hot = p.card.lerp_to_gamma(shade, 0.1);
+        p.input = p.bg.lerp_to_gamma(shade, 0.015);
+        p.border = p.card.lerp_to_gamma(shade, 0.12);
+        p.divider = p.card.lerp_to_gamma(shade, 0.07);
+        p.track = p.card.lerp_to_gamma(shade, 0.18);
+        p.keycap = if page_is_dark {
+            p.card.lerp_to_gamma(Color32::WHITE, 0.15)
+        } else {
+            p.card
+        };
+    }
+    if let Some(c) = t.text {
+        p.text = rgb(c);
+        p.muted = p.text.lerp_to_gamma(p.bg, 0.3);
+    } else if t.page.is_some() || t.panel.is_some() || t.sidebar.is_some() {
+        // the text of the appearance may not carry on a page of another lightness
+        p.text = if page_is_dark { DARK.text } else { LIGHT.text };
+        p.muted = if page_is_dark {
+            DARK.muted
+        } else {
+            LIGHT.muted
+        };
+    }
+    let surfaces = [p.bg, p.sidebar, p.card, p.idle, p.hot, p.input];
+    // black or white, whichever reads better on the worst of the surfaces (on a mid-tone page the
+    // lightness of the interface does not say which)
+    let worst = |c: Color32| {
+        surfaces
+            .iter()
+            .map(|s| contrast(c, *s))
+            .fold(f32::MAX, f32::min)
+    };
+    let extreme = if worst(Color32::WHITE) >= worst(Color32::BLACK) {
+        Color32::WHITE
+    } else {
+        Color32::BLACK
+    };
+    p.text = legible_on(p.text, extreme, &surfaces, 7.0);
+    p.muted = legible_on(p.muted, p.text, &surfaces, 4.5);
+    p
+}
+
+/// Picks the palette for this frame from the configured appearance, the system theme and the
+/// colors of the user.
+pub fn apply_appearance(ctx: &egui::Context, appearance: Appearance, theme: &ThemeColors) {
     crate::ui::draw::set_dark(resolve_dark(appearance, ctx.system_theme()));
+    let fresh = LIVE.read().map(|l| l.made_from != *theme).unwrap_or(true);
+    if fresh {
+        let mut live = LIVE.write().unwrap_or_else(|e| e.into_inner());
+        // the appearance decides the base, the colors of the user are laid over it
+        live.light = with_colors(LIGHT, &theme.light);
+        live.dark = with_colors(DARK, &theme.dark);
+        live.made_from = *theme;
+    }
 }
 
 /// `color`, moved toward `target` (the text color) just far enough that it shows up with at least
@@ -155,6 +273,80 @@ pub fn accent_text(accent: Color32) -> Color32 {
     let p = pal();
     legible_on(accent, p.text, &[p.bg, p.sidebar, p.card, p.idle], 4.5)
 }
+
+/// The colors suggested for the page, as `(name, rgb)`, for the light and the dark appearance. The
+/// first of each is the color the appearance comes with. All of them are sage-tinted neutrals, like
+/// the rest of the palette, so any of them sits well with the default accent.
+pub const PAGES: [&[(&str, [u8; 3])]; 2] = [
+    &[
+        ("Cream", [245, 243, 236]),
+        ("Sage mist", [232, 239, 230]),
+        ("Sage", [221, 231, 218]),
+        ("Oat", [238, 235, 224]),
+        ("Fog", [234, 237, 236]),
+    ],
+    &[
+        ("Graphite", [27, 29, 28]),
+        ("Forest", [22, 28, 24]),
+        ("Night", [17, 21, 19]),
+        ("Moss", [31, 36, 32]),
+        ("Slate", [28, 31, 34]),
+    ],
+];
+
+/// The colors suggested for the panels (see [`PAGES`]).
+pub const PANELS: [&[(&str, [u8; 3])]; 2] = [
+    &[
+        ("Paper", [255, 254, 250]),
+        ("White", [255, 255, 255]),
+        ("Mint", [247, 250, 245]),
+        ("Linen", [250, 247, 240]),
+        ("Mist", [241, 246, 240]),
+    ],
+    &[
+        ("Graphite", [42, 46, 44]),
+        ("Forest", [34, 41, 37]),
+        ("Moss", [47, 54, 49]),
+        ("Deep", [30, 35, 32]),
+        ("Slate", [40, 44, 48]),
+    ],
+];
+
+/// The colors suggested for the sidebar (see [`PAGES`]).
+pub const SIDEBARS: [&[(&str, [u8; 3])]; 2] = [
+    &[
+        ("Stone", [238, 238, 229]),
+        ("Sage mist", [228, 236, 225]),
+        ("Sage", [214, 226, 211]),
+        ("Oat", [243, 240, 231]),
+        ("Fog", [229, 233, 232]),
+    ],
+    &[
+        ("Graphite", [34, 37, 35]),
+        ("Forest", [27, 33, 30]),
+        ("Night", [20, 25, 22]),
+        ("Moss", [40, 46, 42]),
+        ("Slate", [33, 36, 40]),
+    ],
+];
+
+/// The colors suggested for the text (see [`PAGES`]).
+pub const TEXTS: [&[(&str, [u8; 3])]; 2] = [
+    &[
+        ("Ink", [41, 54, 47]),
+        ("Deep green", [28, 42, 34]),
+        ("Charcoal", [38, 40, 39]),
+        ("Slate", [45, 52, 62]),
+        ("Umber", [62, 52, 44]),
+    ],
+    &[
+        ("Paper", [244, 244, 239]),
+        ("Sage mist", [226, 234, 224]),
+        ("White", [255, 255, 255]),
+        ("Mint", [208, 224, 212]),
+        ("Cream", [240, 232, 214]),
+    ],
+];
 
 /// The accents offered as swatches, as `(name, rgb)`. The first is the default of a new install: the
 /// sage green of the website, deep enough to carry white text. The others are the system colors of
@@ -379,6 +571,141 @@ mod tests {
             ("hot", p.hot),
             ("input", p.input),
         ]
+    }
+
+    #[test]
+    fn no_chosen_color_leaves_the_appearance_as_it_is() {
+        for base in [LIGHT, DARK] {
+            let p = with_colors(base, &ModeColors::default());
+            assert_eq!((p.bg, p.card, p.text), (base.bg, base.card, base.text));
+        }
+    }
+
+    #[test]
+    fn a_chosen_page_color_carries_readable_text_whatever_it_is() {
+        let pages = [
+            [0, 0, 0],
+            [255, 255, 255],
+            [255, 255, 0],
+            [128, 128, 128],
+            [10, 10, 80],
+            [200, 30, 30],
+        ];
+        for base in [LIGHT, DARK] {
+            for page in pages {
+                for text in [None, Some([120, 120, 120]), Some(page)] {
+                    let t = ModeColors {
+                        page: Some(page),
+                        text,
+                        ..ModeColors::default()
+                    };
+                    let p = with_colors(base, &t);
+                    assert_eq!(p.dark, base.dark, "the appearance decides it, not the page");
+                    let surfaces = [p.bg, p.sidebar, p.card, p.idle, p.hot, p.input];
+                    // a mid tone cannot carry 7:1 in either black or white: the best there is, for
+                    // the worst surface
+                    let worst = |c: Color32| {
+                        surfaces
+                            .iter()
+                            .map(|s| contrast(c, *s))
+                            .fold(f32::MAX, f32::min)
+                    };
+                    let best = worst(Color32::BLACK).max(worst(Color32::WHITE));
+                    for s in surfaces {
+                        assert!(
+                            contrast(p.text, s) >= 7.0f32.min(best) - 0.01,
+                            "{page:?} {text:?}"
+                        );
+                        assert!(
+                            contrast(p.muted, s) >= 4.5f32.min(best) - 0.01,
+                            "{page:?} {text:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_light_and_the_dark_colors_are_kept_apart() {
+        let mut theme = ThemeColors::default();
+        theme.dark.page = Some([20, 30, 25]);
+        assert!(theme.light.is_default());
+        assert_eq!(*theme.mode(false), ModeColors::default());
+        theme.mode_mut(false).text = Some([1, 2, 3]);
+        assert_eq!(theme.dark.text, None);
+        assert_eq!(theme.light.text, Some([1, 2, 3]));
+        assert_eq!(with_colors(LIGHT, &theme.light).bg, LIGHT.bg);
+        assert_eq!(
+            with_colors(DARK, &theme.dark).bg,
+            Color32::from_rgb(20, 30, 25)
+        );
+    }
+
+    #[test]
+    fn every_suggested_color_keeps_the_text_readable() {
+        for dark in [false, true] {
+            let (base, at) = (base_palette(dark), usize::from(dark));
+            let mut tried = Vec::new();
+            for (_, c) in PAGES[at] {
+                tried.push(ModeColors {
+                    page: Some(*c),
+                    ..ModeColors::default()
+                });
+            }
+            for (_, c) in PANELS[at] {
+                tried.push(ModeColors {
+                    panel: Some(*c),
+                    ..ModeColors::default()
+                });
+            }
+            for (_, c) in SIDEBARS[at] {
+                tried.push(ModeColors {
+                    sidebar: Some(*c),
+                    ..ModeColors::default()
+                });
+            }
+            for (_, c) in TEXTS[at] {
+                tried.push(ModeColors {
+                    text: Some(*c),
+                    ..ModeColors::default()
+                });
+            }
+            for t in tried {
+                let p = with_colors(base, &t);
+                for s in [p.bg, p.sidebar, p.card, p.idle, p.hot, p.input] {
+                    assert!(contrast(p.text, s) >= 7.0 - 0.01, "{t:?}");
+                    assert!(contrast(p.muted, s) >= 4.5 - 0.01, "{t:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_first_suggestion_of_each_is_the_color_the_appearance_comes_with() {
+        for dark in [false, true] {
+            let (p, at) = (base_palette(dark), usize::from(dark));
+            let rgb = |c: Color32| [c.r(), c.g(), c.b()];
+            assert_eq!(PAGES[at][0].1, rgb(p.bg));
+            assert_eq!(PANELS[at][0].1, rgb(p.card));
+            assert_eq!(SIDEBARS[at][0].1, rgb(p.sidebar));
+            assert_eq!(TEXTS[at][0].1, rgb(p.text));
+        }
+    }
+
+    #[test]
+    fn only_the_colors_that_were_chosen_are_saved() {
+        let none = serde_json::to_string(&crate::config::Config::default()).unwrap();
+        assert!(!none.contains("theme"));
+        let mut c = crate::config::Config::default();
+        c.theme.dark.page = Some([1, 2, 3]);
+        let text = serde_json::to_string(&c).unwrap();
+        assert!(
+            text.contains(r#""theme":{"dark":{"page":[1,2,3]}}"#),
+            "{text}"
+        );
+        let back: crate::config::Config = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.theme, c.theme);
     }
 
     #[test]
