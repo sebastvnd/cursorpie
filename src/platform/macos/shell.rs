@@ -59,3 +59,11 @@ pub fn run_shell(cmd: &str) {
 pub fn tick() {
     spawn_reaped(Command::new("afplay").args(["-v", "0.25", "/System/Library/Sounds/Tink.aiff"]));
 }
+
+/// Opens a web link in a new browser window: the link is opened as usual (the browser decides).
+pub fn open_url_new_window(target: &str) {
+    open_url(target);
+}
+
+/// Going to the browser that has a page is done by the extension alone on this OS.
+pub fn raise_browser(_browser: &str) {}

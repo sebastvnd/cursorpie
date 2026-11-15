@@ -470,11 +470,7 @@ fn finish_until(
             Stdio::null()
         })
         .stderr(Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW: no console flashes on screen
-    }
+    super::hide_console(&mut cmd); // no console flashes on screen (Windows)
     let mut child = cmd.spawn().ok()?;
     if let Some(text) = &inv.stdin
         && let Some(mut pipe) = child.stdin.take()
@@ -497,7 +493,7 @@ fn finish_until(
         match child.try_wait() {
             Ok(Some(s)) => break Some(s),
             Ok(None) if started.elapsed() >= timeout || stop() => {
-                kill_tree(&mut child);
+                super::terminate_tree(&mut child);
                 let _ = child.wait();
                 break None;
             }
@@ -515,25 +511,6 @@ fn finish_until(
     })
 }
 
-/// Ends `child` and, on Windows, the programs it started. `cmd.exe /C` runs the person's command
-/// as a grandchild: killing only the shell leaves that program holding the end of the output pipe,
-/// so the thread that reads it (see [`finish`]) would wait for ever, with its buffer, for every
-/// command that timed out.
-fn kill_tree(child: &mut std::process::Child) {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        let _ = Command::new("taskkill")
-            .args(["/PID", &child.id().to_string(), "/T", "/F"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .creation_flags(0x0800_0000)
-            .status();
-    }
-    let _ = child.kill();
-}
-
 /// Tries each program until one can be started; `None` when none can.
 fn first_that_starts(programs: &[Invocation], timeout: Duration, capture: bool) -> Option<Output> {
     programs.iter().find_map(|p| run(p, timeout, capture))
@@ -547,11 +524,7 @@ fn start_and_forget(inv: &Invocation) -> bool {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000);
-    }
+    super::hide_console(&mut cmd);
     match cmd.spawn() {
         Ok(mut child) => {
             std::thread::spawn(move || {
@@ -587,7 +560,7 @@ pub fn exec_until(
         stdin: None,
     };
     let mut cmd = Command::new(inv.program);
-    shell_line(&mut cmd, command);
+    super::shell_line(&mut cmd, command);
     finish_until(cmd, &inv, timeout, true, stop)
 }
 
@@ -597,20 +570,6 @@ const fn shell_program(os: Os) -> &'static str {
         Os::Windows => "cmd.exe",
         Os::Mac | Os::Linux => "/bin/sh",
     }
-}
-
-/// Gives `cmd` the arguments that run `line` as typed. On Windows the line is passed as it is
-/// (`/S` makes cmd strip only the outer pair of quotes, as the *Command* block does).
-#[cfg(windows)]
-fn shell_line(cmd: &mut Command, line: &str) {
-    use std::os::windows::process::CommandExt;
-    cmd.raw_arg(format!("/S /C \"{line}\""));
-}
-
-/// Gives `cmd` the arguments that run `line` as typed.
-#[cfg(not(windows))]
-fn shell_line(cmd: &mut Command, line: &str) {
-    cmd.arg("-c").arg(line);
 }
 
 /// The text on the clipboard.

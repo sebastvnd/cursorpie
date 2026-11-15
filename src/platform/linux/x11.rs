@@ -772,6 +772,47 @@ impl Conn {
         }
     }
 
+    // ------------------------------------------------------------------ the veil
+
+    /// Makes the window `w` fully see-through to the compositor (`on`), or gives it back its own
+    /// opacity (`!on`), with the window manager's opacity hint `_NET_WM_WINDOW_OPACITY`.
+    ///
+    /// Used for every map of the pie window in a Wayland session: XWayland drops the Wayland surface
+    /// when the window is unmapped, so after each map, until the first buffer of the window has
+    /// really been drawn and handed over, XWayland shows what the window holds before any drawing,
+    /// and for a transparent window that is a **black square**. A compositor
+    /// that honors the hint (KWin, Mutter) shows nothing of the window while it is set. One that
+    /// does not (Sway, Hyprland) ignores it and shows what it always showed. Errors (the window is
+    /// gone) are absorbed.
+    pub fn set_veil(&self, w: Window, on: bool) {
+        let Ok(name) = CString::new("_NET_WM_WINDOW_OPACITY") else {
+            return;
+        };
+        let _ = self.trapped(|| {
+            // SAFETY: plain requests on a window id; the value is one 32-bit CARDINAL, which Xlib
+            // reads as a `long`, and it outlives the call.
+            unsafe {
+                let atom = XInternAtom(self.dpy, name.as_ptr(), FALSE);
+                if on {
+                    let zero: c_long = 0;
+                    XChangeProperty(
+                        self.dpy,
+                        w,
+                        atom,
+                        XA_CARDINAL,
+                        32,
+                        PROP_MODE_REPLACE,
+                        (&raw const zero).cast::<c_uchar>(),
+                        1,
+                    );
+                } else {
+                    XDeleteProperty(self.dpy, w, atom);
+                }
+                XFlush(self.dpy);
+            }
+        });
+    }
+
     // ------------------------------------------------------------------ grabs and events
 
     /// Runs `f`, absorbs the X errors it causes, and says whether there were any.

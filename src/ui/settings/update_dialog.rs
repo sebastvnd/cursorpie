@@ -29,7 +29,7 @@ enum Answer {
 }
 
 /// What the sheet says under its title.
-fn body_text(version: crate::update::Version, can_install: bool) -> String {
+fn body_text(version: crate::update::Version, can_install: bool, needs_password: bool) -> String {
     let current = VERSION;
     if !can_install {
         return format!(
@@ -46,6 +46,12 @@ fn body_text(version: crate::update::Version, can_install: bool) -> String {
     if platform::OS == Os::Mac {
         text.push_str(" macOS may ask you to allow Accessibility for CursorPie again.");
     }
+    if needs_password {
+        text.push_str(
+            " This copy is in a folder only an administrator can write to, so your system asks \
+             for your password when CursorPie restarts; if you cancel, the old version starts again.",
+        );
+    }
     text
 }
 
@@ -61,7 +67,14 @@ impl App {
             ctx,
             "update_offer",
             self.ed.card,
-            Vec2::new(560.0, 270.0),
+            Vec2::new(
+                560.0,
+                if self.ed.update_needs_password {
+                    340.0
+                } else {
+                    270.0
+                },
+            ),
             "Update available",
             |ui| {
                 ui.horizontal(|ui| {
@@ -78,7 +91,7 @@ impl App {
                     ));
                 });
                 ui.add_space(6.0);
-                let text = body_text(version, can_install);
+                let text = body_text(version, can_install, self.ed.update_needs_password);
                 ui.add(egui::Label::new(RichText::new(text).size(13.5).color(pal().muted)).wrap());
                 ui.add_space(GAP);
                 // the way forward is the rightmost button, the way back the one before it

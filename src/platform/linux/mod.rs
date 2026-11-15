@@ -5,7 +5,11 @@
 //! backend (`xlib`, `x11`, `backend`) is only compiled on Linux. The Wayland backend (`wayland`, `uinput`) has its pure parts (the clone's description, the KWin script and its reports) built everywhere too; see `docs/developer/WAYLAND_SUPPORT.md`.
 
 pub mod autostart;
+// The touchpad source (the kernel's evdev nodes): its pure parser is tested on every OS.
 pub mod desktop_entry;
+#[cfg(any(target_os = "linux", test))]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) mod evdev;
 pub(crate) mod evdev_io;
 pub mod icontheme;
 pub mod inputdev;
@@ -22,6 +26,12 @@ pub mod xdg;
 
 #[cfg(target_os = "linux")]
 pub(crate) mod backend;
+#[cfg(target_os = "linux")]
+pub(crate) mod pinch;
+#[cfg(target_os = "linux")]
+pub(crate) mod process;
+#[cfg(target_os = "linux")]
+pub(crate) mod tray;
 #[cfg(target_os = "linux")]
 pub(crate) mod x11;
 #[cfg(target_os = "linux")]

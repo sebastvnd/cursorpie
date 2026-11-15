@@ -12,7 +12,7 @@
 //! | the window | a hidden top-level window on its own thread (`cursorpie-touch`) that only receives `WM_INPUT`, `WM_INPUT_DEVICE_CHANGE` and a timer |
 //! | [`Device`] | the descriptor of one touchpad (`HidP_GetValueCaps`), read once; reads the values of a report with `HidP_GetUsageValue` and `HidP_GetUsages` |
 //! | [`ptp`] | everything that is a decision (layout, hybrid reports, palms), tested on every OS |
-//! | [`Bridge`](super::Bridge) | the same translation into the gesture state machine that macOS uses |
+//! | [`Bridge`](crate::tap::touch::Bridge) | the same translation into the gesture state machine that macOS uses |
 //!
 //! Rules it follows, like the hook of `tap::windows`: nothing blocks, nothing panics out of the
 //! window procedure, and the mouse is never affected. A device that is not a precision touchpad
@@ -23,13 +23,13 @@
 //! fingers on the pad costs five slots of reading, not ten.
 
 use super::ptp::{self, Assembler, Cap, RawContact, Spec};
-use super::recognizer::{Finger, Frame};
-use super::{Bridge, Env, Status, now, set_status};
 use crate::config::{cfg, lock};
 use crate::geometry::Point;
 use crate::msg::Notifier;
 use crate::platform::windows::util::wide;
 use crate::tap::gesture::Gesture;
+use crate::tap::touch::recognizer::{Finger, Frame};
+use crate::tap::touch::{Bridge, Env, Status, now, set_status};
 use std::collections::HashMap;
 use std::ptr::{null, null_mut};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -309,6 +309,8 @@ fn reset_bridge(hub: &Hub) {
         state: &hub.state,
         notifier: &hub.notifier,
         cursor: &cur,
+        fresh: &cur,
+        hot: &|_| {},
     };
     lock(&hub.bridge).reset(&env);
 }
@@ -356,6 +358,8 @@ fn on_input(raw: HRAWINPUT) {
         state: &hub.state,
         notifier: &hub.notifier,
         cursor: &cur,
+        fresh: &cur,
+        hot: &|_| {},
     };
     let mut frame: Vec<RawContact> = Vec::with_capacity(ptp::MAX_SLOTS);
     for report in hid.reports() {
@@ -398,6 +402,8 @@ fn on_device_removed(handle: u64) {
         state: &hub.state,
         notifier: &hub.notifier,
         cursor: &cur,
+        fresh: &cur,
+        hot: &|_| {},
     };
     lock(&hub.bridge).device_lost(&env, handle);
 }
@@ -438,7 +444,7 @@ fn count_touchpads() -> usize {
 }
 
 /// How many precision touchpads Windows lists, without registering for anything (see
-/// [`probe`](super::probe)).
+/// [`probe`](crate::tap::touch::probe)).
 pub(super) fn probe() -> usize {
     count_touchpads()
 }
@@ -520,6 +526,8 @@ fn tick(hwnd: HWND) {
         state: &hub.state,
         notifier: &hub.notifier,
         cursor: &cur,
+        fresh: &cur,
+        hot: &|_| {},
     };
     lock(&hub.bridge).poll(&env);
 }

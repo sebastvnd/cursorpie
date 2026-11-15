@@ -28,7 +28,7 @@
 //! Everything about the real layouts of devices is a **design assumption until spikes W1 to W4 of
 //! `docs/developer/TRACKPAD_HAPTICS_PLAN.md` are answered on a Windows laptop**.
 
-use super::recognizer::{Finger, PALM_SIZE};
+use crate::tap::touch::recognizer::{Finger, PALM_SIZE};
 
 /// Raw Input: the packet of a HID device.
 pub const RIM_TYPEHID: u32 = 2;

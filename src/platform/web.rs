@@ -67,15 +67,12 @@ pub fn urls_open(urls: &[String]) -> Vec<bool> {
 
 /// Opens `url` in a new browser window: through the extension when a browser is connected,
 /// otherwise as well as the OS can (Linux: the default browser with `--new-window` when it is a
-/// known one; elsewhere the link is opened as usual).
+/// known one; elsewhere the link is opened as usual): `platform::open_url_new_window`.
 pub fn open_new_window(url: &str) {
     if crate::bridge::open_new_window(url) {
         return;
     }
-    #[cfg(target_os = "linux")]
-    super::linux::backend::open_url_new_window(url);
-    #[cfg(not(target_os = "linux"))]
-    super::open_url(url);
+    super::open_url_new_window(url);
 }
 
 /// Goes to the tab that has the page `url`; opens the link as usual when no connected browser has
@@ -87,13 +84,7 @@ pub fn reveal(url: &str, mode: DesktopMode) {
     if let Some(browser) = crate::bridge::activate(url) {
         // ...and where a program cannot take the focus for a window (a Wayland session), the
         // window manager is asked to raise the browser too
-        #[cfg(target_os = "linux")]
-        for id in linux_app_ids(&browser) {
-            if super::linux::backend::raise_if_running(id) {
-                break;
-            }
-        }
-        let _ = browser;
+        super::raise_browser(&browser);
         return;
     }
     super::open_url(url);

@@ -140,6 +140,17 @@ pub(in crate::ui::settings) fn button_frame(
     resp: &egui::Response,
     look: Look,
 ) -> Color32 {
+    button_frame_r(ui, rect, resp, look, CONTROL_R)
+}
+
+/// [`button_frame`] with corners of the given `radius` (a panel button that says how round it is).
+pub(in crate::ui::settings) fn button_frame_r(
+    ui: &egui::Ui,
+    rect: Rect,
+    resp: &egui::Response,
+    look: Look,
+    radius: egui::CornerRadius,
+) -> Color32 {
     let enabled = ui.is_enabled();
     let (rest, hot, fg) = look.colors();
     let fill = if !enabled {
@@ -155,11 +166,11 @@ pub(in crate::ui::settings) fn button_frame(
     } else {
         rest
     };
-    ui.painter().rect_filled(rect, CONTROL_R, fill);
+    ui.painter().rect_filled(rect, radius, fill);
     if resp.has_focus()
         && let Look::Primary(accent) = look
     {
-        focus_ring(ui, rect, CONTROL_R, accent);
+        focus_ring(ui, rect, radius, accent);
     }
     if enabled {
         fg

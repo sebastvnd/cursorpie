@@ -76,6 +76,17 @@ pub fn native_handle(window: &impl HasWindowHandle) -> Option<isize> {
     }
 }
 
+/// The X window id of the native window, for the platform's X11 requests
+/// (`platform::set_window_veil`).
+/// `None` when the window is not an X window (Windows, macOS, or a native Wayland window).
+pub fn x11_window(window: &impl HasWindowHandle) -> Option<std::os::raw::c_ulong> {
+    match window.window_handle().ok()?.as_raw() {
+        RawWindowHandle::Xlib(h) => Some(h.window),
+        RawWindowHandle::Xcb(h) => Some(std::os::raw::c_ulong::from(h.window.get())),
+        _ => None,
+    }
+}
+
 /// All UI-thread state. Fields are grouped: the message channel, the pie, Settings.
 pub struct App {
     pub rx: mpsc::Receiver<Msg>,
@@ -145,6 +156,11 @@ pub struct App {
     /// surface only exists once the window is mapped, so the frames drawn before that never reach
     /// the compositor; the first buffer it sees must be empty as well. While above 0 nothing is drawn.
     pub settle_frames: u8,
+    /// Linux: the X window id of the native window, once it is known (see [`x11_window`]).
+    pub x_window: Option<std::os::raw::c_ulong>,
+    /// Wayland: the window was mapped invisible (`platform::set_window_veil`, at every map) and is
+    /// made visible when its first empty frame is on screen: its X id and since when. See `App::step_veil`.
+    pub veil: Option<(std::os::raw::c_ulong, Instant)>,
     /// Until when the window is repainted on a timer after a file chooser closed (see `Msg::Refocus`).
     pub repaint_until: Option<Instant>,
     /// Some(true) = closing and saving, Some(false) = closing without saving
@@ -223,6 +239,8 @@ impl App {
             settings_wait: None,
             show_wait: None,
             settle_frames: 0,
+            x_window: None,
+            veil: None,
             repaint_until: None,
             closing: None,
             card_size: egui::vec2(CARD_SIZE[0], CARD_SIZE[1]),
@@ -269,6 +287,9 @@ impl eframe::App for App {
         if let Some(handle) = native_handle(frame) {
             platform::clear_window_frame(handle);
         }
+        if self.x_window.is_none() {
+            self.x_window = x11_window(frame);
+        }
         // debug log only: where the window really is, compared with where it was asked to be
         if crate::debug::observing() {
             let (outer, ppp) = ctx.input(|i| {
@@ -288,6 +309,7 @@ impl eframe::App for App {
             self.handle_msg(ctx, msg);
         }
         self.step_show_wait(ctx);
+        self.step_veil(ctx);
         self.watch_close_flush(ctx);
         self.step_repaint_burst(ctx);
         self.step_hud(ctx);

@@ -143,6 +143,19 @@ pub fn cursor_pos() -> Option<(f64, f64)> {
     Some((px_to_logical(p.x as f64, s), px_to_logical(p.y as f64, s)))
 }
 
+/// The system answers at once: the same as [`cursor_pos`].
+pub fn cursor_pos_fresh() -> Option<(f64, f64)> {
+    cursor_pos()
+}
+
+/// The system needs no asking for the pointer.
+pub fn pointer_hot(_on: bool) {}
+
+/// Only a Wayland session shows a black square when a transparent window is first mapped.
+pub fn set_window_veil(_window: std::os::raw::c_ulong, _on: bool) -> bool {
+    false
+}
+
 // ------------------------------------------------------------------ displays
 
 unsafe extern "system" fn collect_monitor(

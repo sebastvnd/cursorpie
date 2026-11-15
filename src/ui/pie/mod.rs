@@ -412,16 +412,30 @@ impl App {
                     }
                     draw_texture(&painter, t, c, core * 1.3, tint);
                 } else {
-                    draw_icon(
-                        &painter,
-                        center_tex.as_ref(),
-                        &view.center_icon,
-                        c,
-                        core * 1.0,
-                        colors
-                            .ink
-                            .gamma_multiply(fade * if live { 0.6 } else { 0.3 }),
-                    );
+                    // Nothing to show in the center (no app icon, and no active mode or parent
+                    // submenu icon): draw the CursorPie mark instead of leaving the disc empty. If
+                    // the artwork cannot be loaded, the center is drawn as before.
+                    let logo = view.center_icon.trim().is_empty()
+                        && crate::ui::settings::brand::paint(
+                            &painter,
+                            crate::ui::settings::brand::Art::Mark,
+                            egui::Rect::from_center_size(c, Vec2::splat(core * 1.2)),
+                            colors
+                                .ink
+                                .gamma_multiply(fade * if live { 0.75 } else { 0.4 }),
+                        );
+                    if !logo {
+                        draw_icon(
+                            &painter,
+                            center_tex.as_ref(),
+                            &view.center_icon,
+                            c,
+                            core * 1.0,
+                            colors
+                                .ink
+                                .gamma_multiply(fade * if live { 0.6 } else { 0.3 }),
+                        );
+                    }
                 }
                 if self.pie_open
                     && !previewing

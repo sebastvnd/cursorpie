@@ -451,7 +451,8 @@ impl App {
                 card + Vec2::splat(2.0 * WIN_MARGIN),
             ));
         }
-        p.form = Form::new(spec);
+        let old = std::mem::replace(&mut p.form, Form::new(spec));
+        p.form.inherit(&old);
         p.reply = reply;
         p.source = source;
         p.deadline = deadline;

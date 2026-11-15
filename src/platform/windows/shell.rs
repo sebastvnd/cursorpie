@@ -112,3 +112,11 @@ pub fn choose_file(kind: FileKind, prompt: &str) -> Option<String> {
     let p = from_wide(&file);
     (!p.is_empty()).then_some(p)
 }
+
+/// Opens a web link in a new browser window: the link is opened as usual (the browser decides).
+pub fn open_url_new_window(target: &str) {
+    open_url(target);
+}
+
+/// Going to the browser that has a page is done by the extension alone on this OS.
+pub fn raise_browser(_browser: &str) {}

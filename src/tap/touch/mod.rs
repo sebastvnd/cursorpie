@@ -29,26 +29,9 @@
 //! written to the log or to disk; the `touch` category of the diagnostic log has counts and
 //! decisions only.
 
-#[cfg(any(target_os = "linux", test))]
-#[cfg_attr(
-    not(all(target_os = "linux", not(feature = "check-windows"))),
-    allow(dead_code)
-)]
-mod evdev;
 pub(crate) mod extra;
 pub(crate) mod haptic;
-#[cfg(any(target_os = "macos", test))]
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-mod multitouch;
 pub(crate) mod probe;
-// Windows: the pure half is tested everywhere; the Win32 half is also compiled with
-// `--features check-windows` so it can be type-checked on other OSes.
-#[cfg(any(windows, feature = "check-windows"))]
-#[cfg_attr(not(windows), allow(dead_code))]
-mod precision;
-#[cfg(any(windows, feature = "check-windows", test))]
-#[cfg_attr(not(windows), allow(dead_code))]
-mod ptp;
 pub(crate) mod recognizer;
 pub(crate) mod scroll;
 
@@ -120,7 +103,7 @@ fn watch_pointer(state: &Arc<Mutex<Gesture>>, notifier: &Notifier) {
 /// that makes the extra click is a second finger on the surface, and the system scrolls with two
 /// fingers: that scroll, and the glide it leaves behind, must not reach the app under the pie. Two
 /// atomic reads while nothing runs, asked for every wheel event.
-#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
+#[allow(dead_code)] // read by the hooks of macOS and Windows
 pub(crate) fn swallows_scroll() -> bool {
     scroll::swallows()
 }
@@ -160,7 +143,7 @@ pub fn status() -> Status {
     *crate::config::lock(&STATUS)
 }
 
-#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+#[allow(dead_code)] // set by the macOS source (and by tests)
 pub(crate) fn set_status(s: Status) {
     *crate::config::lock(&STATUS) = s;
 }
@@ -182,6 +165,13 @@ pub(crate) struct Env<'a> {
     pub notifier: &'a Notifier,
     /// Where the pointer is (a touch hold moves the system's pointer; the position is read when it is needed).
     pub cursor: &'a dyn Fn() -> Option<Point>,
+    /// Where the pointer is *now*, for the two moments that decide something: the hold that places
+    /// the pie, and the lift that picks the slice. It may take a few milliseconds (a Wayland
+    /// compositor is asked), so it is not read for every movement of the finger: that is `cursor`.
+    pub fresh: &'a dyn Fn() -> Option<Point>,
+    /// Asks the system to report the pointer at full rate (`true`, while a hold runs) or at the
+    /// idle rate (`false`). Only a Wayland compositor has to be asked.
+    pub hot: &'a dyn Fn(bool),
 }
 
 /// Translates what the recognizer reports into the state machine's calls.
@@ -258,6 +248,9 @@ impl Bridge {
         self.rec.reset(&mut events);
         self.apply(env, &events);
         self.events = events;
+        if self.ours {
+            (env.hot)(false);
+        }
         self.ours = false;
         self.opened = false;
         ACTIVE.store(false, Ordering::SeqCst);
@@ -270,7 +263,9 @@ impl Bridge {
         for &ev in events {
             match ev {
                 TouchEvent::HoldArmed { elapsed, double } => {
-                    let started = match (env.cursor)() {
+                    // the pointer is asked for now: the fingers moved it through the system alone,
+                    // so the latest report may be from before the fingers stopped
+                    let started = match (env.fresh)() {
                         Some(p) => {
                             trigger::touch_press(env.state, env.notifier, p, elapsed, double)
                         }
@@ -279,6 +274,7 @@ impl Bridge {
                     self.ours = started;
                     self.opened = false;
                     if started {
+                        (env.hot)(true);
                         // the wheel is ours from now on; a tail of the last pie ends here
                         scroll::on_next_gesture();
                     }
@@ -312,7 +308,8 @@ impl Bridge {
                 }
                 TouchEvent::Release => {
                     if self.ours {
-                        trigger::touch_release(env.state, env.notifier, (env.cursor)());
+                        trigger::touch_release(env.state, env.notifier, (env.fresh)());
+                        (env.hot)(false);
                     }
                     diag::log!("touch", "release", ours = self.ours);
                     self.end_gesture(true);
@@ -320,6 +317,7 @@ impl Bridge {
                 TouchEvent::Cancel(why) => {
                     if self.ours {
                         trigger::touch_cancel(env.state, env.notifier);
+                        (env.hot)(false);
                     }
                     diag::log!("touch", "cancel", why = why.name(), ours = self.ours);
                     // a device that went quiet or away leaves no scroll behind; too many fingers does
@@ -359,11 +357,19 @@ pub(crate) struct Sink {
     notifier: Notifier,
     /// Where the pointer is. The system's, except in tests.
     cursor: fn() -> Option<Point>,
+    /// Where the pointer is now (see [`Env::fresh`]). The system's, except in tests.
+    fresh: fn() -> Option<Point>,
 }
 
 /// Where the system's pointer is.
 fn system_cursor() -> Option<Point> {
     crate::platform::cursor_pos().map(|(x, y)| Point::new(x, y))
+}
+
+/// Where the system's pointer is now: a Wayland compositor is asked to report and answers within a
+/// few milliseconds (see `platform::cursor_pos_fresh`), the other systems answer at once.
+fn system_cursor_fresh() -> Option<Point> {
+    crate::platform::cursor_pos_fresh().map(|(x, y)| Point::new(x, y))
 }
 
 #[cfg_attr(
@@ -377,15 +383,19 @@ impl Sink {
             state,
             notifier,
             cursor: system_cursor,
+            fresh: system_cursor_fresh,
         }
     }
 
     fn with<R>(&self, f: impl FnOnce(&mut Bridge, &Env<'_>) -> R) -> R {
         let cursor = || (self.cursor)();
+        let fresh = || (self.fresh)();
         let env = Env {
             state: &self.state,
             notifier: &self.notifier,
             cursor: &cursor,
+            fresh: &fresh,
+            hot: &crate::platform::pointer_hot,
         };
         f(&mut crate::config::lock(&self.bridge), &env)
     }
@@ -411,7 +421,7 @@ impl Sink {
     }
 
     /// A device went away. Only the Linux source reports this; macOS never does.
-    #[cfg_attr(not(any(target_os = "linux", test)), allow(dead_code))]
+    #[allow(dead_code)] // only the Linux source reports a lost device
     pub(crate) fn device_lost(&self, device: u64) {
         self.with(|b, env| b.device_lost(env, device));
     }
@@ -422,33 +432,6 @@ impl Sink {
     }
 }
 
-/// Starts the touch source on its own thread. It idles until the setting `touch_trigger` is on:
-/// only then is anything loaded (macOS: the private framework) or opened (Linux: `/dev/input`).
-#[cfg(target_os = "macos")]
-pub(crate) fn start(state: Arc<Mutex<Gesture>>, notifier: Notifier) {
-    multitouch::spawn(state, notifier);
-}
-
-/// Starts the touch source on its own thread (Windows). It idles until the setting `touch_trigger`
-/// is on: only then is anything registered with Windows.
-#[cfg(all(any(windows, feature = "check-windows"), not(target_os = "macos")))]
-pub(crate) fn start(state: Arc<Mutex<Gesture>>, notifier: Notifier) {
-    precision::spawn(state, notifier);
-}
-
-/// The `--touchpad-debug` command (see `evdev::debug`).
-#[cfg(target_os = "linux")]
-pub(crate) fn touchpad_debug_from_args() -> bool {
-    evdev::debug::run_from_args()
-}
-
-/// Starts the touch source on its own thread (Linux, see [`evdev`]). With `check-windows` the
-/// Windows source stands in, so both backends can be type-checked on one machine.
-#[cfg(all(target_os = "linux", not(feature = "check-windows")))]
-pub(crate) fn start(state: Arc<Mutex<Gesture>>, notifier: Notifier) {
-    evdev::spawn(state, notifier);
-}
-
 #[cfg(test)]
 mod tests {
     use super::recognizer::Finger;
@@ -457,7 +440,7 @@ mod tests {
     use crate::msg::Msg;
     use crate::tap::gesture::Source;
     use crate::tap::{Ev, Kind, Verdict, dispatch};
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
     use std::sync::MutexGuard;
     use std::sync::mpsc;
 
@@ -546,6 +529,10 @@ mod tests {
         rx: mpsc::Receiver<Msg>,
         bridge: Bridge,
         pointer: Cell<Point>,
+        /// Where the pointer is *now* when it differs from the latest report (`pointer`).
+        fresh: Cell<Option<Point>>,
+        /// What the bridge asked of the compositor: `true` armed, `false` released.
+        hot_log: RefCell<Vec<bool>>,
         t: u64,
     }
 
@@ -558,6 +545,8 @@ mod tests {
                 rx,
                 bridge: Bridge::new(),
                 pointer: Cell::new(Point::new(500.0, 500.0)),
+                fresh: Cell::new(None),
+                hot_log: RefCell::new(Vec::new()),
                 t: 1000,
             }
         }
@@ -566,10 +555,14 @@ mod tests {
         /// (it is driven by the frame times, not by the wall clock).
         fn frames(&mut self, ms: u64, fingers: &[Finger]) {
             let cursor = || Some(self.pointer.get());
+            let fresh = || Some(self.fresh.get().unwrap_or(self.pointer.get()));
+            let hot = |on: bool| self.hot_log.borrow_mut().push(on);
             let env = Env {
                 state: &self.state,
                 notifier: &self.n,
                 cursor: &cursor,
+                fresh: &fresh,
+                hot: &hot,
             };
             for _ in 0..ms / 10 {
                 self.t += 10;
@@ -649,6 +642,34 @@ mod tests {
         assert!(touch.iter().any(|s| s == "haptic Alignment"), "{touch:?}");
         assert!(!mouse.iter().any(|s| s.starts_with("haptic")), "{mouse:?}");
         assert!(matches!(*crate::config::lock(&rig.state), Gesture::Idle));
+    }
+
+    #[test]
+    fn the_pie_opens_where_the_pointer_is_now_not_where_it_was_last_reported() {
+        let _c = Cfg::set(fast);
+        let mut rig = Rig::new();
+        // the fingers moved the pointer after the latest report (a Wayland compositor reports
+        // every 100 ms and says nothing when the pointer stops): the hold asks for it again
+        rig.pointer.set(Point::new(100.0, 100.0));
+        rig.fresh.set(Some(Point::new(700.0, 300.0)));
+        rig.frames(600, &[finger(0.5)]);
+        wait_for_pie(&rig);
+        let center = match &*crate::config::lock(&rig.state) {
+            Gesture::ActivePie { center, .. } => Some(*center),
+            _ => None,
+        };
+        assert_eq!(center, Some(Point::new(700.0, 300.0)));
+    }
+
+    #[test]
+    fn the_compositor_reports_at_full_rate_for_the_hold_and_not_after_it() {
+        let _c = Cfg::set(fast);
+        let mut rig = Rig::new();
+        rig.frames(600, &[finger(0.5)]);
+        wait_for_pie(&rig);
+        assert_eq!(*rig.hot_log.borrow(), [true], "armed for the hold");
+        rig.frames(20, &[]); // the finger lifts
+        assert_eq!(*rig.hot_log.borrow(), [true, false], "idle again after it");
     }
 
     fn second(x: f32) -> Finger {
@@ -1054,10 +1075,13 @@ mod tests {
         let mut rig = Rig::new();
         open_pie(&mut rig);
         let cursor = || Some(rig.pointer.get());
+        let hot = |on: bool| rig.hot_log.borrow_mut().push(on);
         let env = Env {
             state: &rig.state,
             notifier: &rig.n,
             cursor: &cursor,
+            fresh: &cursor,
+            hot: &hot,
         };
         rig.bridge.reset(&env);
         assert!(matches!(*crate::config::lock(&rig.state), Gesture::Idle));

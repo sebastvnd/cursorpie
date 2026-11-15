@@ -58,6 +58,17 @@ pub fn mouse_devices() -> Vec<crate::mouse::Device> {
 pub fn cursor_pos() -> Option<(f64, f64)> {
     None
 }
+/// No pointer.
+pub fn cursor_pos_fresh() -> Option<(f64, f64)> {
+    None
+}
+/// No pointer to ask for.
+pub fn pointer_hot(_on: bool) {}
+
+/// Only a Wayland session shows a black square when a transparent window is first mapped.
+pub fn set_window_veil(_window: std::os::raw::c_ulong, _on: bool) -> bool {
+    false
+}
 /// No displays.
 pub fn display_rects() -> Vec<ScreenRect> {
     Vec::new()
@@ -172,4 +183,77 @@ pub mod layout {
     pub fn find_key(_text: &str) -> Option<(u16, u8)> {
         None
     }
+}
+
+// ------------------------------------------------------------------------ helpers of the other backends
+
+/// Nothing to hide.
+pub fn hide_console(_cmd: &mut std::process::Command) {}
+/// Ends `child`.
+pub fn terminate_tree(child: &mut std::process::Child) {
+    let _ = child.kill();
+}
+/// `-c line`, as in a Unix shell.
+pub fn shell_line(cmd: &mut std::process::Command, line: &str) {
+    cmd.arg("-c").arg(line);
+}
+/// Nothing is detached.
+pub fn detach_from_parent(_cmd: &mut std::process::Command) {}
+/// No permission bits.
+pub fn make_executable(_path: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+/// A plain file.
+pub fn create_private_file(path: &Path) -> std::io::Result<std::fs::File> {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)
+}
+/// Nothing is installed.
+pub fn collect_installed_apps() -> Vec<crate::platform::installed::InstalledApp> {
+    Vec::new()
+}
+/// The link is opened as usual.
+pub fn open_url_new_window(target: &str) {
+    open_url(target);
+}
+/// Nothing to raise.
+pub fn raise_browser(_browser: &str) {}
+/// winit's own choice of window system.
+pub fn event_loop_builder_hook() -> Option<eframe::EventLoopBuilderHook> {
+    None
+}
+
+/// There is no tray here; the handles never exist.
+pub struct TrayHandles;
+
+impl TrayHandles {
+    /// Never ticked.
+    pub fn pause_checked(&self) -> bool {
+        false
+    }
+    /// Never ticked.
+    pub fn login_checked(&self) -> bool {
+        false
+    }
+    /// Ignored.
+    pub fn set_login_checked(&self, _on: bool) {}
+}
+
+/// No tray here.
+pub fn build_tray(_n: &crate::msg::Notifier) -> Option<TrayHandles> {
+    None
+}
+
+/// No touch source.
+pub(crate) fn start_touch_source(
+    _state: std::sync::Arc<std::sync::Mutex<crate::tap::gesture::Gesture>>,
+    _notifier: crate::msg::Notifier,
+) {
+}
+/// No touchpads.
+pub fn probe_trackpads() -> usize {
+    0
 }

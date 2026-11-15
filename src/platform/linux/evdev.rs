@@ -23,14 +23,14 @@
 
 pub mod debug;
 
-use super::recognizer::{Finger, PALM_SIZE};
-use super::{Sink, Status, set_status};
 use crate::config::{cfg, lock};
 use crate::msg::Notifier;
 use crate::platform::linux::evdev_io::{self, POLLIN, PollFd, open_node, poll_fds, raw_fd};
 use crate::platform::linux::inputdev;
 use crate::platform::linux::uinput::{CloneSpec, EV_REL, InputEvent, REL_X, REL_Y, UinputDevice};
 use crate::tap::gesture::Gesture;
+use crate::tap::touch::recognizer::{Finger, PALM_SIZE};
+use crate::tap::touch::{Sink, Status, set_status};
 use std::ffi::c_int;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -447,7 +447,8 @@ fn read_device(hub: &'static Hub, file: std::fs::File, id: u64, generation: u64)
         if wayland {
             // without a virtual pointer a grab would freeze the cursor: do not grab at all
             let want = pad_mouse.is_some()
-                && (super::ACTIVE.load(Ordering::SeqCst) || super::scroll::wanted());
+                && (crate::tap::touch::ACTIVE.load(Ordering::SeqCst)
+                    || crate::tap::touch::scroll::wanted());
             match pad_grab.step(want, started.elapsed().as_millis() as u64) {
                 Some(GrabChange::Take) => {
                     let ok = evdev_io::grab(fd, true);
@@ -521,7 +522,7 @@ fn read_device(hub: &'static Hub, file: std::fs::File, id: u64, generation: u64)
 
 /// How many touchpads the kernel lists, without opening any node: `/proc/bus/input/devices` is
 /// readable by everyone, so this works before the user is in the `input` group (see
-/// [`probe`](super::probe)).
+/// [`probe`](crate::tap::touch::probe)).
 pub(super) fn probe() -> usize {
     std::fs::read_to_string("/proc/bus/input/devices")
         .map_or(0, |text| inputdev::parse_touchpads(&text).len())
@@ -619,8 +620,8 @@ fn scan(hub: &'static Hub) {
 
 #[cfg(test)]
 mod tests {
-    use super::super::recognizer::{Frame, Params, Recognizer, TouchEvent};
     use super::*;
+    use crate::tap::touch::recognizer::{Frame, Params, Recognizer, TouchEvent};
 
     const ABS: u16 = EV_ABS;
 

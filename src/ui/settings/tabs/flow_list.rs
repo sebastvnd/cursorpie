@@ -1974,6 +1974,32 @@ fn fields(
                 "The block waits for the browser. `ok` says how it went; the reply is also what a question answers (tab.url, media.state).",
             );
         }
+        NodeKind::Native { op, a, b }
+            if matches!(op, NativeOp::OpenAppSmart | NativeOp::OpenUrlSmart) =>
+        {
+            if *op == NativeOp::OpenAppSmart {
+                row(ui, "App", |ui| {
+                    let w = (ui.available_width() - 90.0).max(60.0);
+                    ui.add(
+                        text_field(a)
+                            .desired_width(w)
+                            .hint_text(crate::platform::OS.open_app_hint()),
+                    );
+                    if button(ui, Look::Soft, Some(symbols::APP_WINDOW), "Pick\u{2026}")
+                        .on_hover_text("Choose from the installed apps")
+                        .clicked()
+                    {
+                        ops.push(Op::PickApp(id));
+                    }
+                });
+            } else {
+                text_row(ui, "Link or file", a, "link or file");
+            }
+            row(ui, "Open", |ui| {
+                let w = ui.available_width();
+                super::flow::open_mode_pick(ui, w, b);
+            });
+        }
         NodeKind::Native { op, a, b } => {
             let (ha, hb) = op.hints();
             if !ha.is_empty() {

@@ -39,12 +39,20 @@ mod install;
 mod instance;
 mod login_item;
 mod power;
+// the touchpad source: the pure half (`ptp`) is tested everywhere, the Win32 half is also compiled
+// with `--features check-windows` so it can be type-checked on other OSes
+mod precision;
+mod process;
+mod ptp;
 mod registry;
 mod shell;
 mod shellitem;
+// tray-icon is a dependency of Windows only (`check-windows` on another OS has no tray)
+#[cfg(windows)]
+mod tray;
 mod window;
 
-pub use apppath::installed_list;
+pub use apppath::{collect_installed_apps, installed_list};
 pub use apps::*;
 pub use desktops::*;
 pub use input::*;
@@ -52,7 +60,10 @@ pub use install::*;
 pub use instance::*;
 pub use login_item::*;
 pub use power::*;
+pub use process::*;
 pub use shell::*;
+#[cfg(windows)]
+pub use tray::*;
 pub use window::*;
 
 pub(crate) use dpi::{scale_at_physical, set_last_scale};
@@ -76,3 +87,26 @@ pub fn open_input_monitoring_settings() {}
 
 /// There is no Dock icon to hide (the window is kept off the taskbar by the window builder).
 pub fn set_accessory_policy() {}
+
+/// Starts the touch source on its own thread (the precision touchpad, see [`precision`]). It idles
+/// until the setting `touch_trigger` is on: only then is anything registered with Windows.
+pub(crate) fn start_touch_source(
+    state: std::sync::Arc<std::sync::Mutex<crate::tap::gesture::Gesture>>,
+    notifier: crate::msg::Notifier,
+) {
+    precision::spawn(state, notifier);
+}
+
+/// How many precision touchpads the system lists right now. With `check-windows` on another OS
+/// the Win32 code is only type-checked: its Raw Input calls do not exist there, so they must not
+/// be reachable, or the test binary fails to link.
+pub fn probe_trackpads() -> usize {
+    #[cfg(windows)]
+    {
+        precision::probe()
+    }
+    #[cfg(not(windows))]
+    {
+        0
+    }
+}

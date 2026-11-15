@@ -2,6 +2,47 @@
 
 ## Unreleased
 
+## 0.8.16
+
+- **Platform boundary enforced.** OS conditions (`cfg(target_os)`, `cfg(windows)`, `cfg(unix)`, `cfg!`) and native
+  API calls (`std::os::*`, Win32, Cocoa, X11, `windows_subsystem` aside) now live only in `src/platform/<os>/**`,
+  `src/tap/{macos,windows,linux,wayland}.rs`, and the wiring in `src/platform/mod.rs` and `src/tap/mod.rs`; every other
+  layer uses `platform::OS`/`Os` or a platform function. Moved behind the backends: tray icon (`platform::build_tray`),
+  the X11 window choice (`platform::event_loop_builder_hook`), process/file helpers (`hide_console`, `shell_line`,
+  `terminate_tree`, `detach_from_parent`, `make_executable`, `create_private_file`), the installed-apps scan
+  (`collect_installed_apps`), browser raising, and the touchpad sources (`evdev`, `multitouch`, `precision`, `ptp`,
+  now under `platform/{linux,macos,windows}`; started with `platform::start_touch_source`). Test and feature gates stay.
+
+- **Fixed: the two-finger pinch of a trackpad did not zoom the Flow canvas (or the panel designer) on Linux.** Windows
+  gives a pinch to the app as the wheel with Ctrl held and macOS as a magnify event, and egui turns both into a zoom;
+  on Linux the window is always an X11 window (through XWayland in a Wayland session) and winit's X11 backend does not
+  know the pinch gestures of XInput 2.4, so nothing arrived. A small thread (`platform::linux::pinch`) now reads the
+  pinch from the X server and hands it to both views as a zoom factor. Needs an X server or XWayland with XInput 2.4
+  (X.Org 21.1, XWayland 23.1 or newer); without it nothing changes (Alt + scroll and Ctrl + scroll still zoom).
+
+- **The center of the pie shows the CursorPie mark when it has nothing else to show.** With no app icon and no active
+  mode (or parent submenu icon) the center disc was left empty; it now carries the logo's mark (the ring of four arcs
+  around a diamond), tinted with the ink of the pie like the other center icons.
+
+- **Fixed: a black square flashed in the pie every time it appeared (Wayland session).** The pie window is an
+  XWayland window with a transparent pixel format. XWayland drops the Wayland surface of a window when it is
+  unmapped and creates a new one, with no buffer, when it is mapped again, so every map (not only the first one)
+  shows what the window holds before any drawing until the first buffer reaches the compositor: black. The empty
+  frames that `show_wait` and `settle_frames` draw cannot help with that, because they are drawn after the map. Every
+  map is now done invisible: the window carries `_NET_WM_WINDOW_OPACITY` 0 (honored by KWin and Mutter; compositors
+  that ignore it behave as before) until the empty frames after the map were drawn and 60 ms have passed, at most
+  300 ms, and the hint is removed at once if the window is closed meanwhile. New log line `ui.veil_lifted`. X11
+  sessions, macOS and Windows are not touched.
+
+- **Fixed: the pie of a trackpad hold opened at the wrong place, or jumped, in a Wayland session (KDE Plasma).** A
+  mouse was fine and a trackpad was not, because they asked the compositor different things. The mouse asks KWin
+  where the pointer is at the moment of the press. The trackpad hold used the latest report KWin had sent on its own,
+  and the KWin script reports at most every 100 ms and says nothing more when the pointer stops, so the pie was placed
+  where the pointer had been a moment before (and the slice picked at the lift could be the one under an old
+  position). The hold now asks for the pointer when it arms and when the finger lifts (`platform::cursor_pos_fresh`),
+  and while the hold runs the script is told to report every 16 ms, as it is for a mouse hold (`platform::pointer_hot`).
+  Nothing changes on X11, macOS or Windows.
+
 ## 0.8.15
 
 - **New: memory in the diagnostic log (category `mem`).** A memory problem is only a number that is too big at some

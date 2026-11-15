@@ -212,11 +212,7 @@ fn quiet_command(program: &str, args: &[String], stdout: Stdio) -> Command {
         .stdin(Stdio::null())
         .stdout(stdout)
         .stderr(Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW: no console flashes on screen
-    }
+    super::hide_console(&mut cmd); // no console flashes on screen (Windows)
     cmd
 }
 

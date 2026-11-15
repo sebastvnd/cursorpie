@@ -75,11 +75,26 @@ pub(crate) mod chooser;
 pub(crate) mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::backend::*;
+// A touchpad pinch on Linux: winit's X11 backend never passes it on (Windows and macOS do, through
+// the wheel with Ctrl held and through the magnify event), so it is read from the X server itself.
+#[cfg(target_os = "linux")]
+pub use linux::pinch::take_pinch;
+/// The zoom factor of the touchpad pinch since the last call (1.0: none). Only Linux needs it: the
+/// other systems give the pinch to egui (`zoom_delta`).
+#[cfg(not(target_os = "linux"))]
+pub fn take_pinch(_ctx: &eframe::egui::Context) -> f32 {
+    1.0
+}
 
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(target_os = "macos")]
 pub use macos::*;
+// The pure half of the macOS touch source (its frame decoding) is tested on every OS.
+#[cfg(all(test, not(target_os = "macos")))]
+#[allow(dead_code)]
+#[path = "macos/multitouch.rs"]
+mod macos_multitouch;
 
 // Compiled on Windows, and on request elsewhere so it can be type-checked and its pure helpers
 // tested (`--features check-windows`); only re-exported on Windows.
@@ -88,6 +103,11 @@ pub use macos::*;
 pub(crate) mod windows;
 #[cfg(windows)]
 pub use windows::*;
+// The pure half of the Windows touch source (the report parser) is tested on every OS.
+#[cfg(all(test, not(any(windows, feature = "check-windows"))))]
+#[allow(dead_code)]
+#[path = "windows/ptp.rs"]
+mod windows_ptp;
 
 #[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 mod stub;
@@ -306,6 +326,9 @@ impl Os {
 
 /// [`Os::current`] as a constant.
 pub const OS: Os = Os::current();
+/// Whether this build has a real backend (macOS, Windows or Linux); `false` on the other systems,
+/// where only the test stub is compiled.
+pub const SUPPORTED: bool = cfg!(any(target_os = "macos", windows, target_os = "linux"));
 /// [`Os::primary_mod`] of this build.
 pub const MOD_PRIMARY: u8 = OS.primary_mod();
 

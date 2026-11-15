@@ -156,7 +156,9 @@ cd cursorpie-*-linux-x86_64
 ./install.sh --user          # installs under ~/.local; no sudo needed
 ```
 
-`./install.sh` without options installs under `/usr/local` (needs root); `--prefix DIR` chooses another folder.
+`./install.sh` without options installs under `/usr/local` (needs root); `--prefix DIR` chooses another folder. A copy under
+`/usr/local` is updated from **Settings > About** too, but your system asks for your password at the restart; with `--user`
+there is no question.
 The script also refreshes the icon cache, so no image tool is needed.
 
 **Build from source.** Install the development packages, then build and install:

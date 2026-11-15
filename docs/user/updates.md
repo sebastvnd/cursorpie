@@ -34,8 +34,8 @@ What is remembered (day of the last check, newest version, day of the last offer
    user and starts the new version; the "start at login" choice is left as it is.
 
 Only an ordinary install is updated: macOS `CursorPie.app` in a folder you can write to, Windows
-`%LOCALAPPDATA%\Programs\CursorPie\cursorpie.exe`, Linux a program outside a `target/` folder in a folder you can
-write to. Anything else gets **Download page**. On macOS the app is signed ad hoc, so macOS may ask for the
+`%LOCALAPPDATA%\Programs\CursorPie\cursorpie.exe`, Linux a program outside a `target/` folder (in a folder you cannot
+write to only with `pkexec`, see the Linux note). Anything else gets **Download page**. On macOS the app is signed ad hoc, so macOS may ask for the
 Accessibility permission again after an update.
 
 ## What an update brings besides the program
@@ -58,6 +58,14 @@ offers, the panel templates and the flow kit are compiled into the program, so a
 being written. Not written either, because they are not in your own folders: the udev rule (`/etc/udev/rules.d`, needs
 root) and the icons; `install.sh` does those. Everything is best effort: a file that cannot be written stays as it was.
 
-> **Linux note.** The updater only handles an ordinary install: a program outside a `target/` folder, in a folder you can
-> write to (for example `~/.local/bin`). A copy in `/usr/local/bin` that your user cannot write to shows **Download page**.
+> **Linux note.** The updater handles a program outside a `target/` folder. In a folder you can write to (for example
+> `~/.local/bin`, what `./install.sh --user` makes) it works like on the other systems. In a folder you cannot write to
+> (`/usr/local/bin`, what `sudo ./install.sh` makes) it needs `pkexec` (polkit, there on Fedora and Ubuntu desktops):
+> the new program is downloaded, checked and tried as you, in `updates/` of the support folder; **Restart to update**
+> closes CursorPie, your system asks for your password, and then the program is put in place and started. The step that
+> runs as root is a fixed text (`ROOT_SWAP` in `src/update/install.rs`), not a file you could change: it copies the new
+> program into the folder of the old one (so it gets that folder's SELinux type) and installs it only if the copy has the
+> SHA-256 that was made when it was staged. If you cancel the password, or there is no agent to ask it, nothing changes
+> and the old version starts again. A program under `/usr/bin`, `/usr/lib` and the like belongs to the package manager
+> and is never replaced: it shows **Download page**. Without `pkexec` the same.
 > The Fedora package is chosen for the Fedora, RHEL and CentOS family, the Ubuntu one for everything else.

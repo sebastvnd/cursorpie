@@ -34,6 +34,9 @@ pub const KEY_RELEASE: c_int = 3;
 pub const GENERIC_EVENT: c_int = 35;
 pub const CLIENT_MESSAGE: c_int = 33;
 
+// XChangeProperty modes
+pub const PROP_MODE_REPLACE: c_int = 0;
+
 // grab modes and results
 pub const GRAB_MODE_ASYNC: c_int = 1;
 pub const GRAB_SUCCESS: c_int = 0;
@@ -51,6 +54,10 @@ pub const XI_MOTION: c_int = 6;
 pub const XI_RAW_KEY_PRESS: c_int = 13;
 pub const XI_RAW_BUTTON_PRESS: c_int = 15;
 pub const XI_RAW_BUTTON_RELEASE: c_int = 16;
+/// Touchpad pinch gesture (XInput 2.4): the start, every step, and the end or cancel.
+pub const XI_GESTURE_PINCH_BEGIN: c_int = 27;
+pub const XI_GESTURE_PINCH_UPDATE: c_int = 28;
+pub const XI_GESTURE_PINCH_END: c_int = 29;
 /// Highest event type of XInput 2.2 plus one byte of slack: the mask is `(XI_LASTEVENT >> 3) + 1`
 /// bytes long.
 pub const XI_MASK_LEN: usize = 4;
@@ -200,6 +207,38 @@ pub struct XIDeviceEvent {
     pub group: XIModifierState,
 }
 
+/// `XIGesturePinchEvent` (XInput 2.4). `scale` is relative to the start of the gesture (1.0 at the
+/// begin), `angle` is the rotation in degrees.
+#[repr(C)]
+pub struct XIGesturePinchEvent {
+    pub type_: c_int,
+    pub serial: c_ulong,
+    pub send_event: Bool,
+    pub display: *mut Display,
+    pub extension: c_int,
+    pub evtype: c_int,
+    pub time: Time,
+    pub deviceid: c_int,
+    pub sourceid: c_int,
+    pub detail: c_int,
+    pub root: Window,
+    pub event: Window,
+    pub child: Window,
+    pub root_x: c_double,
+    pub root_y: c_double,
+    pub event_x: c_double,
+    pub event_y: c_double,
+    pub delta_x: c_double,
+    pub delta_y: c_double,
+    pub delta_unaccel_x: c_double,
+    pub delta_unaccel_y: c_double,
+    pub scale: c_double,
+    pub angle: c_double,
+    pub mods: XIModifierState,
+    pub group: XIModifierState,
+    pub flags: c_int,
+}
+
 #[repr(C)]
 pub struct XIRawEvent {
     pub type_: c_int,
@@ -276,6 +315,17 @@ unsafe extern "C" {
         win_y: *mut c_int,
         mask_return: *mut c_uint,
     ) -> Bool;
+    pub fn XChangeProperty(
+        dpy: *mut Display,
+        w: Window,
+        property: Atom,
+        type_: Atom,
+        format: c_int,
+        mode: c_int,
+        data: *const c_uchar,
+        nelements: c_int,
+    ) -> c_int;
+    pub fn XDeleteProperty(dpy: *mut Display, w: Window, property: Atom) -> c_int;
     pub fn XGetWindowProperty(
         dpy: *mut Display,
         w: Window,

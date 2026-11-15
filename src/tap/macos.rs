@@ -67,7 +67,7 @@ pub fn spawn(notifier: Notifier) {
         .spawn(move || {
             let state = Arc::new(Mutex::new(Gesture::Idle));
             // the trackpad source (idle until "touch_trigger" is switched on) shares the gesture
-            super::touch::start(state.clone(), notifier.clone());
+            crate::platform::start_touch_source(state.clone(), notifier.clone());
             let mut warned = false;
             loop {
                 let (st, n) = (state.clone(), notifier.clone());

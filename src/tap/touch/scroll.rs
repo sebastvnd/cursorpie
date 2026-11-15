@@ -125,7 +125,7 @@ fn swallows_at(t: u64) -> bool {
 
 /// Whether the wheel should be grabbed (Linux): a hold runs, or a tail is still open. Also closes a
 /// tail that ran out, which on Linux nobody else would notice (no wheel event arrives to see it).
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[allow(dead_code)] // read by the Linux source
 pub(crate) fn wanted() -> bool {
     if ACTIVE.load(Ordering::SeqCst) {
         return true;

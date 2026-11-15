@@ -105,6 +105,10 @@ use ui::app::App;
 pub fn run() -> eframe::Result<()> {
     // A browser starting the native messaging host, or a switch of the browser bridge: neither
     // shows a window nor claims the single-instance lock, so this comes before everything else.
+    if !platform::SUPPORTED {
+        eprintln!("{} runs on macOS, Windows and Linux only.", about::APP_NAME);
+        std::process::exit(1);
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == about::SELFTEST_ARG) {
         println!("{} {}", about::APP_NAME, about::VERSION);
@@ -178,7 +182,7 @@ pub fn run() -> eframe::Result<()> {
     };
     let options = eframe::NativeOptions {
         viewport,
-        event_loop_builder: force_x11(),
+        event_loop_builder: platform::event_loop_builder_hook(),
         ..Default::default()
     };
 
@@ -222,32 +226,6 @@ pub fn run() -> eframe::Result<()> {
             Ok(Box::new(App::new(rx, tx, win, tray)))
         }),
     )
-}
-
-/// Linux: makes winit open the window on the X server (XWayland in a Wayland session).
-///
-/// winit prefers its native Wayland backend whenever `WAYLAND_DISPLAY` is set, and that backend is
-/// compiled in even though only eframe's `x11` feature is asked for (`accesskit_winit` enables
-/// `winit/wayland` by itself). A native Wayland window can neither be placed under the pointer nor
-/// stay on top, and glutin refuses to make an EGL surface for it with a transparent pixel format:
-/// `Glutin(NotSupported("provided native window is not supported"))`. The pie, the X11 helpers
-/// (`platform::linux::x11`) and the scale logic all assume an X window, so ask for one. Only when
-/// there is no X server at all (`DISPLAY` empty: XWayland switched off) winit's own choice stays.
-#[cfg(target_os = "linux")]
-fn force_x11() -> Option<eframe::EventLoopBuilderHook> {
-    let has_x = std::env::var_os("DISPLAY").is_some_and(|d| !d.is_empty());
-    if !has_x {
-        return None;
-    }
-    Some(Box::new(|builder| {
-        use winit::platform::x11::EventLoopBuilderExtX11;
-        builder.with_x11();
-    }))
-}
-
-#[cfg(not(target_os = "linux"))]
-fn force_x11() -> Option<eframe::EventLoopBuilderHook> {
-    None
 }
 
 /// The application icon as pixels for the window (`_NET_WM_ICON` on X11): the same artwork as the

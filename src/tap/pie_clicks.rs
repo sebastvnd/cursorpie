@@ -40,14 +40,14 @@ pub(crate) fn pie_open(state: &Arc<Mutex<Gesture>>) -> bool {
 }
 
 /// Whether the wheel is swallowed because a pie is open (the part of the rule the wheel has).
-#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
+#[allow(dead_code)] // read by the hooks of macOS and Windows
 pub(crate) fn swallows_wheel(state: &Arc<Mutex<Gesture>>) -> bool {
     pie_open(state)
 }
 
 /// Whether a left-button event is worth the native tap reading it (the other buttons always are):
 /// a press while a pie is open, or a release or drag of a click that was swallowed.
-#[cfg_attr(not(any(target_os = "macos", windows)), allow(dead_code))]
+#[allow(dead_code)] // read by the hooks of macOS and Windows
 pub(crate) fn interested(state: &Arc<Mutex<Gesture>>, kind: Kind) -> bool {
     HELD.load(Ordering::Relaxed) != 0 || (kind == Kind::Down && pie_open(state))
 }

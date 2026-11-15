@@ -10,7 +10,9 @@
 use super::desktop_entry::Index;
 use super::icontheme::{self, Found};
 use super::launch::{self, Chooser, Launch};
+pub use super::process::*;
 use super::roles::{self, Role};
+pub use super::tray::*;
 use super::{autostart, inputdev, wayland, x11, xdg, xlib};
 use crate::config::DesktopMode;
 use crate::geometry::Point;
@@ -202,6 +204,50 @@ pub fn cursor_pos() -> Option<(f64, f64)> {
         return Some((p.x, p.y));
     }
     x11::conn()?.pointer()
+}
+
+/// The pointer position now, for the moment a gesture decides where the pie goes.
+///
+/// [`cursor_pos`] is the latest report of the compositor, and KWin's script reports on its own at
+/// most every 100 ms and says nothing more when the pointer stops. A mouse never notices (it asks
+/// at its press, see `tap::wayland`), but a touchpad moves the pointer through the compositor
+/// alone: the pie of a trackpad hold was then placed where the pointer was up to a few hundred
+/// pixels ago. In a Wayland session the compositor is asked to report now and the answer is
+/// awaited for a few milliseconds at most (`kwin::sample_pointer`); anywhere else this is
+/// [`cursor_pos`].
+pub fn cursor_pos_fresh() -> Option<(f64, f64)> {
+    if wayland::active()
+        && let Some((_, p)) = wayland::kwin::sample_pointer()
+    {
+        return Some((p.x, p.y));
+    }
+    cursor_pos()
+}
+
+/// Asks the compositor to report the pointer at full rate (`true`, while a trackpad hold runs) or
+/// at the idle rate (`false`). Only a Wayland session has a compositor that has to be asked; the
+/// mouse does the same at the press of its trigger.
+pub fn pointer_hot(on: bool) {
+    if wayland::active() {
+        wayland::kwin::arm(on);
+    }
+}
+
+/// Hides the window `window` (the X id of the pie window) from the compositor, or shows it again
+/// (see `x11::Conn::set_veil`). Only in a Wayland session, where every map of a transparent
+/// XWayland window shows a black square for a moment; returns whether the request was made.
+/// Nowhere else is there anything to hide, and nothing is done.
+pub fn set_window_veil(window: std::os::raw::c_ulong, on: bool) -> bool {
+    if !wayland::active() {
+        return false;
+    }
+    match x11::conn() {
+        Some(c) => {
+            c.set_veil(window, on);
+            true
+        }
+        None => false,
+    }
 }
 
 /// Where to ask the toolkit to put a window whose center is `(x, y)`, a point in logical points
@@ -673,6 +719,28 @@ pub fn raise_if_running(a: &str) -> bool {
     x11::conn().is_some_and(|c| c.raise(a))
 }
 
+/// The desktop entries that are meant to be listed in the app picker.
+pub fn collect_installed_apps() -> Vec<crate::platform::installed::InstalledApp> {
+    let home = crate::config::home();
+    let dirs = xdg::application_dirs(
+        &home,
+        std::env::var("XDG_DATA_HOME").ok().as_deref(),
+        std::env::var("XDG_DATA_DIRS").ok().as_deref(),
+    );
+    crate::platform::installed::entries_to_apps(&super::desktop_entry::scan(&dirs))
+}
+
+/// Where a Wayland session cannot take the focus for a window of a program, the window manager is
+/// asked to raise the browser that holds a page (see `platform::web`): the first of its desktop
+/// ids that has a window.
+pub fn raise_browser(browser: &str) {
+    for id in crate::platform::web::linux_app_ids(browser) {
+        if raise_if_running(id) {
+            break;
+        }
+    }
+}
+
 /// Opens a link or a file with the default application.
 pub fn open_url(target: &str) {
     // only the scheme is logged: the rest of a link can be personal
@@ -880,6 +948,50 @@ pub mod layout {
     pub fn find_key(_text: &str) -> Option<(u16, u8)> {
         None
     }
+}
+
+// ------------------------------------------------------------------------------------ window system
+
+/// Makes winit open the window on the X server (XWayland in a Wayland session).
+///
+/// winit prefers its native Wayland backend whenever `WAYLAND_DISPLAY` is set, and that backend is
+/// compiled in even though only eframe's `x11` feature is asked for (`accesskit_winit` enables
+/// `winit/wayland` by itself). A native Wayland window can neither be placed under the pointer nor
+/// stay on top, and glutin refuses to make an EGL surface for it with a transparent pixel format:
+/// `Glutin(NotSupported("provided native window is not supported"))`. The pie, the X11 helpers
+/// (`platform::linux::x11`) and the scale logic all assume an X window, so ask for one. Only when
+/// there is no X server at all (`DISPLAY` empty: XWayland switched off) winit's own choice stays.
+pub fn event_loop_builder_hook() -> Option<eframe::EventLoopBuilderHook> {
+    let has_x = std::env::var_os("DISPLAY").is_some_and(|d| !d.is_empty());
+    if !has_x {
+        return None;
+    }
+    Some(Box::new(|builder| {
+        use winit::platform::x11::EventLoopBuilderExtX11;
+        builder.with_x11();
+    }))
+}
+
+// ------------------------------------------------------------------------------------ touchpad
+
+/// Starts the touch source on its own thread (the fingers of a touchpad from `/dev/input`, see
+/// [`evdev`](super::evdev)). It idles until the setting `touch_trigger` is on.
+pub(crate) fn start_touch_source(
+    state: std::sync::Arc<Mutex<crate::tap::gesture::Gesture>>,
+    notifier: crate::msg::Notifier,
+) {
+    super::evdev::spawn(state, notifier);
+}
+
+/// How many touchpads the system lists right now.
+pub fn probe_trackpads() -> usize {
+    super::evdev::probe()
+}
+
+/// The `--touchpad-debug` command: prints why the touchpad does or does not work and shows the
+/// fingers live. `true` = it ran, so the app must not start.
+pub fn touchpad_debug_from_args() -> bool {
+    super::evdev::debug::run_from_args()
 }
 
 #[cfg(test)]

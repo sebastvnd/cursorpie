@@ -21,6 +21,14 @@ const SHOW_WAIT_MAX: Duration = Duration::from_millis(100);
 /// Frames drawn empty at the final size before the window is mapped.
 const SHOW_WAIT_FRAMES: u8 = 2;
 
+/// The shortest time a map of the window stays invisible (Wayland, see [`App::step_veil`]):
+/// long enough for the empty frames drawn after the map to reach the compositor.
+const VEIL_MIN: Duration = Duration::from_millis(60);
+
+/// The longest: the window is made visible then whatever happened, so a request that was lost can
+/// never leave the pie invisible.
+const VEIL_MAX: Duration = Duration::from_millis(300);
+
 /// A window that was asked to appear on Linux and is still being prepared (see `App::show_window`).
 pub struct ShowWait {
     /// The window size it was asked for.
@@ -53,6 +61,13 @@ fn has_size(size: Option<Vec2>, want: Vec2) -> bool {
 /// ignores every click (Close and Save included), while the tray menu still works.
 pub(super) fn passthrough_after_hide(settings_open: bool) -> bool {
     !settings_open
+}
+
+/// Whether the window that was mapped invisible is to be made visible now: its empty frames are
+/// drawn and [`VEIL_MIN`] has passed, or [`VEIL_MAX`] has, or it was closed meanwhile (a veil
+/// must never outlive the show it was made for).
+fn veil_due(drawn: bool, waited: Duration, visible: bool) -> bool {
+    (drawn && waited >= VEIL_MIN) || waited >= VEIL_MAX || !visible
 }
 
 impl App {
@@ -176,6 +191,18 @@ impl App {
             );
             let pos = wait.pos;
             self.show_wait = None;
+            // EVERY map of a transparent XWayland window shows a black square until the first
+            // buffer of the window reaches the compositor, not only the first one: XWayland
+            // destroys the Wayland surface when the X window is unmapped and creates a new one
+            // (with no buffer) when it is mapped again, so the pie that was hidden after the last
+            // use starts from nothing each time it appears. Map it invisible every time;
+            // `step_veil` lifts that once the empty frames after the map have been drawn.
+            // (A veil from an earlier map that is still up is simply renewed.)
+            if let Some(window) = self.x_window
+                && platform::set_window_veil(window, true)
+            {
+                self.veil = Some((window, Instant::now()));
+            }
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             self.settle_frames = SETTLE_FRAMES;
             // KWin ignores the position a window had while it was hidden (a program-specified
@@ -194,6 +221,31 @@ impl App {
             ctx.request_repaint();
         } else {
             ctx.request_repaint_after(Duration::from_millis(4));
+        }
+    }
+
+    /// Runs every frame: makes the window visible after the invisible first map (see
+    /// [`App::step_show_wait`]), once the empty frames drawn after the map are done and
+    /// [`VEIL_MIN`] has passed, at the latest after [`VEIL_MAX`] or when the window was closed.
+    pub(super) fn step_veil(&mut self, ctx: &egui::Context) {
+        let Some((window, since)) = self.veil else {
+            return;
+        };
+        let waited = since.elapsed();
+        let drawn = self.show_wait.is_none() && self.settle_frames == 0;
+        if veil_due(drawn, waited, self.visible) {
+            platform::set_window_veil(window, false);
+            self.veil = None;
+            diag::log!(
+                "ui",
+                "veil_lifted",
+                waited_ms = waited,
+                drawn = drawn,
+                visible = self.visible
+            );
+            ctx.request_repaint();
+        } else {
+            ctx.request_repaint_after(Duration::from_millis(8));
         }
     }
 
@@ -799,6 +851,21 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn the_first_map_stays_invisible_until_its_empty_frames_are_on_screen() {
+        let ms = Duration::from_millis;
+        // still drawing, or drawn but too soon: not yet
+        assert!(!veil_due(false, ms(10), true));
+        assert!(!veil_due(true, VEIL_MIN - ms(1), true));
+        // drawn and long enough
+        assert!(veil_due(true, VEIL_MIN, true));
+        // never longer than the ceiling, whatever the frames did
+        assert!(!veil_due(false, VEIL_MAX - ms(1), true));
+        assert!(veil_due(false, VEIL_MAX, true));
+        // closed meanwhile: the veil goes with it
+        assert!(veil_due(false, ms(0), false));
+    }
 
     #[test]
     fn a_trackpad_pause_does_not_raise_a_settings_window_that_has_the_focus() {

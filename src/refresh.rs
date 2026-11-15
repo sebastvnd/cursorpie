@@ -92,7 +92,7 @@ pub fn run_in(support: &Path, build: &str, steps: &Steps) -> Report {
 /// files are the new ones when the extension connects.
 pub fn run() -> Report {
     let home = std::env::var_os("HOME").map(PathBuf::from);
-    let dirs = if cfg!(target_os = "linux") {
+    let dirs = if crate::platform::OS == crate::platform::Os::Linux {
         home.map(|h| linux::refresh::user_dirs(&h, std::env::var("XDG_DATA_HOME").ok().as_deref()))
     } else {
         None

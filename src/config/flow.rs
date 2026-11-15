@@ -1749,13 +1749,17 @@ fn lint(flow: &Flow, notes: &mut Vec<String>) {
                 "cmd.exe",
                 "-encodedcommand",
             ];
-            if !cfg!(target_os = "macos") && mac_only.iter().any(|w| low.contains(w)) {
+            if crate::platform::OS != crate::platform::Os::Mac
+                && mac_only.iter().any(|w| low.contains(w))
+            {
                 notes.push(format!(
                     "{at} uses commands that exist only on a Mac (osascript, pbcopy, stat -f...) \
                      and this computer is not a Mac: the flow was probably made for another system."
                 ));
             }
-            if !cfg!(target_os = "windows") && win_only.iter().any(|w| low.contains(w)) {
+            if crate::platform::OS != crate::platform::Os::Windows
+                && win_only.iter().any(|w| low.contains(w))
+            {
                 notes.push(format!(
                     "{at} uses Windows commands (PowerShell, %USERPROFILE%...) and this computer \
                      is not running Windows: the flow was probably made for another system."

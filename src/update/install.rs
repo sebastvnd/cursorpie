@@ -9,6 +9,12 @@
 //! | stage | macOS: the app is copied out of the disk image next to the installed one; Linux: the program is unpacked from the archive next to the installed one; both are started once with `--selftest`; Windows: the Setup program is kept as it is |
 //! | swap | after CursorPie quit: macOS and Linux replace the old copy and start the new one (`APPLY_SCRIPT`); Windows runs Setup silently, which replaces the files and starts the new one |
 //!
+//! A Linux copy in a folder the person cannot write to (`install.sh` without `--user` puts it in
+//! `/usr/local/bin`) is updated too, when `pkexec` is there: the program is staged in the updates
+//! folder, and after CursorPie quit the swap asks for the administrator's password (`ROOT_SWAP`).
+//! Nobody can change the new program between the check and the swap, because the swap copies it
+//! into the folder first and compares that copy with the SHA-256 made when it was staged.
+//!
 //! Everything up to *stage* runs while CursorPie keeps working, on a worker thread, and any failure
 //! leaves the installed copy exactly as it was. Only an ordinary install is updated: a copy run from
 //! a build folder, from an unzipped Windows download or from a folder the user cannot write to is
@@ -85,6 +91,50 @@ case "$mode" in
     *) nohup "$target" >/dev/null 2>&1 & ;;
 esac
 "#;
+
+/// The swap of a Linux copy that only an administrator can write to, run by `/bin/sh` after
+/// CursorPie quit. Arguments: the process id to wait for, the staged program, the installed program
+/// and the SHA-256 of the staged program. The part that needs the administrator is [`ROOT_SWAP`],
+/// given to `pkexec` as text so nothing that the person's own programs can write is run as root.
+/// Whatever `pkexec` says (a wrong or cancelled password, no agent to ask it), the program is
+/// started afterwards: the new one when it went in, the old one when it did not.
+const APPLY_ROOT_SCRIPT: &str = r#"#!/bin/sh
+pid=$1
+staged=$2
+target=$3
+want=$4
+n=0
+while kill -0 "$pid" 2>/dev/null && [ "$n" -lt 100 ]; do
+    sleep 0.3
+    n=$((n + 1))
+done
+if kill -0 "$pid" 2>/dev/null; then
+    rm -rf "$staged"
+    exit 1
+fi
+"${PKEXEC:-/usr/bin/pkexec}" /bin/sh -c '@ROOT@' sh "$staged" "$target" "$want" >/dev/null 2>&1
+rm -rf "$staged"
+nohup "$target" >/dev/null 2>&1 &
+"#;
+
+/// What runs as root (see [`APPLY_ROOT_SCRIPT`]); arguments: the staged program, the installed
+/// program, the SHA-256 the staged program must have. The program is copied (not moved) into the
+/// folder of the installed one, so it gets what that folder gives new files, including the SELinux
+/// type on Fedora; the copy is what is compared with the checksum, so a staged file that was
+/// changed meanwhile is never installed; then one rename puts it in place (the old program, which
+/// may still be running, is not written to). It holds no single quote, it is given to `sh -c` in
+/// single quotes.
+const ROOT_SWAP: &str = r#"staged=$1; target=$2; want=$3; new="$target.cursorpie-new"
+rm -f "$new"
+cp "$staged" "$new" || exit 1
+got=$(sha256sum "$new" | cut -d" " -f1)
+if [ -z "$want" ] || [ "$got" != "$want" ]; then rm -f "$new"; exit 1; fi
+chmod 755 "$new" || { rm -f "$new"; exit 1; }
+command -v restorecon >/dev/null 2>&1 && restorecon "$new" >/dev/null 2>&1
+mv -f "$new" "$target" || { rm -f "$new"; exit 1; }"#;
+
+/// Where `pkexec` is looked for (the program that asks for the administrator's password).
+const PKEXEC: &str = "/usr/bin/pkexec";
 
 // ---------------------------------------------------------------------------- the release
 
@@ -322,6 +372,10 @@ pub struct Staged {
     pub staged: PathBuf,
     /// The installed copy that is replaced.
     pub target: PathBuf,
+    /// Linux, a folder that only an administrator can write to: the SHA-256 of the staged program,
+    /// which the swap (run with the administrator's rights) checks again. `None` for an ordinary
+    /// install.
+    pub root_sha256: Option<String>,
 }
 
 /// `target`'s name and `suffix`, in the same folder (the same file system, so a rename is atomic).
@@ -354,19 +408,6 @@ fn succeeds(program: impl AsRef<std::ffi::OsStr>, args: &[&std::ffi::OsStr]) -> 
 /// Starts `program --selftest` (see [`SELFTEST_ARG`]): whether the program runs on this system.
 fn starts(program: &Path) -> bool {
     succeeds(program, &[std::ffi::OsStr::new(SELFTEST_ARG)])
-}
-
-/// Makes `path` runnable (a no-op where files have no such bit).
-#[cfg(unix)]
-fn make_executable(path: &Path) -> io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o755))
-}
-
-/// Makes `path` runnable (a no-op where files have no such bit).
-#[cfg(not(unix))]
-fn make_executable(_path: &Path) -> io::Result<()> {
-    Ok(())
 }
 
 /// macOS: copies `CursorPie.app` out of the disk image to `target`'s folder and starts it once.
@@ -431,8 +472,14 @@ fn copy_app(app: &Path, staged: &Path) -> Result<(), InstallError> {
     }
 }
 
-/// Linux: unpacks the archive, copies the program next to the installed one and starts it once.
-fn stage_linux(package: &Path, target: &Path, dir: &Path) -> Result<PathBuf, InstallError> {
+/// Linux: unpacks the archive, copies the program next to the installed one (into the updates
+/// folder when only an administrator can write next to it: `root`) and starts it once.
+fn stage_linux(
+    package: &Path,
+    target: &Path,
+    dir: &Path,
+    root: bool,
+) -> Result<PathBuf, InstallError> {
     use std::ffi::OsStr;
     let unpacked = dir.join("unpacked");
     fs::create_dir_all(&unpacked).map_err(|_| InstallError::Unpack)?;
@@ -452,10 +499,14 @@ fn stage_linux(package: &Path, target: &Path, dir: &Path) -> Result<PathBuf, Ins
         .map(|entry| entry.path().join("cursorpie"))
         .find(|program| program.is_file())
         .ok_or(InstallError::Unpack)?;
-    let staged = sibling(target, NEW_SUFFIX);
+    let staged = if root {
+        dir.join("cursorpie-new")
+    } else {
+        sibling(target, NEW_SUFFIX)
+    };
     let _ = fs::remove_file(&staged);
     fs::copy(&found, &staged).map_err(|_| InstallError::Unpack)?;
-    if make_executable(&staged).is_err() || !starts(&staged) {
+    if crate::platform::make_executable(&staged).is_err() || !starts(&staged) {
         let _ = fs::remove_file(&staged);
         return Err(InstallError::SelfTest);
     }
@@ -469,11 +520,19 @@ fn stage(
     package: PathBuf,
     target: PathBuf,
     dir: &Path,
+    needs_password: bool,
 ) -> Result<Staged, InstallError> {
+    let root = needs_password && os == Os::Linux;
     let staged = match os {
         Os::Windows => package.clone(),
         Os::Mac => stage_mac(&package, &target, dir)?,
-        Os::Linux => stage_linux(&package, &target, dir)?,
+        Os::Linux => stage_linux(&package, &target, dir, root)?,
+    };
+    // the swap with the administrator's rights compares the program with this
+    let root_sha256 = if root {
+        Some(sha256::file_hex(&staged).map_err(|_| InstallError::Unpack)?)
+    } else {
+        None
     };
     Ok(Staged {
         version,
@@ -481,6 +540,7 @@ fn stage(
         package,
         staged,
         target,
+        root_sha256,
     })
 }
 
@@ -512,12 +572,54 @@ fn expected_checksum(release: &Release, asset: &Asset) -> Result<String, Install
 /// in place (see [`install_target`]) or its folder cannot be written. Makes and removes one empty file,
 /// so call it when something opens, never on every frame.
 pub fn installable_here() -> Option<PathBuf> {
+    install_plan().map(|p| p.target)
+}
+
+/// Where an update goes and whether the swap needs the administrator (see [`installable_here`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InstallPlan {
+    pub target: PathBuf,
+    /// Linux only: the folder cannot be written by this person, so the swap asks for the
+    /// administrator's password with `pkexec`.
+    pub needs_password: bool,
+}
+
+/// Whether a program at `path` belongs to the system's package manager, which is the one to update
+/// it: a program there is never replaced behind its back.
+fn package_managed(path: &Path) -> bool {
+    [
+        "/usr/bin/",
+        "/usr/sbin/",
+        "/usr/lib/",
+        "/bin/",
+        "/sbin/",
+        "/lib/",
+    ]
+    .iter()
+    .any(|dir| path.starts_with(dir))
+}
+
+/// [`installable_here`] with the way the swap is done. A Linux copy in a folder the person cannot
+/// write to (`/usr/local/bin`, where `install.sh` puts it without `--user`) is updated with the
+/// administrator's password when `pkexec` is there and the program is not the package manager's.
+pub fn install_plan() -> Option<InstallPlan> {
     let os = platform::OS;
     let exe = std::env::current_exe().ok()?;
     let local = std::env::var("LOCALAPPDATA").ok();
     let target = install_target(os, &exe.to_string_lossy(), local.as_deref())?;
     let writable = os == Os::Windows || target.parent().is_some_and(can_write);
-    writable.then_some(target)
+    if writable {
+        return Some(InstallPlan {
+            target,
+            needs_password: false,
+        });
+    }
+    (os == Os::Linux && Path::new(PKEXEC).is_file() && !package_managed(&target)).then_some(
+        InstallPlan {
+            target,
+            needs_password: true,
+        },
+    )
 }
 
 /// Downloads the newest release's package for this system, checks it and stages it. Blocks for as
@@ -530,7 +632,10 @@ pub fn installable_here() -> Option<PathBuf> {
 /// touched, and what was made there is removed again on failure.
 pub fn prepare() -> Result<Staged, InstallError> {
     let os = platform::OS;
-    let target = installable_here().ok_or(InstallError::NotInstalled)?;
+    let InstallPlan {
+        target,
+        needs_password,
+    } = install_plan().ok_or(InstallError::NotInstalled)?;
     let os_release = fs::read_to_string("/etc/os-release").unwrap_or_default();
     let name =
         asset_name(os, std::env::consts::ARCH, &os_release).ok_or(InstallError::NoPackage)?;
@@ -552,7 +657,7 @@ pub fn prepare() -> Result<Staged, InstallError> {
     let url = asset_url(&release, name);
     http::download(&url, &package, DOWNLOAD_TIMEOUT_S, MAX_PACKAGE_BYTES)?;
     let outcome = verify(&package, asset.size, &expected)
-        .and_then(|()| stage(release.version, os, package, target, &dir));
+        .and_then(|()| stage(release.version, os, package, target, &dir, needs_password));
     if outcome.is_err() {
         let _ = fs::remove_dir_all(&dir);
     }
@@ -593,11 +698,7 @@ fn apply_windows(staged: &Staged) -> io::Result<()> {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0000_0208); // DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
-    }
+    crate::platform::detach_from_parent(&mut cmd); // outlives this program
     cmd.spawn().map(|_| ())
 }
 
@@ -605,22 +706,22 @@ fn apply_windows(staged: &Staged) -> io::Result<()> {
 /// its own, so it goes on when this program quits.
 fn apply_unix(staged: &Staged) -> io::Result<()> {
     let script = staged.package.with_file_name("apply.sh");
-    fs::write(&script, APPLY_SCRIPT)?;
-    let mode = if staged.os == Os::Mac { "mac" } else { "linux" };
     let mut cmd = Command::new("/bin/sh");
     cmd.arg(&script)
         .arg(std::process::id().to_string())
         .arg(&staged.staged)
-        .arg(&staged.target)
-        .arg(mode)
-        .stdin(Stdio::null())
+        .arg(&staged.target);
+    if let Some(sha) = &staged.root_sha256 {
+        fs::write(&script, APPLY_ROOT_SCRIPT.replace("@ROOT@", ROOT_SWAP))?;
+        cmd.arg(sha);
+    } else {
+        fs::write(&script, APPLY_SCRIPT)?;
+        cmd.arg(if staged.os == Os::Mac { "mac" } else { "linux" });
+    }
+    cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        cmd.process_group(0);
-    }
+    crate::platform::detach_from_parent(&mut cmd); // its own process group
     cmd.spawn().map(|_| ())
 }
 
@@ -817,6 +918,120 @@ mod tests {
         );
         assert_eq!(path("/home/ann/src/cursorpie/target/debug/cursorpie"), None);
         assert_eq!(path("/usr/local/bin/cursorpie (deleted)"), None);
+    }
+
+    #[test]
+    fn a_program_of_the_package_manager_is_never_replaced_by_an_update() {
+        assert!(package_managed(Path::new("/usr/bin/cursorpie")));
+        assert!(package_managed(Path::new("/bin/cursorpie")));
+        assert!(!package_managed(Path::new("/usr/local/bin/cursorpie")));
+        assert!(!package_managed(Path::new("/opt/cursorpie/cursorpie")));
+        assert!(!package_managed(Path::new(
+            "/home/ann/.local/bin/cursorpie"
+        )));
+    }
+
+    #[test]
+    fn the_root_script_holds_no_single_quote_because_it_is_given_in_single_quotes() {
+        assert!(!ROOT_SWAP.contains('\''));
+        assert!(APPLY_ROOT_SCRIPT.contains("@ROOT@"));
+    }
+
+    /// Runs the part of the swap that needs the administrator, as the current user in a folder of
+    /// its own: the same text `pkexec` is given.
+    #[cfg(unix)]
+    fn run_root_swap(staged: &Path, target: &Path, want: &str) -> bool {
+        Command::new("/bin/sh")
+            .arg("-c")
+            .arg(ROOT_SWAP)
+            .arg("sh")
+            .arg(staged)
+            .arg(target)
+            .arg(want)
+            .status()
+            .is_ok_and(|s| s.success())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_root_swap_installs_the_program_only_when_it_is_the_one_that_was_checked() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = temp_dir("rootswap");
+        let target = d.join("cursorpie");
+        let staged = d.join("staged");
+        fs::write(&target, b"old").unwrap();
+        fs::write(&staged, b"new program").unwrap();
+        let good = sha256::file_hex(&staged).unwrap();
+
+        // a program that is not the checked one (changed after the check) is not installed
+        assert!(!run_root_swap(&staged, &target, &"0".repeat(64)));
+        assert!(!run_root_swap(&staged, &target, ""));
+        assert_eq!(fs::read(&target).unwrap(), b"old");
+        assert!(
+            !d.join("cursorpie.cursorpie-new").exists(),
+            "nothing left behind"
+        );
+
+        assert!(run_root_swap(&staged, &target, &good));
+        assert_eq!(fs::read(&target).unwrap(), b"new program");
+        let mode = fs::metadata(&target).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o755);
+        assert!(!d.join("cursorpie.cursorpie-new").exists());
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    /// Runs the waiting script with a `pkexec` that is `fake` (a shell script), for a program that
+    /// has already ended; returns what the started program wrote, after it had time to start.
+    #[cfg(unix)]
+    fn run_root_apply(name: &str, fake: &str) -> String {
+        use std::os::unix::fs::PermissionsExt;
+        let d = temp_dir(name);
+        let target = d.join("cursorpie");
+        let staged = d.join("staged");
+        let marker = d.join("marker");
+        let program = |word: &str| format!("#!/bin/sh\necho {word} > '{}'\n", marker.display());
+        fs::write(&target, program("old")).unwrap();
+        fs::write(&staged, program("new")).unwrap();
+        let sha = sha256::file_hex(&staged).unwrap();
+        let pkexec = d.join("pkexec");
+        fs::write(&pkexec, fake).unwrap();
+        for f in [&target, &staged, &pkexec] {
+            fs::set_permissions(f, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let script = d.join("apply.sh");
+        fs::write(&script, APPLY_ROOT_SCRIPT.replace("@ROOT@", ROOT_SWAP)).unwrap();
+        // a process id that surely does not exist: the program "already quit"
+        let status = Command::new("/bin/sh")
+            .arg(&script)
+            .arg("999999999")
+            .arg(&staged)
+            .arg(&target)
+            .arg(&sha)
+            .env("PKEXEC", &pkexec)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let mut said = String::new();
+        for _ in 0..50 {
+            said = fs::read_to_string(&marker).unwrap_or_default();
+            if !said.is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        let _ = fs::remove_dir_all(&d);
+        said.trim().to_string()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn after_the_password_the_new_program_starts_and_after_a_refusal_the_old_one_does() {
+        // the password was given: pkexec runs what it is given
+        let ok = "#!/bin/sh\nexec \"$@\"\n";
+        assert_eq!(run_root_apply("pk-ok", ok), "new");
+        // it was cancelled (or there is no agent to ask): nothing changes and the old one starts
+        let no = "#!/bin/sh\nexit 126\n";
+        assert_eq!(run_root_apply("pk-no", no), "old");
     }
 
     #[test]

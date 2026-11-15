@@ -36,6 +36,9 @@ use std::sync::mpsc::Sender;
 /// nothing to build.
 const MIN_REQUEST_CHARS: usize = 3;
 
+/// Across of the round "+" that adds a template.
+const ADD_SIZE: f32 = 36.0;
+
 /// The name of a system as the agent should read it: shortcuts and shell commands differ.
 fn system_name(os: Os) -> &'static str {
     match os {
@@ -181,7 +184,7 @@ fn templates_page(
         ctx,
         "flow_new",
         ed.card,
-        Vec2::new(600.0, 420.0),
+        Vec2::new(620.0, 500.0),
         "Start from a template",
         |ui| {
             ui.add(
@@ -198,25 +201,49 @@ fn templates_page(
             );
             ui.add_space(GAP);
             for (i, t) in TEMPLATES.iter().enumerate() {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 12.0;
-                    ui.vertical(|ui| {
-                        ui.set_width((ui.available_width() - 90.0).max(120.0));
-                        ui.label(RichText::new(t.title).size(14.5).strong());
-                        ui.add(
-                            egui::Label::new(RichText::new(t.about).size(12.5).color(pal().muted))
-                                .wrap(),
-                        );
+                // one card for each template: the words on the left, a round "+" centered on the right
+                egui::Frame::new()
+                    .fill(pal().idle)
+                    .corner_radius(egui::CornerRadius::same(14))
+                    .inner_margin(egui::Margin::symmetric(16, 12))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 16.0;
+                            ui.vertical(|ui| {
+                                ui.set_width((ui.available_width() - ADD_SIZE - 16.0).max(120.0));
+                                ui.spacing_mut().item_spacing.y = 4.0;
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(t.title)
+                                            .font(FontId::new(15.0, fonts::semibold()))
+                                            .color(pal().text),
+                                    )
+                                    .wrap(),
+                                );
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(t.about).size(13.0).color(pal().muted),
+                                    )
+                                    .wrap(),
+                                );
+                            });
+                            if round_button(
+                                ui,
+                                Look::Primary(accent),
+                                symbols::PLUS,
+                                "Add it as a new flow and open it",
+                                true,
+                                ADD_SIZE,
+                            )
+                            .clicked()
+                            {
+                                chosen = Some(i);
+                            }
+                        });
                     });
-                    if button(ui, Look::Primary(accent), Some(symbols::PLUS), "Add")
-                        .on_hover_text("Add it as a new flow and open it")
-                        .clicked()
-                    {
-                        chosen = Some(i);
-                    }
-                });
-                ui.add_space(10.0);
+                ui.add_space(8.0);
             }
+            ui.add_space(4.0);
             back = button(ui, Look::Soft, None, "Back").clicked();
         },
     );

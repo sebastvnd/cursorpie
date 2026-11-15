@@ -388,6 +388,8 @@ pub struct Ed {
     /// Whether this copy is updated in place (see `update::install::installable_here`), found when
     /// Settings opens: decides between *Install update* and *Download page*
     pub update_can_install: bool,
+    /// Whether the swap asks for the administrator's password (Linux, a folder only root writes to)
+    pub update_needs_password: bool,
     /// The downloaded and checked update that waits for the restart
     pub update_staged: Option<install::Staged>,
 }
@@ -463,6 +465,7 @@ impl Ed {
             update: Status::default(),
             update_offer: None,
             update_can_install: false,
+            update_needs_password: false,
             update_staged: None,
         }
     }

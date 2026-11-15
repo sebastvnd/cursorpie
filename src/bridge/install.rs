@@ -281,11 +281,7 @@ fn reg(args: &[&str]) -> bool {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW: no console flashes on screen
-    }
+    crate::platform::hide_console(&mut cmd); // no console flashes on screen (Windows)
     cmd.status().is_ok_and(|s| s.success())
 }
 

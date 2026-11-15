@@ -127,6 +127,15 @@ mod tests {
             assert!(branches.iter().any(|b| b == id), "no branch for {id}");
             assert!(message.contains(&format!("\"{id}\"")), "no button {id}");
         }
+        // play and mute change their look at a press and go back at the next
+        for id in ["toggle", "mute"] {
+            let b = spec.find_button(id).expect("the button");
+            assert!(b.toggle, "{id} changes when pressed");
+            assert!(
+                !b.on_icon.is_empty() || !b.on_label.is_empty() || b.on_tone.is_some(),
+                "{id} has a second look"
+            );
+        }
     }
 
     #[test]

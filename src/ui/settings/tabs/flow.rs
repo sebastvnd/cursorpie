@@ -51,6 +51,7 @@ use crate::config::flow_check::{
     block_issues, block_reads, block_severity, block_writes, data_edges, wire_severity,
 };
 use crate::config::*;
+use crate::flowrun::OpenMode;
 #[cfg(test)]
 use crate::keys::{Shortcut, key};
 use crate::msg::Msg;
@@ -488,7 +489,7 @@ fn canvas_menu(
             // on a Mac, Control + click is the right button
             i.pointer.button_pressed(PointerButton::Primary)
                 && i.modifiers.ctrl
-                && cfg!(target_os = "macos"),
+                && platform::OS == platform::Os::Mac,
         )
     });
 
@@ -921,6 +922,34 @@ pub(super) fn field(ui: &mut egui::Ui, text: &mut String, hint: &str) {
     }
 }
 
+/// The ways an *Open app (smart)* or *Open link (smart)* block can open what it is told to: the word
+/// the block stores (see [`OpenMode::parse`]) and what the person reads in the list.
+const OPEN_MODES: [(&str, &str); 4] = [
+    ("smart", "Smart: go to it, or open it"),
+    ("existing", "Only if it is already open"),
+    ("new", "In a new window"),
+    ("plain", "Plain: just open it"),
+];
+
+/// The list that picks the way a smart block opens its target, in the second field. A word that is
+/// none of the four (or a `{{variable}}`) stays a text field, so it can still be read and fixed.
+pub(super) fn open_mode_pick(ui: &mut egui::Ui, width: f32, word: &mut String) {
+    let mode = match OpenMode::parse(word) {
+        Some(m) if !word.contains("{{") => m,
+        _ => return field(ui, word, "smart, existing, new or plain"),
+    };
+    let at = match mode {
+        OpenMode::Smart => 0,
+        OpenMode::Existing => 1,
+        OpenMode::New => 2,
+        OpenMode::Plain => 3,
+    };
+    let labels: Vec<&str> = OPEN_MODES.iter().map(|m| m.1).collect();
+    if let Some(i) = select(ui, width, labels[at], &labels, at) {
+        *word = OPEN_MODES[i].0.to_string();
+    }
+}
+
 /// A pill that picks one of `all`.
 pub(super) fn pick<T: Copy + PartialEq>(
     ui: &mut egui::Ui,
@@ -1175,7 +1204,29 @@ pub(super) fn controls(
             let w = ui.available_width();
             pick(ui, w, &NativeOp::ALL, NativeOp::label, op);
             let (ha, hb) = op.hints();
-            if *op == NativeOp::Browser && !browser_by_variable(a) {
+            if matches!(op, NativeOp::OpenAppSmart | NativeOp::OpenUrlSmart) {
+                // the app from the list of installed apps (or typed), the way to open it from a list
+                if *op == NativeOp::OpenAppSmart {
+                    ui.horizontal(|ui| {
+                        let w = (ui.available_width() - 84.0).max(60.0);
+                        ui.add(
+                            text_field(a)
+                                .desired_width(w)
+                                .hint_text(platform::OS.open_app_hint()),
+                        );
+                        if button(ui, Look::Soft, Some(symbols::APP_WINDOW), "Pick\u{2026}")
+                            .on_hover_text("Choose from the installed apps")
+                            .clicked()
+                        {
+                            ops.push(Op::PickApp(id));
+                        }
+                    });
+                } else {
+                    field(ui, a, ha);
+                }
+                let w = ui.available_width();
+                open_mode_pick(ui, w, b);
+            } else if *op == NativeOp::Browser && !browser_by_variable(a) {
                 // the commands in a list, with the text the chosen one takes beside it
                 ui.horizontal(|ui| browser_fields(ui, a));
                 field(ui, b, hb);
@@ -1413,6 +1464,9 @@ fn view_input(ctx: &egui::Context, ed: &mut Ed, rect: Rect, bg: &egui::Response)
             i.modifiers.alt,
         )
     });
+    // On Linux the pinch of a trackpad does not reach egui (see `platform::take_pinch`). Read it on
+    // every frame, over the canvas or not, so no old pinch is left waiting.
+    let pinch = pinch * platform::take_pinch(ctx);
     let over = pos.is_some_and(|p| rect.contains(p));
     // The trigger button is the middle one by default and the tap swallows it while Settings is
     // open; over this canvas it is let through, so holding it can move the canvas.
@@ -2246,6 +2300,19 @@ mod tests {
     use super::*;
     use crate::ui::app::{CARD_SIZE, WIN_MARGIN};
     use crate::ui::settings::Tab;
+
+    #[test]
+    fn every_way_to_open_in_the_list_is_a_word_the_block_reads() {
+        let modes = [
+            OpenMode::Smart,
+            OpenMode::Existing,
+            OpenMode::New,
+            OpenMode::Plain,
+        ];
+        for ((word, _), mode) in OPEN_MODES.iter().zip(modes) {
+            assert_eq!(OpenMode::parse(word), Some(mode), "{word}");
+        }
+    }
 
     #[test]
     fn the_crisp_scale_is_a_short_ladder() {

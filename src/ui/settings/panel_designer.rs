@@ -29,9 +29,9 @@ use crate::config::flow::{AskMode, Flow, NodeKind};
 use crate::panel::design::{self, Kind};
 use crate::panel::layout::{self, card_size, header_height};
 use crate::panel::spec::{
-    DEFAULT_TIMEOUT_S, HEIGHT_MAX, HEIGHT_MIN, MAX_GROUP_BUTTONS, MAX_TIMEOUT_S, SPACER_DEFAULT,
-    SPACER_MAX, SPACER_MIN, WIDTH_DEFAULT, WIDTH_MAX, WIDTH_MIN, default_buttons, format_hex,
-    parse_hex,
+    BUTTON_H_MAX, BUTTON_RADIUS_MAX, BUTTON_W_MAX, ButtonSide, DEFAULT_TIMEOUT_S, HEIGHT_MAX,
+    HEIGHT_MIN, MAX_GROUP_BUTTONS, MAX_TIMEOUT_S, SPACER_DEFAULT, SPACER_MAX, SPACER_MIN,
+    WIDTH_DEFAULT, WIDTH_MAX, WIDTH_MIN, default_buttons, format_hex, parse_hex,
 };
 use crate::panel::{
     Button, ButtonAlign, Form, Icon, Layout as ListLayout, Opt, PanelSpec, Place, ShowIf,
@@ -180,6 +180,28 @@ impl PanelDesign {
                 if self.preview.as_ref().is_none_or(|p| p.shown != shown) {
                     let mut form = Form::new(shown.clone());
                     form.reveal_all = true;
+                    // a button the person tried in the preview keeps its look while something
+                    // else is edited, unless the edit is the look it starts in
+                    if let Some(old) = &self.preview {
+                        let ids: Vec<String> = shown
+                            .all_buttons()
+                            .filter(|b| {
+                                b.toggle
+                                    && old
+                                        .shown
+                                        .find_button(&b.id)
+                                        .is_some_and(|o| o.toggle && o.on == b.on)
+                            })
+                            .map(|b| b.id.clone())
+                            .collect();
+                        for id in ids {
+                            if old.form.is_on(&id) {
+                                form.on.insert(id);
+                            } else {
+                                form.on.remove(&id);
+                            }
+                        }
+                    }
                     self.preview = Some(Preview { form, shown });
                 }
             }
@@ -727,6 +749,8 @@ fn preview_column(ui: &mut egui::Ui, d: &mut PanelDesign, rect: Rect, accent: Co
                 i.modifiers.alt,
             )
         });
+        // the pinch of a trackpad on Linux (egui does not get it there)
+        let pinch = pinch * crate::platform::take_pinch(&ctx);
         if pos.is_some_and(|p| rect.contains(p)) && !egui::Popup::is_any_open(&ctx) {
             let mut factor = 1.0;
             if pinch != 1.0 {
@@ -811,7 +835,7 @@ fn preview_column(ui: &mut egui::Ui, d: &mut PanelDesign, rect: Rect, accent: Co
         // a click selects what it landed on
         let inner = card.shrink(layout::PAD);
         let head = Rect::from_min_size(inner.min, vec2(inner.width(), header_height(&p.shown)));
-        let foot_top = inner.max.y - layout::footer_height();
+        let foot_top = inner.max.y - layout::footer_height(&p.shown);
 
         // what was picked in the list is brought into view: the middle scrolls to it
         if let Some((target, left)) = *show {
@@ -871,6 +895,17 @@ fn preview_column(ui: &mut egui::Ui, d: &mut PanelDesign, rect: Rect, accent: Co
             {
                 next = Some(Sel::Widget(i));
             }
+        }
+        // a button that changes when pressed does it here too, so what the person designed can be
+        // tried (the press also selects it, like any other button)
+        if let Some(id) = &pressed
+            && p.form
+                .spec
+                .find_button(id)
+                .is_some_and(|b| b.toggle && !b.cancel)
+            && !p.form.on.remove(id)
+        {
+            p.form.on.insert(id.clone());
         }
         if let Some(id) = pressed {
             // a button of the bottom row, or one of a grid (which selects the grid)
@@ -1358,20 +1393,34 @@ fn button_fields(ui: &mut egui::Ui, d: &mut PanelDesign, i: usize, accent: Color
     let Some(b) = d.spec.buttons.get_mut(i) else {
         return false;
     };
-    c |= one_button_fields(ui, b, accent);
+    c |= one_button_fields(ui, b, true, accent);
     c
 }
 
 /// The icon of a button: picked from the icons of the app, or typed (a name, or `file:` and the
 /// path of a picture).
 fn icon_fields(ui: &mut egui::Ui, icon: &mut String) -> bool {
+    icon_fields_titled(ui, "Icon", "No icon", icon)
+}
+
+/// [`icon_fields`] for the icon a toggle shows after a press: empty keeps the first one.
+fn icon_fields_after(ui: &mut egui::Ui, icon: &mut String) -> bool {
+    icon_fields_titled(ui, "Icon after a press", "Same icon", icon)
+}
+
+fn icon_fields_titled(
+    ui: &mut egui::Ui,
+    title: &str,
+    none: &'static str,
+    icon: &mut String,
+) -> bool {
     let mut c = false;
-    field_label(ui, "Icon");
+    field_label(ui, title);
     let name = icon
         .strip_prefix(symbols::PREFIX)
         .unwrap_or(icon.as_str())
         .to_string();
-    let mut items: Vec<(Option<char>, &str)> = vec![(None, "No icon")];
+    let mut items: Vec<(Option<char>, &str)> = vec![(None, none)];
     items.extend(symbols::ALL.iter().map(|(n, ch)| (Some(*ch), *n)));
     let at = symbols::ALL
         .iter()
@@ -1397,7 +1446,7 @@ fn icon_fields(ui: &mut egui::Ui, icon: &mut String) -> bool {
 }
 
 /// Everything a button has, at the bottom or in a grid.
-fn one_button_fields(ui: &mut egui::Ui, b: &mut Button, accent: Color32) -> bool {
+fn one_button_fields(ui: &mut egui::Ui, b: &mut Button, in_footer: bool, accent: Color32) -> bool {
     let mut c = false;
     c |= text_in(
         ui,
@@ -1440,7 +1489,122 @@ fn one_button_fields(ui: &mut egui::Ui, b: &mut Button, accent: Color32) -> bool
             accent,
         )
         .changed();
+        if !b.cancel {
+            c |= toggle_row(
+                ui,
+                &mut b.toggle,
+                "Changes when pressed",
+                "Shows another icon, text or color after a press, and goes back at the next one.",
+                accent,
+            )
+            .changed();
+        }
     });
+    if b.toggle && !b.cancel {
+        ui.add_space(GAP);
+        section_title(ui, "After a press");
+        c |= text_in(
+            ui,
+            "Text after a press",
+            "Empty: the same text",
+            &mut b.on_label,
+            1,
+        );
+        c |= icon_fields_after(ui, &mut b.on_icon);
+        field_label(ui, "Look after a press");
+        let tones = [
+            None,
+            Some(Tone::Secondary),
+            Some(Tone::Primary),
+            Some(Tone::Danger),
+        ];
+        let at = tones.iter().position(|t| *t == b.on_tone).unwrap_or(0);
+        let items = [
+            (None, "Same"),
+            (None, "Normal"),
+            (None, "Main"),
+            (None, "Danger"),
+        ];
+        if let Some(i) = segmented(ui, &items, at) {
+            b.on_tone = tones[i];
+            c = true;
+        }
+        ui.add_space(GAP);
+        panel(ui, "", |ui| {
+            c |= toggle_row(
+                ui,
+                &mut b.on,
+                "Starts changed",
+                "The panel opens with the button already showing how it looks after a press.",
+                accent,
+            )
+            .changed();
+        });
+    }
+    c |= size_and_shape(ui, b, in_footer);
+    c
+}
+
+/// Where a button sits (at the bottom), how wide and how tall it is, and how round its corners are.
+fn size_and_shape(ui: &mut egui::Ui, b: &mut Button, in_footer: bool) -> bool {
+    let mut c = false;
+    ui.add_space(GAP);
+    section_title(ui, "Size and shape");
+    if in_footer {
+        field_label(ui, "Place in the row");
+        let sides = [
+            None,
+            Some(ButtonSide::Start),
+            Some(ButtonSide::Center),
+            Some(ButtonSide::End),
+        ];
+        let at = sides.iter().position(|x| *x == b.side).unwrap_or(0);
+        let items = [
+            (None, "Panel"),
+            (None, "Left"),
+            (None, "Center"),
+            (None, "Right"),
+        ];
+        if let Some(i) = segmented(ui, &items, at) {
+            b.side = sides[i];
+            c = true;
+        }
+    }
+    field_label(ui, "Width in points (0 = as the text needs)");
+    let mut w = f64::from(b.width);
+    if number_in(ui, &mut w, 0.0..=f64::from(BUTTON_W_MAX), 1.0) {
+        b.width = w as u16;
+        c = true;
+    }
+    field_label(ui, "Height in points (0 = the usual)");
+    let mut h = f64::from(b.height);
+    if number_in(ui, &mut h, 0.0..=f64::from(BUTTON_H_MAX), 1.0) {
+        b.height = h as u16;
+        c = true;
+    }
+    field_label(ui, "Corners");
+    let radii = [None, Some(0), Some(8), Some(14), Some(BUTTON_RADIUS_MAX)];
+    let at = radii.iter().position(|r| *r == b.radius);
+    let items = [
+        (None, "Usual"),
+        (None, "Square"),
+        (None, "Soft"),
+        (None, "Round"),
+        (None, "Pill"),
+    ];
+    // a roundness that is none of the five is shown with no choice lit, and its number below
+    if let Some(i) = segmented(ui, &items, at.unwrap_or(usize::MAX)) {
+        b.radius = radii[i];
+        c = true;
+    }
+    if let Some(r) = b.radius {
+        let mut r = f64::from(r);
+        field_label(ui, "Roundness in points");
+        if number_in(ui, &mut r, 0.0..=f64::from(BUTTON_RADIUS_MAX), 1.0) {
+            b.radius = Some(r as u8);
+            c = true;
+        }
+    }
     c
 }
 
@@ -1502,7 +1666,7 @@ fn grid_buttons_editor(
     let mut remove = false;
     if let Some(b) = buttons.get_mut(sel) {
         ui.add_space(GAP);
-        c |= one_button_fields(ui, b, accent);
+        c |= one_button_fields(ui, b, false, accent);
         remove = button(ui, Look::Danger, Some(symbols::TRASH), "Remove this button").clicked();
     }
     if remove {
@@ -1608,6 +1772,7 @@ fn type_fields(
             label,
             columns,
             buttons,
+            align,
             ..
         } => {
             c |= text_in(ui, "Label (optional)", "", label, 1);
@@ -1623,6 +1788,17 @@ fn type_fields(
             ];
             if let Some(k) = segmented(ui, &items, usize::from(*columns).min(6)) {
                 *columns = k as u8;
+                c = true;
+            }
+            field_label(ui, "A narrow button sits");
+            let sides = [ButtonSide::Start, ButtonSide::Center, ButtonSide::End];
+            let items = [(None, "Left"), (None, "Middle"), (None, "Right")];
+            let at = sides
+                .iter()
+                .position(|x| *x == align.unwrap_or(ButtonSide::Center))
+                .unwrap_or(1);
+            if let Some(k) = segmented(ui, &items, at) {
+                *align = (sides[k] != ButtonSide::Center).then_some(sides[k]);
                 c = true;
             }
             field_label(ui, "Buttons (drag a row to move it)");

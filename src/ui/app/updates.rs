@@ -20,7 +20,9 @@ impl App {
         };
         let today = update::day_number(SystemTime::now());
         let state = update::load_state();
-        self.ed.update_can_install = install::installable_here().is_some();
+        let plan = install::install_plan();
+        self.ed.update_can_install = plan.is_some();
+        self.ed.update_needs_password = plan.is_some_and(|p| p.needs_password);
         // a check or an install that is still running keeps its say: its answer comes by message
         if !Self::update_busy(self.ed.update) {
             self.ed.update = match state.latest_version() {
@@ -259,6 +261,7 @@ mod tests {
             package: "/nonexistent/pkg".into(),
             staged: "/nonexistent/new".into(),
             target: "/nonexistent/old".into(),
+            root_sha256: None,
         };
         app.ed.update = Status::Ready(v);
         app.ed.update_staged = Some(staged);

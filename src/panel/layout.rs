@@ -5,7 +5,9 @@
 //!
 //! The numbers are in points and match what `ui::settings::panel_form` draws.
 
-use super::spec::{Layout, Opt, PanelSpec, SPACER_DEFAULT, TextStyle, Widget};
+use super::spec::{
+    Button, ButtonAlign, ButtonSide, Layout, Opt, PanelSpec, SPACER_DEFAULT, TextStyle, Widget,
+};
 
 /// Space between the edge of the card and its content.
 pub const PAD: f32 = 18.0;
@@ -59,6 +61,39 @@ pub fn group_columns(columns: u8, count: usize) -> usize {
 /// where the designer and the panel say that it has no buttons.
 pub fn group_rows(columns: u8, count: usize) -> usize {
     count.div_ceil(group_columns(columns, count)).max(1)
+}
+
+/// How tall `button` is: what it says, or the height of the other controls.
+pub fn button_height(button: &Button) -> f32 {
+    if button.height == 0 {
+        CONTROL_H
+    } else {
+        f32::from(button.height)
+    }
+}
+
+/// The height of each row of a grid of `buttons` in `columns` columns: the tallest button of the
+/// row (an empty grid is one row of the usual height, where the designer says it has no buttons).
+pub fn grid_row_heights(columns: u8, buttons: &[Button]) -> Vec<f32> {
+    let cols = group_columns(columns, buttons.len());
+    let rows = group_rows(columns, buttons.len());
+    (0..rows)
+        .map(|r| {
+            buttons
+                .iter()
+                .skip(r * cols)
+                .take(cols)
+                .map(button_height)
+                .fold(0.0_f32, f32::max)
+                .max(if buttons.is_empty() { CONTROL_H } else { 0.0 })
+        })
+        .collect()
+}
+
+/// The height of a whole grid of buttons (without its label).
+pub fn grid_height(columns: u8, buttons: &[Button]) -> f32 {
+    let rows = grid_row_heights(columns, buttons);
+    rows.iter().sum::<f32>() + rows.len().saturating_sub(1) as f32 * BTN_GAP
 }
 
 /// The width in points that a character of the body text takes, on average (for guessing lines).
@@ -172,12 +207,7 @@ pub fn widget_height(w: &Widget, width: f32) -> f32 {
             columns,
             buttons,
             ..
-        } => {
-            let rows = group_rows(*columns, buttons.len());
-            (if label.is_empty() { 0.0 } else { LABEL_H })
-                + rows as f32 * CONTROL_H
-                + rows.saturating_sub(1) as f32 * BTN_GAP
-        }
+        } => (if label.is_empty() { 0.0 } else { LABEL_H }) + grid_height(*columns, buttons),
         Widget::Spacer { height, .. } => height.unwrap_or(SPACER_DEFAULT),
     }
 }
@@ -203,9 +233,111 @@ pub fn body_height(spec: &PanelSpec) -> f32 {
         + n.saturating_sub(1) as f32 * GAP
 }
 
+/// The height of the row of buttons at the bottom: its tallest button.
+pub fn footer_row_height(spec: &PanelSpec) -> f32 {
+    if spec.buttons.is_empty() {
+        return CONTROL_H;
+    }
+    spec.buttons.iter().map(button_height).fold(0.0, f32::max)
+}
+
 /// The height of the row of buttons, with the line for a notice under it.
-pub const fn footer_height() -> f32 {
-    CONTROL_H + NOTICE_H
+pub fn footer_height(spec: &PanelSpec) -> f32 {
+    footer_row_height(spec) + NOTICE_H
+}
+
+/// Where each button of the row at the bottom goes in a row `row_w` wide: `(x, width)` from the
+/// left edge of the row, in the order of `spec.buttons`. `natural` is how wide each one is when it
+/// takes what its text needs (measured by the code that draws; a button with its own `width` does
+/// not use it).
+///
+/// The buttons that sit on the same side (`Button::side`, else what the panel's `buttons_align`
+/// says) form a group: the left one against the left edge, the right one against the right edge,
+/// the middle one in the middle (moved aside when it would touch another). With `Stretch` and no
+/// side of their own the buttons share the row. When everything is too wide for the row the
+/// widths shrink alike.
+pub fn footer_slots(spec: &PanelSpec, natural: &[f32], row_w: f32) -> Vec<(f32, f32)> {
+    let buttons = &spec.buttons;
+    let n = buttons.len();
+    let own = |i: usize| (buttons[i].width != 0).then(|| f32::from(buttons[i].width));
+    let natural_of = |i: usize| natural.get(i).copied().unwrap_or(CONTROL_H);
+    let stretch = spec.buttons_align == ButtonAlign::Stretch;
+    if n == 0 {
+        return Vec::new();
+    }
+    // sides: a button that says nothing follows `buttons_align` (which has no side when it stretches)
+    let default_side = match spec.buttons_align {
+        ButtonAlign::Start => Some(ButtonSide::Start),
+        ButtonAlign::Center => Some(ButtonSide::Center),
+        ButtonAlign::End => Some(ButtonSide::End),
+        ButtonAlign::Stretch => None,
+    };
+    let side_of = |i: usize| buttons[i].side.or(default_side);
+    let gaps = BTN_GAP * n.saturating_sub(1) as f32;
+    let mut widths: Vec<f32> = if stretch {
+        let fixed: f32 = (0..n).filter_map(own).sum();
+        let free = (0..n).filter(|i| own(*i).is_none()).count();
+        let share = if free == 0 {
+            0.0
+        } else {
+            ((row_w - gaps - fixed) / free as f32).max(24.0)
+        };
+        (0..n).map(|i| own(i).unwrap_or(share)).collect()
+    } else {
+        (0..n)
+            .map(|i| own(i).unwrap_or_else(|| natural_of(i)))
+            .collect()
+    };
+    // the groups, left to right
+    let groups: [Vec<usize>; 3] =
+        [ButtonSide::Start, ButtonSide::Center, ButtonSide::End].map(|want| {
+            (0..n)
+                .filter(|&i| side_of(i).unwrap_or(ButtonSide::Start) == want)
+                .collect()
+        });
+    let used = groups.iter().filter(|g| !g.is_empty()).count();
+    let spans = |widths: &[f32]| -> [f32; 3] {
+        let mut out = [0.0; 3];
+        for (k, g) in groups.iter().enumerate() {
+            out[k] = g.iter().map(|&i| widths[i]).sum::<f32>()
+                + g.len().saturating_sub(1) as f32 * BTN_GAP;
+        }
+        out
+    };
+    let total = |w: &[f32]| spans(w).iter().sum::<f32>() + used.saturating_sub(1) as f32 * BTN_GAP;
+    let all = total(&widths);
+    if all > row_w && all > 0.0 {
+        // too many words for the row: all of them shrink alike
+        let room = row_w - (all - widths.iter().sum::<f32>());
+        let scale = (room / widths.iter().sum::<f32>()).clamp(0.2, 1.0);
+        for w in &mut widths {
+            *w *= scale;
+        }
+    }
+    let span = spans(&widths);
+    let left_end = if groups[0].is_empty() {
+        0.0
+    } else {
+        span[0] + BTN_GAP
+    };
+    let right_start = if groups[2].is_empty() {
+        row_w
+    } else {
+        row_w - span[2] - BTN_GAP
+    };
+    let center_at = ((row_w - span[1]) / 2.0)
+        .min(right_start - span[1])
+        .max(left_end);
+    let starts = [0.0, center_at, row_w - span[2]];
+    let mut out = vec![(0.0, 0.0); n];
+    for (k, g) in groups.iter().enumerate() {
+        let mut x = starts[k];
+        for &i in g {
+            out[i] = (x, widths[i]);
+            x += widths[i] + BTN_GAP;
+        }
+    }
+    out
 }
 
 /// The height the content needs, with the header, the buttons and the padding.
@@ -216,7 +348,7 @@ pub fn content_height(spec: &PanelSpec) -> f32 {
     } else {
         GAP + 4.0
     };
-    let h = PAD + header_height(spec) + gap_after_header + body + GAP + footer_height() + PAD;
+    let h = PAD + header_height(spec) + gap_after_header + body + GAP + footer_height(spec) + PAD;
     h.ceil()
 }
 
@@ -326,6 +458,79 @@ mod tests {
         assert_eq!(group_columns(0, 0), 1);
         assert_eq!(group_rows(0, 0), 1, "an empty grid says so on one row");
         assert_eq!(group_rows(4, 9), 3);
+    }
+
+    #[test]
+    fn buttons_that_say_their_height_make_their_row_that_tall() {
+        let s = spec(
+            r#"{"widgets":[{"type":"buttons","columns":2,"buttons":[
+                {"id":"a","label":"A","height":48},{"id":"b","label":"B"},
+                {"id":"c","label":"C","height":28}]}],
+                "buttons":[{"id":"ok","label":"OK","height":52}]}"#,
+        );
+        let Widget::Buttons {
+            columns, buttons, ..
+        } = &s.widgets[0]
+        else {
+            panic!("a grid");
+        };
+        assert_eq!(grid_row_heights(*columns, buttons), vec![48.0, 28.0]);
+        assert_eq!(grid_height(*columns, buttons), 48.0 + BTN_GAP + 28.0);
+        assert_eq!(footer_row_height(&s), 52.0);
+        assert_eq!(footer_height(&s), 52.0 + NOTICE_H);
+        let plain = spec(r#"{"buttons":[{"id":"ok","label":"OK"}]}"#);
+        assert_eq!(footer_row_height(&plain), CONTROL_H);
+    }
+
+    #[test]
+    fn the_row_at_the_bottom_puts_each_button_on_its_side() {
+        // by default everything is at the right, as it always was
+        let s = spec(r#"{"buttons":[{"id":"a","label":"A"},{"id":"b","label":"B"}]}"#);
+        let slots = footer_slots(&s, &[60.0, 80.0], 400.0);
+        assert_eq!(slots, vec![(400.0 - 148.0, 60.0), (400.0 - 80.0, 80.0)]);
+        // one on each side, one in the middle
+        let s = spec(
+            r#"{"buttons":[{"id":"a","label":"A","side":"end"},
+                {"id":"b","label":"B","side":"start"},{"id":"c","label":"C","side":"center"}]}"#,
+        );
+        let slots = footer_slots(&s, &[60.0, 70.0, 80.0], 400.0);
+        assert_eq!(slots[1], (0.0, 70.0), "left");
+        assert_eq!(slots[2], (160.0, 80.0), "middle");
+        assert_eq!(slots[0], (340.0, 60.0), "right");
+    }
+
+    #[test]
+    fn a_button_that_says_its_width_keeps_it_and_the_middle_makes_room() {
+        let s = spec(
+            r#"{"buttons":[{"id":"a","label":"A","side":"start","width":150},
+                {"id":"b","label":"B","side":"center","width":100}]}"#,
+        );
+        let slots = footer_slots(&s, &[40.0, 40.0], 300.0);
+        assert_eq!(slots[0], (0.0, 150.0));
+        // the middle would be at 100, on the first: it goes beside it
+        assert_eq!(slots[1], (150.0 + BTN_GAP, 100.0));
+    }
+
+    #[test]
+    fn stretched_buttons_share_what_the_wide_ones_leave() {
+        let s = spec(
+            r#"{"buttons_align":"stretch","buttons":[{"id":"a","label":"A","width":100},
+                {"id":"b","label":"B"},{"id":"c","label":"C"}]}"#,
+        );
+        let slots = footer_slots(&s, &[40.0; 3], 316.0);
+        assert_eq!(slots[0], (0.0, 100.0));
+        let share = (316.0 - 2.0 * BTN_GAP - 100.0) / 2.0;
+        assert_eq!(slots[1], (100.0 + BTN_GAP, share));
+        assert_eq!(slots[2], (100.0 + BTN_GAP + share + BTN_GAP, share));
+    }
+
+    #[test]
+    fn a_row_that_is_too_full_shrinks_and_stays_inside() {
+        let s = spec(r#"{"buttons":[{"id":"a","label":"A"},{"id":"b","label":"B"}]}"#);
+        let slots = footer_slots(&s, &[300.0, 300.0], 200.0);
+        let end = slots.iter().map(|(x, w)| x + w).fold(0.0_f32, f32::max);
+        assert!(end <= 200.0 + 0.01, "{slots:?}");
+        assert!(slots[0].0 >= 0.0);
     }
 
     #[test]

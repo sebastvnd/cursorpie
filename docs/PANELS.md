@@ -125,6 +125,14 @@ button of the bottom row (`out` gets its `id`).
 | button `icon` | The name of an icon of the app (`play`, `skip-forward`, `ico:heart`; the designer lists them) or, in a panel of a flow, `file:/path/to/picture.png` (`~/` works; at most 4 MB; pictures are not drawn for the browser extension). A button with an icon and no label is icon only |
 | panel `passive` | `true`: the panel does not take the keyboard from the app that is in front (for a panel that only shows progress). It also gives the window up to any other panel that is asked for. Where the window system decides for itself (macOS, Linux) it is a request |
 | button `keep_open` | This button does not make the panel go away (see below) |
+| button `toggle` | `true`: a button with two looks. Each press changes it to the other look and the next press changes it back (see *Buttons that change*) |
+| button `on_label`, `on_icon`, `on_tone` | The second look of a `toggle` button: its text, its icon (same names as `icon`) and its tone. What is left out stays as in the first look |
+| button `on` | `true`: a `toggle` button that starts in its second look |
+| button `width` | Width in points, 24 to 640. 0 or left out: as wide as the text needs in the row at the bottom, the whole cell in a grid |
+| button `height` | Height in points, 24 to 72. 0 or left out: 36, like the other controls. A row (of a grid, or the one at the bottom) is as tall as its tallest button |
+| button `radius` | How round the corners are, in points: 0 is square, a big number makes a pill (never more than half the height). Left out: the usual |
+| button `side` | Where a button of the row at the bottom sits: `start` (left), `center` or `end` (right). Left out: where `buttons_align` puts it |
+| grid `align` | Where a button that is narrower than its cell (it says its `width`) sits in the cell: `start`, `center` (the default) or `end` |
 
 `{ "type": "spacer", "height": 16 }` is empty room (2 to 200 points).
 
@@ -146,6 +154,38 @@ notice appears between presses.
 `danger`. Enter presses the first `primary` button (else the first that does not cancel); Esc presses the first button
 with `"cancel": true`. A button that cancels closes the panel without values. Any other button is refused with a note
 while a `required` box is empty.
+
+### Size, shape and place of buttons
+
+Every button can say how big and how round it is, and a button of the row at the bottom can say which side it sits on,
+so a *Close* does not have to be next to the answer buttons:
+
+```json
+"buttons": [
+  { "id": "close", "label": "Close", "cancel": true, "side": "start", "radius": 36 },
+  { "id": "go", "label": "Go", "tone": "primary", "width": 160, "height": 44 }
+]
+```
+
+The buttons on the same side form a group, in the order they are written; the left group sits against the left edge, the
+right one against the right edge and the middle one in the middle (it moves aside when it would touch another group).
+With `"buttons_align": "stretch"` the buttons share the row, and a button with its own `width` keeps it. When the buttons
+are too wide for the row they all shrink alike. The window grows with a taller button.
+
+### Buttons that change
+
+A play button that turns into *Pause*, a mute button that turns red: add `"toggle": true` and the second look.
+
+```json
+{ "id": "play", "label": "Play", "icon": "play", "tone": "primary",
+  "toggle": true, "on_label": "Pause", "on_icon": "pause" }
+```
+
+The press is answered as always (the flow gets `play` as the button). Only what the person sees changes, and it stays so
+while the panel stays open (`keep_open`): when the flow asks again with the same panel `id`, a toggle that is still a toggle
+keeps the look it had. A button that cancels cannot be a toggle. A panel that goes away after every press starts its
+toggles again each time it is shown (`"on": true` makes one start in the second look). The look is not checked against
+the world: a play button shows *Pause* after one press even if the browser was already playing when the panel opened.
 
 ### The answer
 

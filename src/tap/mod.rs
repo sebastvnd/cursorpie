@@ -23,7 +23,7 @@
 //! unsure. The full list is in
 //! [`guides::architecture`](crate::guides::architecture#rules-for-the-event-tap-callback).
 
-mod gesture;
+pub(crate) mod gesture;
 mod keyboard;
 mod modorder;
 mod pie_clicks;
@@ -33,11 +33,9 @@ mod side_buttons;
 mod timers;
 mod trigger;
 // The trackpad source runs on macOS, Windows and Linux; its portable core is built and tested everywhere.
-#[cfg_attr(
-    not(any(target_os = "macos", windows, target_os = "linux", test)),
-    allow(dead_code)
-)]
-mod touch;
+// (`pub(crate)`: the native sources of the backends in `platform` feed it.)
+#[allow(dead_code)] // a build without a backend (the test stub) reads none of it
+pub(crate) mod touch;
 
 pub use touch::Status as TouchStatus;
 
@@ -227,7 +225,7 @@ pub(crate) enum Ev {
 /// and shows the fingers live. `true` = it ran, so the app must not start.
 #[cfg(target_os = "linux")]
 pub fn touchpad_debug_from_args() -> bool {
-    touch::touchpad_debug_from_args()
+    crate::platform::touchpad_debug_from_args()
 }
 
 /// Starts the hook on its own thread (retrying while the OS refuses it).

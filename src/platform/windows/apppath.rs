@@ -334,6 +334,21 @@ pub fn installed_list() -> Vec<(String, String)> {
     out
 }
 
+/// The apps of the Start menu (the list Windows itself shows) and those that registered
+/// themselves under `App Paths`, read straight from the registry and the shortcut files: no
+/// `reg.exe`, whose output is in the language and the code page of the system and so cannot be
+/// read reliably.
+pub fn collect_installed_apps() -> Vec<crate::platform::installed::InstalledApp> {
+    installed_list()
+        .into_iter()
+        .map(|(id, name)| crate::platform::installed::InstalledApp {
+            id,
+            name,
+            alt: String::new(),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

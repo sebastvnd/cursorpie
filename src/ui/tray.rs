@@ -1,16 +1,18 @@
 //! Tray icon (the menu bar on macOS, the notification area on Windows): Settings, About, Welcome
 //! guide, Pause, Launch at login, Quit.
 //!
-//! tray-icon must be created on the main thread once the event loop is running; eframe calls the
-//! app creator from `resumed`, which satisfies that on both platforms. On other targets (the Linux
-//! test stub) there is no tray and [`build`] returns `None`.
+//! The menu and the icon are made by the backend of each OS (`platform::build_tray`, which needs
+//! `tray-icon`); this file holds what is the same everywhere: the artwork. Where there is no tray
+//! (Linux, the test stub) [`build`] returns `None`.
 
 use crate::msg::Notifier;
 
-#[cfg(not(any(target_os = "macos", windows)))]
-pub use none::*;
-#[cfg(any(target_os = "macos", windows))]
-pub use real::*;
+pub use crate::platform::TrayHandles;
+
+/// Creates the tray icon and its menu, `None` when this system has none or it cannot be created.
+pub fn build(n: &Notifier) -> Option<TrayHandles> {
+    crate::platform::build_tray(n)
+}
 
 /// RGB color of the Windows tray icon (`#728B73`, the site and app sage accent). macOS draws a
 /// black template image that the system recolors; Windows has no template images, so the icon is
@@ -45,132 +47,6 @@ pub fn icon_rgba(n: u32, rgb: [u8; 3]) -> Vec<u8> {
         }
     }
     px
-}
-
-#[cfg(any(target_os = "macos", windows))]
-mod real {
-    use super::*;
-    use crate::about::APP_NAME;
-    use crate::msg::Msg;
-    use crate::platform;
-    use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
-    use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
-
-    /// Tray handles the app keeps: the icon (dropping it removes it) and the two check items it updates.
-    pub struct TrayHandles {
-        /// keep alive: dropping it removes the icon
-        pub _icon: TrayIcon,
-        pause: CheckMenuItem,
-        login: CheckMenuItem,
-    }
-
-    impl TrayHandles {
-        /// Whether "Pause" is ticked.
-        pub fn pause_checked(&self) -> bool {
-            self.pause.is_checked()
-        }
-        /// Whether "Launch at login" is ticked.
-        pub fn login_checked(&self) -> bool {
-            self.login.is_checked()
-        }
-        /// Ticks or unticks "Launch at login".
-        pub fn set_login_checked(&self, on: bool) {
-            self.login.set_checked(on);
-        }
-    }
-
-    /// Creates the tray icon and its menu. Menu clicks are forwarded as `Msg::Tray(id)`.
-    /// Returns `None` (after logging) if the icon cannot be created.
-    pub fn build(n: &Notifier) -> Option<TrayHandles> {
-        let menu = Menu::new();
-        let settings = MenuItem::with_id("settings", "Settings...", true, None);
-        let about = MenuItem::with_id("about", format!("About {APP_NAME}"), true, None);
-        let welcome = MenuItem::with_id("welcome", "Welcome guide...", true, None);
-        let swap = MenuItem::with_id("swap_side", "Switch side-button pie", true, None);
-        let pause = CheckMenuItem::with_id("pause", format!("Pause {APP_NAME}"), true, false, None);
-        let login = CheckMenuItem::with_id(
-            "login",
-            "Launch at login",
-            true,
-            platform::launch_at_login_enabled(),
-            None,
-        );
-        let quit = MenuItem::with_id("quit", format!("Quit {APP_NAME}"), true, None);
-
-        let _ = menu.append(&settings);
-        let _ = menu.append(&about);
-        let _ = menu.append(&welcome);
-        let _ = menu.append(&PredefinedMenuItem::separator());
-        let _ = menu.append(&swap);
-        let _ = menu.append(&pause);
-        let _ = menu.append(&login);
-        let _ = menu.append(&PredefinedMenuItem::separator());
-        let _ = menu.append(&quit);
-
-        // forward menu clicks to the UI thread (this also wakes it up)
-        let notifier = n.clone();
-        MenuEvent::set_event_handler(Some(move |e: MenuEvent| {
-            notifier.send(Msg::Tray(e.id.0.clone()));
-        }));
-
-        let rgb = match platform::OS {
-            platform::Os::Mac => [0, 0, 0],
-            platform::Os::Windows | platform::Os::Linux => WINDOWS_ICON_RGB,
-        };
-        let icon = match Icon::from_rgba(icon_rgba(44, rgb), 44, 44) {
-            Ok(i) => i,
-            Err(e) => {
-                eprintln!("CursorPie: could not create tray icon image: {e}");
-                return None;
-            }
-        };
-        match TrayIconBuilder::new()
-            .with_menu(Box::new(menu))
-            .with_tooltip(APP_NAME)
-            .with_icon(icon)
-            .with_icon_as_template(true) // macOS only; ignored on Windows
-            .build()
-        {
-            Ok(tray) => Some(TrayHandles {
-                _icon: tray,
-                pause,
-                login,
-            }),
-            Err(e) => {
-                eprintln!(
-                    "CursorPie: could not create the {} icon: {e}",
-                    platform::OS.tray_name()
-                );
-                None
-            }
-        }
-    }
-}
-
-#[cfg(not(any(target_os = "macos", windows)))]
-mod none {
-    use super::*;
-
-    /// There is no tray on this target; the handles never exist.
-    pub struct TrayHandles;
-
-    impl TrayHandles {
-        /// Never ticked.
-        pub fn pause_checked(&self) -> bool {
-            false
-        }
-        /// Never ticked.
-        pub fn login_checked(&self) -> bool {
-            false
-        }
-        /// Ignored.
-        pub fn set_login_checked(&self, _on: bool) {}
-    }
-
-    /// No tray on this target.
-    pub fn build(_n: &Notifier) -> Option<TrayHandles> {
-        None
-    }
 }
 
 #[cfg(test)]

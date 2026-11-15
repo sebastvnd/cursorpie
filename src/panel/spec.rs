@@ -65,6 +65,14 @@ pub const DEFAULT_TIMEOUT_S: u32 = 120;
 pub const WIDTH_MIN: f32 = 280.0;
 pub const WIDTH_MAX: f32 = 640.0;
 pub const WIDTH_DEFAULT: f32 = 380.0;
+/// Narrowest and widest, and lowest and tallest, a button that says its own size is drawn (points).
+pub const BUTTON_W_MIN: u16 = 24;
+pub const BUTTON_W_MAX: u16 = 640;
+pub const BUTTON_H_MIN: u16 = 24;
+pub const BUTTON_H_MAX: u16 = 72;
+/// The most a corner of a button is rounded (points). A button never rounds more than half its
+/// height, so a big number makes a pill.
+pub const BUTTON_RADIUS_MAX: u8 = 36;
 /// Shortest and tallest a panel with a fixed height is drawn (points). Without a height the card
 /// is as tall as its content needs.
 pub const HEIGHT_MIN: f32 = 200.0;
@@ -148,6 +156,19 @@ pub enum ButtonAlign {
     Center,
     /// Every button the same width, filling the whole row.
     Stretch,
+}
+
+/// Which side of the row at the bottom (or of its cell in a grid) a button sits on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ButtonSide {
+    /// Against the left edge.
+    Start,
+    /// In the middle.
+    Center,
+    /// Against the right edge.
+    #[default]
+    End,
 }
 
 /// How the options of a [`Widget::Choice`] are laid out.
@@ -409,6 +430,10 @@ pub enum Widget {
         columns: u8,
         #[serde(default, skip_serializing_if = "is_default")]
         buttons: Vec<Button>,
+        /// Where a button that is narrower than its cell (it says its own `width`) sits in the
+        /// cell. The middle when missing.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        align: Option<ButtonSide>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         show_if: Option<ShowIf>,
     },
@@ -443,6 +468,40 @@ pub struct Button {
     /// the button asked and asks again. (The same for every button: [`PanelSpec::keep_open`].)
     #[serde(default, skip_serializing_if = "is_default")]
     pub keep_open: bool,
+    /// A button with two looks: each press changes it to the other one (a play button that turns
+    /// into pause, a mute button that turns red) and the next press changes it back. The press is
+    /// answered as always (the flow gets the button's `id`); the looks are only what the person
+    /// sees, kept while the panel stays open (`keep_open`). The second look is `on_label`,
+    /// `on_icon` and `on_tone`; what they leave empty stays as it is in the first.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub toggle: bool,
+    /// A toggle that starts in its second look.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub on: bool,
+    /// The text of a toggle in its second look (empty: the same).
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub on_label: String,
+    /// The icon of a toggle in its second look (empty: the same).
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub on_icon: String,
+    /// The tone of a toggle in its second look (none: the same).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_tone: Option<Tone>,
+    /// Width in points (24 to 640). 0 or missing: as wide as the text needs in the row at the
+    /// bottom, the whole cell in a grid. In a grid a narrower button sits where the grid's `align`
+    /// says.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub width: u16,
+    /// Height in points (24 to 72). 0 or missing: the height of the other controls (36).
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub height: u16,
+    /// How round the corners are, in points (0: square). Missing: the usual roundness.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub radius: Option<u8>,
+    /// Where a button of the row at the bottom sits: `start` (left), `center` or `end` (right).
+    /// Missing: where the panel's `buttons_align` puts it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub side: Option<ButtonSide>,
 }
 
 impl Button {
@@ -451,10 +510,44 @@ impl Button {
         check_id(&mut self.id, true, false)?;
         self.label = clean_line(&self.label, MAX_LABEL_CHARS);
         self.icon = clean_line(&self.icon, MAX_ICON_CHARS);
+        self.on_label = clean_line(&self.on_label, MAX_LABEL_CHARS);
+        self.on_icon = clean_line(&self.on_icon, MAX_ICON_CHARS);
+        if self.cancel {
+            // a button that closes the panel has no second look to change to
+            self.toggle = false;
+        }
+        if self.width != 0 {
+            self.width = self.width.clamp(BUTTON_W_MIN, BUTTON_W_MAX);
+        }
+        if self.height != 0 {
+            self.height = self.height.clamp(BUTTON_H_MIN, BUTTON_H_MAX);
+        }
+        self.radius = self.radius.map(|r| r.min(BUTTON_RADIUS_MAX));
         if self.label.is_empty() && self.icon.is_empty() {
             self.label = self.id.clone();
         }
         Ok(())
+    }
+
+    /// What the button shows while it is `on` (only a toggle has a second look): its label, its
+    /// icon and its tone.
+    pub fn face(&self, on: bool) -> (&str, &str, Tone) {
+        if !(self.toggle && on) {
+            return (&self.label, &self.icon, self.tone);
+        }
+        (
+            if self.on_label.is_empty() {
+                &self.label
+            } else {
+                &self.on_label
+            },
+            if self.on_icon.is_empty() {
+                &self.icon
+            } else {
+                &self.on_icon
+            },
+            self.on_tone.unwrap_or(self.tone),
+        )
     }
 }
 
@@ -892,6 +985,7 @@ impl Widget {
                 *label = f(label);
                 for b in buttons.iter_mut() {
                     b.label = f(&b.label);
+                    b.on_label = f(&b.on_label);
                 }
             }
             Widget::Text { text, .. } => *text = f(text),
@@ -1207,6 +1301,30 @@ mod tests {
 
     fn parse(json: &str) -> Result<PanelSpec, SpecError> {
         PanelSpec::parse(json)
+    }
+
+    #[test]
+    fn the_size_and_shape_of_a_button_are_kept_within_bounds() {
+        let s = PanelSpec::parse(
+            r#"{"buttons":[{"id":"a","label":"A","width":5000,"height":3,"radius":200,"side":"start"},
+                {"id":"b","label":"B"}]}"#,
+        )
+        .expect("a good panel");
+        let a = &s.buttons[0];
+        assert_eq!(
+            (a.width, a.height, a.radius),
+            (BUTTON_W_MAX, BUTTON_H_MIN, Some(BUTTON_RADIUS_MAX))
+        );
+        assert_eq!(a.side, Some(ButtonSide::Start));
+        let b = &s.buttons[1];
+        assert_eq!(
+            (b.width, b.height, b.radius, b.side),
+            (0, 0, None, None),
+            "nothing said, nothing set"
+        );
+        // what was not said is not written back
+        let text = serde_json::to_string(b).unwrap();
+        assert!(!text.contains("width") && !text.contains("radius") && !text.contains("side"));
     }
 
     #[test]

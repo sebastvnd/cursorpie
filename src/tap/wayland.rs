@@ -36,7 +36,7 @@
 //! are never opened: a shortcut is recorded from the key events of the Settings window itself
 //! (`ui/settings/wayland_keys.rs`).
 
-use super::{Ev, Gesture, Kind, PAUSED, TAP_ACTIVE, Verdict, dispatch, touch};
+use super::{Ev, Gesture, Kind, PAUSED, RIGHT_BUTTON, TAP_ACTIVE, Verdict, dispatch, pie_clicks};
 use crate::config::{cfg, extra_buttons_in_use, lock};
 use crate::geometry::Point;
 use crate::mouse;
@@ -95,6 +95,9 @@ pub(super) trait Env {
     fn arm(&self, on: bool);
     /// Settings is scanning the mouse for its extra buttons.
     fn scanning(&self) -> bool;
+    /// Whether a pie is open right now: the right button is the state machine's then (it switches
+    /// the pie the side buttons follow), and the app under the pie does not get it.
+    fn pie_open(&self) -> bool;
 }
 
 /// One more than the last button number (`mouse::MAX_BUTTON`).
@@ -272,6 +275,9 @@ impl Engine {
             || button == mouse::FORWARD
             || self.extras.contains(&button)
             || (mouse::is_extra(button) && env.scanning())
+            // the right-click that switches the pie, only while a pie is open: outside it the right
+            // button is the app's and never reaches the state machine
+            || (button == RIGHT_BUTTON && env.pie_open())
     }
 
     /// One button or key event of a frame. Returns whether to write it to the clone.
@@ -279,7 +285,9 @@ impl Engine {
         let Some(button) = button_for_code(e.code) else {
             return true; // a key on a mouse node: not ours
         };
-        let Some(i) = slot(button).filter(|_| self.is_routed(env, button)) else {
+        // a button whose press the state machine heard also gets its release heard, even when the
+        // pie has closed in between
+        let Some(i) = slot(button).filter(|i| self.held[*i] || self.is_routed(env, button)) else {
             return true;
         };
         match e.value {
@@ -393,6 +401,10 @@ impl Env for PipeEnv {
 
     fn scanning(&self) -> bool {
         mouse::scanning()
+    }
+
+    fn pie_open(&self) -> bool {
+        pie_clicks::pie_open(&self.state)
     }
 }
 
@@ -748,7 +760,7 @@ pub fn spawn(notifier: Notifier) {
     }
     x11::warm_index();
     let state = Arc::new(Mutex::new(Gesture::Idle));
-    touch::start(state.clone(), notifier.clone());
+    crate::platform::start_touch_source(state.clone(), notifier.clone());
     beat();
     let started = std::thread::Builder::new()
         .name("cursorpie-wayland-tap".into())
@@ -789,6 +801,7 @@ mod tests {
     use std::cell::{Cell, RefCell};
 
     const MIDDLE: u16 = BTN_MIDDLE;
+    const BTN_RIGHT: u16 = BTN_LEFT + 1;
     const REL_WHEEL: u16 = 8;
     const REL_WHEEL_HI_RES: u16 = 11;
 
@@ -803,6 +816,7 @@ mod tests {
         /// For each press that asked for the pointer: whether it waited for a fresh answer.
         asked: RefCell<Vec<bool>>,
         scanning: Cell<bool>,
+        pie_open: Cell<bool>,
     }
 
     impl Fake {
@@ -815,6 +829,7 @@ mod tests {
                 fresh: Cell::new(None),
                 asked: RefCell::new(Vec::new()),
                 scanning: Cell::new(false),
+                pie_open: Cell::new(false),
             }
         }
 
@@ -852,6 +867,9 @@ mod tests {
         }
         fn scanning(&self) -> bool {
             self.scanning.get()
+        }
+        fn pie_open(&self) -> bool {
+            self.pie_open.get()
         }
     }
 
@@ -902,12 +920,39 @@ mod tests {
     }
 
     #[test]
-    fn the_left_and_right_button_are_never_routed_and_always_pass() {
+    fn the_left_button_is_never_routed_and_the_right_one_only_while_a_pie_is_open() {
         let fake = Fake::swallowing();
         let mut e = engine();
-        let input = [btn(BTN_LEFT, true), SYN, btn(BTN_LEFT, false), SYN];
-        assert_eq!(e.feed(&fake, &input), input);
+        let left = [btn(BTN_LEFT, true), SYN, btn(BTN_LEFT, false), SYN];
+        assert_eq!(e.feed(&fake, &left), left);
+        // no pie: a right-click is the app's
+        let right = [btn(BTN_RIGHT, true), SYN, btn(BTN_RIGHT, false), SYN];
+        assert_eq!(e.feed(&fake, &right), right);
         assert!(fake.events().is_empty());
+        // a pie is open (the trigger is held): the state machine gets the right-click, which
+        // switches the pie, and the app does not
+        fake.pie_open.set(true);
+        assert!(e.feed(&fake, &[btn(BTN_RIGHT, true), SYN]).is_empty());
+        assert_eq!(
+            e.feed(&fake, &left),
+            left,
+            "the left button stays the app's"
+        );
+        // the pie closed before the button was let go: the release is still heard, and swallowed
+        fake.pie_open.set(false);
+        assert!(e.feed(&fake, &[btn(BTN_RIGHT, false), SYN]).is_empty());
+        let kinds: Vec<(Kind, i64)> = fake
+            .events()
+            .iter()
+            .map(|ev| match ev {
+                Ev::Mouse { kind, button, .. } => (*kind, *button),
+                _ => panic!("a mouse event"),
+            })
+            .collect();
+        assert_eq!(kinds, [(Kind::Down, 1), (Kind::Up, 1)]);
+        assert!(!e.any_held());
+        // and the next right-click, with no pie, is the app's again
+        assert_eq!(e.feed(&fake, &right), right);
     }
 
     #[test]

@@ -287,6 +287,7 @@ pub fn new_widget(kind: Kind, taken: &BTreeSet<String>) -> Widget {
                     button(2, "", "play"),
                     button(3, "Next", "skip-forward"),
                 ],
+                align: None,
                 show_if: None,
             }
         }

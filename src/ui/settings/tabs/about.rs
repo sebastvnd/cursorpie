@@ -158,7 +158,9 @@ impl App {
                     _ => {}
                 }
             });
-            let how = if can_install {
+            let how = if can_install && self.ed.update_needs_password {
+                "Install update downloads the release from GitHub and checks its checksum. This copy is in a folder only an administrator can write to, so when CursorPie restarts to update, your system asks for your password; if you cancel, the old version starts again. Your settings are kept."
+            } else if can_install {
                 "Install update downloads the release from GitHub, checks its checksum, replaces this copy and restarts CursorPie. Your settings are kept."
             } else {
                 "This copy was not installed in the usual place, so it cannot update itself: Download page opens the release page in your browser."

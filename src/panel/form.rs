@@ -11,7 +11,7 @@ use super::spec::{
     Tone, Widget, clean_line, clean_options, format_hex, number_bounds, parse_hex,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// What a panel ended with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -169,6 +169,8 @@ pub struct Form {
     /// Show every widget, whatever its `show_if` says. For the panel designer, which has to draw
     /// (and let the person pick) the widgets that a real panel would still hide.
     pub reveal_all: bool,
+    /// The toggle buttons that show their second look now (see [`Button::toggle`]), by `id`.
+    pub on: BTreeSet<String>,
 }
 
 impl Form {
@@ -197,12 +199,44 @@ impl Form {
             })
             .collect();
         let filters = vec![String::new(); spec.widgets.len()];
+        let on = spec
+            .all_buttons()
+            .filter(|b| b.toggle && b.on)
+            .map(|b| b.id.clone())
+            .collect();
         Self {
             spec,
             fields,
             filters,
             notice: None,
             reveal_all: false,
+            on,
+        }
+    }
+
+    /// Whether the button `id` shows its second look now.
+    pub fn is_on(&self, id: &str) -> bool {
+        self.on.contains(id)
+    }
+
+    /// Takes over from `old`, the form of the same panel that is being replaced by this one (a
+    /// panel that stays open between two questions of a flow): a toggle that was a toggle there
+    /// keeps the look it had, so a button the person turned on is not turned off by the flow
+    /// asking again.
+    pub fn inherit(&mut self, old: &Form) {
+        let was_toggle = |id: &str| old.spec.find_button(id).is_some_and(|b| b.toggle);
+        let ids: Vec<String> = self
+            .spec
+            .all_buttons()
+            .filter(|b| b.toggle && was_toggle(&b.id))
+            .map(|b| b.id.clone())
+            .collect();
+        for id in ids {
+            if old.is_on(&id) {
+                self.on.insert(id);
+            } else {
+                self.on.remove(&id);
+            }
         }
     }
 
@@ -303,6 +337,10 @@ impl Form {
             return Err(why);
         }
         self.notice = None;
+        if b.toggle && !self.on.remove(&b.id) {
+            // it showed its first look, and now shows the second; the next press goes back
+            self.on.insert(b.id.clone());
+        }
         Ok(self.answer(&b.id))
     }
 
@@ -626,6 +664,66 @@ mod tests {
         {"type":"multi","id":"tags","options":["a","b","c"],"values":["b"]},
         {"type":"text","text":"hello"}],
         "buttons":[{"id":"go","tone":"primary"},{"id":"no","cancel":true}]}"#;
+
+    const REMOTE: &str = r#"{"id":"r","keep_open":true,"widgets":[{"type":"buttons","buttons":[
+        {"id":"play","label":"Play","icon":"play","toggle":true,"on_label":"Pause","on_icon":"pause"},
+        {"id":"mute","icon":"speaker-high","toggle":true,"on_icon":"speaker-slash","on_tone":"danger"},
+        {"id":"next","label":"Next"}]}],
+        "buttons":[{"id":"close","cancel":true,"toggle":true}]}"#;
+
+    #[test]
+    fn a_toggle_changes_look_at_a_press_and_goes_back_at_the_next() {
+        let mut f = form(REMOTE);
+        let play = f.spec.find_button("play").unwrap().clone();
+        assert_eq!(
+            play.face(f.is_on("play")),
+            ("Play", "play", Tone::Secondary)
+        );
+        let r = f.submit("play").unwrap();
+        assert_eq!(r.button, "play", "the press is answered as always");
+        assert!(f.is_on("play") && !f.is_on("mute"));
+        assert_eq!(play.face(true), ("Pause", "pause", Tone::Secondary));
+        f.submit("play").unwrap();
+        assert!(!f.is_on("play"));
+        // what a second look leaves empty stays as it is; the tone may change alone
+        let mute = f.spec.find_button("mute").unwrap();
+        assert_eq!(mute.face(true), ("", "speaker-slash", Tone::Danger));
+        assert_eq!(mute.face(false), ("", "speaker-high", Tone::Secondary));
+    }
+
+    #[test]
+    fn a_button_that_is_not_a_toggle_and_one_that_cancels_never_change() {
+        let mut f = form(REMOTE);
+        f.submit("next").unwrap();
+        f.submit("close").unwrap();
+        assert!(f.on.is_empty());
+        assert!(!f.spec.find_button("close").unwrap().toggle);
+    }
+
+    #[test]
+    fn a_toggle_may_start_changed_and_a_refused_press_changes_nothing() {
+        let mut f = form(
+            r#"{"widgets":[{"type":"input","id":"n","required":true},
+                {"type":"buttons","buttons":[{"id":"t","toggle":true,"on":true,"label":"A","on_label":"B"}]}]}"#,
+        );
+        assert!(f.is_on("t"));
+        assert!(f.submit("t").is_err(), "a required box is empty");
+        assert!(f.is_on("t"), "nothing was answered, so nothing changed");
+    }
+
+    #[test]
+    fn the_next_panel_of_a_remote_keeps_the_looks_the_person_made() {
+        let mut old = form(REMOTE);
+        old.submit("mute").unwrap();
+        let mut new = form(REMOTE);
+        new.inherit(&old);
+        assert!(new.is_on("mute") && !new.is_on("play"));
+        // a button that is no longer a toggle in the new description does not keep it
+        let mut plain =
+            form(r#"{"widgets":[{"type":"buttons","buttons":[{"id":"mute","label":"M"}]}]}"#);
+        plain.inherit(&old);
+        assert!(plain.on.is_empty());
+    }
 
     #[test]
     fn a_form_starts_with_the_values_of_its_spec() {

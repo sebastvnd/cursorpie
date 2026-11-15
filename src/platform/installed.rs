@@ -75,22 +75,7 @@ pub fn action_text(app: &InstalledApp) -> String {
 
 /// The installed applications of this system, sorted by name. Slow: call it off the UI thread.
 pub fn installed_apps() -> Vec<InstalledApp> {
-    tidy(collect())
-}
-
-// ---------------------------------------------------------------------------------------- Linux
-
-/// The desktop entries that are meant to be listed.
-#[cfg(target_os = "linux")]
-fn collect() -> Vec<InstalledApp> {
-    use crate::platform::linux::xdg;
-    let home = crate::config::home();
-    let dirs = xdg::application_dirs(
-        &home,
-        std::env::var("XDG_DATA_HOME").ok().as_deref(),
-        std::env::var("XDG_DATA_DIRS").ok().as_deref(),
-    );
-    entries_to_apps(&desktop_entry::scan(&dirs))
+    tidy(super::collect_installed_apps())
 }
 
 /// The listed apps of an index: entries marked `NoDisplay` (URL handlers, helpers) are left out.
@@ -114,95 +99,6 @@ pub fn entries_to_apps(index: &desktop_entry::Index) -> Vec<InstalledApp> {
             .to_lowercase(),
         })
         .collect()
-}
-
-// ---------------------------------------------------------------------------------------- macOS
-
-/// The folders whose `.app` bundles are listed, with how many levels of plain folders below each
-/// are searched too (Adobe, Setapp and the Chrome apps keep their bundles one folder down), and
-/// whether helper programs without a window (`LSUIElement`) are left out. Finder itself, Screen
-/// Sharing and the other system apps are in `CoreServices`, which the Finder shows as part of the
-/// system although it is not in any "Applications" folder.
-#[cfg(target_os = "macos")]
-fn mac_app_dirs() -> Vec<(std::path::PathBuf, u32, bool)> {
-    use std::path::PathBuf;
-    let mut dirs: Vec<(PathBuf, u32, bool)> = vec![
-        (PathBuf::from("/Applications"), 2, false),
-        (PathBuf::from("/System/Applications"), 2, false),
-        // Safari and the other apps that the system updates apart from the system volume
-        (
-            PathBuf::from("/System/Cryptexes/App/System/Applications"),
-            1,
-            false,
-        ),
-        (PathBuf::from("/System/Library/CoreServices"), 1, true),
-    ];
-    dirs.push((crate::config::home().join("Applications"), 2, false));
-    dirs
-}
-
-/// The `.app` bundles in `dir` and in the plain folders below it (`depth` levels). A bundle is
-/// never entered: what is inside it is not an app of its own.
-#[cfg(target_os = "macos")]
-fn bundles_in(dir: &std::path::Path, depth: u32, out: &mut Vec<std::path::PathBuf>) {
-    let Ok(read) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for file in read.flatten() {
-        if out.len() >= 5000 {
-            return;
-        }
-        if file.file_name().to_string_lossy().starts_with('.') {
-            continue;
-        }
-        let path = file.path();
-        if path
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("app"))
-        {
-            out.push(path);
-        } else if depth > 0 && path.is_dir() {
-            bundles_in(&path, depth - 1, out);
-        }
-    }
-}
-
-/// An `Info.plist` as JSON, by `plutil`, which reads the XML, the binary and the old-style forms
-/// (and `.strings` files) alike. `None` when the file cannot be read.
-#[cfg(target_os = "macos")]
-fn plist_json(path: &std::path::Path) -> Option<Vec<u8>> {
-    let output = std::process::Command::new("plutil")
-        .args(["-convert", "json", "-o", "-"])
-        .arg(path)
-        .output()
-        .ok()?;
-    output.status.success().then_some(output.stdout)
-}
-
-/// Where the `Info.plist` of a bundle is: normally `Contents/Info.plist`. An iPhone or iPad app
-/// that runs on a Mac is a wrapper whose real bundle is `WrappedBundle`, with the plist at its top.
-#[cfg(target_os = "macos")]
-fn info_plist(bundle: &std::path::Path) -> Option<std::path::PathBuf> {
-    [
-        "Contents/Info.plist",
-        "WrappedBundle/Info.plist",
-        "Info.plist",
-    ]
-    .iter()
-    .map(|rel| bundle.join(rel))
-    .find(|p| p.is_file())
-}
-
-/// The languages the user prefers, most wanted first (`id-ID`, `en-ID`...), from the global
-/// preference `AppleLanguages`. At most three; empty when it cannot be read.
-#[cfg(target_os = "macos")]
-fn preferred_languages() -> Vec<String> {
-    std::process::Command::new("defaults")
-        .args(["read", "-g", "AppleLanguages"])
-        .output()
-        .ok()
-        .map(|o| parse_apple_languages(&String::from_utf8_lossy(&o.stdout)))
-        .unwrap_or_default()
 }
 
 /// The language tags in the output of `defaults read -g AppleLanguages`, which looks like
@@ -234,27 +130,6 @@ pub fn lproj_names(lang: &str) -> Vec<String> {
     out
 }
 
-/// The names a bundle has in the user's languages: what Finder shows (`Kalkulator` for
-/// Calculator on an Indonesian system), read from `InfoPlist.strings` of the matching `.lproj`.
-#[cfg(target_os = "macos")]
-fn localized_names(bundle: &std::path::Path, languages: &[String]) -> Vec<String> {
-    let resources = bundle.join("Contents/Resources");
-    let mut out: Vec<String> = Vec::new();
-    for lang in languages {
-        for dir in lproj_names(lang) {
-            let file = resources.join(format!("{dir}.lproj/InfoPlist.strings"));
-            if !file.is_file() {
-                continue;
-            }
-            if let Some(json) = plist_json(&file) {
-                out.extend(names_in_strings_json(&json));
-                break; // the best folder of this language is enough
-            }
-        }
-    }
-    out
-}
-
 /// The display name and the bundle name in the JSON form of an `InfoPlist.strings` file.
 pub fn names_in_strings_json(json: &[u8]) -> Vec<String> {
     let Ok(v) = serde_json::from_slice::<serde_json::Value>(json) else {
@@ -266,36 +141,6 @@ pub fn names_in_strings_json(json: &[u8]) -> Vec<String> {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect()
-}
-
-/// Every `.app` bundle in the usual folders, with its id and name read from `Info.plist`.
-#[cfg(target_os = "macos")]
-fn collect() -> Vec<InstalledApp> {
-    let languages = preferred_languages();
-    let mut out = Vec::new();
-    for (dir, depth, no_agents) in mac_app_dirs() {
-        let mut bundles = Vec::new();
-        bundles_in(&dir, depth, &mut bundles);
-        for path in bundles {
-            let Some(json) = info_plist(&path).and_then(|p| plist_json(&p)) else {
-                continue;
-            };
-            if no_agents && plist_is_agent(&json) {
-                continue;
-            }
-            if let Some(mut app) = app_from_plist_json(&json, &path) {
-                for name in localized_names(&path, &languages) {
-                    let name = name.to_lowercase();
-                    if !app.alt.split('\n').any(|a| a == name) {
-                        app.alt.push('\n');
-                        app.alt.push_str(&name);
-                    }
-                }
-                out.push(app);
-            }
-        }
-    }
-    out
 }
 
 /// Whether the JSON form of an `Info.plist` is that of an agent: a program that runs without a
@@ -356,26 +201,8 @@ pub fn app_from_plist_json(json: &[u8], bundle: &std::path::Path) -> Option<Inst
     })
 }
 
-// -------------------------------------------------------------------------------------- Windows
-
-/// The apps of the Start menu (the list Windows itself shows) and those that registered
-/// themselves under `App Paths`, read straight from the registry and the shortcut files: no
-/// `reg.exe`, whose output is in the language and the code page of the system and so cannot be
-/// read reliably. See `platform::windows::apppath`.
-#[cfg(windows)]
-fn collect() -> Vec<InstalledApp> {
-    super::windows::installed_list()
-        .into_iter()
-        .map(|(id, name)| InstalledApp {
-            id,
-            name,
-            alt: String::new(),
-        })
-        .collect()
-}
-
 /// The apps in the output of `reg query ...\App Paths /s /ve`. Not used by the Windows build any
-/// more (see `collect`); kept, with its tests, for anyone who has such an output at hand:
+/// more (see `platform::windows::collect_installed_apps`); kept, with its tests, for anyone who has such an output at hand:
 ///
 /// ```text
 /// HKEY_LOCAL_MACHINE\SOFTWARE\...\App Paths\chrome.exe
@@ -384,7 +211,6 @@ fn collect() -> Vec<InstalledApp> {
 ///
 /// The id is the key's name in lower case; the name is the program's file name without `.exe`,
 /// with a capital. Keys that are not programs (`.exe` only), uninstallers and updaters are skipped.
-#[cfg_attr(windows, allow(dead_code))]
 pub fn parse_reg_app_paths(text: &str) -> Vec<InstalledApp> {
     let mut out = Vec::new();
     let mut key: Option<String> = None;
@@ -424,13 +250,6 @@ pub fn parse_reg_app_paths(text: &str) -> Vec<InstalledApp> {
         });
     }
     out
-}
-
-// ------------------------------------------------------------------------------- anything else
-
-#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-fn collect() -> Vec<InstalledApp> {
-    Vec::new()
 }
 
 #[cfg(test)]

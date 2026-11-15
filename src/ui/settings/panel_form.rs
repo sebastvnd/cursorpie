@@ -10,20 +10,20 @@
 
 use super::theme::{CARD_RADIUS, CONTROL_R, pal, wash, window_outline, window_shadow};
 use super::widgets::{
-    Look, accent_picker, button_frame, fit_galley, icon_button_look, select_capped, slider,
+    Look, accent_picker, button_frame_r, fit_galley, icon_button_look, select_capped, slider,
     text_field, text_font,
 };
 use crate::panel::form::snap_number;
 use crate::panel::layout::{
     BAR_H, BTN_GAP, CHIP_H, CONTROL_H, GAP, LIST_ROWS, MULTI_ROWS, PAD, ROW_H, ROW_HINT_H,
-    SEPARATOR_H, footer_height, group_columns, group_rows, has_search, header_height, list_height,
+    SEPARATOR_H, button_height, footer_height, footer_row_height, footer_slots, grid_row_heights,
+    group_columns, has_search, header_height, list_height,
 };
+use crate::panel::spec::ButtonSide;
 use crate::panel::spec::{
     DEFAULT_COLOR, FILE_ICON_PREFIX, SPACER_DEFAULT, format_hex, number_bounds, parse_hex,
 };
-use crate::panel::{
-    Button, ButtonAlign, Field, Form, Icon, Layout, Opt, PanelSpec, TextStyle, Tone, Widget,
-};
+use crate::panel::{Button, Field, Form, Icon, Layout, Opt, PanelSpec, TextStyle, Tone, Widget};
 use crate::ui::fonts;
 use crate::ui::hud::HudKind;
 use crate::ui::symbols;
@@ -115,7 +115,7 @@ pub struct BodyScroll {
 pub fn body_rect(card: Rect, spec: &PanelSpec) -> Rect {
     let inner = card.shrink(PAD);
     let head_bottom = inner.min.y + header_height(spec);
-    let foot_top = inner.max.y - footer_height();
+    let foot_top = inner.max.y - footer_height(spec);
     let top = head_bottom
         + if spec.widgets.is_empty() {
             0.0
@@ -157,7 +157,10 @@ fn paint(
     let head = Rect::from_min_size(inner.min, vec2(inner.width(), header_height(&form.spec)));
     header(ui, head, &form.spec, accent);
 
-    let foot = Rect::from_min_max(pos2(inner.min.x, inner.max.y - footer_height()), inner.max);
+    let foot = Rect::from_min_max(
+        pos2(inner.min.x, inner.max.y - footer_height(&form.spec)),
+        inner.max,
+    );
     let body = body_rect(card, &form.spec);
 
     let mut multiline_focus = false;
@@ -266,49 +269,44 @@ fn header(ui: &mut egui::Ui, rect: Rect, spec: &PanelSpec, accent: Color32) {
 }
 
 fn footer(ui: &mut egui::Ui, rect: Rect, form: &Form, accent: Color32, event: &mut Event) {
-    let row = Rect::from_min_size(
-        rect.min,
-        vec2(rect.width(), crate::ui::settings::theme::CONTROL_H),
-    );
+    let row_h = footer_row_height(&form.spec);
+    let row = Rect::from_min_size(rect.min, vec2(rect.width(), row_h));
     let buttons = &form.spec.buttons;
-    let pics: Vec<Pic> = buttons
+    // what each button shows now: a toggle that was pressed shows its second look
+    let faces: Vec<(&str, &str, Tone)> =
+        buttons.iter().map(|b| b.face(form.is_on(&b.id))).collect();
+    let pics: Vec<Pic> = faces
         .iter()
-        .map(|b| button_pic(ui.ctx(), &b.icon))
+        .map(|(_, icon, _)| button_pic(ui.ctx(), icon))
         .collect();
-    let count = buttons.len();
-    let gaps = BTN_GAP * count.saturating_sub(1) as f32;
-    let mut widths: Vec<f32> = match form.spec.buttons_align {
-        // every button as wide as the others, together as wide as the row
-        ButtonAlign::Stretch if count > 0 => {
-            vec![((row.width() - gaps) / count as f32).max(24.0); count]
-        }
-        // each one as wide as it needs
-        _ => buttons
-            .iter()
-            .zip(&pics)
-            .map(|(b, pic)| natural_width(ui, pic, &b.label, b.tone == Tone::Primary))
-            .collect(),
-    };
-    let total = widths.iter().sum::<f32>() + gaps;
-    if total > row.width() && total > 0.0 {
-        // too many words for the row: all of them shrink alike
-        let scale = ((row.width() - gaps) / (total - gaps)).clamp(0.2, 1.0);
-        for w in &mut widths {
-            *w *= scale;
-        }
-    }
-    let total = widths.iter().sum::<f32>() + gaps;
-    let mut x = match form.spec.buttons_align {
-        ButtonAlign::End => row.max.x - total,
-        ButtonAlign::Center => row.center().x - total / 2.0,
-        ButtonAlign::Start | ButtonAlign::Stretch => row.min.x,
-    }
-    .max(row.min.x);
-    for ((b, pic), w) in buttons.iter().zip(&pics).zip(&widths) {
-        let r = Rect::from_min_size(pos2(x.round(), row.min.y), vec2(w.round(), row.height()));
-        x += w + BTN_GAP;
+    let natural: Vec<f32> = faces
+        .iter()
+        .zip(&pics)
+        .zip(buttons)
+        .map(|(((label, _, tone), pic), b)| {
+            natural_width(ui, pic, label, *tone == Tone::Primary).max(button_height(b))
+        })
+        .collect();
+    // where each one goes: its side of the row, its own width, or what its words need
+    let slots = footer_slots(&form.spec, &natural, row.width());
+    for (((b, (label, _, tone)), pic), (x, w)) in buttons.iter().zip(&faces).zip(&pics).zip(&slots)
+    {
+        let h = button_height(b);
+        let r = Rect::from_min_size(
+            pos2((row.min.x + x).round(), (row.center().y - h / 2.0).round()),
+            vec2(w.round(), h),
+        );
         let id = ui.id().with(("footer_button", &b.id));
-        let resp = action_button(ui, r, id, look_of(b.tone, accent), pic, &b.label, &b.id);
+        let resp = action_button(
+            ui,
+            r,
+            id,
+            look_of(*tone, accent),
+            pic,
+            label,
+            &b.id,
+            b.radius,
+        );
         if resp.clicked() && *event == Event::None {
             *event = Event::Press(b.id.clone());
         }
@@ -443,6 +441,7 @@ fn natural_width(ui: &egui::Ui, pic: &Pic, label: &str, bold: bool) -> f32 {
 
 /// A button of the panel in `rect`, in the look of Settings, with its picture and its label (either
 /// may be missing). `tip` is shown when the pointer rests on it, for a button that has no label.
+#[allow(clippy::too_many_arguments)]
 fn action_button(
     ui: &mut egui::Ui,
     rect: Rect,
@@ -451,9 +450,14 @@ fn action_button(
     pic: &Pic,
     label: &str,
     tip: &str,
+    radius: Option<u8>,
 ) -> egui::Response {
     let resp = ui.interact(rect, id, Sense::click());
-    let fg = button_frame(ui, rect, &resp, look);
+    // how round: what the button says (never more than half its height), else the usual
+    let radius = radius.map_or(crate::ui::settings::theme::CONTROL_R, |r| {
+        egui::CornerRadius::same(r.min((rect.height() / 2.0).floor() as u8))
+    });
+    let fg = button_frame_r(ui, rect, &resp, look, radius);
     let bold = matches!(look, Look::Primary(_));
     let pic_w = if matches!(pic, Pic::None) { 0.0 } else { PIC };
     let room = (rect.width() - pic_w - 16.0 - if pic_w > 0.0 { PIC_GAP } else { 0.0 }).max(8.0);
@@ -492,20 +496,23 @@ fn action_button(
     }
 }
 
-/// A grid of buttons ([`Widget::Buttons`]): every button as wide as the others, in rows.
+/// A grid of buttons ([`Widget::Buttons`]): every cell as wide as the others, in rows as tall as
+/// their tallest button. A button that says it is narrower or lower than its cell sits where
+/// `align` says (the middle by default).
 fn button_grid(
     ui: &mut egui::Ui,
     c: &Ctx<'_>,
     label: &str,
     columns: u8,
     buttons: &[Button],
+    align: Option<ButtonSide>,
     event: &mut Event,
 ) {
     field_label(ui, label);
     let cols = group_columns(columns, buttons.len());
-    let rows = group_rows(columns, buttons.len());
+    let heights = grid_row_heights(columns, buttons);
     let width = ui.available_width();
-    let height = rows as f32 * CONTROL_H + rows.saturating_sub(1) as f32 * BTN_GAP;
+    let height = heights.iter().sum::<f32>() + heights.len().saturating_sub(1) as f32 * BTN_GAP;
     let (area, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     if buttons.is_empty() {
         ui.painter().text(
@@ -518,19 +525,41 @@ fn button_grid(
         return;
     }
     let cell_w = ((width - BTN_GAP * cols.saturating_sub(1) as f32) / cols as f32).max(24.0);
-    for (i, b) in buttons.iter().enumerate() {
-        let (row, col) = (i / cols, i % cols);
-        let at = pos2(
-            area.min.x + col as f32 * (cell_w + BTN_GAP),
-            area.min.y + row as f32 * (CONTROL_H + BTN_GAP),
-        );
-        let r = Rect::from_min_size(at, vec2(cell_w, CONTROL_H)).intersect(area);
-        let pic = button_pic(ui.ctx(), &b.icon);
-        let id = ui.id().with(("grid_button", c.index, &b.id));
-        let resp = action_button(ui, r, id, look_of(b.tone, c.accent), &pic, &b.label, &b.id);
-        if resp.clicked() && *event == Event::None {
-            *event = Event::Press(b.id.clone());
+    let mut top = area.min.y;
+    for (row, row_h) in heights.iter().enumerate() {
+        for (col, b) in buttons.iter().skip(row * cols).take(cols).enumerate() {
+            let cell_x = area.min.x + col as f32 * (cell_w + BTN_GAP);
+            let w = if b.width == 0 {
+                cell_w
+            } else {
+                f32::from(b.width).min(cell_w)
+            };
+            let h = button_height(b);
+            let x = match align.unwrap_or(ButtonSide::Center) {
+                ButtonSide::Start => cell_x,
+                ButtonSide::Center => cell_x + (cell_w - w) / 2.0,
+                ButtonSide::End => cell_x + cell_w - w,
+            };
+            let r =
+                Rect::from_min_size(pos2(x, top + (row_h - h) / 2.0), vec2(w, h)).intersect(area);
+            let (label, icon, tone) = b.face(c.on.contains(&b.id));
+            let pic = button_pic(ui.ctx(), icon);
+            let id = ui.id().with(("grid_button", c.index, &b.id));
+            let resp = action_button(
+                ui,
+                r,
+                id,
+                look_of(tone, c.accent),
+                &pic,
+                label,
+                &b.id,
+                b.radius,
+            );
+            if resp.clicked() && *event == Event::None {
+                *event = Event::Press(b.id.clone());
+            }
         }
+        top += row_h + BTN_GAP;
     }
 }
 
@@ -556,12 +585,16 @@ fn body_widgets(
         let visible = form.matching(i);
         let w = form.spec.widgets[i].clone();
         let Form {
-            fields, filters, ..
+            fields,
+            filters,
+            on,
+            ..
         } = &mut *form;
         let ctx = Ctx {
             index: i,
             accent,
             visible: &visible,
+            on,
         };
         // each widget is a group of its own, so the label sits close to its control
         let group = ui.vertical(|ui| {
@@ -589,6 +622,8 @@ struct Ctx<'a> {
     accent: Color32,
     /// For a list: the options that match its search box.
     visible: &'a [usize],
+    /// The toggle buttons that show their second look now.
+    on: &'a std::collections::BTreeSet<String>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -682,10 +717,11 @@ fn widget(
                 label,
                 columns,
                 buttons,
+                align,
                 ..
             },
             _,
-        ) => button_grid(ui, c, label, *columns, buttons, event),
+        ) => button_grid(ui, c, label, *columns, buttons, *align, event),
         (Widget::Spacer { height, .. }, _) => {
             let h = height.unwrap_or(SPACER_DEFAULT);
             ui.allocate_exact_size(vec2(1.0, h), Sense::hover());

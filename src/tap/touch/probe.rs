@@ -27,15 +27,10 @@ static LAST: AtomicUsize = AtomicUsize::new(NEVER);
 /// since (see [`take_pending_save`]).
 static PENDING_SAVE: AtomicBool = AtomicBool::new(false);
 
-/// The trackpad classes of the macOS I/O registry: the built-in one and a Bluetooth Magic Trackpad.
-/// (`AppleMultitouchDevice` is left out on purpose: a Magic Mouse is one too.)
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-const MAC_CLASSES: [&str; 2] = ["AppleMultitouchTrackpad", "BNBTrackpadDevice"];
-
 /// How many objects of class `class` an `ioreg -r -c <class>` listing shows. Pure, so it is unit
 /// tested on every OS. A registry entry is a line like
 /// `+-o AppleMultitouchTrackpad  <class AppleMultitouchTrackpad, id 0x1000003a5, registered, ...>`.
-#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
+#[allow(dead_code)] // read by the macOS backend (and by tests)
 pub(crate) fn count_ioreg(listing: &str, class: &str) -> usize {
     let tag = format!("<class {class},");
     listing
@@ -44,67 +39,9 @@ pub(crate) fn count_ioreg(listing: &str, class: &str) -> usize {
         .count()
 }
 
-/// Asks `ioreg` for one class, with a time limit. `None` when it could not be run or answered late.
-#[cfg(target_os = "macos")]
-fn ioreg(class: &str) -> Option<String> {
-    use std::process::Command;
-    use std::sync::mpsc;
-    use std::time::Duration;
-    let class = class.to_string();
-    let (tx, rx) = mpsc::channel();
-    std::thread::Builder::new()
-        .name("cursorpie-ioreg".into())
-        .spawn(move || {
-            let out = Command::new("/usr/sbin/ioreg")
-                .args(["-r", "-c", &class, "-d", "0"])
-                .output()
-                .ok()
-                .filter(|o| o.status.success())
-                .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
-            let _ = tx.send(out);
-        })
-        .ok()?;
-    rx.recv_timeout(Duration::from_millis(1500)).ok().flatten()
-}
-
 /// How many trackpads the system lists right now. Starts nothing, loads nothing private.
 pub fn probe() -> usize {
-    #[cfg(target_os = "macos")]
-    {
-        // one physical trackpad can show up under both classes: the larger count, not the sum
-        MAC_CLASSES
-            .iter()
-            .filter_map(|c| ioreg(c).map(|l| count_ioreg(&l, c)))
-            .max()
-            .unwrap_or(0)
-    }
-    #[cfg(all(windows, not(target_os = "macos")))]
-    {
-        super::precision::probe()
-    }
-    // `check-windows` on another OS only type-checks the Windows code: its Raw Input calls do not
-    // exist there, so they must not be reachable, or the test binary fails to link.
-    #[cfg(all(feature = "check-windows", not(windows), not(target_os = "macos")))]
-    {
-        0
-    }
-    #[cfg(all(
-        target_os = "linux",
-        not(feature = "check-windows"),
-        not(target_os = "macos")
-    ))]
-    {
-        super::evdev::probe()
-    }
-    #[cfg(not(any(
-        target_os = "macos",
-        target_os = "linux",
-        windows,
-        feature = "check-windows"
-    )))]
-    {
-        0
-    }
+    crate::platform::probe_trackpads()
 }
 
 /// Looks for trackpads now and remembers the answer for Settings ([`last_scan`]).

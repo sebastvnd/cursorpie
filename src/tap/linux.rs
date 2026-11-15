@@ -177,7 +177,7 @@ pub fn spawn(notifier: Notifier) {
     );
     x11::warm_index();
     let state = Arc::new(Mutex::new(Gesture::Idle));
-    touch::start(state.clone(), notifier.clone());
+    crate::platform::start_touch_source(state.clone(), notifier.clone());
     let started = std::thread::Builder::new()
         .name("cursorpie-x11-tap".into())
         .spawn(move || run(state, notifier));

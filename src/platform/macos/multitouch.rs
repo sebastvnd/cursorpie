@@ -16,11 +16,11 @@
 //! was **not verified on a Mac in this change**; keep it in this file and note the macOS release it
 //! was verified on when S1 is done.
 
-use super::recognizer::Finger;
-use super::{Sink, Status, set_status};
 use crate::config::{cfg, lock};
 use crate::msg::Notifier;
 use crate::tap::gesture::Gesture;
+use crate::tap::touch::recognizer::Finger;
+use crate::tap::touch::{Sink, Status, set_status};
 use std::ffi::{CString, c_char, c_int, c_void};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -507,6 +507,51 @@ fn run(hub: &'static Hub) {
             }
         }
     }
+}
+
+// ------------------------------------------------------------------------------------ the backend
+
+/// Starts the touch source on its own thread. It idles until the setting `touch_trigger` is on:
+/// only then is anything loaded (the private framework).
+pub(crate) fn start_touch_source(state: Arc<Mutex<Gesture>>, notifier: Notifier) {
+    spawn(state, notifier);
+}
+
+/// The trackpad classes of the macOS I/O registry: the built-in one and a Bluetooth Magic Trackpad.
+/// (`AppleMultitouchDevice` is left out on purpose: a Magic Mouse is one too.)
+#[allow(dead_code)] // the other OSes build this file for its tests only
+const MAC_CLASSES: [&str; 2] = ["AppleMultitouchTrackpad", "BNBTrackpadDevice"];
+
+/// Asks `ioreg` for one class, with a time limit. `None` when it could not be run or answered late.
+fn ioreg(class: &str) -> Option<String> {
+    use std::process::Command;
+    use std::sync::mpsc;
+    use std::time::Duration;
+    let class = class.to_string();
+    let (tx, rx) = mpsc::channel();
+    std::thread::Builder::new()
+        .name("cursorpie-ioreg".into())
+        .spawn(move || {
+            let out = Command::new("/usr/sbin/ioreg")
+                .args(["-r", "-c", &class, "-d", "0"])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+            let _ = tx.send(out);
+        })
+        .ok()?;
+    rx.recv_timeout(Duration::from_millis(1500)).ok().flatten()
+}
+
+/// How many trackpads the system lists right now. Starts nothing, loads nothing private.
+pub fn probe_trackpads() -> usize {
+    // one physical trackpad can show up under both classes: the larger count, not the sum
+    MAC_CLASSES
+        .iter()
+        .filter_map(|c| ioreg(c).map(|l| crate::tap::touch::probe::count_ioreg(&l, c)))
+        .max()
+        .unwrap_or(0)
 }
 
 #[cfg(test)]

@@ -344,6 +344,19 @@ pub fn cursor_pos() -> Option<(f64, f64)> {
     Some((p.x, p.y))
 }
 
+/// The system answers at once: the same as [`cursor_pos`].
+pub fn cursor_pos_fresh() -> Option<(f64, f64)> {
+    cursor_pos()
+}
+
+/// The system needs no asking for the pointer.
+pub fn pointer_hot(_on: bool) {}
+
+/// Only a Wayland session shows a black square when a transparent window is first mapped.
+pub fn set_window_veil(_window: std::os::raw::c_ulong, _on: bool) -> bool {
+    false
+}
+
 /// Activates an app and waits (briefly) until macOS really has it in front: `open` returns
 /// before the switch is done, and keys sent too early would reach the previous app.
 pub fn activate_app(bundle: &str) {
@@ -378,6 +391,11 @@ pub fn display_rects() -> Vec<ScreenRect> {
             }
         })
         .collect()
+}
+
+/// winit's own choice of window system stays: there is only one on this OS.
+pub fn event_loop_builder_hook() -> Option<eframe::EventLoopBuilderHook> {
+    None
 }
 
 #[cfg(test)]

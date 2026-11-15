@@ -4,8 +4,8 @@ use super::App;
 use crate::config::flow::{add_flow, import_flow_report, merge_flows};
 use crate::config::share::{add_profile, import_file_with_flows};
 use crate::config::{
-    Action, Flow, Item, ItemKind, MAX_CONFIG_FILE_BYTES, NodeKind, cfg, has_commands, icons_dir,
-    item_at_mut, parse_config, profile_has_commands, read_text_capped, tilde,
+    Action, Flow, Item, ItemKind, MAX_CONFIG_FILE_BYTES, NativeOp, NodeKind, cfg, has_commands,
+    icons_dir, item_at_mut, parse_config, profile_has_commands, read_text_capped, tilde,
 };
 use crate::msg::Msg;
 use crate::platform;
@@ -249,9 +249,17 @@ impl App {
                     .flows
                     .get_mut(flow)
                     .and_then(|f| f.nodes.iter_mut().find(|n| n.id == node))
-                    && matches!(n.kind, NodeKind::OpenApp(_))
                 {
-                    n.kind = NodeKind::OpenApp(app);
+                    match &mut n.kind {
+                        NodeKind::OpenApp(_) => n.kind = NodeKind::OpenApp(app),
+                        // *Open app (smart)* keeps its way of opening; only the app changes
+                        NodeKind::Native {
+                            op: NativeOp::OpenAppSmart,
+                            a,
+                            ..
+                        } => *a = app,
+                        _ => {}
+                    }
                 }
             }
             Msg::ActionAppPicked {

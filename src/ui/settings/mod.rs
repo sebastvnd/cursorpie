@@ -30,7 +30,8 @@
 
 mod action_editor;
 mod add_panel;
-mod brand;
+// the pie draws the mark in its empty center (see `ui::pie`)
+pub(crate) mod brand;
 mod demo;
 mod icon_catalog;
 mod icon_picker;

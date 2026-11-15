@@ -254,21 +254,8 @@ fn write_bridge_file(port: u16, token: &str) -> std::io::Result<()> {
         port,
         token: token.to_string(),
     })?;
-    let mut opts = std::fs::OpenOptions::new();
-    opts.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        opts.mode(0o600);
-    }
-    #[allow(unused_mut)] // only changed on Unix
-    let mut file = opts.open(bridge_file_path())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        // a file that was there already keeps its old mode otherwise
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    }
+    // readable by the owner only (also when the file was there already with a wider mode)
+    let mut file = crate::platform::create_private_file(&bridge_file_path())?;
     file.write_all(text.as_bytes())
 }
 

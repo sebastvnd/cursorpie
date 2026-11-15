@@ -270,3 +270,8 @@ fn take_pending_raise(hwnd: HWND) {
         }
     }
 }
+
+/// winit's own choice of window system stays: there is only one on this OS.
+pub fn event_loop_builder_hook() -> Option<eframe::EventLoopBuilderHook> {
+    None
+}
