@@ -33,7 +33,8 @@
 use crate::config::PanelOp;
 use crate::flowrun::{PanelCommand, PanelValue};
 use crate::panel::{
-    self, Button, Icon, PanelResult, PanelSpec, Patch, Place, Source, TextStyle, Tone, Widget,
+    self, Button, Icon, PanelResult, PanelSpec, Patch, Place, Source, TextFmt, TextStyle, Tone,
+    Widget,
 };
 use crate::ui::hud::{HudNote, HudProgress};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -114,6 +115,9 @@ struct State {
     ended: Option<Instant>,
     /// The panels were taken off the screen.
     closed: bool,
+    /// Since when the run waits for the person to answer a question (an *Ask* block). That time is
+    /// not work: the progress panel neither opens during it nor counts it (see [`asking`]).
+    asking: Option<Instant>,
 }
 
 fn lock() -> MutexGuard<'static, Option<State>> {
@@ -152,6 +156,7 @@ pub fn begin(name: &str, auto: bool) {
             own: Vec::new(),
             ended: None,
             closed: false,
+            asking: None,
         });
     }
     let _ = std::thread::Builder::new()
@@ -189,6 +194,20 @@ pub fn steps(done: u32, total: u32, round: bool) {
         st.done = done;
         st.total = total;
         st.round = round;
+    }
+}
+
+/// The run starts (`true`) or stops (`false`) waiting for the person to answer a question. A run
+/// that asks again and again (a calculator in a panel) is not slow: the time spent in the questions
+/// does not count towards [`OPEN_AFTER`], and the progress panel does not open while one is open,
+/// where it would only compete with the question for the window.
+pub fn asking(on: bool) {
+    if let Some(st) = lock().as_mut() {
+        if on {
+            st.asking.get_or_insert_with(Instant::now);
+        } else if let Some(since) = st.asking.take() {
+            st.started += since.elapsed();
+        }
     }
 }
 
@@ -306,6 +325,7 @@ fn progress_spec(
             id: STEP.into(),
             text: step.to_string(),
             style: TextStyle::Body,
+            fmt: TextFmt::default(),
             show_if: None,
         });
     }
@@ -402,6 +422,7 @@ impl State {
         self.auto
             && !self.auto_gone
             && !self.quiet
+            && self.asking.is_none()
             && now.saturating_duration_since(self.started) >= OPEN_AFTER
     }
 
@@ -534,6 +555,7 @@ mod tests {
             own: Vec::new(),
             ended: None,
             closed: false,
+            asking: None,
         }
     }
 
@@ -709,4 +731,23 @@ mod tests {
     }
 
     static TURN: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn time_spent_answering_a_question_does_not_make_a_run_slow() {
+        let mut st = state();
+        // a run that has lasted long enough would open its panel...
+        st.started = Instant::now() - OPEN_AFTER - Duration::from_millis(100);
+        assert!(st.wants_auto(Instant::now()));
+        // ...but not while a question is open
+        st.asking = Some(Instant::now());
+        assert!(!st.wants_auto(Instant::now()), "no panel over a question");
+        // and the time of the question is given back when it is answered
+        st.asking = Some(Instant::now() - Duration::from_secs(30));
+        let since = st.asking.take().unwrap();
+        st.started += since.elapsed();
+        assert!(
+            !st.wants_auto(Instant::now()),
+            "thirty seconds of thinking are not thirty seconds of work"
+        );
+    }
 }

@@ -26,6 +26,7 @@ use crate::ui::draw::{ease_out_cubic, rgb};
 use crate::ui::screen::screen_rect_at;
 use crate::ui::settings::panel_form::{self, Event};
 use eframe::egui::{self, Pos2, Rect, Vec2, pos2, vec2};
+use std::collections::VecDeque;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -43,6 +44,10 @@ const FOCUS_FRAMES: u8 = 6;
 /// before it goes away. The flow ending lets it go at once (`panel::release`); this is only the
 /// net for a flow that does something slow, or that never asks again.
 const LINGER: Duration = Duration::from_secs(6);
+/// How many presses a panel that waits for the flow (`keep_open`) remembers. A remote control or a
+/// calculator is clicked faster than a flow answers; the presses are played back one by one, in the
+/// order they were made, as the flow asks again. More than this are let go.
+const PENDING_MAX: usize = 8;
 /// How long a panel takes to come in: it fades in while it rises into place. Short on purpose, so
 /// the panel is there at once for the eye but does not jump at the person.
 const OPEN_TIME: Duration = Duration::from_millis(170);
@@ -77,6 +82,42 @@ pub struct ActivePanel {
     /// A panel that takes the window over from one that waited (`keep_open`) keeps its value, so
     /// nothing blinks and nothing plays again.
     pub shown: Option<Instant>,
+    /// Buttons pressed while the panel waited for the flow to ask again (`keep_open`), oldest
+    /// first. They are answered, one for each new question, as soon as the flow asks (see
+    /// [`ActivePanel::replay`]) instead of being thrown away.
+    pub pending: VecDeque<String>,
+}
+
+impl ActivePanel {
+    /// Remembers that `button` was pressed while the panel waited for the flow. Returns whether it
+    /// was kept (the queue is short on purpose, see [`PENDING_MAX`]).
+    pub(super) fn remember_press(&mut self, button: String) -> bool {
+        if self.pending.len() >= PENDING_MAX {
+            return false;
+        }
+        self.pending.push_back(button);
+        true
+    }
+
+    /// The answer of the oldest remembered press that still means something in the panel as it is
+    /// now: the button exists, does not cancel and is not refused (a required box that is empty).
+    /// Presses that no longer mean anything are dropped. The others stay for the next question.
+    pub(super) fn replay(&mut self) -> Option<PanelResult> {
+        while let Some(button) = self.pending.pop_front() {
+            let usable = self
+                .form
+                .spec
+                .find_button(&button)
+                .is_some_and(|b| !b.cancel);
+            if !usable {
+                continue;
+            }
+            if let Ok(answer) = self.form.submit(&button) {
+                return Some(answer);
+            }
+        }
+        None
+    }
 }
 
 /// The center of a card of size `card` on a display `area`, for a panel that wants to be at `place`
@@ -414,6 +455,7 @@ impl App {
             frames: 0,
             linger: None,
             shown: None,
+            pending: VecDeque::new(),
         });
         self.visible = true;
         self.show_window(ctx, win);
@@ -459,6 +501,21 @@ impl App {
         p.card = card;
         p.focus_first = false;
         p.linger = None;
+        // buttons that were pressed while the flow was busy are answered now, one for each question,
+        // so a quick run of clicks is not lost and the next frame already shows the new state
+        let replayed = p.replay();
+        match replayed {
+            Some(answer)
+                if self
+                    .panel
+                    .as_ref()
+                    .is_some_and(|p| p.form.keeps_open(&answer.button)) =>
+            {
+                self.linger_panel(ctx, answer);
+            }
+            Some(answer) => self.end_panel(ctx, answer),
+            None => {}
+        }
         ctx.request_repaint();
     }
 
@@ -541,10 +598,12 @@ impl App {
             let event = panel_form::draw(ui, card, &mut p.form, accent, &mut p.focus_first);
             // already answered and waiting for the flow: only Esc or a button that cancels still count
             let event = match event {
-                Event::Press(ref b)
+                // answered already: a press is remembered and played back when the flow asks again
+                Event::Press(b)
                     if p.linger.is_some()
-                        && !p.form.spec.find_button(b).is_some_and(|x| x.cancel) =>
+                        && !p.form.spec.find_button(&b).is_some_and(|x| x.cancel) =>
                 {
+                    p.remember_press(b);
                     Event::None
                 }
                 Event::Pick(..) if p.linger.is_some() => Event::None,
@@ -658,5 +717,59 @@ mod tests {
             cut.y <= 700.0 - 2.0 * WIN_MARGIN,
             "scrolls instead of overflowing"
         );
+    }
+
+    const CALC: &str = r#"{"id":"calc","keep_open":true,"widgets":[
+        {"type":"input","id":"screen","value":"0","required":true},
+        {"type":"buttons","buttons":[{"id":"a1","label":"1"},{"id":"a2","label":"2"}]}],
+        "buttons":[{"id":"close","label":"close","cancel":true}]}"#;
+
+    fn active(json: &str) -> ActivePanel {
+        let (reply, _rx) = mpsc::channel();
+        ActivePanel {
+            form: Form::new(PanelSpec::parse(json).unwrap()),
+            reply,
+            source: Source::Flow,
+            deadline: None,
+            focus_first: false,
+            card: vec2(400.0, 300.0),
+            frames: 0,
+            linger: Some(Instant::now()),
+            shown: None,
+            pending: VecDeque::new(),
+        }
+    }
+
+    #[test]
+    fn presses_made_while_the_flow_is_busy_are_played_back_in_order() {
+        let mut p = active(CALC);
+        assert!(p.remember_press("a1".into()));
+        assert!(p.remember_press("a2".into()));
+        assert_eq!(p.replay().unwrap().button, "a1");
+        assert_eq!(p.replay().unwrap().button, "a2");
+        assert!(p.replay().is_none(), "nothing left");
+    }
+
+    #[test]
+    fn a_press_that_means_nothing_any_more_is_dropped() {
+        let mut p = active(CALC);
+        p.remember_press("gone".into());
+        p.remember_press("close".into());
+        p.remember_press("a2".into());
+        assert_eq!(
+            p.replay().unwrap().button,
+            "a2",
+            "unknown and cancelling ones are skipped"
+        );
+    }
+
+    #[test]
+    fn the_memory_of_presses_is_short() {
+        let mut p = active(CALC);
+        for _ in 0..PENDING_MAX {
+            assert!(p.remember_press("a1".into()));
+        }
+        assert!(!p.remember_press("a1".into()), "one too many is let go");
+        assert_eq!(p.pending.len(), PENDING_MAX);
     }
 }

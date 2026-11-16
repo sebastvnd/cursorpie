@@ -157,6 +157,8 @@ impl App {
         // sheets over the page (the new flow sheet, the panel designer with its own copy of a
         // panel, the update offer) and the Flow tab's per-session state that points into `edit`
         self.ed.close_sheet();
+        // an imported pie that was never added belongs to this session: Settings opens without it
+        self.ed.close_import();
         self.ed.release_flow_state();
         self.ed.user_icons = Vec::new();
         self.ed.icons_not_listed = 0;

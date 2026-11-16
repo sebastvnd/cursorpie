@@ -14,13 +14,14 @@
 //! | the options of a list as lines of text | [`options_to_text`], [`text_to_options`] |
 //! | ready-made panels to start from | [`TEMPLATES`], [`template_spec`] |
 //! | to and from the text a flow block keeps | [`from_flow_text`], [`to_flow_text`] |
+//! | several widgets at once: copy, paste, remove, move | [`copy_widgets`], [`paste_widgets`], [`remove_widgets`], [`move_widgets`] |
 
 use super::spec::{
-    Button, Icon, Layout, MAX_BUTTONS, MAX_OPTIONS, MAX_WIDGETS, Opt, PanelSpec, ShowIf, TextStyle,
-    Tone, Widget,
+    Button, Icon, Layout, MAX_BUTTONS, MAX_OPTIONS, MAX_WIDGETS, Opt, Padding, PanelSpec, ShowIf,
+    TextFmt, TextStyle, Tone, Widget,
 };
 use crate::config::flow::MAX_PANEL_CHARS;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Something the designer can add to a panel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -190,12 +191,14 @@ pub fn new_widget(kind: Kind, taken: &BTreeSet<String>) -> Widget {
             id: String::new(),
             text: "Heading".into(),
             style: TextStyle::Heading,
+            fmt: TextFmt::default(),
             show_if: None,
         },
         Kind::Text => Widget::Text {
             id: String::new(),
             text: "Some text".into(),
             style: TextStyle::Body,
+            fmt: TextFmt::default(),
             show_if: None,
         },
         Kind::Separator => Widget::Separator { show_if: None },
@@ -208,6 +211,10 @@ pub fn new_widget(kind: Kind, taken: &BTreeSet<String>) -> Widget {
             multiline: kind == Kind::Multiline,
             required: false,
             max_chars: None,
+            value_fmt: TextFmt::default(),
+            width: None,
+            height: None,
+            text_padding: Padding::default(),
             show_if: None,
         },
         Kind::Number => Widget::Number {
@@ -331,6 +338,174 @@ pub fn duplicate_widget(spec: &mut PanelSpec, index: usize) -> Option<usize> {
         }
     }
     insert_widget(spec, index + 1, copy)
+}
+
+/// What the text of copied widgets starts with on the clipboard (the widgets follow as JSON), so a
+/// paste can tell them from any other text.
+pub const CLIP_WIDGETS: &str = "cursorpie-panel-widgets:";
+
+/// The most a paste reads: a bigger clipboard text is not a copy of widgets.
+const CLIP_MAX_BYTES: usize = 1_000_000;
+
+/// What [`paste_widgets`] did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PasteWidgets {
+    /// The text is not a copy of widgets: nothing happened.
+    NotWidgets,
+    /// The panel has no room for the copies: nothing happened.
+    Full,
+    /// The copies were added, at these places.
+    Done(Vec<usize>),
+}
+
+/// `old` when no id of `taken` is it, else the first free `base2`, `base3`, ... (the digits at the
+/// end of `old` are not part of the base, so `toggle2` becomes `toggle3` and not `toggle22`).
+fn fresh_like(old: &str, taken: &BTreeSet<String>) -> String {
+    if !taken.contains(old) {
+        return old.to_string();
+    }
+    let base = old.trim_end_matches(|c: char| c.is_ascii_digit());
+    let base = if base.is_empty() { old } else { base };
+    unique_id(base, taken)
+}
+
+/// The text for the clipboard when the widgets at `indices` are copied: [`CLIP_WIDGETS`] and then
+/// the widgets as JSON, in the order they have in the panel. `None` when there is nothing to copy.
+pub fn copy_widgets(spec: &PanelSpec, indices: &[usize]) -> Option<String> {
+    let mut at: Vec<usize> = indices
+        .iter()
+        .copied()
+        .filter(|i| *i < spec.widgets.len())
+        .collect();
+    at.sort_unstable();
+    at.dedup();
+    if at.is_empty() {
+        return None;
+    }
+    let widgets: Vec<&Widget> = at.iter().map(|i| &spec.widgets[*i]).collect();
+    let json = serde_json::to_string(&widgets).ok()?;
+    Some(format!("{CLIP_WIDGETS}{json}"))
+}
+
+/// Puts the widgets of a copy ([`copy_widgets`]) into `spec` from place `at` on (the end when it is
+/// too far). Each copy keeps its id unless a widget of the panel has it, and then gets one of its
+/// own, like the buttons of a grid; a `show_if` follows the widget it looked at when that was
+/// copied too, stays when the panel has a widget with that id, and is dropped otherwise (it would
+/// name a field that is not there). A group is pasted whole or not at all.
+pub fn paste_widgets(spec: &mut PanelSpec, at: usize, text: &str) -> PasteWidgets {
+    if text.len() > CLIP_MAX_BYTES {
+        return PasteWidgets::NotWidgets;
+    }
+    let Some(json) = text.trim_start().strip_prefix(CLIP_WIDGETS) else {
+        return PasteWidgets::NotWidgets;
+    };
+    let Ok(mut widgets) = serde_json::from_str::<Vec<Widget>>(json.trim()) else {
+        return PasteWidgets::NotWidgets;
+    };
+    if widgets.is_empty() {
+        return PasteWidgets::NotWidgets;
+    }
+    if spec.widgets.len() + widgets.len() > MAX_WIDGETS {
+        return PasteWidgets::Full;
+    }
+    let mut taken = taken_ids(spec);
+    let mut taken_buttons = taken_button_ids(spec);
+    let mut renamed: BTreeMap<String, String> = BTreeMap::new();
+    for w in &mut widgets {
+        if let Some(old) = w.id().map(str::to_string) {
+            let new = fresh_like(&old, &taken);
+            taken.insert(new.clone());
+            renamed.entry(old).or_insert_with(|| new.clone());
+            w.set_id(new);
+        }
+        if let Widget::Buttons { buttons, .. } = w {
+            for b in buttons.iter_mut() {
+                let new = fresh_like(&b.id, &taken_buttons);
+                taken_buttons.insert(new.clone());
+                b.id = new;
+            }
+        }
+    }
+    for w in &mut widgets {
+        if let Some(mut cond) = w.show_if().cloned() {
+            if let Some(new) = renamed.get(&cond.id) {
+                cond.id.clone_from(new);
+            }
+            let keep = taken.contains(&cond.id) && w.id() != Some(cond.id.as_str());
+            w.set_show_if(keep.then_some(cond));
+        }
+    }
+    let at = at.min(spec.widgets.len());
+    let count = widgets.len();
+    for (k, w) in widgets.into_iter().enumerate() {
+        spec.widgets.insert(at + k, w);
+    }
+    PasteWidgets::Done((at..at + count).collect())
+}
+
+/// A copy of the widgets at `indices` right after the last of them, with ids of their own.
+/// Returns where the copies are, or `None` when there is nothing to copy or the panel is full.
+pub fn duplicate_widgets(spec: &mut PanelSpec, indices: &[usize]) -> Option<Vec<usize>> {
+    let text = copy_widgets(spec, indices)?;
+    let last = indices
+        .iter()
+        .copied()
+        .filter(|i| *i < spec.widgets.len())
+        .max()?;
+    match paste_widgets(spec, last + 1, &text) {
+        PasteWidgets::Done(at) => Some(at),
+        _ => None,
+    }
+}
+
+/// Removes the widgets at `indices` (and every `show_if` that waited for one of them, see
+/// [`remove_widget`]). Returns what to select next: the widget now at the place of the first one
+/// removed, or the last one, or `None` for an empty panel.
+pub fn remove_widgets(spec: &mut PanelSpec, indices: &[usize]) -> Option<usize> {
+    let mut at: Vec<usize> = indices
+        .iter()
+        .copied()
+        .filter(|i| *i < spec.widgets.len())
+        .collect();
+    at.sort_unstable();
+    at.dedup();
+    let first = *at.first()?;
+    for i in at.into_iter().rev() {
+        remove_widget(spec, i);
+    }
+    (!spec.widgets.is_empty()).then(|| first.min(spec.widgets.len() - 1))
+}
+
+/// Moves the widgets at `indices` up (`-1`) or down (`1`) by one place, together: the ones that
+/// are not next to each other stay apart, and a group that is at the end already stays where it
+/// is. Returns where they are now, or `None` when nothing moved.
+pub fn move_widgets(spec: &mut PanelSpec, indices: &[usize], delta: isize) -> Option<Vec<usize>> {
+    let len = spec.widgets.len();
+    let mut on = vec![false; len];
+    for i in indices {
+        if *i < len {
+            on[*i] = true;
+        }
+    }
+    let mut moved = false;
+    if delta < 0 {
+        for i in 1..len {
+            if on[i] && !on[i - 1] {
+                spec.widgets.swap(i, i - 1);
+                on.swap(i, i - 1);
+                moved = true;
+            }
+        }
+    } else {
+        for i in (0..len.saturating_sub(1)).rev() {
+            if on[i] && !on[i + 1] {
+                spec.widgets.swap(i, i + 1);
+                on.swap(i, i + 1);
+                moved = true;
+            }
+        }
+    }
+    moved.then(|| (0..len).filter(|i| on[*i]).collect())
 }
 
 /// Where an item that is dragged from `from` ends up when it is dropped on the item `over`, in the
@@ -507,9 +682,10 @@ pub fn new_button(spec: &PanelSpec) -> Option<Button> {
     })
 }
 
-/// Whether the panel has no button of its own, so it gets the default ones.
+/// Whether the panel has no button of its own and did not ask for none, so it gets the default
+/// ones (Cancel and OK).
 pub fn uses_default_buttons(spec: &PanelSpec) -> bool {
-    spec.buttons.is_empty()
+    spec.buttons.is_empty() && !spec.no_buttons
 }
 
 /// A line for the list of widgets: what the person would call it.
@@ -638,9 +814,7 @@ pub const TEMPLATES: &[Template] = &[
       { "id": "fwd10", "label": "10 s", "icon": "fast-forward" }
     ] }
   ],
-  "buttons": [
-    { "id": "close", "label": "Close", "cancel": true }
-  ]
+  "no_buttons": true
 }"#,
     },
     Template {
@@ -963,6 +1137,7 @@ mod tests {
                 id: String::new(),
                 text: "x".repeat(900),
                 style: TextStyle::Body,
+                fmt: TextFmt::default(),
                 show_if: None,
             });
         }
@@ -981,5 +1156,140 @@ mod tests {
         assert_eq!(lines[2], "first line");
         assert!(lines[3].ends_with('\u{2026}') && lines[3].chars().count() <= 34);
         assert_eq!(lines[4], "");
+    }
+}
+
+#[cfg(test)]
+mod clip_tests {
+    use super::*;
+
+    fn spec(json: &str) -> PanelSpec {
+        serde_json::from_str(json).expect("json")
+    }
+
+    fn ids(spec: &PanelSpec) -> Vec<String> {
+        spec.widgets
+            .iter()
+            .map(|w| w.id().unwrap_or("-").to_string())
+            .collect()
+    }
+
+    fn four() -> PanelSpec {
+        spec(
+            r#"{"widgets":[{"type":"toggle","id":"a"},{"type":"toggle","id":"b"},
+            {"type":"toggle","id":"c"},{"type":"toggle","id":"d"}]}"#,
+        )
+    }
+
+    #[test]
+    fn pasted_widgets_get_ids_of_their_own_and_keep_their_order() {
+        let mut s = four();
+        let text = copy_widgets(&s, &[2, 0, 0]).unwrap();
+        assert!(text.starts_with(CLIP_WIDGETS));
+        assert_eq!(
+            paste_widgets(&mut s, 4, &text),
+            PasteWidgets::Done(vec![4, 5])
+        );
+        assert_eq!(ids(&s), ["a", "b", "c", "d", "a2", "c2"]);
+        // pasted into a panel without them, the ids stay
+        let mut other = spec(r#"{"widgets":[{"type":"toggle","id":"z"}]}"#);
+        assert_eq!(
+            paste_widgets(&mut other, 0, &text),
+            PasteWidgets::Done(vec![0, 1])
+        );
+        assert_eq!(ids(&other), ["a", "c", "z"]);
+    }
+
+    #[test]
+    fn a_show_if_follows_a_copied_widget_and_is_dropped_when_nothing_is_there() {
+        let mut s = spec(
+            r#"{"widgets":[{"type":"toggle","id":"a"},
+            {"type":"toggle","id":"b","show_if":{"id":"a"}}]}"#,
+        );
+        // both copied, into the same panel: the copy waits for the copy
+        let both = copy_widgets(&s, &[0, 1]).unwrap();
+        assert_eq!(
+            paste_widgets(&mut s, 2, &both),
+            PasteWidgets::Done(vec![2, 3])
+        );
+        assert_eq!(s.widgets[3].show_if().map(|c| c.id.as_str()), Some("a2"));
+        // only the one that waits, into the same panel: it still waits for the widget it had
+        let only = copy_widgets(&s, &[1]).unwrap();
+        assert_eq!(paste_widgets(&mut s, 4, &only), PasteWidgets::Done(vec![4]));
+        assert_eq!(s.widgets[4].show_if().map(|c| c.id.as_str()), Some("a"));
+        // only the one that waits, into a panel that has no `a`: the condition goes
+        let mut empty = PanelSpec::default();
+        assert_eq!(
+            paste_widgets(&mut empty, 0, &only),
+            PasteWidgets::Done(vec![0])
+        );
+        assert!(empty.widgets[0].show_if().is_none());
+    }
+
+    #[test]
+    fn the_buttons_of_a_copied_grid_answer_with_ids_of_their_own() {
+        let mut s = PanelSpec::default();
+        let grid = new_widget(Kind::Buttons, &taken_ids(&s));
+        assert_eq!(insert_widget(&mut s, 0, grid), Some(0));
+        assert_eq!(duplicate_widgets(&mut s, &[0]), Some(vec![1]));
+        let all: Vec<String> = s.all_buttons().map(|b| b.id.clone()).collect();
+        let distinct: BTreeSet<&String> = all.iter().collect();
+        assert!(all.len() >= 2);
+        assert_eq!(distinct.len(), all.len(), "{all:?}");
+    }
+
+    #[test]
+    fn other_text_is_not_widgets_and_a_full_panel_takes_nothing() {
+        let mut s = four();
+        let before = s.clone();
+        assert_eq!(paste_widgets(&mut s, 0, "hello"), PasteWidgets::NotWidgets);
+        let broken = format!("{CLIP_WIDGETS}[{{\"type\":");
+        assert_eq!(paste_widgets(&mut s, 0, &broken), PasteWidgets::NotWidgets);
+        let none = format!("{CLIP_WIDGETS}[]");
+        assert_eq!(paste_widgets(&mut s, 0, &none), PasteWidgets::NotWidgets);
+        assert_eq!(copy_widgets(&s, &[]), None);
+        assert_eq!(copy_widgets(&s, &[9]), None);
+        assert_eq!(s, before);
+        let text = copy_widgets(&s, &[0, 1]).unwrap();
+        while s.widgets.len() < MAX_WIDGETS - 1 {
+            let w = new_widget(Kind::Separator, &taken_ids(&s));
+            insert_widget(&mut s, 0, w);
+        }
+        let count = s.widgets.len();
+        assert_eq!(paste_widgets(&mut s, 0, &text), PasteWidgets::Full);
+        assert_eq!(s.widgets.len(), count);
+    }
+
+    #[test]
+    fn several_widgets_are_removed_and_moved_together() {
+        let mut s = four();
+        assert_eq!(remove_widgets(&mut s, &[2, 0]), Some(0));
+        assert_eq!(ids(&s), ["b", "d"]);
+        assert_eq!(
+            remove_widgets(&mut s, &[0, 1]),
+            None,
+            "an empty panel selects nothing"
+        );
+        assert_eq!(remove_widgets(&mut s, &[3]), None);
+
+        let mut s = four();
+        assert_eq!(move_widgets(&mut s, &[1, 2], -1), Some(vec![0, 1]));
+        assert_eq!(ids(&s), ["b", "c", "a", "d"]);
+        assert_eq!(move_widgets(&mut s, &[0, 1], -1), None, "already first");
+        assert_eq!(move_widgets(&mut s, &[0, 1], 1), Some(vec![1, 2]));
+        assert_eq!(ids(&s), ["a", "b", "c", "d"]);
+        // two that are apart stay apart, and the one at the end stays
+        assert_eq!(move_widgets(&mut s, &[0, 3], 1), Some(vec![1, 3]));
+        assert_eq!(ids(&s), ["b", "a", "c", "d"]);
+    }
+
+    #[test]
+    fn removing_a_widget_frees_the_ones_that_waited_for_it() {
+        let mut s = spec(
+            r#"{"widgets":[{"type":"toggle","id":"a"},
+            {"type":"toggle","id":"b","show_if":{"id":"a"}}]}"#,
+        );
+        assert_eq!(remove_widgets(&mut s, &[0]), Some(0));
+        assert!(s.widgets[0].show_if().is_none());
     }
 }

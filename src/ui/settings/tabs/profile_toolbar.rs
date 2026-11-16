@@ -335,6 +335,20 @@ pub(super) fn profile_toolbar(
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
+            // while a pie is being imported these only get in the way: the tray is closed with its
+            // own button (or Esc), and a new profile would pull the pie out from under it
+            if ed.pie_import.is_some() {
+                ui.disable();
+            }
+            // the same switch as the Flow tab's: the classic pie, or the pie editor (a canvas)
+            if let Some(view) = super::pie_editor::view_switch(ui, ed.menu_view, accent) {
+                ed.menu_view = view;
+                ed.adding = false;
+                ed.add_catalog = None;
+                ed.picking_icon = false;
+                ed.pie_drag = None;
+                ed.stop_recording();
+            }
             // "..." unfolds the rarely used actions as a row of icons to its left (hiding "+"
             // meanwhile) and turns into an X that folds them again
             let more_id = egui::Id::new("profile_more_open");

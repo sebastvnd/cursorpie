@@ -18,6 +18,10 @@
 //! }
 //! ```
 //!
+//! A flow can keep the state of a panel in its variables: a toggle button with `bind` and a panel with
+//! `restore` read them when the panel is shown ([`PanelSpec::restore_from`]) and every answer writes
+//! them back ([`Form`](super::Form)).
+//!
 //! Nothing here is trusted. [`PanelSpec::checked`] limits the size of everything, removes control
 //! characters, makes the ids valid and unique, and drops what cannot be shown, so a spec that comes
 //! from a web page's extension cannot make CursorPie draw a huge window or fill memory.
@@ -80,6 +84,10 @@ pub const HEIGHT_MAX: f32 = 900.0;
 
 /// Most space between the edge of the card and its content, on one side (points).
 pub const PADDING_MAX: f32 = 60.0;
+/// The narrowest and the lowest an `input` box can be made, and the highest (points).
+pub const BOX_W_MIN: f32 = 60.0;
+pub const BOX_H_MIN: f32 = 24.0;
+pub const BOX_H_MAX: f32 = 400.0;
 
 /// Ids a field may not have: a flow sets these variables itself.
 const RESERVED_IDS: [&str; 3] = ["ok", "index", "code"];
@@ -93,6 +101,109 @@ pub const NUMBER_LIMIT: f64 = 1e12;
 /// panel designer stays short and reads like something a person would write.
 fn is_default<T: Default + PartialEq>(value: &T) -> bool {
     *value == T::default()
+}
+
+/// Smallest and biggest font size a [`TextFmt`] may ask for (points).
+pub const FONT_SIZE_MIN: u8 = 8;
+pub const FONT_SIZE_MAX: u8 = 48;
+
+/// Where a text sits in the width it has.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TextAlign {
+    /// Against the left edge (the default).
+    #[default]
+    Left,
+    /// In the middle.
+    Center,
+    /// Against the right edge.
+    Right,
+}
+
+/// Where a text sits in the height of its box (only a box that is taller than its text shows it:
+/// the display of a calculator, a box of several lines).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TextVAlign {
+    /// Against the top edge.
+    #[default]
+    Top,
+    /// In the middle.
+    Middle,
+    /// Against the bottom edge.
+    Bottom,
+}
+
+/// How far a text can be nudged from where its alignment puts it, to either side (points).
+pub const NUDGE_MAX: i16 = 60;
+
+/// How a text is written, on top of what its [`TextStyle`] (or the place it is in: a title, a label)
+/// already does. Every part is optional and a part left out keeps the usual look, so
+/// `{ "align": "center", "italic": true }` changes only those two things.
+///
+/// ```json
+/// { "type": "text", "text": "Done", "fmt": { "align": "center", "bold": true, "size": 22, "color": "#16a34a" } }
+/// ```
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TextFmt {
+    /// `left` (default), `center` or `right`.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub align: TextAlign,
+    /// Heavy letters. Missing: what the style says (a heading is bold, the rest is regular), so
+    /// `false` turns a heading light.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bold: Option<bool>,
+    /// Slanted letters.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub italic: bool,
+    /// A line under the text.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub underline: bool,
+    /// A line through the text.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub strike: bool,
+    /// Size in points (8 to 48). Missing: the size of the style.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u8>,
+    /// `#rrggbb`. Missing: the color of the style.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    /// Where the text sits in the height of its box: `top`, `middle` or `bottom`. Only the text of
+    /// a box (`value_fmt` of an `input`) uses it. Missing: what the box does by itself (the middle
+    /// of a one-line box, the top of a box of several lines).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valign: Option<TextVAlign>,
+    /// Moves the text this many points to the right (to the left when negative), after `align` put
+    /// it. For the title, the subtitle and the text of a box.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub dx: i16,
+    /// Moves the text this many points down (up when negative).
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub dy: i16,
+}
+
+impl TextFmt {
+    /// Whether this changes nothing (every part is left out).
+    pub fn is_plain(&self) -> bool {
+        *self == TextFmt::default()
+    }
+
+    /// The color, when there is a good one.
+    pub fn rgb(&self) -> Option<[u8; 3]> {
+        self.color.as_deref().and_then(parse_hex)
+    }
+
+    /// Limits the size and drops a color that is not `#rrggbb` (see [`PanelSpec::checked`]).
+    pub(super) fn clean_in_place(&mut self) {
+        self.size = self.size.map(|n| n.clamp(FONT_SIZE_MIN, FONT_SIZE_MAX));
+        self.dx = self.dx.clamp(-NUDGE_MAX, NUDGE_MAX);
+        self.dy = self.dy.clamp(-NUDGE_MAX, NUDGE_MAX);
+        self.color = self
+            .color
+            .take()
+            .and_then(|c| parse_hex(&c))
+            .map(format_hex);
+    }
 }
 
 /// Where a panel appears.
@@ -290,6 +401,9 @@ pub enum Widget {
         text: String,
         #[serde(default, skip_serializing_if = "is_default")]
         style: TextStyle,
+        /// Alignment, weight, slant, size and color on top of the style.
+        #[serde(default, skip_serializing_if = "is_default")]
+        fmt: TextFmt,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         show_if: Option<ShowIf>,
     },
@@ -318,6 +432,21 @@ pub enum Widget {
         required: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         max_chars: Option<u32>,
+        /// How the text inside the box is written (alignment, position in the box, weight, slant,
+        /// size, color). The label above the box follows the panel's `label_fmt`.
+        #[serde(default, skip_serializing_if = "is_default")]
+        value_fmt: TextFmt,
+        /// Width in points (60 up to the width of the card). Missing: as wide as the card.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        width: Option<f32>,
+        /// Height in points (24 to 400). Missing: the usual height (one line, or four lines).
+        /// A box of several lines grows when its text is taller.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        height: Option<f32>,
+        /// Space between the edge of the box and its text, per side (0 to 60 points; 12 left
+        /// and right and 4 above and below, or 8 for several lines, when a side is missing).
+        #[serde(default, skip_serializing_if = "is_default")]
+        text_padding: Padding,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         show_if: Option<ShowIf>,
     },
@@ -490,6 +619,14 @@ pub struct Button {
     /// The tone of a toggle in its second look (none: the same).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_tone: Option<Tone>,
+    /// The name of a flow variable that holds the state of a toggle (`1`/`0`). When the panel is
+    /// shown the toggle takes its look from that variable (a variable that is not set leaves it
+    /// as `on` says), and every answer of the panel writes the state back to it, so the flow and
+    /// the button always agree, however often the panel is closed and opened again. Without
+    /// `bind` a toggle only remembers its look while the panel stays open (see
+    /// [`PanelSpec::restore`], which uses the button's `id` as the variable).
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub bind: String,
     /// Width in points (24 to 640). 0 or missing: as wide as the text needs in the row at the
     /// bottom, the whole cell in a grid. In a grid a narrower button sits where the grid's `align`
     /// says.
@@ -515,6 +652,14 @@ impl Button {
         self.icon = clean_line(&self.icon, MAX_ICON_CHARS);
         self.on_label = clean_line(&self.on_label, MAX_LABEL_CHARS);
         self.on_icon = clean_line(&self.on_icon, MAX_ICON_CHARS);
+        self.bind = self.bind.trim().to_string();
+        if !self.bind.is_empty() && !is_var_name(&self.bind) {
+            return Err(SpecError::Invalid(format!(
+                "`{}` is not a good `bind`: use the name of a variable (letters, digits and _, \
+                 not starting with a digit)",
+                self.bind
+            )));
+        }
         if self.cancel {
             // a button that closes the panel has no second look to change to
             self.toggle = false;
@@ -530,6 +675,20 @@ impl Button {
             self.label = self.id.clone();
         }
         Ok(())
+    }
+
+    /// The flow variable that holds the state of this button: its `bind`, or (when the panel
+    /// asks to `restore` its state) its `id`. Only a toggle has a state.
+    pub fn state_var(&self, restore: bool) -> Option<&str> {
+        if !self.toggle || self.cancel {
+            None
+        } else if !self.bind.is_empty() {
+            Some(&self.bind)
+        } else if restore {
+            Some(&self.id)
+        } else {
+            None
+        }
     }
 
     /// What the button shows while it is `on` (only a toggle has a second look): its label, its
@@ -595,6 +754,15 @@ pub struct PanelSpec {
     pub title: String,
     #[serde(default, skip_serializing_if = "is_default")]
     pub subtitle: String,
+    /// How the title is written (alignment, weight, slant, size, color).
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub title_fmt: TextFmt,
+    /// How the subtitle is written.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub subtitle_fmt: TextFmt,
+    /// How the labels above the fields (and of switches, sliders, lists, button grids) are written.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub label_fmt: TextFmt,
     #[serde(default, skip_serializing_if = "is_default")]
     pub icon: Icon,
     #[serde(default, skip_serializing_if = "is_default")]
@@ -625,12 +793,31 @@ pub struct PanelSpec {
     /// or `stretch` (all the same width).
     #[serde(default, skip_serializing_if = "is_default")]
     pub buttons_align: ButtonAlign,
+    /// The panel has no row of buttons at the bottom, not even OK and Cancel (which a panel gets
+    /// when it says nothing about its buttons). The X at the top right (see `hide_close`) closes
+    /// it, and what answers is a button of a grid, a menu or the flow itself. Without effect when
+    /// the panel has buttons of its own.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub no_buttons: bool,
+    /// Every panel has a small X at the top right that closes it like Esc does (it presses the
+    /// button that cancels, or answers as cancelled when there is none). This leaves it out.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub hide_close: bool,
     /// When a button is pressed the panel stays on screen instead of going away and coming back:
     /// the flow answers the press, and its next *Ask* with the same panel `id` takes the window
     /// over without a blink. It goes away when the flow ends, when a button that cancels is
     /// pressed, or after a few seconds without a new panel.
     #[serde(default, skip_serializing_if = "is_default")]
     pub keep_open: bool,
+    /// The panel has a memory in the variables of the flow. When it is shown, every field (input,
+    /// number, switch, slider, color, list) that finds a variable named by its `id` starts with
+    /// that value instead of its own `value`, and every toggle button without a `bind` uses the
+    /// variable named by its `id` for its look. Every answer writes the fields and the toggles
+    /// back (the fields always did), so a slider or a switch that the person moved is still where
+    /// they left it when the flow shows the panel again, even after the panel went away.
+    /// A variable that is not set (or empty) leaves the panel's own value.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub restore: bool,
     /// The panel does not take the keyboard from the app that is in front: for a panel that only
     /// shows how far something has come (the progress panel of a long run), so the keys that the
     /// run sends still reach the app they are for. Where the window system decides that for
@@ -837,9 +1024,10 @@ impl Widget {
     fn clean_in_place(&mut self) -> Result<(), SpecError> {
         match self {
             Widget::Separator { .. } => {}
-            Widget::Text { id, text, .. } => {
+            Widget::Text { id, text, fmt, .. } => {
                 check_id(id, false, false)?;
                 *text = clean(text, MAX_TEXT_CHARS, true);
+                fmt.clean_in_place();
             }
             Widget::Input {
                 id,
@@ -848,9 +1036,21 @@ impl Widget {
                 value,
                 multiline,
                 max_chars,
+                value_fmt,
+                width,
+                height,
+                text_padding,
                 ..
             } => {
                 check_id(id, true, true)?;
+                value_fmt.clean_in_place();
+                *width = width
+                    .filter(|w| w.is_finite())
+                    .map(|w| w.clamp(BOX_W_MIN, WIDTH_MAX));
+                *height = height
+                    .filter(|h| h.is_finite())
+                    .map(|h| h.clamp(BOX_H_MIN, BOX_H_MAX));
+                *text_padding = text_padding.cleaned();
                 *label = clean_line(label, MAX_LABEL_CHARS);
                 *hint = clean_line(hint, MAX_LABEL_CHARS);
                 *max_chars = max_chars.map(|n| n.clamp(1, MAX_VALUE_CHARS as u32));
@@ -1013,6 +1213,46 @@ impl Widget {
         Ok(())
     }
 
+    /// Starts this field with the value of the flow variable named by its `id` (see
+    /// [`PanelSpec::restore_from`]). A widget that holds nothing, or whose variable is not set or
+    /// cannot be read as what the widget holds, stays as it is.
+    fn restore_value(&mut self, get: &mut dyn FnMut(&str) -> Option<String>) {
+        let number = |text: &str| text.trim().parse::<f64>().ok().filter(|n| n.is_finite());
+        match self {
+            Widget::Input { id, value, .. } | Widget::Color { id, value, .. } => {
+                if let Some(v) = get(id) {
+                    *value = v;
+                }
+            }
+            Widget::Toggle { id, value, .. } => {
+                if let Some(v) = get(id).as_deref().and_then(flow_flag) {
+                    *value = v;
+                }
+            }
+            Widget::Slider { id, value, .. } | Widget::Number { id, value, .. } => {
+                if let Some(v) = get(id).as_deref().and_then(number) {
+                    *value = Some(v);
+                }
+            }
+            Widget::Choice {
+                id, value, options, ..
+            } => {
+                if let Some(v) = get(id)
+                    && options.iter().any(|o| o.value == v)
+                {
+                    *value = v;
+                }
+            }
+            Widget::Multi { id, values, .. } => {
+                if let Some(v) = get(id).and_then(|t| serde_json::from_str::<Vec<String>>(&t).ok())
+                {
+                    *values = v;
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Runs `f` over every text that is shown or entered (not over ids), for filling in the
     /// variables of a flow.
     fn map_text(&mut self, f: &mut dyn FnMut(&str) -> String) {
@@ -1150,6 +1390,9 @@ impl PanelSpec {
         }
         self.title = clean_line(&self.title, MAX_TITLE_CHARS);
         self.subtitle = clean_line(&self.subtitle, MAX_LABEL_CHARS);
+        self.title_fmt.clean_in_place();
+        self.subtitle_fmt.clean_in_place();
+        self.label_fmt.clean_in_place();
         self.width = self.width.map(|w| {
             if w.is_finite() {
                 w.clamp(WIDTH_MIN, WIDTH_MAX)
@@ -1237,7 +1480,7 @@ impl PanelSpec {
                 "a panel has at most {MAX_ACTION_BUTTONS} buttons in its grids"
             )));
         }
-        if self.buttons.is_empty() {
+        if self.buttons.is_empty() && !self.no_buttons {
             // a panel made of a grid of buttons answers when one is pressed: it only needs a way out
             let menu = self.widgets.iter().any(|w| match w {
                 Widget::Choice { submit: true, .. } => true,
@@ -1260,6 +1503,37 @@ impl PanelSpec {
         }
         for b in &mut self.buttons {
             b.label = f(&b.label);
+            b.on_label = f(&b.on_label);
+        }
+    }
+
+    /// Gives the panel the state that the flow keeps for it: a toggle button with a `bind` (or,
+    /// with [`restore`](Self::restore), any toggle) takes its look from the variable, and with
+    /// `restore` every field starts with the value of the variable named by its `id`. `get`
+    /// returns the value of a variable of the flow, or `None` when it is not set. What cannot be
+    /// read (not a number, not an option of the list) leaves the panel's own value. Call it after
+    /// [`map_text`](Self::map_text) (the options are filled in by then) and before
+    /// [`checked`](Self::checked) (which limits what was restored).
+    pub fn restore_from(&mut self, get: &mut dyn FnMut(&str) -> Option<String>) {
+        let restore = self.restore;
+        fn button(b: &mut Button, restore: bool, get: &mut dyn FnMut(&str) -> Option<String>) {
+            if let Some(var) = b.state_var(restore).map(str::to_string)
+                && let Some(on) = get(&var).as_deref().and_then(flow_flag)
+            {
+                b.on = on;
+            }
+        }
+        for b in &mut self.buttons {
+            button(b, restore, get);
+        }
+        for w in &mut self.widgets {
+            if let Widget::Buttons { buttons, .. } = w {
+                for b in buttons.iter_mut() {
+                    button(b, restore, get);
+                }
+            } else if restore {
+                w.restore_value(get);
+            }
         }
     }
 
@@ -1318,19 +1592,40 @@ impl PanelSpec {
     }
 }
 
-/// The names of the variables a flow gets from the panel in `json`: the ids of its fields. Reads the
-/// description loosely (it may still hold `{{variables}}`), and gives an empty list when it cannot.
+/// A flow variable read as a switch: `1`, `true`, `on` and `yes` are on, `0`, `false`, `off` and
+/// `no` are off (in any case). Anything else (an empty variable, a word) is neither.
+pub fn flow_flag(text: &str) -> Option<bool> {
+    match text.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "on" | "yes" => Some(true),
+        "0" | "false" | "off" | "no" => Some(false),
+        _ => None,
+    }
+}
+
+/// The names of the variables a flow gets from the panel in `json`: the ids of its fields, and the
+/// variables that its toggle buttons keep their state in. Reads the description loosely (it may
+/// still hold `{{variables}}`), and gives an empty list when it cannot.
 pub fn declared_vars(json: &str) -> Vec<String> {
     let Ok(spec) = serde_json::from_str::<PanelSpec>(json) else {
         return Vec::new();
     };
-    spec.widgets
+    let mut names: Vec<String> = spec
+        .widgets
         .iter()
         .filter(|w| w.is_field())
         .filter_map(Widget::id)
         .filter(|id| is_var_name(id))
         .map(str::to_string)
-        .collect()
+        .collect();
+    for b in spec.all_buttons() {
+        if let Some(var) = b.state_var(spec.restore)
+            && is_var_name(var)
+            && !names.iter().any(|n| n == var)
+        {
+            names.push(var.to_string());
+        }
+    }
+    names
 }
 
 #[cfg(test)]
@@ -1339,6 +1634,115 @@ mod tests {
 
     fn parse(json: &str) -> Result<PanelSpec, SpecError> {
         PanelSpec::parse(json)
+    }
+
+    #[test]
+    fn a_toggle_takes_its_look_from_the_variable_it_is_bound_to() {
+        let mut s = parse(
+            r#"{"keep_open":true,"widgets":[{"type":"buttons","buttons":[
+                {"id":"mute","toggle":true,"bind":"keep_muted","on_icon":"speaker-slash"},
+                {"id":"play","toggle":true},{"id":"next"}]}]}"#,
+        )
+        .expect("a good panel");
+        s.restore_from(&mut |name: &str| (name == "keep_muted").then(|| "1".to_string()));
+        assert!(s.find_button("mute").unwrap().on);
+        assert!(
+            !s.find_button("play").unwrap().on,
+            "no `bind` and no `restore`: left alone"
+        );
+        s.restore_from(&mut |name: &str| (name == "keep_muted").then(|| "OFF".to_string()));
+        assert!(!s.find_button("mute").unwrap().on);
+    }
+
+    #[test]
+    fn a_variable_that_is_not_set_or_not_a_switch_leaves_a_toggle_as_it_was() {
+        let mut s = parse(
+            r#"{"widgets":[{"type":"buttons","buttons":[
+                {"id":"m","toggle":true,"on":true,"bind":"x"}]}]}"#,
+        )
+        .expect("a good panel");
+        s.restore_from(&mut |_: &str| None);
+        assert!(s.find_button("m").unwrap().on, "not set");
+        s.restore_from(&mut |_: &str| Some("maybe".to_string()));
+        assert!(s.find_button("m").unwrap().on, "not a switch");
+        s.restore_from(&mut |_: &str| Some(String::new()));
+        assert!(s.find_button("m").unwrap().on, "empty");
+    }
+
+    #[test]
+    fn a_bind_must_be_the_name_of_a_variable() {
+        assert!(parse(r#"{"buttons":[{"id":"a","toggle":true,"bind":"1 bad"}]}"#).is_err());
+        assert!(parse(r#"{"buttons":[{"id":"a","toggle":true,"bind":" keep_a "}]}"#).is_ok());
+        // a button that cancels is no toggle, so it keeps no state
+        let s = parse(r#"{"buttons":[{"id":"c","cancel":true,"toggle":true,"bind":"x"}]}"#)
+            .expect("a good panel");
+        assert_eq!(s.buttons[0].state_var(true), None);
+    }
+
+    #[test]
+    fn restore_starts_every_field_with_the_variable_of_its_id() {
+        let mut s = parse(
+            r#"{"restore":true,"widgets":[
+                {"type":"input","id":"name","value":"d"},
+                {"type":"toggle","id":"loud"},
+                {"type":"slider","id":"vol","min":0,"max":1},
+                {"type":"number","id":"n"},
+                {"type":"choice","id":"size","options":["s","m"],"value":"s"},
+                {"type":"multi","id":"tags","options":["a","b"]},
+                {"type":"buttons","buttons":[{"id":"mute","toggle":true}]}]}"#,
+        )
+        .expect("a good panel");
+        let vars = [
+            ("name", "Ann"),
+            ("loud", "1"),
+            ("vol", "0.5"),
+            ("n", "7"),
+            ("size", "m"),
+            ("tags", "[\"b\"]"),
+            ("mute", "true"),
+        ];
+        s.restore_from(&mut |k: &str| {
+            vars.iter()
+                .find(|(n, _)| *n == k)
+                .map(|(_, v)| v.to_string())
+        });
+        assert!(matches!(&s.widgets[0], Widget::Input { value, .. } if value == "Ann"));
+        assert!(matches!(&s.widgets[1], Widget::Toggle { value: true, .. }));
+        assert!(
+            matches!(&s.widgets[2], Widget::Slider { value: Some(v), .. } if (*v - 0.5).abs() < 1e-9)
+        );
+        assert!(
+            matches!(&s.widgets[3], Widget::Number { value: Some(v), .. } if (*v - 7.0).abs() < 1e-9)
+        );
+        assert!(matches!(&s.widgets[4], Widget::Choice { value, .. } if value == "m"));
+        assert!(
+            matches!(&s.widgets[5], Widget::Multi { values, .. } if values.len() == 1 && values[0] == "b")
+        );
+        assert!(s.find_button("mute").unwrap().on, "a toggle uses its id");
+    }
+
+    #[test]
+    fn restore_keeps_the_own_value_of_a_field_it_cannot_read_and_does_nothing_without_it() {
+        let json = r#"{"restore":true,"widgets":[
+            {"type":"slider","id":"vol","min":0,"max":1,"value":0.25},
+            {"type":"choice","id":"size","options":["s","m"],"value":"s"}]}"#;
+        let mut s = parse(json).expect("a good panel");
+        s.restore_from(&mut |_: &str| Some("soon".to_string()));
+        assert!(matches!(&s.widgets[0], Widget::Slider { value: Some(v), .. } if *v == 0.25));
+        assert!(matches!(&s.widgets[1], Widget::Choice { value, .. } if value == "s"));
+        // without `restore` the fields are not touched, even when the variables exist
+        let mut plain = parse(&json.replace("\"restore\":true,", "")).expect("a good panel");
+        plain.restore_from(&mut |_: &str| Some("1".to_string()));
+        assert!(matches!(&plain.widgets[0], Widget::Slider { value: Some(v), .. } if *v == 0.25));
+    }
+
+    #[test]
+    fn the_variables_a_toggle_writes_are_declared_to_the_flow() {
+        let json = r#"{"widgets":[{"type":"input","id":"a"},{"type":"buttons","buttons":[
+            {"id":"t","toggle":true,"bind":"keep_t"},{"id":"u","toggle":true},{"id":"n"}]}]}"#;
+        assert_eq!(declared_vars(json), ["a", "keep_t"]);
+        let with_restore = json.replacen("{\"widgets\"", "{\"restore\":true,\"widgets\"", 1);
+        assert_eq!(declared_vars(&with_restore), ["a", "keep_t", "u"]);
     }
 
     #[test]
@@ -1363,6 +1767,20 @@ mod tests {
         // what was not said is not written back
         let text = serde_json::to_string(b).unwrap();
         assert!(!text.contains("width") && !text.contains("radius") && !text.contains("side"));
+    }
+
+    #[test]
+    fn a_panel_can_do_without_its_buttons_and_the_x_stays_unless_it_is_hidden() {
+        let bare = parse(r#"{"title":"x","no_buttons":true}"#).unwrap();
+        assert!(bare.buttons.is_empty(), "no OK and Cancel were added");
+        assert!(!bare.hide_close, "the X is there by default");
+        let own = parse(r#"{"no_buttons":true,"buttons":[{"id":"go"}]}"#).unwrap();
+        assert_eq!(own.buttons.len(), 1, "buttons of its own are kept");
+        let hidden = parse(r#"{"title":"x","hide_close":true}"#).unwrap();
+        assert!(hidden.hide_close);
+        assert_eq!(hidden.buttons.len(), 2, "still OK and Cancel");
+        let json = serde_json::to_string(&parse(r#"{"title":"x"}"#).unwrap()).unwrap();
+        assert!(!json.contains("no_buttons") && !json.contains("hide_close"));
     }
 
     #[test]
@@ -1508,6 +1926,93 @@ mod tests {
         };
         assert_eq!(*value, Some(10.0));
         assert_eq!(*step, None);
+    }
+
+    #[test]
+    fn a_text_format_is_read_cleaned_and_written_short() {
+        let s = parse(
+            r##"{"title_fmt":{"align":"center","size":99},
+                 "widgets":[{"type":"text","text":"hi","fmt":
+                   {"align":"right","bold":false,"italic":true,"underline":true,"size":2,"color":"#FF0000"}},
+                  {"type":"text","text":"plain","fmt":{"color":"red"}}]}"##,
+        )
+        .unwrap();
+        // a size outside the range is brought inside it
+        assert_eq!(s.title_fmt.align, TextAlign::Center);
+        assert_eq!(s.title_fmt.size, Some(FONT_SIZE_MAX));
+        let Widget::Text { fmt, .. } = &s.widgets[0] else {
+            panic!("text")
+        };
+        assert_eq!(fmt.align, TextAlign::Right);
+        assert_eq!(fmt.bold, Some(false));
+        assert!(fmt.italic && fmt.underline && !fmt.strike);
+        assert_eq!(fmt.size, Some(FONT_SIZE_MIN));
+        assert_eq!(fmt.color.as_deref(), Some("#ff0000"));
+        // a color that is not #rrggbb is dropped, and then nothing is left to write
+        let Widget::Text { fmt, .. } = &s.widgets[1] else {
+            panic!("text")
+        };
+        assert!(fmt.is_plain());
+        let json = serde_json::to_string(&s.widgets[1]).unwrap();
+        assert!(!json.contains("fmt"), "{json}");
+        // and what was written is read back the same
+        let again: PanelSpec = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!(again, s);
+    }
+
+    #[test]
+    fn the_text_of_a_box_has_a_format_that_is_cleaned_and_written_short() {
+        let s = parse(
+            r##"{"widgets":[
+                {"type":"input","id":"disp","multiline":true,
+                 "value_fmt":{"align":"right","valign":"middle","italic":true,
+                              "size":99,"dx":500,"dy":-5,"color":"#00FF00"}},
+                {"type":"input","id":"plain"}]}"##,
+        )
+        .unwrap();
+        let Widget::Input { value_fmt, .. } = &s.widgets[0] else {
+            panic!("input")
+        };
+        assert_eq!(value_fmt.align, TextAlign::Right);
+        assert_eq!(value_fmt.valign, Some(TextVAlign::Middle));
+        assert!(value_fmt.italic);
+        // a size and a nudge outside their range are brought inside it
+        assert_eq!(value_fmt.size, Some(FONT_SIZE_MAX));
+        assert_eq!(value_fmt.dx, NUDGE_MAX);
+        assert_eq!(value_fmt.dy, -5);
+        assert_eq!(value_fmt.color.as_deref(), Some("#00ff00"));
+        let s2 = parse(
+            r#"{"widgets":[{"type":"input","id":"a","width":5,"height":9000,
+                "text_padding":{"left":99,"top":2}}]}"#,
+        )
+        .unwrap();
+        let Widget::Input {
+            width,
+            height,
+            text_padding,
+            ..
+        } = &s2.widgets[0]
+        else {
+            panic!("input")
+        };
+        // a size outside its range is brought inside it
+        assert_eq!(*width, Some(BOX_W_MIN));
+        assert_eq!(*height, Some(BOX_H_MAX));
+        assert_eq!(text_padding.left, Some(PADDING_MAX));
+        assert_eq!(text_padding.top, Some(2.0));
+        assert_eq!(text_padding.right, None);
+        // a box that says nothing writes nothing, and what was written is read back the same
+        let json = serde_json::to_string(&s.widgets[1]).unwrap();
+        assert!(!json.contains("value_fmt"), "{json}");
+        let again: PanelSpec = serde_json::from_str(&serde_json::to_string(&s).unwrap()).unwrap();
+        assert_eq!(again, s);
+    }
+
+    #[test]
+    fn a_panel_without_formats_writes_none() {
+        let s = parse(r#"{"title":"t","widgets":[{"type":"text","text":"x"}]}"#).unwrap();
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(!json.contains("fmt"), "{json}");
     }
 
     #[test]

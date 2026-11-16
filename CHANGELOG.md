@@ -2,6 +2,106 @@
 
 ## Unreleased
 
+## 0.8.18
+
+- **Changed: the pie editor selects and moves pies, and adds slices from a floating list.** The left button no longer
+  moves the canvas: that is the job of the middle button (the trigger button), Space + drag, or the scroll, as in the Flow
+  tab. A drag on the empty canvas now draws a selection box (Shift or Ctrl/Cmd adds to the selection, Ctrl/Cmd + A selects
+  every pie), a click on the middle of a pie selects it (Shift or Ctrl/Cmd + click adds or removes it), and dragging the
+  middle of a pie moves it and the other selected pies. The top pie stays where it is; the others are placed around it.
+  Where a pie was put is saved with its slice (`at` in `config.json`, left out for a pie that was never moved), and the new
+  *Tidy up* button of the bar puts every pie back. The **+** of the bar no longer opens the "Add a
+  slice" sheet: the three groups unfold in the bar and a searchable list opens over it, and the right button opens the same
+  list where it is pressed, like the Flow canvas. Ctrl/Cmd + C, X and V copy, cut and paste the selected slice or pies
+  (with everything in them) through the system clipboard, like the blocks of a flow, so a copy can go to another pie or
+  profile. A selected pie sits on a tint of the accent and every pie has a soft
+  shadow. The classic Menu tab still uses the sheet.
+
+- **New: buttons and fields of a panel can keep their state in the variables of the flow.** A toggle button had a look
+  (play or pause, muted or not) that only lived inside the window, so a flow had to keep one copy of the panel for every
+  state (a remote needed four panels for play and mute) and the look was lost when the panel went away. Now a toggle can
+  say `"bind": "keep_playing"`: it takes its look from that variable when the panel is shown and every answer writes
+  `1` or `0` back, so one panel description serves every state, and with a `keep_` name the state survives closing
+  CursorPie. A panel can say `"restore": true`: every input, number, switch, slider, color and list then starts with the
+  variable named by its `id` (what it always wrote), and toggles without `bind` use their `id`. A bound toggle no longer
+  takes the look of the panel it replaces, the variable wins. Also fixed: `on_label` of a button of the row at the
+  bottom did not fill in `{{variables}}`, and the flow checks know the variables that toggles write. Nothing changes for
+  a panel that uses neither setting. The panel designer has both: *Remember values* under *Behavior* of the panel, and *Remember in variable* (card *Kept by the flow*) for a button that changes when pressed. New example flow `browser-remote-panel-state`. See *State kept by the flow* in
+  `PANELS.md`.
+- **New: a flow can remember things between runs, also after CursorPie was closed.** Until now every run began with no
+  variables and ended by forgetting them. Now a variable whose name starts with `keep_` is saved when the run ends and is
+  back in the next run of that flow (a run that was stopped or cancelled is saved too). Every run also starts with
+  `run_count`, `last_run` and `last_ending`, so a flow can tell its first run from the others and see how the last one
+  ended. Three new *System* blocks, *Save data*, *Load data* and *Remove data*, keep names with a text that every flow
+  shares, so one flow can leave something for another. Loading a name nobody saved is not reported as a problem: the
+  variable is empty and `ok` is 0. All of it is plain JSON in the new folder `flow-state` of the support directory
+  (`<flow id>.state.json` per flow and `data.json` for the shared data), written through a temporary file so a crash
+  leaves no half file; a file that cannot be read is moved aside (`data.corrupt.json`) instead of overwritten. Existing
+  flows are not changed: they have no `keep_` variables and the new variables only add names. See *Remembering things
+  between runs* in `FLOWS_FOR_AI.md`.
+- **Changed: the inspector of the panel in the panel designer is calmer and follows the Settings look.** The long
+  column of small labels is now four cards (*Header*, *Look*, *Size and place*, *Behavior*) of rows with the name on the
+  left and one control on the right, so each line is one thing to decide. The look of the title, the subtitle and the
+  field labels, and the space inside the card, are one step in: a row with a summary ("Bold, 22 pt") opens a page with a
+  back arrow, instead of the three folding headers. There the letters are four toggles on one line, the size shows its
+  number and a *Reset*, the colors are round swatches that include "the usual" (so one click goes back to it), and the
+  nudge is two number boxes (X and Y) with one note. The inspector is 24 points wider. The same format controls are
+  used for a selected text, so they look the same there. Nothing in the panel's JSON changes.
+- **New: every panel has an X at the top right, and the buttons at the bottom are optional.** The X closes a panel like
+  Esc does (it presses the button that cancels, or answers as cancelled). So a panel no longer needs a *Cancel* or
+  *Close* button of its own: `"no_buttons": true` leaves out the row at the bottom, together with its room and gap
+  (a panel that says nothing about its buttons still gets Cancel and OK, so existing flows work as before), and
+  `"hide_close": true` leaves out the X. In the designer, *No buttons* in the panel's inspector does the same, taking
+  away the last button now leaves none (instead of bringing Cancel and OK back), and *Close button* is a switch under
+  *Behavior*. The *Button pad* template uses the X instead of a *Close* button.
+- **Changed: the inspectors of a button and of every widget follow the same look.** What a button or a widget has is
+  now in cards too (*Button*, *After a press*, *Size and shape*; *Input*, *Size of the box*, *Options*, *Visibility*, ...)
+  with a name above each box instead of one long column of labels. Corners are a list instead of five squeezed choices,
+  the color of a color widget is a row of round swatches, and the look of the text inside an input box is a page one
+  step in (like the title of the panel) instead of a folding header.
+
+- **Added: text format for the text inside an `input` box (a note box, a display), and a way to place any text by
+  hand.** An `input` takes `value_fmt`, with the same parts as the other formats (`align`, `bold`, `italic`,
+  `underline`, `strike`, `size`, `color`) and `valign` (`top`, `middle`, `bottom`: where the text sits in the height
+  of the box, so the display of a calculator can sit in the middle). `title_fmt`, `subtitle_fmt` and `value_fmt` also take
+  `dx` and `dy`, a nudge in points (to the right and down; negative goes left and up, at most 60 either way) applied
+  after `align`. The title and the subtitle share the header with the round badge, so their *Center* was a little to
+  the right of the middle of the card: the designer has a *Center on the whole card* button (`center` with `dx` -23).
+  A bigger text makes its box taller. The designer shows *Look of the text inside the box* for a selected input and
+  *Nudge* under every look of the header. A password box shows dots, so slant and lines do not apply to it. Panels
+  written before look the same. See `docs/PANELS.md`.
+  An `input` box also takes `width`, `height` and `text_padding` (the space between its edge and its text, per side),
+  under *Size of the box* in the designer.
+
+- **Added: text format in panels and in the panel designer.** A `text` widget takes `fmt`, and the panel takes
+  `title_fmt`, `subtitle_fmt` and `label_fmt` (the labels above the fields), each with `align` (`left`, `center`,
+  `right`), `bold`, `italic`, `underline`, `strike`, `size` (8 to 48 points) and `color` (`#rrggbb`). Everything is
+  optional and what is left out keeps the look it had, so a panel written before still looks the same and a panel
+  without formats writes none. The designer shows the controls for a selected text and, in the panel's own fields,
+  *Title look*, *Subtitle look* and *Look of the labels above the fields*. The height of a text widget and of the header
+  follows the size. See `docs/PANELS.md`.
+
+- **Added: copy and paste in the Flow canvas and in the panel designer, and several widgets selected at once in the
+  designer.** On the canvas, Ctrl/Cmd + C copies the selected blocks, Ctrl/Cmd + X cuts them and Ctrl/Cmd + V pastes
+  them where the pointer is (a little down and to the right of the originals when it is off the canvas). The wires
+  between the copied blocks stay, with ids of their own; *Start* and *End* are never copied, and a group that does not fit
+  in the flow is not pasted at all. In the panel designer the widgets of the list or of the panel can be picked together
+  (Ctrl/Cmd + click adds or removes one, Shift + click picks a range, Ctrl/Cmd + A picks all) and then removed,
+  duplicated, moved up or down, cut, copied and pasted as a group; a pasted widget gets an id of its own and its
+  `show_if` follows the widget it looked at, or goes when the panel has no such widget. Both copy through the system
+  clipboard as text, so blocks go to another flow and widgets to another panel. Everything is undoable.
+
+- **Fixed: a panel that stays open (`keep_open`) no longer loses the buttons pressed while the flow is working.** A
+  panel that waits for the flow to ask again used to ignore every press, so a quick run of clicks on a calculator or a
+  remote lost most of them. Now up to 8 presses are remembered and answered one by one, in order, as the flow asks
+  again with the same panel `id`; a press that no longer means anything (the button is gone, or it cancels) is dropped.
+
+- **Fixed: the progress panel of a run opened over the question the run was asking.** A flow that asks again and again
+  (a calculator in a panel) counted the time the person spent in the questions as work, so after two seconds the
+  progress panel ("Step 30/68") came up and competed with the question for the window. Time spent answering an *Ask*
+  (text, yes/no or panel) no longer counts towards the two seconds, and the progress panel does not open while a
+  question is open.
+
 ## 0.8.17
 
 - **Added: the colors of Settings can be chosen, not only the accent.** *Look & feel* in *Behavior* has *Page

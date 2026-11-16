@@ -69,9 +69,9 @@ const GAP_H: f32 = 30.0;
 /// the buttons of one capsule are [`BAR_GAP`] apart, so the header and the floating bars line up.
 const BAR_BTN: Vec2 = Vec2::splat(CONTROL_H - 6.0);
 /// The gap between two buttons of a capsule (the same as between the cells of the view switch).
-const BAR_GAP: f32 = 2.0;
+pub(super) const BAR_GAP: f32 = 2.0;
 /// The padding between the edge of a capsule and its buttons.
-const BAR_PAD: i8 = 3;
+pub(super) const BAR_PAD: i8 = 3;
 
 // ------------------------------------------------------------------ the list of flows
 
@@ -287,7 +287,7 @@ fn flow_row(ui: &mut egui::Ui, name: &str, on: bool, accent: Color32) -> egui::R
 
 /// How a button of the capsule in the header looks.
 #[derive(Clone, Copy)]
-enum Tone {
+pub(super) enum Tone {
     /// Calm: the glyph is grey until the pointer is over it.
     Plain,
     /// Filled with the accent: the main thing to do.
@@ -297,7 +297,7 @@ enum Tone {
 }
 
 /// One round button of the capsule: a glyph, a tooltip, a wash that fades in under the pointer.
-fn bar_button(ui: &mut egui::Ui, icon: char, tip: &str, tone: Tone) -> egui::Response {
+pub(super) fn bar_button(ui: &mut egui::Ui, icon: char, tip: &str, tone: Tone) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(BAR_BTN, Sense::click());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tip));
     let h = ui
@@ -435,7 +435,7 @@ fn tidy_strip(ui: &mut egui::Ui, trigger: &egui::Response) -> Option<TidyStyle> 
 
 /// The button of the capsule that fills the whole display with the Flow tab (and, while it does,
 /// goes back to the window).
-fn full_button(ui: &mut egui::Ui, full: bool) -> egui::Response {
+pub(super) fn full_button(ui: &mut egui::Ui, full: bool) -> egui::Response {
     if full {
         bar_button(
             ui,
@@ -449,7 +449,7 @@ fn full_button(ui: &mut egui::Ui, full: bool) -> egui::Response {
 }
 
 /// The thin line between two groups of buttons of the capsule.
-fn bar_divider(ui: &mut egui::Ui) {
+pub(super) fn bar_divider(ui: &mut egui::Ui) {
     let (rect, _) = ui.allocate_exact_size(vec2(BAR_GAP * 2.0 + 1.0, 16.0), Sense::hover());
     ui.painter().line_segment(
         [rect.center_top(), rect.center_bottom()],
@@ -1192,6 +1192,12 @@ pub(super) fn quick_catalog() -> Vec<(&'static str, Vec<Entry>)> {
                         b: s("1"),
                     },
                 ),
+                native(
+                    N::StoreSet,
+                    "Saves a text that stays after CursorPie closes",
+                ),
+                native(N::StoreGet, "Loads a saved text into a variable"),
+                native(N::StoreRemove, "Forgets a saved text"),
             ],
         ),
         (

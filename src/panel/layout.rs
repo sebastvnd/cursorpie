@@ -6,7 +6,7 @@
 //! The numbers are in points and match what `ui::settings::panel_form` draws.
 
 use super::spec::{
-    Button, ButtonAlign, ButtonSide, Layout, Opt, PADDING_MAX, PanelSpec, SPACER_DEFAULT,
+    Button, ButtonAlign, ButtonSide, Layout, Opt, PADDING_MAX, PanelSpec, SPACER_DEFAULT, TextFmt,
     TextStyle, Widget,
 };
 
@@ -57,6 +57,13 @@ pub const LABEL_H: f32 = 24.0;
 pub const LINE_H: f32 = 20.0;
 /// Height of a box with several lines.
 pub const MULTILINE_H: f32 = 92.0;
+/// The size of the text inside a box when its `value_fmt` says no size (points).
+pub const BOX_TEXT_SIZE: f32 = 14.0;
+/// The usual space between the edge of an input box and its text: at the sides, above and below a
+/// line, above and below several lines (points).
+pub const BOX_PAD_X: f32 = 12.0;
+pub const BOX_PAD_Y_ONE: f32 = 4.0;
+pub const BOX_PAD_Y_MANY: f32 = 8.0;
 /// Height of a row of a list: without a hint line, and with one.
 pub const ROW_H: f32 = 36.0;
 pub const ROW_HINT_H: f32 = 52.0;
@@ -161,6 +168,35 @@ fn chip_lines(options: &[Opt], inner: f32) -> usize {
     lines
 }
 
+/// The size a text widget is drawn at when its `fmt` says no size (points).
+pub fn style_size(style: TextStyle) -> f32 {
+    match style {
+        TextStyle::Body => 14.0,
+        TextStyle::Heading => 17.0,
+        TextStyle::Muted | TextStyle::Code => 13.0,
+    }
+}
+
+/// The usual size of the title, of the subtitle and of a label above a field (points).
+pub const TITLE_SIZE: f32 = 16.0;
+pub const SUBTITLE_SIZE: f32 = 13.0;
+pub const LABEL_SIZE: f32 = 13.0;
+/// The biggest a title, a subtitle or a label is drawn, whatever its `fmt` asks for: the header and
+/// the label rows have a fixed height.
+pub const TITLE_SIZE_MAX: f32 = 28.0;
+pub const SUBTITLE_SIZE_MAX: f32 = 20.0;
+pub const LABEL_SIZE_MAX: f32 = 20.0;
+
+/// The size a text of `fmt` is drawn at: what it asks for, or `usual`, and never more than `most`.
+pub fn text_size(fmt: &TextFmt, usual: f32, most: f32) -> f32 {
+    fmt.size.map_or(usual, f32::from).min(most)
+}
+
+/// How much bigger (or smaller) than `style` a text widget is drawn because of its `fmt`.
+fn text_scale(style: TextStyle, fmt: &TextFmt) -> f32 {
+    fmt.size.map_or(1.0, |s| f32::from(s) / style_size(style))
+}
+
 /// How many lines a text takes in a box `inner` wide.
 pub fn text_lines(text: &str, inner: f32, style: TextStyle) -> usize {
     let char_w = match style {
@@ -179,8 +215,12 @@ pub fn widget_height(w: &Widget, width: f32) -> f32 {
     let inner = width - 2.0 * PAD;
     match w {
         Widget::Separator { .. } => SEPARATOR_H,
-        Widget::Text { text, style, .. } => {
-            text_lines(text, inner, *style) as f32 * LINE_H
+        Widget::Text {
+            text, style, fmt, ..
+        } => {
+            // a bigger font has fewer characters per line and taller lines
+            let scale = text_scale(*style, fmt);
+            text_lines(text, inner / scale, *style) as f32 * LINE_H * scale
                 + if *style == TextStyle::Heading {
                     6.0
                 } else {
@@ -188,10 +228,23 @@ pub fn widget_height(w: &Widget, width: f32) -> f32 {
                 }
         }
         Widget::Input {
-            label, multiline, ..
+            label,
+            multiline,
+            value_fmt,
+            height,
+            ..
         } => {
             let label_h = if label.is_empty() { 0.0 } else { LABEL_H };
-            label_h + if *multiline { MULTILINE_H } else { CONTROL_H }
+            // a box that says its height has it; otherwise a bigger text makes the box taller (a
+            // box never gets lower than the usual one)
+            let size = value_fmt.size.map_or(BOX_TEXT_SIZE, f32::from);
+            let line = size * 1.3;
+            label_h
+                + match height {
+                    Some(h) => *h,
+                    None if *multiline => MULTILINE_H.max(4.0 * line + 16.0),
+                    None => CONTROL_H.max(line + 8.0),
+                }
         }
         Widget::Toggle { .. } => CONTROL_H,
         Widget::Number { label, .. } | Widget::Color { label, .. } => {
@@ -251,7 +304,16 @@ pub fn header_height(spec: &PanelSpec) -> f32 {
             0.0
         } else {
             SUBTITLE_H
+                + title_extra(spec)
+                + (text_size(&spec.subtitle_fmt, SUBTITLE_SIZE, SUBTITLE_SIZE_MAX) - SUBTITLE_SIZE)
+                    .max(0.0)
+                    * 1.3
         }
+}
+
+/// How much room a title bigger than the usual one takes from the subtitle under it.
+pub fn title_extra(spec: &PanelSpec) -> f32 {
+    (text_size(&spec.title_fmt, TITLE_SIZE, TITLE_SIZE_MAX) - TITLE_SIZE).max(0.0) * 1.3
 }
 
 /// The height of everything between the header and the buttons.
@@ -269,10 +331,22 @@ pub fn body_height(spec: &PanelSpec) -> f32 {
 
 /// The height of the row of buttons at the bottom: its tallest button.
 pub fn footer_row_height(spec: &PanelSpec) -> f32 {
-    if spec.buttons.is_empty() {
-        return CONTROL_H;
-    }
     spec.buttons.iter().map(button_height).fold(0.0, f32::max)
+}
+
+/// Whether the card has a row of buttons at the bottom. A panel that asked for none
+/// (`no_buttons`) has no row, no room for it and no gap above it.
+pub fn has_footer(spec: &PanelSpec) -> bool {
+    !spec.buttons.is_empty()
+}
+
+/// The room the footer takes under the body: the gap above it and the footer itself, or nothing.
+pub fn footer_block(spec: &PanelSpec) -> f32 {
+    if has_footer(spec) {
+        GAP + footer_height(spec)
+    } else {
+        0.0
+    }
 }
 
 /// Whether a press of a button can be refused with a notice (a required box is empty).
@@ -285,6 +359,9 @@ pub fn can_refuse(spec: &PanelSpec) -> bool {
 /// The height of the row of buttons, with the line for a notice under it when the panel can have
 /// one (without such a line the buttons are as close to the bottom as the padding says).
 pub fn footer_height(spec: &PanelSpec) -> f32 {
+    if !has_footer(spec) {
+        return 0.0;
+    }
     footer_row_height(spec) + if can_refuse(spec) { NOTICE_H } else { 0.0 }
 }
 
@@ -391,13 +468,8 @@ pub fn content_height(spec: &PanelSpec) -> f32 {
         GAP + 4.0
     };
     let ins = insets(spec);
-    let h = ins.top
-        + header_height(spec)
-        + gap_after_header
-        + body
-        + GAP
-        + footer_height(spec)
-        + ins.bottom;
+    let h =
+        ins.top + header_height(spec) + gap_after_header + body + footer_block(spec) + ins.bottom;
     h.ceil()
 }
 
@@ -411,6 +483,7 @@ pub fn card_size(spec: &PanelSpec) -> (f32, f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::panel::Padding;
 
     fn spec(json: &str) -> PanelSpec {
         PanelSpec::parse(json).expect("a good panel")
@@ -433,6 +506,16 @@ mod tests {
         let ins = insets(&wild);
         assert_eq!((ins.left, ins.right, ins.top), (PADDING_MAX, 0.0, PAD));
         assert_eq!(insets(&base), insets(&PanelSpec::default()));
+    }
+
+    #[test]
+    fn a_panel_without_buttons_has_no_footer_and_is_shorter() {
+        let with = spec(r#"{"title":"x"}"#);
+        let without = spec(r#"{"title":"x","no_buttons":true}"#);
+        assert!(has_footer(&with) && !has_footer(&without));
+        assert_eq!(footer_height(&without), 0.0);
+        assert_eq!(footer_block(&without), 0.0);
+        assert!(content_height(&with) > content_height(&without));
     }
 
     #[test]
@@ -484,6 +567,83 @@ mod tests {
         assert_eq!(text_lines("short", 300.0, TextStyle::Body), 1);
         assert_eq!(text_lines("a\nb\nc", 300.0, TextStyle::Body), 3);
         assert!(text_lines(&"word ".repeat(100), 300.0, TextStyle::Body) > 5);
+    }
+
+    #[test]
+    fn a_bigger_font_makes_a_text_taller() {
+        let text = |size: Option<u8>| Widget::Text {
+            id: String::new(),
+            text: "word ".repeat(30),
+            style: TextStyle::Body,
+            fmt: TextFmt {
+                size,
+                ..TextFmt::default()
+            },
+            show_if: None,
+        };
+        let usual = widget_height(&text(None), 380.0);
+        assert!(widget_height(&text(Some(28)), 380.0) > usual);
+        assert!(widget_height(&text(Some(9)), 380.0) < usual);
+        // asking for the size the style has anyway changes nothing
+        assert_eq!(widget_height(&text(Some(14)), 380.0), usual);
+    }
+
+    #[test]
+    fn a_bigger_text_makes_a_box_taller_but_never_lower_than_usual() {
+        let input = |multiline: bool, size: Option<u8>| Widget::Input {
+            id: "i".into(),
+            label: String::new(),
+            hint: String::new(),
+            value: String::new(),
+            secret: false,
+            multiline,
+            required: false,
+            max_chars: None,
+            value_fmt: TextFmt {
+                size,
+                ..TextFmt::default()
+            },
+            width: None,
+            height: None,
+            text_padding: Padding::default(),
+            show_if: None,
+        };
+        for multiline in [false, true] {
+            let usual = widget_height(&input(multiline, None), 380.0);
+            assert!(widget_height(&input(multiline, Some(40)), 380.0) > usual);
+            assert_eq!(widget_height(&input(multiline, Some(9)), 380.0), usual);
+        }
+        assert_eq!(widget_height(&input(true, None), 380.0), MULTILINE_H);
+        assert_eq!(widget_height(&input(false, None), 380.0), CONTROL_H);
+        // a box that says its height has exactly that
+        let tall = Widget::Input {
+            id: "i".into(),
+            label: String::new(),
+            hint: String::new(),
+            value: String::new(),
+            secret: false,
+            multiline: true,
+            required: false,
+            max_chars: None,
+            value_fmt: TextFmt::default(),
+            width: Some(200.0),
+            height: Some(150.0),
+            text_padding: Padding::default(),
+            show_if: None,
+        };
+        assert_eq!(widget_height(&tall, 380.0), 150.0);
+    }
+
+    #[test]
+    fn a_bigger_title_makes_the_header_taller_only_with_a_subtitle() {
+        let mut spec = PanelSpec::default();
+        spec.title_fmt.size = Some(28);
+        assert_eq!(header_height(&spec), HEADER_H);
+        spec.subtitle = "under".into();
+        let big = header_height(&spec);
+        spec.title_fmt.size = None;
+        assert!(big > header_height(&spec));
+        assert_eq!(header_height(&spec), HEADER_H + SUBTITLE_H);
     }
 
     #[test]

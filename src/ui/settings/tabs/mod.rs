@@ -9,4 +9,5 @@ mod flow_new;
 mod general;
 mod menu;
 mod mouse;
+pub(super) mod pie_editor;
 pub(super) mod profile_toolbar;

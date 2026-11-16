@@ -149,7 +149,16 @@ pub struct Item {
     /// Text / emoji, or an image path (.png .jpg .jpeg .webp), e.g. "~/Pictures/undo.png"
     pub icon: String,
     pub kind: ItemKind,
+    /// Only for a submenu: how far its pie was moved from the place the pie editor gives it, as
+    /// `[x, y]` in the units of that canvas. It only decides where the pie is drawn *in Settings*;
+    /// the pie that opens under the pointer ignores it. Left out when the pie was never moved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<[f32; 2]>,
 }
+
+/// How far (in canvas units) a pie of the pie editor can be moved from its place in either
+/// direction; [`Config::sanitize`] cuts a hand-edited `at` down to this.
+pub const PIE_AT_LIMIT: f32 = 3000.0;
 
 /// How the pie of an app that has its own profile is opened.
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq, Default)]
@@ -289,6 +298,7 @@ impl Item {
                 forward: Action::Key(forward),
                 extra: BTreeMap::new(),
             },
+            at: None,
         }
     }
     /// Creates a slice that runs `action` when the button is released over it.
@@ -297,6 +307,7 @@ impl Item {
             name: name.into(),
             icon: icon.into(),
             kind: ItemKind::Run(action),
+            at: None,
         }
     }
     /// Creates a slice that opens a nested ring.
@@ -305,6 +316,7 @@ impl Item {
             name: name.into(),
             icon: icon.into(),
             kind: ItemKind::Submenu(items),
+            at: None,
         }
     }
 }

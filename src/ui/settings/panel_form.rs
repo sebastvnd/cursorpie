@@ -15,15 +15,20 @@ use super::widgets::{
 };
 use crate::panel::form::snap_number;
 use crate::panel::layout::{
-    BAR_H, BTN_GAP, CHIP_H, CONTROL_H, GAP, LIST_ROWS, MULTI_ROWS, ROW_H, ROW_HINT_H, SEPARATOR_H,
-    button_height, footer_height, footer_row_height, footer_slots, grid_row_heights, group_columns,
-    has_search, header_height, insets, list_height,
+    BAR_H, BOX_PAD_X, BOX_PAD_Y_MANY, BOX_PAD_Y_ONE, BOX_TEXT_SIZE, BTN_GAP, CHIP_H, CONTROL_H,
+    GAP, LABEL_SIZE, LABEL_SIZE_MAX, LIST_ROWS, MULTI_ROWS, ROW_H, ROW_HINT_H, SEPARATOR_H,
+    SUBTITLE_SIZE, SUBTITLE_SIZE_MAX, TITLE_SIZE, TITLE_SIZE_MAX, button_height, footer_height,
+    footer_row_height, footer_slots, grid_row_heights, group_columns, has_footer, has_search,
+    header_height, insets, list_height, style_size, text_size, title_extra,
 };
 use crate::panel::spec::ButtonSide;
 use crate::panel::spec::{
     DEFAULT_COLOR, FILE_ICON_PREFIX, SPACER_DEFAULT, format_hex, number_bounds, parse_hex,
 };
-use crate::panel::{Button, Field, Form, Icon, Layout, Opt, PanelSpec, TextStyle, Tone, Widget};
+use crate::panel::{
+    Button, Field, Form, Icon, Layout, Opt, Padding, PanelSpec, TextAlign, TextFmt, TextStyle,
+    TextVAlign, Tone, Widget,
+};
 use crate::ui::fonts;
 use crate::ui::hud::HudKind;
 use crate::ui::symbols;
@@ -125,6 +130,8 @@ pub fn body_rect(card: Rect, spec: &PanelSpec) -> Rect {
     let inner = inner_rect(card, spec);
     let head_bottom = inner.min.y + header_height(spec);
     let foot_top = inner.max.y - footer_height(spec);
+    // no row of buttons: the body runs down to the padding, with no gap to keep above it
+    let foot_gap = if has_footer(spec) { GAP } else { 0.0 };
     let top = head_bottom
         + if spec.widgets.is_empty() {
             0.0
@@ -133,7 +140,7 @@ pub fn body_rect(card: Rect, spec: &PanelSpec) -> Rect {
         };
     Rect::from_min_max(
         pos2(inner.min.x, top),
-        pos2(inner.max.x, (foot_top - GAP).max(top)),
+        pos2(inner.max.x, (foot_top - foot_gap).max(top)),
     )
 }
 
@@ -164,7 +171,7 @@ fn paint(
     let mut event = Event::None;
     let inner = inner_rect(card, &form.spec);
     let head = Rect::from_min_size(inner.min, vec2(inner.width(), header_height(&form.spec)));
-    header(ui, head, &form.spec, accent);
+    header(ui, head, &form.spec, accent, &mut event);
 
     let foot = Rect::from_min_max(
         pos2(inner.min.x, inner.max.y - footer_height(&form.spec)),
@@ -202,7 +209,9 @@ fn paint(
         });
     }
 
-    footer(ui, foot, form, accent, &mut event);
+    if has_footer(&form.spec) {
+        footer(ui, foot, form, accent, &mut event);
+    }
 
     // keys: Esc cancels; Enter presses the main button (in a box with several lines only with
     // Ctrl/Cmd), or, in a menu, picks the first option that matches the search
@@ -244,37 +253,187 @@ fn first_match_of_menu(form: &Form) -> Option<(usize, String)> {
 
 // ------------------------------------------------------------------ header and footer
 
-fn header(ui: &mut egui::Ui, rect: Rect, spec: &PanelSpec, accent: Color32) {
+/// Size of the round area of the X at the top right, and the room the title leaves for it.
+const CLOSE_SIZE: f32 = 30.0;
+const CLOSE_ROOM: f32 = CLOSE_SIZE + 8.0;
+
+/// The small X at the top right of every panel (unless the panel hides it): it closes the panel
+/// like Esc does, so a panel does not need a Cancel button of its own to have a way out.
+fn close_button(ui: &mut egui::Ui, head: Rect, event: &mut Event) {
+    // as far from the right edge as the badge is from the left one, on the same line
+    let center = pos2(head.max.x - 18.0, head.min.y + 20.0);
+    let area = Rect::from_center_size(center, vec2(CLOSE_SIZE, CLOSE_SIZE));
+    let resp = ui
+        .interact(area, ui.id().with("panel_close"), Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    let hot = resp.hovered();
+    let painter = ui.painter();
+    if hot {
+        painter.circle_filled(center, CLOSE_SIZE / 2.0, pal().hot);
+    }
+    fonts::paint_icon(
+        painter,
+        center,
+        symbols::X,
+        15.0,
+        if hot { pal().text } else { pal().muted },
+        false,
+    );
+    if resp.clicked() && *event == Event::None {
+        *event = Event::Cancel;
+    }
+}
+
+fn header(ui: &mut egui::Ui, rect: Rect, spec: &PanelSpec, accent: Color32, event: &mut Event) {
     let p = ui.painter();
     let badge_c = pos2(rect.min.x + 18.0, rect.min.y + 20.0);
     p.circle_filled(badge_c, 18.0, wash(accent, 0.16));
     fonts::paint_icon(p, badge_c, glyph(spec.icon), 18.0, accent, true);
     let text_x = rect.min.x + 46.0;
-    let max_w = (rect.max.x - text_x).max(40.0);
+    let room = if spec.hide_close { 0.0 } else { CLOSE_ROOM };
+    let max_w = (rect.max.x - text_x - room).max(40.0);
     let title = if spec.title.is_empty() {
         "CursorPie"
     } else {
         spec.title.as_str()
     };
-    let (g, _) = fit_galley(ui, title, text_font(16.0, true), pal().text, max_w);
+    let tf = &spec.title_fmt;
+    let title_color = fmt_color(tf, pal().text);
+    let title_font = text_font(
+        text_size(tf, TITLE_SIZE, TITLE_SIZE_MAX),
+        tf.bold.unwrap_or(true),
+    );
+    let g = fmt_galley(ui, title, title_font, title_color, tf, max_w);
     let title_y = if spec.subtitle.is_empty() {
         rect.min.y + 20.0 - g.size().y / 2.0
     } else {
         rect.min.y + 2.0
     };
+    let title_x = text_x + aligned(tf.align, max_w, g.size().x) + f32::from(tf.dx);
+    let title_y = title_y + f32::from(tf.dy);
     ui.painter()
-        .galley(pos2(text_x, title_y).round(), g, pal().text);
+        .galley(pos2(title_x, title_y).round(), g, title_color);
     if !spec.subtitle.is_empty() {
-        let (g, _) = fit_galley(
-            ui,
-            &spec.subtitle,
-            text_font(13.0, false),
-            pal().muted,
-            max_w,
+        let sf = &spec.subtitle_fmt;
+        let sub_color = fmt_color(sf, pal().muted);
+        let sub_font = text_font(
+            text_size(sf, SUBTITLE_SIZE, SUBTITLE_SIZE_MAX),
+            sf.bold.unwrap_or(false),
         );
-        ui.painter()
-            .galley(pos2(text_x, rect.min.y + 24.0).round(), g, pal().muted);
+        let g = fmt_galley(ui, &spec.subtitle, sub_font, sub_color, sf, max_w);
+        let sub_x = text_x + aligned(sf.align, max_w, g.size().x) + f32::from(sf.dx);
+        ui.painter().galley(
+            pos2(
+                sub_x,
+                rect.min.y + 24.0 + title_extra(spec) + f32::from(sf.dy),
+            )
+            .round(),
+            g,
+            sub_color,
+        );
     }
+    if !spec.hide_close {
+        close_button(ui, rect, event);
+    }
+}
+
+/// How far from the left edge a text `width` wide starts in a box `room` wide.
+fn aligned(align: TextAlign, room: f32, width: f32) -> f32 {
+    match align {
+        TextAlign::Left => 0.0,
+        TextAlign::Center => ((room - width) / 2.0).max(0.0),
+        TextAlign::Right => (room - width).max(0.0),
+    }
+}
+
+/// The color a [`TextFmt`] asks for, or `usual`.
+fn fmt_color(fmt: &TextFmt, usual: Color32) -> Color32 {
+    fmt.rgb()
+        .map_or(usual, |[r, g, b]| Color32::from_rgb(r, g, b))
+}
+
+/// `text` on one line, at most `max_w` wide (a longer one ends in an ellipsis, like
+/// [`fit_galley`]), written as `fmt` says: slanted, underlined, struck through. The size, the
+/// weight and the color are in `font` and `color`.
+fn fmt_galley(
+    ui: &egui::Ui,
+    text: &str,
+    font: FontId,
+    color: Color32,
+    fmt: &TextFmt,
+    max_w: f32,
+) -> std::sync::Arc<egui::Galley> {
+    if !fmt.italic && !fmt.underline && !fmt.strike {
+        return fit_galley(ui, text, font, color, max_w).0;
+    }
+    let line = |t: &str| {
+        let lines = |on: bool| {
+            if on {
+                Stroke::new(1.0, color)
+            } else {
+                Stroke::NONE
+            }
+        };
+        let format = egui::TextFormat {
+            font_id: font.clone(),
+            color,
+            italics: fmt.italic,
+            underline: lines(fmt.underline),
+            strikethrough: lines(fmt.strike),
+            ..Default::default()
+        };
+        ui.painter()
+            .layout_job(egui::text::LayoutJob::single_section(t.to_owned(), format))
+    };
+    let whole = line(text);
+    if whole.size().x <= max_w.max(0.0) {
+        return whole;
+    }
+    // the most characters that still fit together with the ellipsis
+    let chars: Vec<char> = text.chars().collect();
+    let (mut lo, mut hi) = (0usize, chars.len());
+    while lo < hi {
+        let mid = lo + (hi - lo).div_ceil(2);
+        let head: String = chars[..mid].iter().collect();
+        if line(&format!("{}\u{2026}", head.trim_end())).size().x <= max_w.max(0.0) {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    let head: String = chars[..lo].iter().collect();
+    line(&format!("{}\u{2026}", head.trim_end()))
+}
+
+/// A text for `ui.label`: the font, the color and the slant and lines `fmt` asks for.
+fn fmt_rich(text: &str, font: FontId, color: Color32, fmt: &TextFmt) -> RichText {
+    let mut rich = RichText::new(text).font(font).color(color);
+    if fmt.italic {
+        rich = rich.italics();
+    }
+    if fmt.underline {
+        rich = rich.underline();
+    }
+    if fmt.strike {
+        rich = rich.strikethrough();
+    }
+    rich
+}
+
+/// Puts `label` where `align` says in the width of `ui` (a text that wraps is aligned line by
+/// line). Left is the way a label is laid out anyway.
+fn aligned_label(ui: &mut egui::Ui, align: TextAlign, rich: RichText) {
+    let main = match align {
+        TextAlign::Left => {
+            ui.label(rich);
+            return;
+        }
+        TextAlign::Center => Align::Center,
+        TextAlign::Right => Align::Max,
+    };
+    ui.with_layout(egui::Layout::top_down(main), |ui| {
+        ui.label(rich);
+    });
 }
 
 fn footer(ui: &mut egui::Ui, rect: Rect, form: &Form, accent: Color32, event: &mut Event) {
@@ -517,7 +676,7 @@ fn button_grid(
     align: Option<ButtonSide>,
     event: &mut Event,
 ) {
-    field_label(ui, label);
+    field_label(ui, label, c.label_fmt);
     let cols = group_columns(columns, buttons.len());
     let heights = grid_row_heights(columns, buttons);
     let width = ui.available_width();
@@ -593,6 +752,7 @@ fn body_widgets(
         }
         let visible = form.matching(i);
         let w = form.spec.widgets[i].clone();
+        let label_fmt = form.spec.label_fmt.clone();
         let Form {
             fields,
             filters,
@@ -604,6 +764,7 @@ fn body_widgets(
             accent,
             visible: &visible,
             on,
+            label_fmt: &label_fmt,
         };
         // each widget is a group of its own, so the label sits close to its control
         let group = ui.vertical(|ui| {
@@ -633,6 +794,8 @@ struct Ctx<'a> {
     visible: &'a [usize],
     /// The toggle buttons that show their second look now.
     on: &'a std::collections::BTreeSet<String>,
+    /// How the labels of the fields are written (`PanelSpec::label_fmt`).
+    label_fmt: &'a TextFmt,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -648,7 +811,12 @@ fn widget(
 ) {
     match (w, field) {
         (Widget::Separator { .. }, _) => separator(ui),
-        (Widget::Text { text, style, .. }, _) => text_block(ui, text, *style),
+        (
+            Widget::Text {
+                text, style, fmt, ..
+            },
+            _,
+        ) => text_block(ui, text, *style, fmt),
         (
             Widget::Input {
                 label,
@@ -656,6 +824,10 @@ fn widget(
                 secret,
                 multiline,
                 max_chars,
+                value_fmt,
+                width,
+                height,
+                text_padding,
                 ..
             },
             Field::Text(value),
@@ -669,8 +841,17 @@ fn widget(
             value,
             focus_first,
             multiline_focus,
+            c.label_fmt,
+            value_fmt,
+            BoxSize {
+                width: *width,
+                height: *height,
+                padding: text_padding,
+            },
         ),
-        (Widget::Toggle { label, .. }, Field::Bool(on)) => toggle(ui, label, on, c.accent),
+        (Widget::Toggle { label, .. }, Field::Bool(on)) => {
+            toggle(ui, label, on, c.accent, c.label_fmt)
+        }
         (
             Widget::Number {
                 label,
@@ -681,8 +862,10 @@ fn widget(
                 ..
             },
             Field::Number(n),
-        ) => number_widget(ui, label, n, *min, *max, *step, unit),
-        (Widget::Color { label, .. }, Field::Text(value)) => color_widget(ui, label, value),
+        ) => number_widget(ui, label, n, *min, *max, *step, unit, c.label_fmt),
+        (Widget::Color { label, .. }, Field::Text(value)) => {
+            color_widget(ui, label, value, c.label_fmt)
+        }
         (
             Widget::Slider {
                 label,
@@ -693,7 +876,7 @@ fn widget(
                 ..
             },
             Field::Number(n),
-        ) => slider_widget(ui, label, n, *min, *max, *step, unit, c.accent),
+        ) => slider_widget(ui, label, n, *min, *max, *step, unit, c.accent, c.label_fmt),
         (
             Widget::Choice {
                 label,
@@ -720,7 +903,9 @@ fn widget(
         (Widget::Multi { label, options, .. }, Field::Many(current)) => {
             multi(ui, c, label, options, current, filter)
         }
-        (Widget::Progress { label, value, .. }, _) => progress(ui, label, *value, c.accent),
+        (Widget::Progress { label, value, .. }, _) => {
+            progress(ui, label, *value, c.accent, c.label_fmt)
+        }
         (
             Widget::Buttons {
                 label,
@@ -739,12 +924,18 @@ fn widget(
     }
 }
 
-fn field_label(ui: &mut egui::Ui, label: &str) {
+/// The label above a field, written as the panel's `label_fmt` says (small, bold and muted when
+/// it says nothing).
+fn field_label(ui: &mut egui::Ui, label: &str, fmt: &TextFmt) {
     if !label.is_empty() {
-        ui.label(
-            RichText::new(label)
-                .font(text_font(13.0, true))
-                .color(pal().muted),
+        let font = text_font(
+            text_size(fmt, LABEL_SIZE, LABEL_SIZE_MAX),
+            fmt.bold.unwrap_or(true),
+        );
+        aligned_label(
+            ui,
+            fmt.align,
+            fmt_rich(label, font, fmt_color(fmt, pal().muted), fmt),
         );
     }
 }
@@ -757,20 +948,46 @@ fn separator(ui: &mut egui::Ui) {
     );
 }
 
-fn text_block(ui: &mut egui::Ui, text: &str, style: TextStyle) {
-    let rich = match style {
-        TextStyle::Body => RichText::new(text)
-            .font(text_font(14.0, false))
-            .color(pal().text),
-        TextStyle::Heading => RichText::new(text)
-            .font(text_font(17.0, true))
-            .color(pal().text),
-        TextStyle::Muted => RichText::new(text)
-            .font(text_font(13.0, false))
-            .color(pal().muted),
-        TextStyle::Code => RichText::new(text).monospace().size(13.0).color(pal().text),
+/// A paragraph: the look of its style, changed by what its `fmt` asks for.
+fn text_block(ui: &mut egui::Ui, text: &str, style: TextStyle, fmt: &TextFmt) {
+    let size = fmt.size.map_or(style_size(style), f32::from);
+    let (font, usual) = match style {
+        TextStyle::Body => (text_font(size, fmt.bold.unwrap_or(false)), pal().text),
+        TextStyle::Heading => (text_font(size, fmt.bold.unwrap_or(true)), pal().text),
+        TextStyle::Muted => (text_font(size, fmt.bold.unwrap_or(false)), pal().muted),
+        // there is no heavier weight of the code font, so `bold` does not change it
+        TextStyle::Code => (FontId::monospace(size), pal().text),
     };
-    ui.label(rich);
+    aligned_label(
+        ui,
+        fmt.align,
+        fmt_rich(text, font, fmt_color(fmt, usual), fmt),
+    );
+}
+
+/// The margin of a box: the space the box says (`text_padding`, else the usual `x` at the sides
+/// and `y` above and below), and the text nudged by it: the side the text moves away from gets
+/// more room, the side it moves to gets less (`dx` to the right, `dy` down, in points).
+fn nudged_margin(x: f32, y: f32, pad: &Padding, fmt: &TextFmt) -> egui::Margin {
+    let side = |own: Option<f32>, base: f32, d: i16| {
+        (own.unwrap_or(base).round() as i32 + i32::from(d)).clamp(0, 120) as i8
+    };
+    egui::Margin {
+        left: side(pad.left, x, fmt.dx),
+        right: side(pad.right, x, -fmt.dx),
+        top: side(pad.top, y, fmt.dy),
+        bottom: side(pad.bottom, y, -fmt.dy),
+    }
+}
+
+/// What an input box says about its own size and the space around its text.
+#[derive(Clone, Copy)]
+struct BoxSize<'a> {
+    /// Points; `None`: as wide as the card.
+    width: Option<f32>,
+    /// Points; `None`: the usual height.
+    height: Option<f32>,
+    padding: &'a Padding,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -784,23 +1001,103 @@ fn input(
     value: &mut String,
     focus_first: &mut bool,
     multiline_focus: &mut bool,
+    label_fmt: &TextFmt,
+    value_fmt: &TextFmt,
+    size: BoxSize,
 ) {
-    field_label(ui, label);
+    field_label(ui, label, label_fmt);
+    // how the text inside the box is written: size, weight and color go to the box itself; slant
+    // and lines need a layouter (not for a password: its dots are drawn by the box)
+    let font = text_font(
+        value_fmt.size.map_or(BOX_TEXT_SIZE, f32::from),
+        value_fmt.bold.unwrap_or(false),
+    );
+    let color = fmt_color(value_fmt, pal().text);
+    let lines = |on: bool| {
+        if on {
+            Stroke::new(1.0, color)
+        } else {
+            Stroke::NONE
+        }
+    };
+    let needs_layouter = !secret && (value_fmt.italic || value_fmt.underline || value_fmt.strike);
+    let layout_font = font.clone();
+    let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
+        let format = egui::TextFormat {
+            font_id: layout_font.clone(),
+            color,
+            italics: value_fmt.italic,
+            underline: lines(value_fmt.underline),
+            strikethrough: lines(value_fmt.strike),
+            ..Default::default()
+        };
+        let mut job = egui::text::LayoutJob::single_section(text.as_str().to_owned(), format);
+        job.wrap.max_width = wrap_width;
+        ui.painter().layout_job(job)
+    };
+    let across = match value_fmt.align {
+        TextAlign::Left => Align::Min,
+        TextAlign::Center => Align::Center,
+        TextAlign::Right => Align::Max,
+    };
+    // a box never gets wider than the room it has
+    let box_width = size
+        .width
+        .map_or(f32::INFINITY, |w| w.min(ui.available_width()));
     let resp = if multiline {
+        // several lines start at the top unless the box is told otherwise
+        let down = match value_fmt.valign.unwrap_or(TextVAlign::Top) {
+            TextVAlign::Top => Align::Min,
+            TextVAlign::Middle => Align::Center,
+            TextVAlign::Bottom => Align::Max,
+        };
         let mut edit = egui::TextEdit::multiline(value)
-            .desired_rows(4)
-            .desired_width(f32::INFINITY)
-            .margin(egui::Margin::symmetric(12, 8))
+            .desired_rows(if size.height.is_some() { 1 } else { 4 })
+            .desired_width(box_width)
+            .min_size(vec2(0.0, size.height.unwrap_or(0.0)))
+            .margin(nudged_margin(
+                BOX_PAD_X,
+                BOX_PAD_Y_MANY,
+                size.padding,
+                value_fmt,
+            ))
+            .font(font)
+            .text_color(color)
+            .horizontal_align(across)
+            .vertical_align(down)
             .hint_text(hint);
+        if needs_layouter {
+            edit = edit.layouter(&mut layouter);
+        }
         if let Some(n) = max_chars {
             edit = edit.char_limit(n as usize);
         }
         ui.add(edit)
     } else {
+        // one line sits in the middle of its box unless the box is told otherwise
+        let down = match value_fmt.valign.unwrap_or(TextVAlign::Middle) {
+            TextVAlign::Top => Align::Min,
+            TextVAlign::Middle => Align::Center,
+            TextVAlign::Bottom => Align::Max,
+        };
         let mut edit = text_field(value)
-            .desired_width(f32::INFINITY)
+            .desired_width(box_width)
+            .min_size(vec2(0.0, size.height.unwrap_or(CONTROL_H)))
+            .margin(nudged_margin(
+                BOX_PAD_X,
+                BOX_PAD_Y_ONE,
+                size.padding,
+                value_fmt,
+            ))
+            .font(font)
+            .text_color(color)
+            .horizontal_align(across)
+            .vertical_align(down)
             .hint_text(hint)
             .password(secret);
+        if needs_layouter {
+            edit = edit.layouter(&mut layouter);
+        }
         if let Some(n) = max_chars {
             edit = edit.char_limit(n as usize);
         }
@@ -815,7 +1112,7 @@ fn input(
     }
 }
 
-fn toggle(ui: &mut egui::Ui, label: &str, on: &mut bool, accent: Color32) {
+fn toggle(ui: &mut egui::Ui, label: &str, on: &mut bool, accent: Color32, fmt: &TextFmt) {
     let (rect, resp) = ui.allocate_exact_size(
         vec2(ui.available_width(), crate::ui::settings::theme::CONTROL_H),
         Sense::click(),
@@ -823,18 +1120,20 @@ fn toggle(ui: &mut egui::Ui, label: &str, on: &mut bool, accent: Color32) {
     if resp.clicked() {
         *on = !*on;
     }
-    let p = ui.painter();
-    let (g, _) = fit_galley(
-        ui,
-        label,
-        text_font(14.0, false),
-        pal().text,
-        rect.width() - 60.0,
+    // the label of a switch is a little bigger than the one above a field, and not bold
+    let color = fmt_color(fmt, pal().text);
+    let font = text_font(
+        text_size(fmt, 14.0, LABEL_SIZE_MAX),
+        fmt.bold.unwrap_or(false),
     );
+    let room = rect.width() - 60.0;
+    let g = fmt_galley(ui, label, font, color, fmt, room);
+    let x = rect.min.x + aligned(fmt.align, room, g.size().x);
+    let p = ui.painter();
     p.galley(
-        pos2(rect.min.x, rect.center().y - g.size().y / 2.0).round(),
+        pos2(x, rect.center().y - g.size().y / 2.0).round(),
         g,
-        pal().text,
+        color,
     );
     let sw = Rect::from_center_size(pos2(rect.max.x - 22.0, rect.center().y), vec2(40.0, 22.0));
     let fill = if *on { accent } else { pal().track };
@@ -860,14 +1159,21 @@ fn slider_widget(
     step: Option<f64>,
     unit: &str,
     accent: Color32,
+    label_fmt: &TextFmt,
 ) {
     ui.horizontal(|ui| {
         if !label.is_empty() {
-            ui.label(
-                RichText::new(label)
-                    .font(text_font(13.0, true))
-                    .color(pal().muted),
+            // the label shares its line with the number, so only its look is set here, not where it sits
+            let font = text_font(
+                text_size(label_fmt, LABEL_SIZE, LABEL_SIZE_MAX),
+                label_fmt.bold.unwrap_or(true),
             );
+            ui.label(fmt_rich(
+                label,
+                font,
+                fmt_color(label_fmt, pal().muted),
+                label_fmt,
+            ));
         }
         ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
             let shown = crate::panel::form::snap(*n, min, max, step);
@@ -885,6 +1191,7 @@ fn slider_widget(
 }
 
 /// A number: `-` and `+` buttons around a box that can be typed in or dragged.
+#[allow(clippy::too_many_arguments)]
 fn number_widget(
     ui: &mut egui::Ui,
     label: &str,
@@ -893,8 +1200,9 @@ fn number_widget(
     max: Option<f64>,
     step: Option<f64>,
     unit: &str,
+    label_fmt: &TextFmt,
 ) {
-    field_label(ui, label);
+    field_label(ui, label, label_fmt);
     let (lo, hi) = number_bounds(min, max);
     let grid = step.filter(|s| s.is_finite() && *s > 0.0).unwrap_or(1.0);
     ui.horizontal(|ui| {
@@ -921,8 +1229,8 @@ fn number_widget(
 }
 
 /// A color: the accent swatches of Settings, and the color picker of the system for any other.
-fn color_widget(ui: &mut egui::Ui, label: &str, value: &mut String) {
-    field_label(ui, label);
+fn color_widget(ui: &mut egui::Ui, label: &str, value: &mut String, label_fmt: &TextFmt) {
+    field_label(ui, label, label_fmt);
     let mut rgb = parse_hex(value)
         .or_else(|| parse_hex(DEFAULT_COLOR))
         .unwrap_or([0x3b, 0x82, 0xf6]);
@@ -937,8 +1245,8 @@ fn color_widget(ui: &mut egui::Ui, label: &str, value: &mut String) {
     }
 }
 
-fn progress(ui: &mut egui::Ui, label: &str, value: f64, accent: Color32) {
-    field_label(ui, label);
+fn progress(ui: &mut egui::Ui, label: &str, value: f64, accent: Color32, label_fmt: &TextFmt) {
+    field_label(ui, label, label_fmt);
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), BAR_H), Sense::hover());
     let p = ui.painter();
     let r = CornerRadius::same(4);
@@ -1063,7 +1371,7 @@ fn choice(
     focus_first: &mut bool,
     event: &mut Event,
 ) {
-    field_label(ui, label);
+    field_label(ui, label, c.label_fmt);
     if searchable {
         search_box(ui, filter, focus_first);
     }
@@ -1174,7 +1482,7 @@ fn multi(
     current: &mut Vec<String>,
     filter: &mut String,
 ) {
-    field_label(ui, label);
+    field_label(ui, label, c.label_fmt);
     if options.len() > crate::panel::layout::SEARCH_FROM {
         let mut none = false;
         search_box(ui, filter, &mut none);

@@ -30,6 +30,7 @@ pub mod flow_kit;
 pub mod flow_list;
 pub mod flow_templates;
 mod model;
+pub mod pie_edit;
 mod sanitize;
 pub mod share;
 mod store;

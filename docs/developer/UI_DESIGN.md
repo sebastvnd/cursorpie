@@ -33,7 +33,10 @@ settings of a Mac, and follows from that:
   everywhere. Lists of choices (the profile list, drop-downs) use `widgets::select` or a list under their
   button, and a few icon buttons that unfold in a row (the "..." of the profile toolbar) are drawn in place.
   `widgets::popover` (a small card under a button) is still there for a short form, but nothing uses it
-  at the moment. There are no other floating panels.
+  at the moment. The one exception is the *list of things to add* of a canvas (the blocks of the Flow canvas, the slices
+  of the pie editor): a searchable list that floats over the bar's **+** or where the right button was pressed, with
+  nothing dimmed, closed by Esc or a press outside. A canvas is for dragging things about, and a modal over it would
+  hide what is being placed. There are no other floating panels.
 - **One icon set.** Every icon in the interface, and the default slice icons, come from the same set
   (Phosphor, outline for rest and filled for selected). No icon is a combination of letters.
 - **Predictable.** The buttons you confirm with never move: Cancel (red) and Save (the accent) are two small
@@ -92,6 +95,26 @@ missing from either weight.
   to the 232 pt sidebar. The choice is remembered while the app runs, not saved.
 - **The page sits in the middle** of the body at 820 pt wide at most, so there is never an empty strip
   on one side only.
+
+### The panel designer's inspector
+
+The right column of the panel designer (`ui/settings/panel_designer.rs`) follows the same rules as a Settings page,
+in a 324 pt column:
+
+- **Cards of rows, not a column of labels.** What a field decides is a *row* of a `panel` card: the name on the left,
+  one control on the right (`row_wide`, `toggle_row`, `slider_row`). A control that needs the whole width (a text box,
+  the swatches, a segmented control of three) is a `field`: the name small and muted above it, a hairline from the
+  field before. No bare `field_label` stack in new inspector code.
+- **One step in for what is rarely touched.** The look of a text and the space inside the card are behind a `nav_row`
+  (name, what is set now, a caret) that opens a page with a back arrow (`PanelDesign::look`). Do not use
+  `CollapsingHeader`: its triangle and indent are not part of the design system.
+- **A way back to the usual.** Swatches start with the usual color (`color_dots`), the size has *Reset*, and a page
+  ends with *Reset style*. What is the usual is never written to the JSON.
+- **Letters are toggles** (`chips`): equal width, lit with the accent while on.
+- **The same goes for the inspector of a button and of every widget.** Use `text_field_in`, `choice_field`,
+  `pair_field` and `auto_row` inside a `panel` card; a page one step in for a widget is named by a constant such as
+  `INPUT_LOOK` and kept in `PanelDesign::look` together with the selection it belongs to, so picking something else
+  closes it.
 
 ### Palette
 
@@ -350,6 +373,10 @@ at the very least change the display scaling once:
       while something is unsaved and goes away after Ctrl/Cmd+S or when you undo back to the start. Cancel or Esc
       with unsaved changes asks "Discard changes?": Enter discards, Esc keeps editing; with nothing unsaved they
       close at once. Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z still undo and redo.
+- [ ] Pie editor: the left button never pans (drag on the background draws a selection box; the middle button, Space +
+      drag and the scroll pan). Dragging the middle of a submenu's pie moves it and the selected ones, the top pie does
+      not move, Save keeps the places, and *Tidy up* puts them back. The **+** unfolds three groups in the bar and
+      opens a list over it (Esc and a press outside close it); a right click opens the list at the pointer.
 - [ ] Menu: **...** unfolds four icons to its left, hides **+** and becomes an **x**; each action folds it again.
 - [ ] Shrink the screen height (or use a short laptop display): the Menu tab still fits.
 - [ ] Use an image icon with a transparent background: no dark halo around it.

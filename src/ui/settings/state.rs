@@ -111,6 +111,90 @@ pub enum FlowView {
     Canvas,
 }
 
+/// How the Menu tab shows the pie being edited.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MenuView {
+    /// One pie at a time with the slice editor beside it: the way the tab has always looked.
+    #[default]
+    Classic,
+    /// The pie editor: the whole tree of rings on a canvas (every submenu is a pie of its own,
+    /// wired to its slice), like the canvas of the Flow tab. See `tabs::pie_editor`.
+    Editor,
+}
+
+/// How much of the width the imported pie takes when the import tray opens: a third, so your own pie
+/// (the one being edited) keeps the larger part.
+pub const IMPORT_SPLIT: f32 = 0.3;
+
+/// How far a canvas of pies is moved and zoomed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PieView {
+    /// How far the canvas is scrolled, from the top left corner of its area.
+    pub pan: egui::Vec2,
+    /// How far it is zoomed (1.0 = actual size).
+    pub zoom: f32,
+    /// What the view was last fitted to (the profile of the canvas); it is fitted again when that
+    /// changes, or when this is `None`.
+    pub fitted_for: Option<usize>,
+}
+
+impl Default for PieView {
+    fn default() -> Self {
+        Self {
+            pan: egui::Vec2::ZERO,
+            zoom: 1.0,
+            fitted_for: None,
+        }
+    }
+}
+
+/// A slice that is being dragged in the pie editor or the import tray.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PieDrag {
+    /// The slice comes from the imported pie (it is copied) and not from yours (it is moved).
+    pub from_import: bool,
+    /// The ring it is in.
+    pub ring: Vec<usize>,
+    /// Its place in that ring.
+    pub idx: usize,
+}
+
+/// The list of slices to add that the **+** of the pie editor, or the right button on its canvas,
+/// opens over the canvas (not a sheet: the list floats, like the one of the Flow canvas).
+#[derive(Clone, Debug)]
+pub struct PieMenu {
+    /// Where it opens: the place of the right click, or `None` over the bar, centered on it.
+    pub at: Option<egui::Pos2>,
+    /// The ring a picked slice is added to.
+    pub ring: Vec<usize>,
+    /// Where the list was drawn last frame (a press outside it closes it).
+    pub rect: egui::Rect,
+    /// The group of the list that is narrowed to (an index into `AddCatalog::groups`), if any.
+    pub group: Option<usize>,
+    /// What the person typed in the search box.
+    pub search: String,
+}
+
+/// The **import tray**: a pie file that was opened but not added to anything. The window shows it
+/// next to your pie, and slices are dragged from one into the other (see `tabs::pie_editor`). Nothing
+/// is written to the icons folder or added to the flows until a slice is taken, and then only what
+/// that slice needs.
+pub struct PieImport {
+    /// The name of the file, for the title of its half.
+    pub label: String,
+    /// What the file holds. The profile in it is never changed: it is the source.
+    pub bundle: Box<crate::config::share::Bundle>,
+    /// The slice that is selected in the imported pie: its ring and its place.
+    pub sel: Option<(Vec<usize>, usize)>,
+    /// Where the imported pie is on its half of the window.
+    pub view: PieView,
+    /// The images of the file as textures, by icon string; `None` for an icon that is not an image
+    /// of the file (text, a symbol or an app), which the usual cache draws.
+    pub textures: std::collections::HashMap<String, Option<egui::TextureHandle>>,
+    /// Whether anything in the file runs shell commands, writes files or sends messages.
+    pub runs_commands: bool,
+}
+
 /// The sheet that opens over the Flow tab when **New flow** is pressed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FlowNew {
@@ -351,6 +435,31 @@ pub struct Ed {
     /// lined up. Blocks added from the list have no place on the canvas yet; the canvas gives
     /// them one the first time it is opened.
     pub flow_untidy: std::collections::BTreeSet<String>,
+    /// Menu tab: classic pie and slice editor, or the pie editor (a canvas)
+    pub menu_view: MenuView,
+    /// Menu tab, pie editor: where the canvas of your pie is
+    pub pie_view: PieView,
+    /// Menu tab, pie editor: the slice editor stays open at the right without a selected slice
+    /// (the button of the bar)
+    pub pie_insp: bool,
+    /// Menu tab, pie editor and import tray: the slice being dragged
+    pub pie_drag: Option<PieDrag>,
+    /// Menu tab, pie editor: the pies (rings, by the path of the submenu that opens them) that are
+    /// selected. The top pie can be selected but not moved: the others are placed around it.
+    pub pie_picked: std::collections::BTreeSet<Vec<usize>>,
+    /// Menu tab, pie editor: where the selection box started, in the window, while one is dragged
+    pub pie_marquee: Option<egui::Pos2>,
+    /// Menu tab, pie editor: what was selected when the box started with Shift or Ctrl/Cmd held
+    pub pie_marquee_base: std::collections::BTreeSet<Vec<usize>>,
+    /// Menu tab, pie editor: the middle of a pie is being dragged, so the selected pies move
+    pub pie_moving: bool,
+    /// Menu tab, pie editor: the list of slices to add, while it is open
+    pub pie_menu: Option<PieMenu>,
+    /// Menu tab, import tray: the imported pie that waits to be dragged into yours, if any. While
+    /// there is one, the tab is split in two halves.
+    pub pie_import: Option<PieImport>,
+    /// Menu tab, import tray: how much of the width the imported half takes (0.25 to 0.75)
+    pub pie_split: f32,
     /// Flow tab: the selected block
     pub flow_sel: Option<u32>,
     /// Flow tab: the blocks selected together (a drag over the empty canvas, Shift or Ctrl/Cmd +
@@ -465,6 +574,17 @@ impl Ed {
             flow_side_rect: egui::Rect::NOTHING,
             flow_untidy: std::collections::BTreeSet::new(),
             flow_center: egui::Pos2::new(240.0, 160.0),
+            menu_view: MenuView::default(),
+            pie_view: PieView::default(),
+            pie_insp: false,
+            pie_drag: None,
+            pie_picked: std::collections::BTreeSet::new(),
+            pie_marquee: None,
+            pie_marquee_base: std::collections::BTreeSet::new(),
+            pie_moving: false,
+            pie_menu: None,
+            pie_import: None,
+            pie_split: IMPORT_SPLIT,
             flow_sel: None,
             flow_multi: std::collections::BTreeSet::new(),
             flow_marquee: None,
@@ -545,6 +665,11 @@ impl Ed {
         self.flow_search = String::new();
         self.flow_side = false;
         self.flow_side_leave = None;
+        self.pie_picked.clear();
+        self.pie_marquee = None;
+        self.pie_marquee_base.clear();
+        self.pie_moving = false;
+        self.close_pie_menu();
     }
 
     /// Every selected block of the canvas: the one, or the group.
@@ -570,9 +695,57 @@ impl Ed {
         }
     }
 
-    /// Closes the list of blocks of the canvas. Returns whether it was open.
+    /// Closes the list of blocks of the Flow canvas, or the list of slices of the pie editor.
+    /// Returns whether one was open.
     pub fn close_flow_menu(&mut self) -> bool {
-        self.flow_menu.take().is_some()
+        let flow = self.flow_menu.take().is_some();
+        let pie = self.close_pie_menu();
+        flow || pie
+    }
+
+    /// Closes the list of slices of the pie editor. Returns whether it was open.
+    pub fn close_pie_menu(&mut self) -> bool {
+        let was = self.pie_menu.take().is_some();
+        if was {
+            // the tiles are built again the next time one is opened (see `AddCatalog`)
+            self.add_catalog = None;
+        }
+        was
+    }
+
+    /// Whether the Menu tab is showing something that can fill the whole display: the pie editor
+    /// or the import tray (see `App::toggle_flow_full`).
+    pub fn pie_canvas_open(&self) -> bool {
+        self.tab == Tab::Menu && (self.menu_view == MenuView::Editor || self.pie_import.is_some())
+    }
+
+    /// Opens the import tray on a pie file that was read (replacing the one that was open).
+    pub fn open_import(
+        &mut self,
+        bundle: crate::config::share::Bundle,
+        label: String,
+        runs_commands: bool,
+    ) {
+        self.pie_import = Some(PieImport {
+            label,
+            bundle: Box::new(bundle),
+            sel: None,
+            view: PieView::default(),
+            textures: std::collections::HashMap::new(),
+            runs_commands,
+        });
+        self.pie_drag = None;
+        self.pie_split = IMPORT_SPLIT;
+        self.tab = Tab::Menu;
+        self.adding = false;
+        self.add_catalog = None;
+        self.picking_icon = false;
+    }
+
+    /// Closes the import tray. Returns whether there was one.
+    pub fn close_import(&mut self) -> bool {
+        self.pie_drag = None;
+        self.pie_import.take().is_some()
     }
 
     /// Stops recording a shortcut (also disarms the event tap).
@@ -625,6 +798,13 @@ impl Ed {
         }
         self.flow_marquee = None;
         self.flow_group = false;
+        self.pie_drag = None;
+        self.pie_marquee = None;
+        self.pie_moving = false;
+        self.close_pie_menu();
+        let top = edit.profiles.get(self.profile).map(|p| p.items.as_slice());
+        self.pie_picked
+            .retain(|path| top.is_some_and(|items| items_at(items, path).is_some()));
         let ring_len = edit
             .profiles
             .get(self.profile)

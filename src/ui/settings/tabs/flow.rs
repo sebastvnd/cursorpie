@@ -49,7 +49,9 @@
 use super::flow_inspect::{self, READS_C, SETS_C};
 use super::flow_list as list_ui;
 use super::flow_new::flow_new_sheet;
-use crate::config::flow::{COORD_LIMIT, export_flow_to_downloads, fresh_id, unique_name};
+use crate::config::flow::{
+    COORD_LIMIT, PasteBlocks, export_flow_to_downloads, fresh_id, unique_name,
+};
 use crate::config::flow_check::{
     block_issues, block_reads, block_severity, block_writes, data_edges, wire_severity,
 };
@@ -64,6 +66,7 @@ use crate::ui::app::App;
 use crate::ui::draw::rgb;
 use crate::ui::fonts;
 use crate::ui::settings::action_editor::browser_fields;
+use crate::ui::settings::clip::{self, Clip};
 use crate::ui::settings::panel_designer;
 use crate::ui::settings::picker::spawn_file_picker;
 use crate::ui::settings::state::{Ed, FlowMenu, FlowNew, FlowView, KitStatus, PickFor, Rec, Slot};
@@ -158,6 +161,9 @@ pub(super) enum Op {
     PickApp(u32),
     /// Open the panel designer for this *Ask* block
     DesignPanel(u32),
+    /// Paste the blocks of this clipboard text, with the corner of the group at this place of
+    /// the canvas (`None`: a little down and to the right of where they were)
+    Paste(String, Option<Pos2>),
     /// Add a block with no wires at this place of the canvas
     AddAt(NodeKind, Pos2),
     /// Add a block at this place and wire the output (block, port) that had nothing to it
@@ -1863,6 +1869,32 @@ fn canvas(
         {
             ed.set_selection(flow.nodes.iter().map(|n| n.id).collect());
         }
+        // Ctrl/Cmd + C copies the selected blocks and Ctrl/Cmd + X cuts them, Ctrl/Cmd + V pastes
+        // them where the pointer is (or beside the originals when it is off the canvas). They go
+        // through the system clipboard as text, so a copy can be pasted into another flow too
+        if keys_free && let Some(clipped) = clip::take(ctx) {
+            let cut = matches!(clipped, Clip::Cut);
+            match clipped {
+                Clip::Copy | Clip::Cut => {
+                    let ids = ed.selected_ids();
+                    if let Some(text) = flow.copy_nodes(&ids) {
+                        ctx.copy_text(text);
+                        if cut {
+                            for id in ids {
+                                ops.push(Op::Remove(id));
+                            }
+                        }
+                    }
+                }
+                Clip::Paste(text) => {
+                    let at = ctx
+                        .input(|i| i.pointer.latest_pos())
+                        .filter(|p| view.contains(*p))
+                        .map(|p| from_global * p - vec2(20.0, HEAD_H / 2.0));
+                    ops.push(Op::Paste(text, at));
+                }
+            }
+        }
         // A press on the empty canvas is also followed here, by where the blocks are and not by what
         // egui says the pointer is over, so that a click that lets go of the selection and a drag
         // that draws the box work even when the background (`bg`) does not get the press, as when
@@ -2620,10 +2652,10 @@ fn canvas(
         }
         let hints = [
             format!(
-                "{head} \u{b7} right-click adds a block \u{b7} drag to select \u{b7} Shift + click adds or removes \u{b7} Alt + scroll or pinch zooms \u{b7} middle button, Space + drag or two fingers moves"
+                "{head} \u{b7} right-click adds a block \u{b7} drag to select \u{b7} Shift + click adds or removes \u{b7} Ctrl/Cmd + C, X, V copies, cuts, pastes \u{b7} Alt + scroll or pinch zooms \u{b7} middle button, Space + drag or two fingers moves"
             ),
             format!(
-                "{head} \u{b7} right-click adds a block \u{b7} drag to select \u{b7} Shift + click adds or removes \u{b7} Alt + scroll zooms"
+                "{head} \u{b7} right-click adds a block \u{b7} drag to select \u{b7} Shift + click adds or removes \u{b7} Ctrl/Cmd + C, V copies, pastes \u{b7} Alt + scroll zooms"
             ),
             format!("{head} \u{b7} right-click adds a block \u{b7} Alt + scroll zooms"),
             head,
@@ -2705,6 +2737,15 @@ pub(super) fn apply_ops(
             Op::Connect(from, port, to) => {
                 flow.connect(from, port, to);
             }
+            Op::Paste(text, at) => match flow.paste_nodes(&text, at.map(|p| (p.x, p.y))) {
+                PasteBlocks::Done(ids) => ed.set_selection(ids.into_iter().collect()),
+                PasteBlocks::Full => notice(
+                    tx,
+                    ctx,
+                    format!("A flow can have {MAX_FLOW_NODES} blocks at most."),
+                ),
+                PasteBlocks::NotBlocks => {}
+            },
             Op::AddAt(kind, at) => {
                 if flow.nodes.len() < MAX_FLOW_NODES {
                     let id = flow.add_at(kind, at.x, at.y);

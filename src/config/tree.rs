@@ -136,6 +136,12 @@ pub fn profile_has_commands(p: &Profile) -> bool {
     items_run_commands(&p.items)
 }
 
+/// true if the slice `item` (or anything in a submenu of it) runs a shell command. The import tray
+/// marks such slices before they are dragged into a pie.
+pub fn item_runs_commands(item: &Item) -> bool {
+    items_run_commands(std::slice::from_ref(item))
+}
+
 /// Mutable version of [`items_at`]: the ring at `path`, where an empty path is the top ring.
 /// `None` if the path leaves the tree.
 pub fn ring_mut<'a>(items: &'a mut Vec<Item>, path: &[usize]) -> Option<&'a mut Vec<Item>> {

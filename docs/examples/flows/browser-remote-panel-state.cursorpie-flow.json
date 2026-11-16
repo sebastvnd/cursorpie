@@ -1,0 +1,321 @@
+{
+  "cursorpie_flow": 2,
+  "flow": {
+    "id": "flow-3",
+    "name": "Browser remote (kept state)",
+    "nodes": [
+      {
+        "id": 1,
+        "x": 40.0,
+        "y": 40.0,
+        "kind": "Start",
+        "next": 2
+      },
+      {
+        "id": 2,
+        "x": 280.0,
+        "y": 40.0,
+        "kind": {
+          "Native": {
+            "op": "Quiet",
+            "a": "on",
+            "b": ""
+          }
+        },
+        "next": 21
+      },
+      {
+        "id": 3,
+        "x": 2130.0,
+        "y": 40.0,
+        "kind": {
+          "Ask": {
+            "mode": "Panel",
+            "message": "{\n  \"id\": \"browser-remote\",\n  \"title\": \"{{result}}\",\n  \"icon\": \"browser\",\n  \"place\": \"bottom\",\n  \"width\": 330.0,\n  \"padding\": {\n    \"bottom\": 22.0\n  },\n  \"widgets\": [\n    {\n      \"type\": \"buttons\",\n      \"buttons\": [\n        {\n          \"id\": \"prev\",\n          \"icon\": \"skip-back\",\n          \"width\": 640,\n          \"height\": 72,\n          \"radius\": 36\n        },\n        {\n          \"id\": \"toggle\",\n          \"tone\": \"primary\",\n          \"icon\": \"play\",\n          \"toggle\": true,\n          \"on_icon\": \"pause\",\n          \"on_tone\": \"danger\",\n          \"width\": 326,\n          \"height\": 72,\n          \"radius\": 36,\n          \"bind\": \"keep_playing\"\n        },\n        {\n          \"id\": \"next\",\n          \"icon\": \"skip-forward\",\n          \"width\": 640,\n          \"height\": 72,\n          \"radius\": 36\n        }\n      ]\n    },\n    {\n      \"type\": \"buttons\",\n      \"columns\": 3,\n      \"buttons\": [\n        {\n          \"id\": \"vol_down\",\n          \"label\": \"-\",\n          \"width\": 640,\n          \"height\": 65,\n          \"radius\": 36\n        },\n        {\n          \"id\": \"mute\",\n          \"icon\": \"speaker-high\",\n          \"toggle\": true,\n          \"on_icon\": \"speaker-slash\",\n          \"on_tone\": \"danger\",\n          \"width\": 640,\n          \"height\": 65,\n          \"radius\": 36,\n          \"bind\": \"keep_muted\"\n        },\n        {\n          \"id\": \"vol_up\",\n          \"label\": \"+\",\n          \"width\": 640,\n          \"height\": 65,\n          \"radius\": 36\n        }\n      ]\n    },\n    {\n      \"type\": \"buttons\",\n      \"id\": \"buttons\",\n      \"buttons\": [\n        {\n          \"id\": \"open\",\n          \"icon\": \"arrows-out\",\n          \"width\": 640,\n          \"height\": 60,\n          \"radius\": 36\n        }\n      ]\n    },\n    {\n      \"type\": \"separator\"\n    }\n  ],\n  \"no_buttons\": true,\n  \"keep_open\": true\n}",
+            "preset": "",
+            "out": "button"
+          }
+        },
+        "next": 4
+      },
+      {
+        "id": 4,
+        "x": 2870.0,
+        "y": 40.0,
+        "kind": {
+          "Branch": {
+            "a": "ok",
+            "op": "IsTrue",
+            "b": ""
+          }
+        },
+        "next": 5,
+        "alt": 20
+      },
+      {
+        "id": 5,
+        "x": 3240.0,
+        "y": 40.0,
+        "kind": {
+          "Branch": {
+            "a": "button",
+            "op": "Eq",
+            "b": "prev"
+          }
+        },
+        "next": 6,
+        "alt": 7
+      },
+      {
+        "id": 6,
+        "x": 3600.0,
+        "y": 40.0,
+        "kind": {
+          "Native": {
+            "op": "Browser",
+            "a": "media.prev",
+            "b": ""
+          }
+        },
+        "next": 27
+      },
+      {
+        "id": 7,
+        "x": 3240.0,
+        "y": 256.0,
+        "kind": {
+          "Branch": {
+            "a": "button",
+            "op": "Eq",
+            "b": "toggle"
+          }
+        },
+        "next": 8,
+        "alt": 9
+      },
+      {
+        "id": 8,
+        "x": 3600.0,
+        "y": 256.0,
+        "kind": {
+          "Native": {
+            "op": "Browser",
+            "a": "media.toggle",
+            "b": ""
+          }
+        },
+        "next": 24
+      },
+      {
+        "id": 9,
+        "x": 3240.0,
+        "y": 472.0,
+        "kind": {
+          "Branch": {
+            "a": "button",
+            "op": "Eq",
+            "b": "next"
+          }
+        },
+        "next": 10,
+        "alt": 11
+      },
+      {
+        "id": 10,
+        "x": 3600.0,
+        "y": 472.0,
+        "kind": {
+          "Native": {
+            "op": "Browser",
+            "a": "media.next",
+            "b": ""
+          }
+        },
+        "next": 28
+      },
+      {
+        "id": 11,
+        "x": 3240.0,
+        "y": 688.0,
+        "kind": {
+          "Branch": {
+            "a": "button",
+            "op": "Eq",
+            "b": "vol_down"
+          }
+        },
+        "next": 12,
+        "alt": 13
+      },
+      {
+        "id": 12,
+        "x": 3600.0,
+        "y": 688.0,
+        "kind": {
+          "Native": {
+            "op": "Browser",
+            "a": "media.volume_down",
+            "b": ""
+          }
+        },
+        "next": 24
+      },
+      {
+        "id": 13,
+        "x": 3240.0,
+        "y": 904.0,
+        "kind": {
+          "Branch": {
+            "a": "button",
+            "op": "Eq",
+            "b": "mute"
+          }
+        },
+        "next": 14,
+        "alt": 15
+      },
+      {
+        "id": 14,
+        "x": 3600.0,
+        "y": 904.0,
+        "kind": {
+          "Native": {
+            "op": "Browser",
+            "a": "media.mute",
+            "b": ""
+          }
+        },
+        "next": 24
+      },
+      {
+        "id": 15,
+        "x": 3240.0,
+        "y": 1120.0,
+        "kind": {
+          "Branch": {
+            "a": "button",
+            "op": "Eq",
+            "b": "vol_up"
+          }
+        },
+        "next": 16,
+        "alt": 25
+      },
+      {
+        "id": 16,
+        "x": 3600.0,
+        "y": 1120.0,
+        "kind": {
+          "Native": {
+            "op": "Browser",
+            "a": "media.volume_up",
+            "b": ""
+          }
+        },
+        "next": 24
+      },
+      {
+        "id": 20,
+        "x": 3240.0,
+        "y": 1600.0,
+        "kind": "End",
+        "next": null
+      },
+      {
+        "id": 21,
+        "x": 650.0,
+        "y": 40.0,
+        "kind": {
+          "Native": {
+            "op": "Browser",
+            "a": "media.now_playing",
+            "b": "result"
+          }
+        },
+        "next": 29
+      },
+      {
+        "id": 24,
+        "x": 4320.0,
+        "y": 600.0,
+        "kind": {
+          "Native": {
+            "op": "Browser",
+            "a": "media.now_playing",
+            "b": "result"
+          }
+        },
+        "next": 3
+      },
+      {
+        "id": 25,
+        "x": 3240.0,
+        "y": 1348.0,
+        "kind": {
+          "Branch": {
+            "a": "button",
+            "op": "Eq",
+            "b": "open"
+          }
+        },
+        "next": 26,
+        "alt": 3
+      },
+      {
+        "id": 26,
+        "x": 3600.0,
+        "y": 1348.0,
+        "kind": {
+          "Native": {
+            "op": "Browser",
+            "a": "media.focus",
+            "b": ""
+          }
+        },
+        "next": 24
+      },
+      {
+        "id": 27,
+        "x": 3960.0,
+        "y": 40.0,
+        "kind": {
+          "Wait": 500
+        },
+        "next": 24
+      },
+      {
+        "id": 28,
+        "x": 3960.0,
+        "y": 472.0,
+        "kind": {
+          "Wait": 500
+        },
+        "next": 24
+      },
+      {
+        "id": 29,
+        "x": 1020.0,
+        "y": 40.0,
+        "kind": {
+          "Set": {
+            "name": "keep_playing",
+            "value": "{{keep_playing|default:0}}"
+          }
+        },
+        "next": 30
+      },
+      {
+        "id": 30,
+        "x": 1390.0,
+        "y": 40.0,
+        "kind": {
+          "Set": {
+            "name": "keep_muted",
+            "value": "{{keep_muted|default:0}}"
+          }
+        },
+        "next": 3
+      }
+    ]
+  }
+}

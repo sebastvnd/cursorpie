@@ -225,10 +225,13 @@ impl Form {
     /// asking again.
     pub fn inherit(&mut self, old: &Form) {
         let was_toggle = |id: &str| old.spec.find_button(id).is_some_and(|b| b.toggle);
+        let restore = self.spec.restore;
         let ids: Vec<String> = self
             .spec
             .all_buttons()
-            .filter(|b| b.toggle && was_toggle(&b.id))
+            // a toggle that keeps its state in a flow variable (`bind`, `restore`) takes the look
+            // the flow gave it: the variable is the truth, not what the old panel remembers
+            .filter(|b| b.toggle && was_toggle(&b.id) && b.state_var(restore).is_none())
             .map(|b| b.id.clone())
             .collect();
         for id in ids {
@@ -375,6 +378,13 @@ impl Form {
     /// The panel as it is now, answered with `button`.
     fn answer(&self, button: &str) -> PanelResult {
         let mut values = BTreeMap::new();
+        // the toggles that keep their state in a variable of the flow (a field with the same name
+        // is written after them and wins)
+        for b in self.spec.all_buttons() {
+            if let Some(var) = b.state_var(self.spec.restore) {
+                values.insert(var.to_string(), Value::Bool(self.is_on(&b.id)));
+            }
+        }
         for (w, f) in self.spec.widgets.iter().zip(&self.fields) {
             let (Some(id), true) = (w.id(), w.is_field()) else {
                 continue;
@@ -689,6 +699,52 @@ mod tests {
         let mute = f.spec.find_button("mute").unwrap();
         assert_eq!(mute.face(true), ("", "speaker-slash", Tone::Danger));
         assert_eq!(mute.face(false), ("", "speaker-high", Tone::Secondary));
+    }
+
+    const BOUND: &str = r#"{"id":"r","keep_open":true,"widgets":[{"type":"buttons","buttons":[
+        {"id":"play","icon":"play","toggle":true,"bind":"keep_playing","on_icon":"pause"},
+        {"id":"free","toggle":true},{"id":"next"}]}]}"#;
+
+    #[test]
+    fn a_bound_toggle_writes_its_new_state_into_every_answer() {
+        let mut f = form(BOUND);
+        let r = f.submit("play").unwrap();
+        assert_eq!(r.values.get("keep_playing"), Some(&Value::Bool(true)));
+        assert_eq!(
+            r.flow_pairs(),
+            [("keep_playing".to_string(), "1".to_string())]
+        );
+        let r = f.submit("next").unwrap();
+        assert_eq!(
+            r.values.get("keep_playing"),
+            Some(&Value::Bool(true)),
+            "any press carries the state"
+        );
+        assert!(!r.values.contains_key("free"), "no `bind`, nothing written");
+        let r = f.submit("play").unwrap();
+        assert_eq!(r.values.get("keep_playing"), Some(&Value::Bool(false)));
+    }
+
+    #[test]
+    fn the_variable_wins_over_what_the_old_panel_remembered_but_a_free_toggle_is_inherited() {
+        let mut old = form(BOUND);
+        old.submit("play").unwrap();
+        old.submit("free").unwrap();
+        // the flow asks again: it gives `keep_playing` 0 (the first look) in the new description
+        let mut next = form(BOUND);
+        next.inherit(&old);
+        assert!(!next.is_on("play"), "a bound toggle is the flow's");
+        assert!(next.is_on("free"), "a toggle without `bind` keeps its look");
+    }
+
+    #[test]
+    fn with_restore_every_toggle_keeps_its_state_in_the_variable_of_its_id() {
+        let mut f = form(
+            r#"{"restore":true,"widgets":[{"type":"buttons","buttons":[
+                {"id":"mute","toggle":true},{"id":"next"}]}]}"#,
+        );
+        let r = f.submit("mute").unwrap();
+        assert_eq!(r.values.get("mute"), Some(&Value::Bool(true)));
     }
 
     #[test]

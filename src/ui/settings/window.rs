@@ -213,6 +213,7 @@ impl App {
                     && !self.ed.close_flow_menu()
                     && !egui::Popup::is_any_open(&ctx)
                     && !self.leave_flow_full(&ctx)
+                    && !self.ed.close_import()
                 {
                     self.request_cancel();
                 }
@@ -231,10 +232,10 @@ impl App {
             self.say("Saved.");
             ctx.request_repaint();
         }
-        // F11 fills the display with the Flow tab and back (the button of the bar does the same)
+        // F11 fills the display with the Flow tab (or the pie editor, or the import tray) and back (the button of the bar does the same)
         if self.closing.is_none()
             && self.ed.recording.is_none()
-            && self.ed.tab == Tab::Flow
+            && (self.ed.tab == Tab::Flow || self.ed.pie_canvas_open())
             && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::F11))
         {
             self.ed.flow_full_req = true;
@@ -260,7 +261,7 @@ impl App {
         let compact = COMPACT.load(Ordering::Relaxed);
         let open = ctx.animate_bool_with_time(egui::Id::new("sidebar_open"), !compact, 0.16);
         // the Flow tab on the whole display: no sidebar, no shadow, the card is the display
-        if self.ed.flow_full.is_some() && self.ed.tab != Tab::Flow {
+        if self.ed.flow_full.is_some() && self.ed.tab != Tab::Flow && !self.ed.pie_canvas_open() {
             self.leave_flow_full(&ctx);
         }
         let full_screen = self.ed.flow_full.is_some();
@@ -478,6 +479,9 @@ impl App {
             if self.ed.tab != Tab::Flow {
                 crate::tap::FLOW_CANVAS_HOVER.store(false, std::sync::atomic::Ordering::SeqCst);
                 self.ed.flow_menu = None;
+            }
+            if !self.ed.pie_canvas_open() {
+                self.ed.close_pie_menu();
             }
             if self.ed.tab == Tab::Menu {
                 // Menu: two tiles, no outer scroll

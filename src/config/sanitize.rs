@@ -2,7 +2,7 @@
 
 use super::{
     CONFIG_VERSION, Config, HUD_MS_MAX, HUD_MS_MIN, HUD_SIZE_MAX, HUD_SIZE_MIN, Item, ItemKind,
-    MAX_DEPTH, MAX_ITEMS, MAX_PROFILES, item_at, presets, share::clean_apps,
+    MAX_DEPTH, MAX_ITEMS, MAX_PROFILES, PIE_AT_LIMIT, item_at, presets, share::clean_apps,
 };
 use crate::platform::{Os, linux::roles};
 
@@ -27,9 +27,18 @@ fn first_mode(items: &[Item]) -> Option<Vec<usize>> {
 }
 
 /// Trims a ring to `MAX_ITEMS` slices and empties submenus nested deeper than `MAX_DEPTH`.
-fn clean_items(items: &mut Vec<Item>, depth: usize) {
+pub(super) fn clean_items(items: &mut Vec<Item>, depth: usize) {
     items.truncate(MAX_ITEMS);
     for it in items.iter_mut() {
+        // where the pie of a submenu sits in the pie editor: a number that is not finite, or a
+        // slice that is not a submenu, has none; the rest is kept on the canvas
+        it.at = match (&it.kind, it.at) {
+            (ItemKind::Submenu(_), Some([x, y])) if x.is_finite() && y.is_finite() => Some([
+                x.clamp(-PIE_AT_LIMIT, PIE_AT_LIMIT),
+                y.clamp(-PIE_AT_LIMIT, PIE_AT_LIMIT),
+            ]),
+            _ => None,
+        };
         match &mut it.kind {
             ItemKind::Submenu(c) => {
                 if depth + 1 >= MAX_DEPTH {
@@ -231,6 +240,36 @@ mod tests {
         let big = parse(r#"{"version":2,"pie_hold_ms":99999,"pie_size":9999}"#);
         assert_eq!(big.pie_hold_ms, 2000);
         assert_eq!(big.pie_size, 360.0);
+    }
+
+    #[test]
+    fn the_place_of_a_pie_on_the_canvas_is_kept_cut_down_and_never_written_when_unset() {
+        let c = parse(
+            r#"{"version":2,"profiles":[{"name":"G","apps":[],"active":[0],"items":[
+                {"name":"M","icon":"M","kind":{"Mode":{"back":"Nothing","forward":"Nothing"}},"at":[5.0,5.0]},
+                {"name":"S","icon":"S","kind":{"Submenu":[]},"at":[120.5,-40.0]},
+                {"name":"T","icon":"T","kind":{"Submenu":[]},"at":[99999.0,-99999.0]},
+                {"name":"U","icon":"U","kind":{"Submenu":[]}}
+            ]}]}"#,
+        );
+        let items = &c.profiles[0].items;
+        assert_eq!(items[0].at, None, "only a submenu has a pie to place");
+        assert_eq!(items[1].at, Some([120.5, -40.0]));
+        assert_eq!(items[2].at, Some([PIE_AT_LIMIT, -PIE_AT_LIMIT]));
+        assert_eq!(items[3].at, None);
+        let nan = Item {
+            at: Some([f32::NAN, 1.0]),
+            ..Item::submenu("n", "ico:folder", Vec::new())
+        };
+        let mut cfg = Config::default();
+        cfg.profiles[0].items.push(nan);
+        let cfg = cfg.sanitize();
+        assert_eq!(cfg.profiles[0].items.last().and_then(|i| i.at), None);
+        let json = serde_json::to_string(&Config::default()).unwrap();
+        assert!(
+            !json.contains("\"at\""),
+            "a pie that was never moved writes nothing"
+        );
     }
 
     #[test]

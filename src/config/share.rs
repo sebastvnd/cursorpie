@@ -43,7 +43,7 @@ struct SharedIcon {
 }
 
 /// The file format. See the module docs.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Bundle {
     cursorpie_profile: u32,
     pub profile: Profile,
@@ -285,43 +285,97 @@ pub fn install_icons(
     } = bundle;
     let mut map: BTreeMap<String, String> = BTreeMap::new();
     for (key, icon) in icons.into_iter().take(MAX_ICONS) {
-        let Some(bytes) = b64_decode(&icon.data) else {
-            continue;
-        };
-        if bytes.len() > MAX_ICON_BYTES {
-            continue;
-        }
-        let Some(ext) = sniff_extension(&bytes) else {
-            continue;
-        };
-        let stem_src = Path::new(&icon.file)
-            .file_stem()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_default();
-        let stem = safe_stem(&stem_src, "icon");
-        if fs::create_dir_all(icons_dir).is_err() {
-            break;
-        }
-        let mut n = 1;
-        let path = loop {
-            let name = if n == 1 {
-                format!("{stem}.{ext}")
-            } else {
-                format!("{stem}-{n}.{ext}")
-            };
-            let p = icons_dir.join(name);
-            match fs::read(&p) {
-                Ok(existing) if existing == bytes => break Some(p), // already there
-                Ok(_) => n += 1,
-                Err(_) => break fs::write(&p, &bytes).ok().map(|_| p),
-            }
-        };
-        if let Some(p) = path {
+        if let Some(p) = write_icon(&icon, icons_dir) {
             map.insert(key, as_icon(&p));
         }
     }
     rewrite_icons(&mut profile.items, &map);
     profile
+}
+
+/// Writes one embedded image into `icons_dir` and returns the file. Nothing is written for bytes
+/// that are not a PNG, JPEG or WebP image or that are too big. An identical file that is already
+/// there is reused, a different one with the same name gets a number.
+fn write_icon(icon: &SharedIcon, icons_dir: &Path) -> Option<PathBuf> {
+    let bytes = b64_decode(&icon.data)?;
+    if bytes.len() > MAX_ICON_BYTES {
+        return None;
+    }
+    let ext = sniff_extension(&bytes)?;
+    let stem_src = Path::new(&icon.file)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let stem = safe_stem(&stem_src, "icon");
+    fs::create_dir_all(icons_dir).ok()?;
+    let mut n = 1;
+    loop {
+        let name = if n == 1 {
+            format!("{stem}.{ext}")
+        } else {
+            format!("{stem}-{n}.{ext}")
+        };
+        let p = icons_dir.join(name);
+        match fs::read(&p) {
+            Ok(existing) if existing == bytes => return Some(p), // already there
+            Ok(_) => n += 1,
+            Err(_) => return fs::write(&p, &bytes).ok().map(|_| p),
+        }
+    }
+}
+
+/// Adds to `out` every icon string of `items` (submenus included).
+fn icons_used(items: &[Item], out: &mut std::collections::BTreeSet<String>) {
+    for it in items {
+        out.insert(it.icon.clone());
+        if let ItemKind::Submenu(children) = &it.kind {
+            icons_used(children, out);
+        }
+    }
+}
+
+impl Bundle {
+    /// The flows the file carries (the slices of the profile that run a flow point at them).
+    pub fn flows(&self) -> &[Flow] {
+        &self.flows
+    }
+
+    /// Takes the flows out of the file, which is then only the profile and its icons.
+    pub fn take_flows(&mut self) -> Vec<Flow> {
+        std::mem::take(&mut self.flows)
+    }
+
+    /// The bytes of the embedded image that the icon string `key` stands for, for a preview. `None`
+    /// for text and `app:` icons, and for an image that is too big or not a PNG, JPEG or WebP.
+    pub fn icon_bytes(&self, key: &str) -> Option<Vec<u8>> {
+        let bytes = b64_decode(&self.icons.get(key)?.data)?;
+        (bytes.len() <= MAX_ICON_BYTES && sniff_extension(&bytes).is_some()).then_some(bytes)
+    }
+
+    /// A copy of `item` (a slice of this profile, with everything in it) that stands on its own:
+    /// the images it uses are written into `icons_dir` and its icon strings point at the files, as
+    /// [`install_icons`] does for the whole profile. The file itself is not changed, so one slice
+    /// after another can be taken from it.
+    pub fn install_item(
+        &self,
+        item: &Item,
+        icons_dir: &Path,
+        as_icon: &dyn Fn(&Path) -> String,
+    ) -> Item {
+        let mut used = std::collections::BTreeSet::new();
+        icons_used(std::slice::from_ref(item), &mut used);
+        let mut map: BTreeMap<String, String> = BTreeMap::new();
+        for key in used {
+            if let Some(icon) = self.icons.get(&key)
+                && let Some(p) = write_icon(icon, icons_dir)
+            {
+                map.insert(key, as_icon(&p));
+            }
+        }
+        let mut copy = item.clone();
+        rewrite_icons(std::slice::from_mut(&mut copy), &map);
+        copy
+    }
 }
 
 /// Replaces icon strings found in `map`; icons that could not be installed keep their old text.
@@ -360,6 +414,18 @@ pub fn import_file_with_flows(
     let mut bundle = parse_bundle(&text)?;
     let flows = std::mem::take(&mut bundle.flows);
     Ok((install_icons(bundle, icons_dir, as_icon), flows))
+}
+
+/// Reads a profile file and parses it, but installs nothing: the import tray shows what is in it
+/// and writes only the images of the slices that are taken (see [`Bundle::install_item`]). The error
+/// is a sentence for the status bar.
+pub fn read_bundle(path: &str) -> Result<Bundle, String> {
+    let meta = fs::metadata(path).map_err(|_| "Could not read that file.".to_string())?;
+    if meta.len() > MAX_FILE_BYTES {
+        return Err("That file is too large to be a profile.".into());
+    }
+    let text = fs::read_to_string(path).map_err(|_| "Could not read that file.".to_string())?;
+    parse_bundle(&text)
 }
 
 /// Adds an imported profile to `cfg` as a new profile and returns its index. The profile needs at
@@ -533,6 +599,71 @@ mod tests {
         other.push(9);
         let c = install_icons(mk(&other), &dst, &tilde);
         assert!(c.items[0].icon.ends_with("a-2.png"), "{}", c.items[0].icon);
+    }
+
+    #[test]
+    fn one_slice_of_a_staged_file_installs_only_its_own_images() {
+        let src = scratch("share-stage-src");
+        let dst = scratch("share-stage-dst");
+        let a = src.join("a.png");
+        let mut other = PNG.to_vec();
+        other.push(7);
+        let b = src.join("b.png");
+        fs::write(&a, PNG).unwrap();
+        fs::write(&b, &other).unwrap();
+        let (a_s, b_s) = (
+            a.to_string_lossy().to_string(),
+            b.to_string_lossy().to_string(),
+        );
+        let mut p = profile_with(&[&a_s, &b_s]);
+        p.items.push(Item::submenu(
+            "Sub",
+            "S",
+            vec![Item::run("In", &a_s, Action::Nothing)],
+        ));
+        let bundle = parse_bundle(&export_profile(&p).unwrap()).unwrap();
+
+        // the preview reads the bytes from the file, nothing is written yet
+        assert_eq!(bundle.icon_bytes(&a_s).as_deref(), Some(PNG));
+        assert_eq!(bundle.icon_bytes("<>"), None);
+        assert!(!dst.join("a.png").exists());
+
+        let got = bundle.install_item(&bundle.profile.items[2], &dst, &tilde);
+        assert!(got.icon == "S" || got.icon.starts_with(dst.to_str().unwrap()));
+        match &got.kind {
+            ItemKind::Submenu(c) => {
+                assert!(
+                    c[0].icon.starts_with(dst.to_str().unwrap()),
+                    "{}",
+                    c[0].icon
+                )
+            }
+            _ => panic!(),
+        }
+        assert_eq!(
+            fs::read_dir(&dst).unwrap().count(),
+            1,
+            "b.png was not taken"
+        );
+        // the staged profile still has its own strings: another slice can be taken afterwards
+        assert_eq!(bundle.profile.items[0].icon, a_s);
+        let again = bundle.install_item(&bundle.profile.items[1], &dst, &tilde);
+        assert!(again.icon.starts_with(dst.to_str().unwrap()));
+        assert_eq!(fs::read_dir(&dst).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn reading_a_bundle_installs_nothing_and_refuses_what_is_not_a_profile() {
+        let dir = scratch("share-read");
+        let good = dir.join("p.json");
+        fs::write(&good, export_profile(&profile_with(&["<>"])).unwrap()).unwrap();
+        let bundle = read_bundle(good.to_str().unwrap()).unwrap();
+        assert_eq!(bundle.profile.name, "Photo");
+        assert!(bundle.flows().is_empty());
+        let bad = dir.join("q.json");
+        fs::write(&bad, "{\"hello\": 1}").unwrap();
+        assert!(read_bundle(bad.to_str().unwrap()).is_err());
+        assert!(read_bundle(dir.join("none.json").to_str().unwrap()).is_err());
     }
 
     #[test]

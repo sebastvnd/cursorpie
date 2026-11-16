@@ -15,6 +15,7 @@
 //! | `welcome` | the first-launch welcome window (`App::welcome_ui`), drawn in the same window and style |
 //! | `quit_dialog` | the "unsaved changes" sheet shown when you quit with edits that were not saved (`App::request_quit`) |
 //! | `update_dialog` | the "update available" sheet, offered once a day when Settings opens (see [`update`](crate::update)) |
+//! | `clip` | Ctrl/Cmd + X, C and V in the editors (blocks of a flow, widgets of a panel) through the system clipboard |
 //! | `wayland_keys` | recording a shortcut from the window's own key events in a Wayland session |
 //! | `undo` | undo / redo shortcuts and backup restore, on top of [`History`](crate::history::History) |
 //! | `theme`, `widgets` | palette, geometry, egui style and small reusable widgets |
@@ -32,6 +33,7 @@ mod action_editor;
 mod add_panel;
 // the pie draws the mark in its empty center (see `ui::pie`)
 pub(crate) mod brand;
+mod clip;
 mod demo;
 mod icon_catalog;
 mod icon_picker;
@@ -54,7 +56,10 @@ mod widgets;
 mod window;
 
 pub use picker::choosing;
-pub use state::{AppScan, BehaviorPage, Ed, FlowFull, FlowNew, FlowView, KitStatus, Slot, Tab};
+pub use state::{
+    AppScan, BehaviorPage, Ed, FlowFull, FlowNew, FlowView, KitStatus, MenuView, PieDrag,
+    PieImport, PieView, Slot, Tab,
+};
 pub use welcome::Welcome;
 
 /// Whether zoomed text was cut into the font atlas since the last call; see

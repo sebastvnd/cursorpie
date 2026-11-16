@@ -47,6 +47,17 @@ use std::collections::{BTreeMap, BTreeSet};
 /// The name that stands for "any variable": a *Call flow* block can set anything.
 const ANYTHING: &str = "*";
 
+/// Whether `name` is there when a block starts, given the variables `defined` that a block before
+/// it may have set: after a *Call flow* anything is, and a run always starts with the variables
+/// that come from what the flow saved last time (`keep_...` and the run facts of
+/// [`crate::flowstate`]): they are set before the first block, even though no block sets them.
+fn is_defined(defined: &BTreeSet<String>, name: &str) -> bool {
+    defined.contains(ANYTHING)
+        || defined.contains(name)
+        || crate::flowstate::is_keep_var(name)
+        || crate::flowstate::RUN_FACTS.contains(&name)
+}
+
 /// Words that are a value of their own, not the name of a variable somebody forgot to set.
 const WORDS: [&str; 6] = ["true", "false", "yes", "no", "on", "off"];
 
@@ -457,7 +468,7 @@ fn defined_before(flow: &Flow) -> BTreeMap<u32, BTreeSet<String>> {
 pub fn is_set_before(flow: &Flow, block: u32, name: &str) -> Option<bool> {
     defined_before(flow)
         .get(&block)
-        .map(|d| d.contains(ANYTHING) || d.contains(name))
+        .map(|d| is_defined(d, name))
 }
 
 /// Every variable of the flow with who sets it and who reads it, sorted by name.
@@ -487,7 +498,7 @@ pub fn variables(flow: &Flow) -> Vec<VarRow> {
             });
             r.readers.push(n.id);
             if let Some(d) = before.get(&n.id)
-                && !(d.contains(ANYTHING) || d.contains(&name))
+                && !is_defined(d, &name)
             {
                 r.unset.push(n.id);
             }
@@ -634,7 +645,7 @@ pub fn check_flow(flow: &Flow, known_flows: &[&str]) -> Vec<Issue> {
         for &(p, port) in preds.get(&n.id).map(Vec::as_slice).unwrap_or(&[]) {
             let defined = after.get(&p);
             for (name, how) in &wanted {
-                let known = defined.is_some_and(|d| d.contains(ANYTHING) || d.contains(name));
+                let known = defined.is_some_and(|d| is_defined(d, name));
                 if known {
                     continue;
                 }
@@ -1217,6 +1228,41 @@ mod tests {
     }
 
     #[test]
+    fn what_the_flow_saved_last_time_counts_as_set_before_the_first_block() {
+        // kept variables and the run facts are there when the run starts
+        let (f, _) = flow_with(vec![NodeKind::Command(
+            "echo {{keep_count}} {{run_count}} {{last_run}} {{last_ending}}".into(),
+        )]);
+        let issues = check_flow(&f, &["f1"]);
+        assert!(issues.is_empty(), "{issues:?}");
+        let (f, ids) = flow_with(vec![NodeKind::Branch(Cond {
+            a: "keep_done".into(),
+            op: CmpOp::IsTrue,
+            b: String::new(),
+        })]);
+        assert_eq!(is_set_before(&f, ids[0], "keep_done"), Some(true));
+        // other names are as before: nobody set them
+        assert_eq!(is_set_before(&f, ids[0], "done"), Some(false));
+        let (f, _) = flow_with(vec![NodeKind::Command("echo {{keep_}}".into())]);
+        assert_eq!(
+            check_flow(&f, &["f1"]).len(),
+            1,
+            "a bare `keep_` is not kept"
+        );
+        // what *Load data* puts in its variable counts as set
+        let (f, _) = flow_with(vec![
+            NodeKind::Native {
+                op: NativeOp::StoreGet,
+                a: "last.file".into(),
+                b: "file".into(),
+            },
+            NodeKind::Command("echo {{file}}".into()),
+        ]);
+        let issues = check_flow(&f, &["f1"]);
+        assert!(issues.is_empty(), "{issues:?}");
+    }
+
+    #[test]
     fn what_a_block_writes_counts_as_set() {
         let (f, _) = flow_with(vec![
             NodeKind::Run {
@@ -1453,6 +1499,12 @@ mod tests {
                 "copy-newest-file-and-paste",
                 include_str!(
                     "../../docs/examples/flows/copy-newest-file-and-paste.cursorpie-flow.json"
+                ),
+            ),
+            (
+                "browser-remote-panel-state",
+                include_str!(
+                    "../../docs/examples/flows/browser-remote-panel-state.cursorpie-flow.json"
                 ),
             ),
             (

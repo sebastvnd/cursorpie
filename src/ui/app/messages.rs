@@ -1,11 +1,11 @@
 //! Applies one [`Msg`] (sent by the event tap, the tray menu or a file-picker thread) to the UI state.
 
 use super::App;
-use crate::config::flow::{add_flow, import_flow_report, merge_flows};
-use crate::config::share::{add_profile, import_file_with_flows};
+use crate::config::flow::{add_flow, import_flow_report};
+use crate::config::share::read_bundle;
 use crate::config::{
     Action, Flow, Item, ItemKind, MAX_CONFIG_FILE_BYTES, NativeOp, NodeKind, cfg, has_commands,
-    icons_dir, item_at_mut, parse_config, profile_has_commands, read_text_capped, tilde,
+    item_at_mut, parse_config, profile_has_commands, read_text_capped,
 };
 use crate::msg::Msg;
 use crate::platform;
@@ -304,34 +304,23 @@ impl App {
 }
 
 impl App {
-    /// Adds the profile in `file` (with its icons) to the Settings copy as a new profile.
+    /// Opens the profile in `file` in the import tray: it is shown beside the pie being edited and
+    /// nothing is added until slices are dragged across (or the tray adds all of it as a new
+    /// pie). Nothing is written to the icons folder yet.
     fn import_profile(&mut self, file: &str) {
         if !self.settings_open {
             return; // the chooser answered after Settings was closed
         }
-        // the flows the profile uses come with it; if the profile cannot be added after all, the
-        // flows are taken out again
-        let flows_before = self.edit.flows.clone();
-        let added =
-            import_file_with_flows(file, &icons_dir(), &tilde).and_then(|(mut p, flows)| {
-                let runs_commands =
-                    profile_has_commands(&p) || flows.iter().any(Flow::has_commands);
-                merge_flows(&mut self.edit.flows, flows, &mut p.items)?;
-                add_profile(&mut self.edit, p).map(|i| (i, runs_commands))
-            });
-        if added.is_err() {
-            self.edit.flows = flows_before;
-        }
-        match added {
-            Ok((index, runs_commands)) => {
-                self.ed.profile = index;
-                self.ed.reset_nav();
+        match read_bundle(file) {
+            Ok(bundle) => {
+                let runs_commands = profile_has_commands(&bundle.profile)
+                    || bundle.flows().iter().any(Flow::has_commands);
                 self.ed.stop_recording();
-                self.ed.icons.revalidate();
+                self.ed.open_import(bundle, file_label(file), runs_commands);
                 self.say(if runs_commands {
-                    "Profile imported. It can run shell commands, write files or send messages - review them before you Save."
+                    "Pie opened beside yours. Some of its slices can run shell commands, write files or send messages: they are marked. Drag the slices you need across."
                 } else {
-                    "Profile imported. Review it, then press Save to apply."
+                    "Pie opened beside yours. Drag the slices you need across, then press Save to apply."
                 });
             }
             Err(e) => self.import_refused(file, e),

@@ -482,11 +482,20 @@ pub enum NativeOp {
     /// the pill that announces keys, apps and links, and the *Notification* blocks. A flow that
     /// asks again and again (a remote control in a panel) puts it right after *Start*.
     Quiet,
+    /// Saves the text `b` under the name `a` in the data that every flow shares and that stays when
+    /// CursorPie is closed. `ok` is 0 when the name is not allowed, the store is full or the disk
+    /// refused.
+    StoreSet,
+    /// Puts the text saved under the name `a` in the variable `b`. `ok` is 0 (and the variable is
+    /// empty) when nothing is saved under that name: not a failure, a flow checks `ok`.
+    StoreGet,
+    /// Removes what is saved under the name `a`. `ok` is 0 when there was nothing.
+    StoreRemove,
 }
 
 impl NativeOp {
     /// Every operation, in the order the editor lists them.
-    pub const ALL: [NativeOp; 32] = [
+    pub const ALL: [NativeOp; 35] = [
         NativeOp::ClipboardSet,
         NativeOp::ClipboardGet,
         NativeOp::TypeText,
@@ -519,6 +528,9 @@ impl NativeOp {
         NativeOp::OpenAppSmart,
         NativeOp::OpenUrlSmart,
         NativeOp::Quiet,
+        NativeOp::StoreSet,
+        NativeOp::StoreGet,
+        NativeOp::StoreRemove,
     ];
 
     /// What the editor shows for it.
@@ -556,6 +568,9 @@ impl NativeOp {
             NativeOp::OpenAppSmart => "Open app (smart)",
             NativeOp::OpenUrlSmart => "Open link (smart)",
             NativeOp::Quiet => "Hide notices",
+            NativeOp::StoreSet => "Save data",
+            NativeOp::StoreGet => "Load data",
+            NativeOp::StoreRemove => "Remove data",
         }
     }
 
@@ -592,6 +607,9 @@ impl NativeOp {
             NativeOp::OpenAppSmart => ("app name or id", "smart, existing, new or plain"),
             NativeOp::OpenUrlSmart => ("link or file", "smart, existing, new or plain"),
             NativeOp::Quiet => ("on (or empty) or off", ""),
+            NativeOp::StoreSet => ("name, e.g. last.file", "text to save"),
+            NativeOp::StoreGet => ("name, e.g. last.file", "variable"),
+            NativeOp::StoreRemove => ("name, e.g. last.file", ""),
         }
     }
 
@@ -619,6 +637,7 @@ impl NativeOp {
                 | NativeOp::SystemInfo
                 | NativeOp::VolumeGet
                 | NativeOp::Browser
+                | NativeOp::StoreGet
         )
     }
 }
@@ -1018,6 +1037,28 @@ impl FlowNode {
     }
 }
 
+/// What the text of copied blocks starts with on the clipboard (the blocks follow as JSON), so a
+/// paste can tell them from any other text.
+pub const CLIP_BLOCKS: &str = "cursorpie-flow-blocks:";
+
+/// The most a paste reads: a bigger clipboard text is not a copy of blocks.
+const CLIP_MAX_BYTES: usize = 1_000_000;
+
+/// How far a pasted group steps down and to the right when blocks already sit where it would land
+/// (so pasting twice in the same place does not pile the copies up).
+const PASTE_STEP: f32 = 24.0;
+
+/// What [`Flow::paste_nodes`] did.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PasteBlocks {
+    /// The text is not a copy of blocks: nothing happened.
+    NotBlocks,
+    /// The flow has no room for the copies: nothing happened.
+    Full,
+    /// The copies were added; these are their ids.
+    Done(Vec<u32>),
+}
+
 /// A named graph of blocks.
 #[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
 pub struct Flow {
@@ -1259,6 +1300,106 @@ impl Flow {
             alt: None,
         });
         id
+    }
+
+    /// The text for the clipboard when the blocks `ids` are copied: [`CLIP_BLOCKS`] and then the
+    /// blocks as JSON. The wires between the copied blocks stay, the ones that leave the group are
+    /// dropped. *Start* and *End* are never copied (a flow has one of each). `None` when there is
+    /// nothing to copy.
+    pub fn copy_nodes(&self, ids: &BTreeSet<u32>) -> Option<String> {
+        let mut nodes: Vec<FlowNode> = self
+            .nodes
+            .iter()
+            .filter(|n| ids.contains(&n.id) && !matches!(n.kind, NodeKind::Start | NodeKind::End))
+            .cloned()
+            .collect();
+        if nodes.is_empty() {
+            return None;
+        }
+        let keep: BTreeSet<u32> = nodes.iter().map(|n| n.id).collect();
+        for n in &mut nodes {
+            n.next = n.next.filter(|t| keep.contains(t));
+            n.alt = n.alt.filter(|t| keep.contains(t));
+        }
+        let json = serde_json::to_string(&nodes).ok()?;
+        Some(format!("{CLIP_BLOCKS}{json}"))
+    }
+
+    /// Adds the blocks of a copy ([`Flow::copy_nodes`]) with ids of their own, the wires between
+    /// them rewired to the new ids. The group's top left corner goes to `at` (or a little down and
+    /// to the right of where it was, with `None`), and steps aside while a block already sits where
+    /// one of the copies would land. A text that is not a copy of blocks changes nothing, and
+    /// neither does a copy that does not fit (the flow keeps at most [`MAX_FLOW_NODES`] blocks):
+    /// a group is pasted whole or not at all.
+    pub fn paste_nodes(&mut self, text: &str, at: Option<(f32, f32)>) -> PasteBlocks {
+        if text.len() > CLIP_MAX_BYTES {
+            return PasteBlocks::NotBlocks;
+        }
+        let Some(json) = text.trim_start().strip_prefix(CLIP_BLOCKS) else {
+            return PasteBlocks::NotBlocks;
+        };
+        let Ok(mut nodes) = serde_json::from_str::<Vec<FlowNode>>(json.trim()) else {
+            return PasteBlocks::NotBlocks;
+        };
+        nodes.retain(|n| !matches!(n.kind, NodeKind::Start | NodeKind::End));
+        let mut seen = BTreeSet::new();
+        nodes.retain(|n| seen.insert(n.id));
+        if nodes.is_empty() {
+            return PasteBlocks::NotBlocks;
+        }
+        if self.nodes.len() + nodes.len() > MAX_FLOW_NODES {
+            return PasteBlocks::Full;
+        }
+        for n in &mut nodes {
+            n.kind.clean();
+            n.x = if n.x.is_finite() { n.x } else { 0.0 };
+            n.y = if n.y.is_finite() { n.y } else { 0.0 };
+        }
+        let left = nodes.iter().map(|n| n.x).fold(f32::INFINITY, f32::min);
+        let top = nodes.iter().map(|n| n.y).fold(f32::INFINITY, f32::min);
+        let (mut dx, mut dy) = match at {
+            Some((x, y)) if x.is_finite() && y.is_finite() => (x - left, y - top),
+            _ => (40.0, 40.0),
+        };
+        for _ in 0..100 {
+            let covered = nodes.iter().any(|p| {
+                self.nodes
+                    .iter()
+                    .any(|o| (o.x - (p.x + dx)).abs() < 1.0 && (o.y - (p.y + dy)).abs() < 1.0)
+            });
+            if !covered {
+                break;
+            }
+            dx += PASTE_STEP;
+            dy += PASTE_STEP;
+        }
+        let base = self.next_node_id();
+        let renamed: BTreeMap<u32, u32> = nodes
+            .iter()
+            .enumerate()
+            .map(|(i, n)| (n.id, base.saturating_add(i as u32)))
+            .collect();
+        let mut ids = Vec::with_capacity(nodes.len());
+        for n in nodes {
+            let id = renamed.get(&n.id).copied().unwrap_or(base);
+            let outputs = n.kind.outputs();
+            let wire = |port: Port, to: Option<u32>| {
+                to.and_then(|t| renamed.get(&t).copied())
+                    .filter(|t| *t != id && outputs.contains(&port))
+            };
+            let next = wire(Port::Next, n.next);
+            let alt = wire(Port::Alt, n.alt);
+            self.nodes.push(FlowNode {
+                id,
+                x: (n.x + dx).clamp(-COORD_LIMIT, COORD_LIMIT),
+                y: (n.y + dy).clamp(-COORD_LIMIT, COORD_LIMIT),
+                kind: n.kind,
+                next,
+                alt,
+            });
+            ids.push(id);
+        }
+        PasteBlocks::Done(ids)
     }
 
     /// Removes a block (never *Start* or *End*) and joins its neighbours: every wire that led into
@@ -2982,10 +3123,128 @@ mod tests {
             assert!(!op.b_is_variable() || !b.is_empty());
         }
         assert_eq!(CmpOp::ALL.len(), 11);
-        assert_eq!(NativeOp::ALL.len(), 32);
+        assert_eq!(NativeOp::ALL.len(), 35);
         assert!(CmpOp::ALL.iter().all(|c| !c.label().is_empty()));
         assert!(CalcOp::ALL.iter().all(|c| !c.label().is_empty()));
         assert!(LogicOp::ALL.iter().all(|c| !c.label().is_empty()));
         assert!(AskMode::ALL.iter().all(|c| !c.label().is_empty()));
+    }
+}
+
+#[cfg(test)]
+mod clip_tests {
+    use super::*;
+
+    /// Start, two loose blocks wired one to the other and the second one to End.
+    fn flow_with_pair() -> (Flow, u32, u32) {
+        let mut f = Flow::new("f", "F");
+        let a = f.add_at(NodeKind::Wait(0), 100.0, 100.0);
+        let b = f.add_at(NodeKind::Wait(1), 400.0, 160.0);
+        assert!(f.connect(a, Port::Next, b));
+        let end = f.end().unwrap().id;
+        assert!(f.connect(b, Port::Next, end));
+        (f, a, b)
+    }
+
+    #[test]
+    fn copied_blocks_come_back_with_new_ids_and_the_wire_between_them() {
+        let (mut f, a, b) = flow_with_pair();
+        let text = f.copy_nodes(&BTreeSet::from([a, b])).unwrap();
+        assert!(text.starts_with(CLIP_BLOCKS));
+        let before = f.nodes.len();
+        let PasteBlocks::Done(ids) = f.paste_nodes(&text, Some((500.0, 300.0))) else {
+            panic!("the copy fits");
+        };
+        assert_eq!(ids.len(), 2);
+        assert_eq!(f.nodes.len(), before + 2);
+        assert!(ids.iter().all(|id| *id != a && *id != b));
+        let (na, nb) = (f.node(ids[0]).unwrap(), f.node(ids[1]).unwrap());
+        assert_eq!(na.next, Some(nb.id), "the wire between the copies stays");
+        assert_eq!(nb.next, None, "the wire out of the group is dropped");
+        assert_eq!(
+            (na.x, na.y),
+            (500.0, 300.0),
+            "the group's corner goes to the pointer"
+        );
+        assert_eq!(
+            (nb.x, nb.y),
+            (800.0, 360.0),
+            "the blocks keep their places to each other"
+        );
+        // the originals did not change
+        assert_eq!(f.node(a).unwrap().next, Some(b));
+        assert_eq!(f.node(b).unwrap().next, f.end().map(|e| e.id));
+    }
+
+    #[test]
+    fn start_and_end_are_never_copied() {
+        let (f, a, _) = flow_with_pair();
+        let start = f.start().unwrap().id;
+        let end = f.end().unwrap().id;
+        assert_eq!(f.copy_nodes(&BTreeSet::from([start, end])), None);
+        assert_eq!(f.copy_nodes(&BTreeSet::new()), None);
+        let text = f.copy_nodes(&BTreeSet::from([start, a, end])).unwrap();
+        let mut g = f.clone();
+        match g.paste_nodes(&text, None) {
+            PasteBlocks::Done(ids) => assert_eq!(ids.len(), 1),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_text_that_is_not_a_copy_of_blocks_changes_nothing() {
+        let (mut f, ..) = flow_with_pair();
+        let before = f.clone();
+        assert_eq!(f.paste_nodes("hello", None), PasteBlocks::NotBlocks);
+        assert_eq!(f.paste_nodes("", None), PasteBlocks::NotBlocks);
+        let broken = format!("{CLIP_BLOCKS}[{{\"id\":");
+        assert_eq!(f.paste_nodes(&broken, None), PasteBlocks::NotBlocks);
+        let empty = format!("{CLIP_BLOCKS}[]");
+        assert_eq!(f.paste_nodes(&empty, None), PasteBlocks::NotBlocks);
+        assert_eq!(f, before);
+    }
+
+    #[test]
+    fn a_copy_that_does_not_fit_is_not_pasted_at_all() {
+        let (mut f, a, b) = flow_with_pair();
+        let text = f.copy_nodes(&BTreeSet::from([a, b])).unwrap();
+        while f.nodes.len() < MAX_FLOW_NODES - 1 {
+            f.add_at(NodeKind::Wait(0), 0.0, 0.0);
+        }
+        let before = f.nodes.len();
+        assert_eq!(f.paste_nodes(&text, None), PasteBlocks::Full);
+        assert_eq!(f.nodes.len(), before);
+    }
+
+    #[test]
+    fn pasting_twice_in_the_same_place_does_not_pile_the_copies_up() {
+        let (mut f, a, _) = flow_with_pair();
+        let text = f.copy_nodes(&BTreeSet::from([a])).unwrap();
+        let spot = Some((700.0, 500.0));
+        let first = match f.paste_nodes(&text, spot) {
+            PasteBlocks::Done(ids) => ids[0],
+            other => panic!("{other:?}"),
+        };
+        let second = match f.paste_nodes(&text, spot) {
+            PasteBlocks::Done(ids) => ids[0],
+            other => panic!("{other:?}"),
+        };
+        let (p, q) = (f.node(first).unwrap(), f.node(second).unwrap());
+        assert_eq!((p.x, p.y), (700.0, 500.0));
+        assert_eq!((q.x, q.y), (700.0 + PASTE_STEP, 500.0 + PASTE_STEP));
+    }
+
+    #[test]
+    fn a_wire_the_block_cannot_have_is_not_pasted() {
+        // a hand-made clipboard: a wait block has no second output
+        let (mut f, ..) = flow_with_pair();
+        let text = format!(
+            "{CLIP_BLOCKS}{}",
+            r#"[{"id":7,"x":0.0,"y":0.0,"kind":{"Wait":5},"next":8,"alt":8},{"id":8,"x":50.0,"y":0.0,"kind":{"Wait":5}}]"#
+        );
+        if let PasteBlocks::Done(ids) = f.paste_nodes(&text, None) {
+            assert_eq!(f.node(ids[0]).unwrap().alt, None);
+            assert_eq!(f.node(ids[0]).unwrap().next, Some(ids[1]));
+        }
     }
 }

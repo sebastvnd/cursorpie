@@ -135,6 +135,32 @@ pub fn load_icon(
     Some(ctx.load_texture(name, color, egui::TextureOptions::LINEAR))
 }
 
+/// Like [`load_icon`] for an image that is in memory (the icons of a profile file that has not been
+/// imported yet, see the import tray). `None` for bytes that are not an image or are too big.
+pub fn load_icon_bytes(
+    ctx: &egui::Context,
+    bytes: &[u8],
+    name: &str,
+) -> Option<egui::TextureHandle> {
+    let reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?;
+    let (w, h) = reader.into_dimensions().ok()?;
+    if w > MAX_SOURCE_SIDE || h > MAX_SOURCE_SIDE {
+        return None;
+    }
+    let img = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?
+        .decode()
+        .ok()?
+        .into_rgba8();
+    let rgba = prepare_icon(img, ICON_MAX_PX);
+    let size = [rgba.width() as usize, rgba.height() as usize];
+    let color = egui::ColorImage::from_rgba_premultiplied(size, rgba.as_raw());
+    Some(ctx.load_texture(name, color, egui::TextureOptions::LINEAR))
+}
+
 /// Draws an icon centered at `c` in a box of `size`, in the color `ink`.
 ///
 /// An icon string is one of three things, see [`crate::ui::symbols`]:

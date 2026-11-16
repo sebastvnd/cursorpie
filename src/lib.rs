@@ -27,6 +27,7 @@
 //! | [`tap`] | `cursorpie-tap` thread | global event tap and the gesture state machine |
 //! | [`actions`] | `cursorpie-actions` thread | executes actions (shortcuts, `open`, shell) in order |
 //! | [`flowrun`] | `cursorpie-actions` thread | the interpreter of a flow (variables, decisions, loops, questions, system blocks) behind a [`Host`](flowrun::Host); [`actions`] supplies the real one |
+//! | [`flowstate`] | `cursorpie-actions` thread | what a flow remembers between runs: the saved state of one flow (`keep_` variables, how the last run ended) and the data every flow shares; plain JSON in `flow-state/` |
 //! | [`running`] | `cursorpie-running` thread | whether the app of an "Open app" slice already runs, and the new-window / open-app choice that follows |
 //! | [`bridge`] | `cursorpie-bridge*` threads | the optional browser extension (embedded in the program): which web pages are open, go to one, open a new window; also the native messaging host mode |
 //! | [`cache`] | any thread | bounded least-recently-used cache (backs the icon textures) |
@@ -67,6 +68,7 @@ pub mod cache;
 pub mod config;
 pub mod debug;
 pub mod flowrun;
+pub mod flowstate;
 pub mod geometry;
 pub mod guides;
 pub mod history;

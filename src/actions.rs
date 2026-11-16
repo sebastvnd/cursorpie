@@ -21,6 +21,7 @@
 
 use crate::config::{Action, Flow, NodeKind, is_web_url};
 use crate::flowrun::{self, ExecResult, Host, OpenMode};
+use crate::flowstate::{self, FlowState};
 use crate::geometry::Point;
 use crate::keys::Shortcut;
 use crate::msg::{Msg, Notifier};
@@ -31,7 +32,7 @@ use crate::tap::Kind;
 use crate::ui::hud::{self, HudKind, HudNote, HudProgress};
 use crate::windowing::{Asked, Baseline};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::{OnceLock, mpsc};
+use std::sync::{Mutex, OnceLock, PoisonError, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// Marks events we posted ourselves so the event tap ignores them.
@@ -646,16 +647,26 @@ impl Host for SystemHost {
     }
 
     fn ask_text(&mut self, message: &str, preset: &str) -> Option<String> {
-        platform::native::ask_text(message, preset)
+        runpanel::asking(true);
+        let answer = platform::native::ask_text(message, preset);
+        runpanel::asking(false);
+        answer
     }
 
     fn ask_yes_no(&mut self, message: &str) -> Option<bool> {
-        platform::native::ask_yes_no(message)
+        runpanel::asking(true);
+        let answer = platform::native::ask_yes_no(message);
+        runpanel::asking(false);
+        answer
     }
 
     fn ask_panel(&mut self, spec: &crate::panel::PanelSpec) -> Option<crate::panel::PanelResult> {
-        // the window is the UI thread's: this worker waits here for the answer
-        Some(crate::panel::ask(spec.clone(), crate::panel::Source::Flow))
+        // the window is the UI thread's: this worker waits here for the answer. A question is not
+        // work, so the progress panel of the run leaves it alone (see `runpanel::asking`)
+        runpanel::asking(true);
+        let answer = crate::panel::ask(spec.clone(), crate::panel::Source::Flow);
+        runpanel::asking(false);
+        Some(answer)
     }
 
     fn clipboard(&mut self) -> Option<String> {
@@ -785,6 +796,36 @@ impl Host for SystemHost {
         };
         flowrun::BrowserReply { ok, message }
     }
+
+    fn load_flow_state(&mut self, flow_id: &str) -> Option<FlowState> {
+        Some(flowstate::load_state(&flowstate::state_dir(), flow_id))
+    }
+
+    fn save_flow_state(&mut self, flow_id: &str, state: &FlowState) -> bool {
+        flowstate::save_state(&flowstate::state_dir(), flow_id, state).is_ok()
+    }
+
+    fn store_get(&mut self, key: &str) -> Option<String> {
+        with_store(|store| store.get(key))
+    }
+
+    fn store_set(&mut self, key: &str, value: &str) -> bool {
+        with_store(|store| store.set(key, value))
+    }
+
+    fn store_remove(&mut self, key: &str) -> bool {
+        with_store(|store| store.remove(key))
+    }
+}
+
+/// The data all flows share ([`flowstate::Store`]), read from disk the first time a flow asks for
+/// it and kept in memory after that: every change is written to disk at once, so it is there
+/// again after CursorPie was closed.
+fn with_store<T>(f: impl FnOnce(&mut flowstate::Store) -> T) -> T {
+    static STORE: OnceLock<Mutex<flowstate::Store>> = OnceLock::new();
+    let store = STORE.get_or_init(|| Mutex::new(flowstate::Store::open(flowstate::state_dir())));
+    let mut guard = store.lock().unwrap_or_else(PoisonError::into_inner);
+    f(&mut guard)
 }
 
 /// Spreads the bits of `x` (the finalizer of SplitMix64), so numbers that differ little give

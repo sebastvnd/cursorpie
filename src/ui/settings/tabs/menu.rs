@@ -46,6 +46,13 @@ impl App {
         profile_toolbar(ui, ctx, edit, ed, tx_ref, accent);
         ui.add_space(GAP + 4.0);
 
+        // the pie editor (a canvas) and the import tray (two canvases) take the room of the two tiles
+        if ed.pie_canvas_open() {
+            let room = ui.available_rect_before_wrap();
+            self.pie_canvas_page(ui, ctx, room);
+            return;
+        }
+
         // ------------------------------------------------------------ two tiles
         // widths are computed explicitly (not from available_width) so nothing grows with its content
         let avail = ui.available_rect_before_wrap();

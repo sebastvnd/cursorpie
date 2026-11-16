@@ -131,7 +131,7 @@ wired **back to the loop block itself**. `alt` leads on. See `examples/flows/ask
 
 | `kind` | JSON | Behaviour |
 |---|---|---|
-| Ask | `{ "Ask": { "mode": "Text", "message": "Name?", "preset": "Bob", "out": "name" } }` | shows a window of the system and waits. `mode`: `Text` (a box; `preset` is what it starts with), `YesNo` (`out` becomes `1` or `0`) or `Panel` (`message` is the JSON of a panel, see `docs/PANELS.md`: each field sets the variable named by its `id`, `out` gets the id of the button that was pressed, `ok` is `1` only when a confirming button was pressed). `ok` is `0` when it was cancelled or no window program exists (Linux needs `zenity` or `kdialog`); on Windows an empty answer counts as cancelled |
+| Ask | `{ "Ask": { "mode": "Text", "message": "Name?", "preset": "Bob", "out": "name" } }` | shows a window of the system and waits. `mode`: `Text` (a box; `preset` is what it starts with), `YesNo` (`out` becomes `1` or `0`) or `Panel` (`message` is the JSON of a panel, see `docs/PANELS.md`: each field sets the variable named by its `id`, `out` gets the id of the button that was pressed, `ok` is `1` only when a confirming button was pressed; a toggle button with `"bind": "keep_x"` reads and writes the variable `keep_x` (`1`/`0`) to keep its look, and a panel with `"restore": true` starts every field with the variable named by its `id`, see "State kept by the flow" in `docs/PANELS.md`). `ok` is `0` when it was cancelled or no window program exists (Linux needs `zenity` or `kdialog`); on Windows an empty answer counts as cancelled |
 | PanelUpdate | `{ "PanelUpdate": { "op": "Open", "panel": "progress", "title": "Copying", "label": "Starting", "value": "0", "stop": true } }` | a **progress panel** the flow runs itself; **nothing waits for it**. `op`: `Open` (shows it: `title`, a bar with `label` and `value`, and with `stop: true` a Stop button that ends the whole run when pressed), `Update` (changes `title`, `label` and `value`; a field left empty stays as it was) or `Close`. `panel` is its id (empty: `progress`; use another id for a second one, which takes the window from the first). `value` is a fraction from 0 to 1 (`0.4`), a percentage (`40%`) or `busy` (a bar that moves, no number); a plain number above 1 is a full bar, so write `50%`. The texts may hold `{{variables}}`. Put a `Calc` (`index` / count) before an `Update` to get a fraction. `ok` is `0` when panels are switched off (*Behavior > Panels of flows*) or the value cannot be read. The panel goes away by itself when the run ends. It never takes the keyboard, so `Key` and `TypeText` blocks still reach their app. Example: `docs/examples/flows/progress-panel.cursorpie-flow.json` |
 | Run | `{ "Run": { "command": "git rev-parse HEAD", "out": "rev", "timeout_s": 10 } }` | runs a shell command and **waits** (1 to 120 s, then it is ended). `out` gets what it printed (trailing line breaks cut, at most 256 KB), `code` its exit code. Every variable is also in its environment as `CURSORPIE_<NAME>` |
 | Native | `{ "Native": { "op": "Notify", "a": "Title", "b": "Text" } }` | something the system does or tells; `op` decides what `a` and `b` are for (table below) |
@@ -172,8 +172,32 @@ wired **back to the loop block itself**. `alt` leads on. See `examples/flows/ask
 | `OpenAppSmart` | app name or id | how: `smart` (default: go to it when open, start it when not), `existing` (only go to it when open; `ok` is `0` when it is not), `new` (a new window), `plain` (as the *Open app* block) |
 | `OpenUrlSmart` | link or file | how, as above: `smart` goes to the tab that has the page when the browser extension reports it open, `existing` only does that (`ok` is `0` when no tab has it), `new` opens a new browser window |
 | `Quiet` | `on` (or empty) or `off` | |
+| `StoreSet` | name (letters, digits and `_ . - :`, at most 64 characters) | text to save |
+| `StoreGet` | name | variable (empty and `ok` `0` when nothing is saved under the name) |
+| `StoreRemove` | name | |
 
 `Quiet` hides the notices of the rest of the run: the pill that announces keys, apps and links, and the `Notify` blocks.
+
+## Remembering things between runs
+
+Variables are gone when a run ends. Two things stay, on disk, also after CursorPie is closed and opened again
+(folder `flow-state` next to `config.json`):
+
+- **Kept variables.** A variable whose name starts with `keep_` is saved when the run ends and is back in the next run
+  of the same flow, with the value it had at the end. `Set keep_count` to `1` in the first run and the next run starts
+  with `keep_count` = `1`. Up to 64 kept variables per flow; text only. A flow called with *Call flow* shares the
+  variables of the flow that calls it, so its `keep_` variables are saved under the flow that was run, not under itself.
+- **Run facts.** Every run starts with `run_count` (the number of this run, from 1), `last_run` (when the previous run
+  ended, Unix seconds; empty in the first run) and `last_ending` (`finished`, `stopped`, `out_of_steps`, `out_of_time` or
+  `cancelled`; empty in the first run). A run that was stopped or cancelled is saved too.
+- **Shared data.** `StoreSet`, `StoreGet` and `StoreRemove` read and write names that **every** flow sees: one flow leaves
+  something (`StoreSet` `last.file`), another one picks it up (`StoreGet` `last.file` into `f`). At most 512 names. A
+  `StoreGet` of a name nobody saved is **not** a problem: the variable is empty and `ok` is `0`, so check `ok` with an
+  *If / else* to tell the first run from the others.
+
+Do not keep secrets in them: the files are plain JSON. To start a flow from nothing again, delete its
+`<flow id>.state.json`; to forget all shared data, delete `data.json`.
+
 Put it right after *Start* in a flow that asks again and again (a remote control in a panel).
 
 `Browser` **waits** until the extension says how the command went (20 seconds at most; a `ui.*` panel as long as a person

@@ -19,6 +19,16 @@
 //! themselves: `ok` (1 when the last block that can fail worked), `code` (the exit code of the last
 //! *Run*) and `index` (the round of the innermost loop, from 1).
 //!
+//! ## What stays after the run
+//!
+//! Variables are gone when a run ends, unless the host keeps them ([`crate::flowstate`]). A host
+//! that does gives every run three more variables: `run_count` (the number of this run, from 1),
+//! `last_run` (when the previous run ended, Unix seconds; empty in the first run) and `last_ending`
+//! (how it ended: `finished`, `stopped`, `out_of_steps`, `out_of_time` or `cancelled`; empty in the
+//! first run). Every variable whose name starts with `keep_` is saved when the run ends and is back
+//! in the next run of the same flow, also after CursorPie was closed. The blocks *Save data*, *Load
+//! data* and *Remove data* use the data that all flows share.
+//!
 //! ## Failures
 //!
 //! A block that cannot do its work never stops the run: it sets `ok` to 0 and the flow goes on, so a
@@ -44,6 +54,7 @@ use crate::config::{
     MAX_CALL_DEPTH, MAX_FLOW_RUN_SECS, MAX_FLOW_STEPS, MAX_REPEAT, MAX_RUN_SECS, MAX_VALUE_CHARS,
     MAX_VARS, MAX_WAIT_MS, NativeOp, NodeKind, PanelOp,
 };
+use crate::flowstate::{self, FlowState};
 use crate::keys::Shortcut;
 use crate::platform::Os;
 use std::collections::{BTreeMap, BTreeSet};
@@ -324,6 +335,30 @@ pub trait Host {
             message: "this host cannot reach a browser".into(),
         }
     }
+
+    /// The state the flow `flow_id` saved when its last run ended (see [`crate::flowstate`]).
+    /// `None` is that this host keeps nothing between runs, and the run then neither restores nor
+    /// saves anything; a host that does keep state answers a flow that never ran with
+    /// `FlowState::default()`. The default keeps nothing.
+    fn load_flow_state(&mut self, _flow_id: &str) -> Option<FlowState> {
+        None
+    }
+    /// Saves the state of the flow `flow_id`, called once when a run ends; whether it worked.
+    fn save_flow_state(&mut self, _flow_id: &str, _state: &FlowState) -> bool {
+        false
+    }
+    /// The text saved under `key` in the data all flows share.
+    fn store_get(&mut self, _key: &str) -> Option<String> {
+        None
+    }
+    /// Saves a text under `key` in the shared data; whether it is saved.
+    fn store_set(&mut self, _key: &str, _value: &str) -> bool {
+        false
+    }
+    /// Removes `key` from the shared data; whether there was something.
+    fn store_remove(&mut self, _key: &str) -> bool {
+        false
+    }
 }
 
 /// The variables of a run.
@@ -371,6 +406,19 @@ pub enum Ending {
     /// The person pressed Stop in the progress panel ([`Host::cancelled`]). Not a failure: nothing
     /// is reported about it.
     Cancelled,
+}
+
+impl Ending {
+    /// The word a flow sees in `last_ending` and the saved state keeps.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Ending::Finished => "finished",
+            Ending::Stopped => "stopped",
+            Ending::OutOfSteps => "out_of_steps",
+            Ending::OutOfTime => "out_of_time",
+            Ending::Cancelled => "cancelled",
+        }
+    }
 }
 
 /// What kind of thing went wrong in a block, for the words of the report.
@@ -514,10 +562,20 @@ pub struct Report {
 /// Runs `flow` on `host` for the OS `os` (it decides the paste shortcut and the shell quoting).
 /// Blocks the calling thread until the run ends: call it from the actions worker.
 pub fn run<H: Host>(host: &mut H, flow: &Flow, os: Os) -> Outcome {
+    // what the last run of this flow left (a host that keeps nothing says `None`)
+    let saved = if flow.id.is_empty() {
+        None
+    } else {
+        host.load_flow_state(&flow.id)
+    };
+    let mut vars = Vars::default();
+    if let Some(state) = &saved {
+        restore_state(&mut vars, state);
+    }
     let mut runner = Runner {
-        host,
+        host: &mut *host,
         os,
-        vars: Vars::default(),
+        vars,
         steps: 0,
         deadline: Instant::now() + Duration::from_secs(MAX_FLOW_RUN_SECS),
         failures: Vec::new(),
@@ -532,10 +590,34 @@ pub fn run<H: Host>(host: &mut H, flow: &Flow, os: Os) -> Outcome {
         Ok(()) => Ending::Finished,
         Err(e) => e,
     };
-    Outcome {
+    let outcome = Outcome {
         ending,
         vars: runner.vars,
         failures: runner.failures,
+    };
+    // the run is over: leave what the next one finds, also when it was stopped or cancelled
+    if let Some(state) = saved {
+        let next = state.after_run(ending.as_str(), host.unix_time(), outcome.vars.iter());
+        host.save_flow_state(&flow.id, &next);
+    }
+    outcome
+}
+
+/// Puts the saved state of a flow in the variables of a run that starts: the `keep_` variables it
+/// kept, and `run_count`, `last_run` and `last_ending`.
+fn restore_state(vars: &mut Vars, state: &FlowState) {
+    vars.set("run_count", state.runs.saturating_add(1).to_string());
+    let last_run = if state.last_run > 0 {
+        state.last_run.to_string()
+    } else {
+        String::new()
+    };
+    vars.set("last_run", last_run);
+    vars.set("last_ending", state.last_ending.as_str());
+    for (name, value) in &state.vars {
+        if flowstate::is_keep_var(name) {
+            vars.set(name, value.as_str());
+        }
     }
 }
 
@@ -1128,6 +1210,24 @@ fn native_failure(op: NativeOp, a: &str, b: &str) -> (FailKind, String) {
                 ),
             }
         }
+        NativeOp::StoreSet | NativeOp::StoreGet | NativeOp::StoreRemove => (
+            FailKind::File,
+            if flowstate::is_store_key(a.trim()) {
+                format!(
+                    "the data `{}` could not be saved or removed: the disk refused, or the \
+                     shared data is full ({} names at most)",
+                    brief(a.trim(), 50),
+                    flowstate::MAX_STORE_KEYS
+                )
+            } else {
+                format!(
+                    "`{}` is not a name for saved data: use letters, digits and _ . - : \
+                     (at most {} characters)",
+                    brief(a.trim(), 50),
+                    flowstate::MAX_KEY_CHARS
+                )
+            },
+        ),
         NativeOp::VolumeGet | NativeOp::VolumeSet => (
             FailKind::System,
             "the volume could not be read or set: the number is not from 0 to 100, or the system \
@@ -1696,6 +1796,9 @@ impl<H: Host> Runner<'_, H> {
         };
         let mut spec = spec;
         spec.map_text(&mut |t: &str| self.text(t));
+        // the state the flow keeps for the panel (toggle buttons with a `bind`, and every field
+        // when the panel says `restore`) is read now, so one description serves every state
+        spec.restore_from(&mut |name: &str| self.vars.get(name).map(str::to_string));
         let spec = match spec.checked() {
             Ok(s) => s,
             Err(e) => {
@@ -1864,6 +1967,8 @@ impl<H: Host> Runner<'_, H> {
         };
         // what the browser said, when it did not work (a *Browser command* block)
         let mut browser_said = String::new();
+        // *Load data* and *Remove data* of a name that is not there: `ok` is 0 but nothing failed
+        let mut missing_is_fine = false;
         let ok = match op {
             NativeOp::OpenAppSmart => {
                 let opened = match OpenMode::parse(&tb) {
@@ -1889,6 +1994,35 @@ impl<H: Host> Runner<'_, H> {
                 self.quiet = on;
                 self.host.set_quiet(on);
                 true
+            }
+            NativeOp::StoreSet => {
+                let key = ta.trim();
+                flowstate::is_store_key(key) && self.host.store_set(key, &tb)
+            }
+            NativeOp::StoreGet => {
+                let key = ta.trim();
+                let got = if flowstate::is_store_key(key) {
+                    self.host.store_get(key)
+                } else {
+                    None
+                };
+                let ok = got.is_some();
+                // a name nobody saved yet is the normal first run of a flow: `ok` says it, and
+                // nothing is reported as a problem
+                missing_is_fine = !ok && flowstate::is_store_key(key);
+                self.put(&tb, got.unwrap_or_default());
+                ok
+            }
+            NativeOp::StoreRemove => {
+                let key = ta.trim();
+                if flowstate::is_store_key(key) {
+                    let removed = self.host.store_remove(key);
+                    // removing what is not there is not a problem either
+                    missing_is_fine = !removed && self.host.store_get(key).is_none();
+                    removed
+                } else {
+                    false
+                }
             }
             NativeOp::ClipboardSet => self.host.set_clipboard(&ta),
             NativeOp::ClipboardGet => {
@@ -2045,7 +2179,7 @@ impl<H: Host> Runner<'_, H> {
             }
         };
         self.ok(ok);
-        if !ok {
+        if !ok && !missing_is_fine {
             let (kind, mut detail) = native_failure(op, &ta, &tb);
             if op == NativeOp::Browser && !browser_said.is_empty() {
                 detail = format!(
@@ -2110,9 +2244,42 @@ mod tests {
         /// `cancelled` says yes from the call with this number on (0 = never).
         cancel_from: usize,
         cancel_calls: usize,
+        /// `Some` makes the host keep the state of flows between runs, as the real one does.
+        state: Option<BTreeMap<String, FlowState>>,
+        /// The data all flows share.
+        store: BTreeMap<String, String>,
+        /// The disk refuses every change of the shared data.
+        store_broken: bool,
     }
 
     impl Host for Mock {
+        fn load_flow_state(&mut self, flow_id: &str) -> Option<FlowState> {
+            self.state
+                .as_ref()
+                .map(|all| all.get(flow_id).cloned().unwrap_or_default())
+        }
+        fn save_flow_state(&mut self, flow_id: &str, state: &FlowState) -> bool {
+            match self.state.as_mut() {
+                Some(all) => {
+                    all.insert(flow_id.to_string(), state.clone());
+                    true
+                }
+                None => false,
+            }
+        }
+        fn store_get(&mut self, key: &str) -> Option<String> {
+            self.store.get(key).cloned()
+        }
+        fn store_set(&mut self, key: &str, value: &str) -> bool {
+            if self.store_broken {
+                return false;
+            }
+            self.store.insert(key.to_string(), value.to_string());
+            true
+        }
+        fn store_remove(&mut self, key: &str) -> bool {
+            !self.store_broken && self.store.remove(key).is_some()
+        }
         fn cancelled(&mut self) -> bool {
             self.cancel_calls += 1;
             self.cancel_from > 0 && self.cancel_calls >= self.cancel_from
@@ -4082,5 +4249,245 @@ mod tests {
             "{:?}",
             h.log
         );
+    }
+
+    // ---- what stays after a run
+
+    fn flow_with_id(id: &str, kinds: Vec<NodeKind>) -> Flow {
+        let mut f = Flow::new(id, "F");
+        for k in kinds {
+            f.add_after(None, k);
+        }
+        f
+    }
+
+    fn store_block(op: NativeOp, a: &str, b: &str) -> NodeKind {
+        NodeKind::Native {
+            op,
+            a: a.into(),
+            b: b.into(),
+        }
+    }
+
+    fn with_state() -> Mock {
+        Mock {
+            state: Some(BTreeMap::new()),
+            ..Mock::default()
+        }
+    }
+
+    #[test]
+    fn a_host_that_keeps_nothing_leaves_the_variables_of_a_run_as_they_were() {
+        let mut h = Mock::default();
+        let out = go(&line(vec![set("keep_a", "1")]), &mut h);
+        assert_eq!(out.vars.get("keep_a"), Some("1"));
+        assert_eq!(out.vars.get("run_count"), None);
+        assert_eq!(out.vars.get("last_run"), None);
+        assert_eq!(out.vars.get("last_ending"), None);
+        let again = go(&line(vec![set("seen", "{{keep_a}}")]), &mut h);
+        assert_eq!(again.vars.get("seen"), Some("{{keep_a}}"));
+    }
+
+    #[test]
+    fn the_first_run_of_a_flow_says_so() {
+        let mut h = with_state();
+        let out = go(&line(vec![]), &mut h);
+        assert_eq!(out.vars.get("run_count"), Some("1"));
+        assert_eq!(out.vars.get("last_run"), Some(""));
+        assert_eq!(out.vars.get("last_ending"), Some(""));
+    }
+
+    #[test]
+    fn keep_variables_and_the_last_ending_come_back_in_the_next_run() {
+        let mut h = with_state();
+        let first = flow_with_id("f", vec![set("keep_note", "hello"), set("scratch", "x")]);
+        go(&first, &mut h);
+        // the same flow, edited, and run again: the host is the only thing that remembers
+        let second = flow_with_id("f", vec![set("seen", "{{keep_note}}/{{scratch}}")]);
+        let out = go(&second, &mut h);
+        assert_eq!(out.vars.get("seen"), Some("hello/{{scratch}}"));
+        assert_eq!(out.vars.get("keep_note"), Some("hello"));
+        assert_eq!(out.vars.get("run_count"), Some("2"));
+        assert_eq!(out.vars.get("last_run"), Some("1700000000"));
+        assert_eq!(out.vars.get("last_ending"), Some("finished"));
+        let third = go(&second, &mut h);
+        assert_eq!(third.vars.get("run_count"), Some("3"));
+    }
+
+    #[test]
+    fn a_variable_that_changes_in_a_run_is_saved_as_it_ended() {
+        let mut h = with_state();
+        go(&line(vec![set("keep_n", "1")]), &mut h);
+        go(&line(vec![set("keep_n", "{{keep_n}}2")]), &mut h);
+        let out = go(&line(vec![]), &mut h);
+        assert_eq!(out.vars.get("keep_n"), Some("12"));
+    }
+
+    #[test]
+    fn a_run_that_was_stopped_or_cancelled_is_saved_too() {
+        let mut h = with_state();
+        let stopped = flow_with_id(
+            "f",
+            vec![set("keep_a", "1"), NodeKind::Stop, set("keep_a", "2")],
+        );
+        assert_eq!(go(&stopped, &mut h).ending, Ending::Stopped);
+        let out = go(&line(vec![]), &mut h);
+        assert_eq!(out.vars.get("last_ending"), Some("stopped"));
+        assert_eq!(out.vars.get("keep_a"), Some("1"));
+
+        let mut h = Mock {
+            cancel_from: 1,
+            ..with_state()
+        };
+        let busy = flow_with_id("f", vec![set("keep_a", "1")]);
+        assert_eq!(go(&busy, &mut h).ending, Ending::Cancelled);
+        h.cancel_from = 0;
+        let out = go(&line(vec![]), &mut h);
+        assert_eq!(out.vars.get("last_ending"), Some("cancelled"));
+        assert_eq!(out.vars.get("run_count"), Some("2"));
+    }
+
+    #[test]
+    fn every_flow_has_its_own_saved_state() {
+        let mut h = with_state();
+        go(&flow_with_id("one", vec![set("keep_who", "one")]), &mut h);
+        let other = go(&flow_with_id("two", vec![]), &mut h);
+        assert_eq!(other.vars.get("keep_who"), None);
+        assert_eq!(other.vars.get("run_count"), Some("1"));
+        let back = go(&flow_with_id("one", vec![]), &mut h);
+        assert_eq!(back.vars.get("keep_who"), Some("one"));
+    }
+
+    #[test]
+    fn a_saved_variable_that_is_not_a_keep_variable_is_not_restored() {
+        let mut h = with_state();
+        // a state file written by hand (or by a newer version) with other names in it
+        let mut state = FlowState {
+            runs: 5,
+            ..FlowState::default()
+        };
+        state.vars.insert("keep_ok".into(), "yes".into());
+        state.vars.insert("secret".into(), "no".into());
+        state.vars.insert("ok".into(), "7".into());
+        h.state.as_mut().unwrap().insert("f".into(), state);
+        let out = go(&line(vec![]), &mut h);
+        assert_eq!(out.vars.get("keep_ok"), Some("yes"));
+        assert_eq!(out.vars.get("secret"), None);
+        assert_eq!(out.vars.get("ok"), None);
+        assert_eq!(out.vars.get("run_count"), Some("6"));
+    }
+
+    #[test]
+    fn a_called_flow_shares_the_variables_and_the_state_belongs_to_the_flow_that_was_run() {
+        let mut h = with_state();
+        let child = flow_with_id("child", vec![set("keep_c", "from child")]);
+        h.flows.push(child);
+        let parent = flow_with_id("parent", vec![NodeKind::Call("child".into())]);
+        go(&parent, &mut h);
+        let all = h.state.as_ref().unwrap();
+        assert!(all.contains_key("parent"));
+        assert!(!all.contains_key("child"));
+        assert_eq!(
+            all["parent"].vars.get("keep_c").map(String::as_str),
+            Some("from child")
+        );
+    }
+
+    #[test]
+    fn shared_data_is_saved_loaded_and_removed_by_name() {
+        let mut h = Mock::default();
+        let f = line(vec![
+            set("who", "ana"),
+            store_block(NativeOp::StoreSet, "last.file", "{{who}}.txt"),
+            store_block(NativeOp::StoreGet, "last.file", "got"),
+            set("ok_get", "{{ok}}"),
+            store_block(NativeOp::StoreRemove, "last.file", ""),
+            set("ok_remove", "{{ok}}"),
+            store_block(NativeOp::StoreGet, "last.file", "gone"),
+            set("ok_gone", "{{ok}}"),
+        ]);
+        let out = go(&f, &mut h);
+        assert!(out.failures.is_empty(), "{:?}", out.failures);
+        assert_eq!(out.vars.get("got"), Some("ana.txt"));
+        assert_eq!(out.vars.get("ok_get"), Some("1"));
+        assert_eq!(out.vars.get("ok_remove"), Some("1"));
+        assert_eq!(out.vars.get("gone"), Some(""));
+        assert_eq!(out.vars.get("ok_gone"), Some("0"));
+        assert!(h.store.is_empty());
+    }
+
+    #[test]
+    fn what_one_flow_saves_another_flow_loads() {
+        let mut h = Mock::default();
+        go(
+            &flow_with_id(
+                "writer",
+                vec![store_block(NativeOp::StoreSet, "shared", "42")],
+            ),
+            &mut h,
+        );
+        let out = go(
+            &flow_with_id(
+                "reader",
+                vec![store_block(NativeOp::StoreGet, "shared", "n")],
+            ),
+            &mut h,
+        );
+        assert_eq!(out.vars.get("n"), Some("42"));
+    }
+
+    #[test]
+    fn a_name_nobody_saved_is_not_reported_as_a_problem() {
+        let mut h = Mock::default();
+        let out = go(
+            &line(vec![
+                store_block(NativeOp::StoreGet, "never", "v"),
+                store_block(NativeOp::StoreRemove, "never", ""),
+            ]),
+            &mut h,
+        );
+        assert_eq!(out.vars.get("ok"), Some("0"));
+        assert!(out.failures.is_empty(), "{:?}", out.failures);
+        assert!(out.report("f", "F").is_none());
+    }
+
+    #[test]
+    fn a_name_that_is_not_allowed_and_a_disk_that_refuses_are_reported() {
+        let mut h = Mock::default();
+        let out = go(
+            &line(vec![store_block(NativeOp::StoreSet, "not a name", "x")]),
+            &mut h,
+        );
+        assert_eq!(out.failures.len(), 1);
+        assert_eq!(out.failures[0].kind, FailKind::File);
+        assert!(out.failures[0].detail.contains("not a name for saved data"));
+        assert!(h.store.is_empty());
+
+        let mut h = Mock {
+            store_broken: true,
+            ..Mock::default()
+        };
+        let out = go(
+            &line(vec![store_block(NativeOp::StoreSet, "fine", "x")]),
+            &mut h,
+        );
+        assert_eq!(out.vars.get("ok"), Some("0"));
+        assert_eq!(out.failures.len(), 1);
+        assert!(out.failures[0].detail.contains("could not be saved"));
+    }
+
+    #[test]
+    fn the_name_of_saved_data_can_hold_a_variable() {
+        // the name is filled in before it is used
+        let mut h = Mock::default();
+        h.store.insert("user.ana".into(), "7".into());
+        let out = go(
+            &line(vec![
+                set("who", "ana"),
+                store_block(NativeOp::StoreGet, "user.{{who}}", "n"),
+            ]),
+            &mut h,
+        );
+        assert_eq!(out.vars.get("n"), Some("7"));
     }
 }

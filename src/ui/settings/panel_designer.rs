@@ -13,6 +13,9 @@
 //!   flow, so what is designed is what is shown. Its widgets work (type, switch, drag), and a click
 //!   on one selects it; widgets that a `show_if` would hide are drawn anyway, so they can be
 //!   selected.
+//! * Several widgets can be selected together (Ctrl/Cmd + click, Shift + click for a range, Ctrl/Cmd + A) and
+//!   then removed, duplicated, moved, cut, copied and pasted as a group. A copy goes to the system clipboard
+//!   (see [`super::clip`]), so it can be pasted into another panel too.
 //! * Every change is written back to the block at once, so Settings' undo and redo cover it. When
 //!   the block changes behind the designer's back (undo, the JSON box) it reads the block again.
 //! * The rules (what a new widget starts as, moving, renaming without breaking a `show_if`, the
@@ -20,22 +23,24 @@
 //!
 //! A text that is not a panel at all (broken JSON) is left alone until the person picks a template.
 
+use super::clip::{self, Clip};
 use super::panel_form;
 use super::state::Ed;
 use super::theme::*;
 use super::widgets::*;
 use crate::config::Config;
 use crate::config::flow::{AskMode, Flow, NodeKind};
-use crate::panel::design::{self, Kind};
+use crate::panel::design::{self, Kind, PasteWidgets};
 use crate::panel::layout::{self, card_size, header_height};
 use crate::panel::spec::{
-    BUTTON_H_MAX, BUTTON_RADIUS_MAX, BUTTON_W_MAX, ButtonSide, DEFAULT_TIMEOUT_S, HEIGHT_MAX,
-    HEIGHT_MIN, MAX_GROUP_BUTTONS, MAX_TIMEOUT_S, PADDING_MAX, SPACER_DEFAULT, SPACER_MAX,
-    SPACER_MIN, WIDTH_DEFAULT, WIDTH_MAX, WIDTH_MIN, default_buttons, format_hex, parse_hex,
+    BOX_H_MAX, BOX_H_MIN, BOX_W_MIN, BUTTON_H_MAX, BUTTON_RADIUS_MAX, BUTTON_W_MAX, ButtonSide,
+    DEFAULT_TIMEOUT_S, FONT_SIZE_MAX, FONT_SIZE_MIN, HEIGHT_MAX, HEIGHT_MIN, MAX_GROUP_BUTTONS,
+    MAX_TIMEOUT_S, NUDGE_MAX, PADDING_MAX, SPACER_DEFAULT, SPACER_MAX, SPACER_MIN, WIDTH_DEFAULT,
+    WIDTH_MAX, WIDTH_MIN, default_buttons, format_hex, parse_hex,
 };
 use crate::panel::{
     Button, ButtonAlign, Form, Icon, Layout as ListLayout, Opt, Padding, PanelSpec, Place, ShowIf,
-    TextStyle as Style, Tone, Widget,
+    TextAlign, TextFmt, TextStyle as Style, TextVAlign, Tone, Widget,
 };
 use crate::ui::{fonts, symbols};
 use eframe::egui::{self, Align, Align2, Color32, FontId, Rect, Sense, Stroke, UiBuilder};
@@ -44,8 +49,9 @@ use std::collections::BTreeSet;
 
 /// Width of the column with the list of what the panel holds.
 const LEFT_W: f32 = 216.0;
-/// Width of the inspector.
-const RIGHT_W: f32 = 300.0;
+/// Width of the inspector. Wide enough for the color swatches and the four letter toggles to sit
+/// on one line, so the cards do not need to wrap or scroll sideways.
+const RIGHT_W: f32 = 324.0;
 /// Room around the panel in the middle, above and below it and at its sides.
 const PREVIEW_PAD: f32 = 28.0;
 /// How far the panel in the middle can be zoomed out and in. The text is laid out again at the
@@ -113,6 +119,17 @@ pub struct PanelDesign {
     /// the widget and the button. Delete and the trash of the bottom bar then remove that button
     /// and not the whole grid. Any other pick of the list or of the middle lets go of it.
     inner: Option<(usize, usize)>,
+    /// The widgets selected together (Ctrl/Cmd or Shift + click, Ctrl/Cmd + A). Empty, or two or
+    /// more: one widget is `sel` alone, as before. While a group exists `sel` is [`Sel::Panel`],
+    /// and the inspector shows the group.
+    group: BTreeSet<usize>,
+    /// The widget a Shift + click counts from (the last one picked).
+    anchor: Option<usize>,
+    /// The page one step in that an inspector shows, and for what: for the panel the look of the
+    /// title (0), of the subtitle (1) or of the labels (2), or the space inside the card (3); for
+    /// an input box the look of the text inside it ([`INPUT_LOOK`]). `None`: the first page.
+    /// Picking something else closes it.
+    look: Option<(Sel, u8)>,
 }
 
 impl PanelDesign {
@@ -135,6 +152,9 @@ impl PanelDesign {
             body_scroll: panel_form::BodyScroll::default(),
             show: None,
             inner: None,
+            group: BTreeSet::new(),
+            anchor: None,
+            look: None,
         };
         d.reload(message);
         d
@@ -161,6 +181,83 @@ impl PanelDesign {
             Sel::Button(i) if i < self.spec.buttons.len() => Sel::Button(i),
             _ => Sel::Panel,
         };
+        // a group that lost widgets (undo, the JSON box) shrinks to what is still there
+        let len = self.spec.widgets.len();
+        self.group.retain(|i| *i < len);
+        if self.group.len() < 2 {
+            if let Some(only) = self.group.iter().next().copied() {
+                self.sel = Sel::Widget(only);
+            }
+            self.group.clear();
+        }
+    }
+
+    /// Whether widget `i` is selected, alone or in the group.
+    fn widget_on(&self, i: usize) -> bool {
+        self.sel == Sel::Widget(i) || self.group.contains(&i)
+    }
+
+    /// The widgets that are selected, in the order they have in the panel.
+    fn selected_widgets(&self) -> Vec<usize> {
+        if !self.group.is_empty() {
+            return self.group.iter().copied().collect();
+        }
+        match self.sel {
+            Sel::Widget(i) => vec![i],
+            _ => Vec::new(),
+        }
+    }
+
+    /// Selects exactly these widgets: none, one (the one the inspector shows) or a group.
+    fn set_widgets(&mut self, set: BTreeSet<usize>) {
+        let len = self.spec.widgets.len();
+        let set: BTreeSet<usize> = set.into_iter().filter(|i| *i < len).collect();
+        match set.len() {
+            0 => {
+                self.group.clear();
+                self.select_in_place(Sel::Panel);
+            }
+            1 => {
+                let only = set.into_iter().next().unwrap_or(0);
+                self.select_in_place(Sel::Widget(only));
+            }
+            _ => {
+                self.group = set;
+                self.sel = Sel::Panel;
+                self.options_for = None;
+                self.inner = None;
+            }
+        }
+    }
+
+    /// A click on widget `i` (in the list or on the panel) with the keys that were held:
+    /// Ctrl/Cmd adds it to what is selected or takes it out, Shift selects everything between the
+    /// last one picked and it, and without a key it is the one selected. `scroll`: the middle
+    /// brings it into view (a pick in the list).
+    fn click_widget(&mut self, i: usize, shift: bool, command: bool, scroll: bool) {
+        if !shift && !command {
+            self.anchor = Some(i);
+            if scroll {
+                self.select(Sel::Widget(i));
+            } else {
+                self.select_in_place(Sel::Widget(i));
+            }
+            return;
+        }
+        let current: BTreeSet<usize> = self.selected_widgets().into_iter().collect();
+        let last = self.spec.widgets.len().saturating_sub(1);
+        let anchor = self
+            .anchor
+            .or_else(|| current.iter().next().copied())
+            .unwrap_or(i)
+            .min(last);
+        let set = pick_set(&current, anchor, i, shift, command);
+        if command {
+            self.anchor = Some(i);
+        } else if self.anchor.is_none() {
+            self.anchor = Some(anchor);
+        }
+        self.set_widgets(set);
     }
 
     /// Selects something and has the middle scroll to it (a pick in the list, a new widget).
@@ -172,6 +269,7 @@ impl PanelDesign {
 
     /// Selects something that is already in view (a click on the panel itself): nothing scrolls.
     fn select_in_place(&mut self, sel: Sel) {
+        self.group.clear();
         if self.sel != sel {
             self.sel = sel;
             self.options_for = None;
@@ -215,6 +313,28 @@ impl PanelDesign {
             }
             Err(e) => self.problem = Some(e.to_string()),
         }
+    }
+}
+
+/// What is selected after a click on widget `i` with Ctrl/Cmd (it joins `current`, or leaves it
+/// when it was in) or with Shift (everything from `anchor` to `i`), and without a key (just `i`).
+fn pick_set(
+    current: &BTreeSet<usize>,
+    anchor: usize,
+    i: usize,
+    shift: bool,
+    command: bool,
+) -> BTreeSet<usize> {
+    if command {
+        let mut set = current.clone();
+        if !set.remove(&i) {
+            set.insert(i);
+        }
+        set
+    } else if shift {
+        (anchor.min(i)..=anchor.max(i)).collect()
+    } else {
+        BTreeSet::from([i])
     }
 }
 
@@ -303,6 +423,16 @@ fn draw(ui: &mut egui::Ui, d: &mut PanelDesign, accent: Color32) -> bool {
     {
         changed |= delete_selected(d);
     }
+    // Ctrl/Cmd + A selects every widget; Ctrl/Cmd + C copies the selected ones, X cuts them and V
+    // pastes after them (through the system clipboard, so into another panel too)
+    if !ctx.egui_wants_keyboard_input() && !egui::Popup::is_any_open(&ctx) {
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::A)) {
+            d.set_widgets((0..d.spec.widgets.len()).collect());
+        }
+        if let Some(clipped) = clip::take(&ctx) {
+            changed |= run_clip(&ctx, d, clipped);
+        }
+    }
     let area = ui.available_rect_before_wrap();
     let left = Rect::from_min_size(area.min, vec2(LEFT_W, area.height()));
     let right = Rect::from_min_max(pos2(area.max.x - RIGHT_W, area.min.y), area.max);
@@ -366,21 +496,6 @@ fn field_label(ui: &mut egui::Ui, text: &str) {
 /// A muted sentence that wraps.
 fn note_line(ui: &mut egui::Ui, text: &str, color: Color32) {
     ui.add(egui::Label::new(egui::RichText::new(text).size(12.5).color(color)).wrap());
-}
-
-/// A label and a box to type in. `rows` above 1 makes a box of several lines.
-fn text_in(ui: &mut egui::Ui, label: &str, hint: &str, text: &mut String, rows: usize) -> bool {
-    field_label(ui, label);
-    let resp = if rows > 1 {
-        ui.add(text_area(text, rows).desired_width(f32::INFINITY))
-    } else {
-        ui.add(
-            text_field(text)
-                .desired_width(f32::INFINITY)
-                .hint_text(hint),
-        )
-    };
-    resp.changed()
 }
 
 /// A number in a box that can be typed in or dragged.
@@ -613,9 +728,16 @@ fn kind_menu(ui: &mut egui::Ui, accent: Color32) -> Option<Kind> {
     picked
 }
 
-/// Removes what is selected: the button of a grid that was picked on its own, else the widget or
-/// the button at the bottom (the panel itself stays).
+/// Removes what is selected: the widgets of a group, the button of a grid that was picked on its
+/// own, else the widget or the button at the bottom (the panel itself stays).
 fn delete_selected(d: &mut PanelDesign) -> bool {
+    if !d.group.is_empty() {
+        let at: Vec<usize> = d.group.iter().copied().collect();
+        d.note = None;
+        let next = design::remove_widgets(&mut d.spec, &at);
+        d.select(next.map_or(Sel::Panel, Sel::Widget));
+        return true;
+    }
     if let Some((w, j)) = d.inner
         && remove_inner(d, w, j)
     {
@@ -691,6 +813,7 @@ fn left_column(ui: &mut egui::Ui, d: &mut PanelDesign, accent: Color32) -> bool 
                     d.unreadable = None;
                     d.options_for = None;
                     d.inner = None;
+                    d.group.clear();
                     d.sel = Sel::Panel;
                     d.body_scroll.offset = 0.0;
                     picked = true;
@@ -705,6 +828,8 @@ fn left_column(ui: &mut egui::Ui, d: &mut PanelDesign, accent: Color32) -> bool 
     section_title(ui, "Structure");
 
     let mut pick = None;
+    // a row clicked with Ctrl/Cmd or Shift held: (the widget, shift, command)
+    let mut group_pick: Option<(usize, bool, bool)> = None;
     // a row let go over the trash of the bottom bar
     let mut trashed: Option<Sel> = None;
     // a row dropped on another one: (is it a widget, from, over, below)
@@ -743,13 +868,19 @@ fn left_column(ui: &mut egui::Ui, d: &mut PanelDesign, accent: Color32) -> bool 
                     ui,
                     kind_icon(kind),
                     &text,
-                    d.sel == Sel::Widget(i),
+                    d.widget_on(i),
                     accent,
                     LIST_WIDGETS,
                     i,
                 );
                 if out.clicked {
-                    pick = Some(Sel::Widget(i));
+                    let (shift, command) =
+                        ui.input(|inp| (inp.modifiers.shift, inp.modifiers.command));
+                    if shift || command {
+                        group_pick = Some((i, shift, command));
+                    } else {
+                        pick = Some(Sel::Widget(i));
+                    }
                 }
                 if let Some((from, after)) = out.dropped {
                     moved = Some((true, from, i, after));
@@ -762,6 +893,12 @@ fn left_column(ui: &mut egui::Ui, d: &mut PanelDesign, accent: Color32) -> bool 
             section_title(ui, "Buttons");
             if design::uses_default_buttons(&d.spec) {
                 note_line(ui, "Cancel and OK, until you add your own.", pal().muted);
+            } else if d.spec.buttons.is_empty() {
+                note_line(
+                    ui,
+                    "None: the X at the top right closes the panel.",
+                    pal().muted,
+                );
             }
             for (i, b) in d.spec.buttons.iter().enumerate() {
                 let icon = match b.tone {
@@ -811,10 +948,22 @@ fn left_column(ui: &mut egui::Ui, d: &mut PanelDesign, accent: Color32) -> bool 
         }
     }
     if let Some(sel) = trashed {
-        changed |= run_act(d, sel, Act::Remove);
+        // a row of the group let go over the trash takes the whole group with it
+        changed |= if matches!(sel, Sel::Widget(i) if d.group.contains(&i)) {
+            delete_selected(d)
+        } else {
+            run_act(d, sel, Act::Remove)
+        };
         pick = None;
+        group_pick = None;
+    }
+    if let Some((i, shift, command)) = group_pick {
+        d.click_widget(i, shift, command, true);
     }
     if let Some(sel) = pick {
+        if let Sel::Widget(i) = sel {
+            d.anchor = Some(i);
+        }
         d.select(sel);
     }
     changed
@@ -831,6 +980,8 @@ fn preview_column(ui: &mut egui::Ui, d: &mut PanelDesign, rect: Rect, accent: Co
     let bar_act: BarAct;
     let mut trash_widget: Option<usize> = None;
     let mut inner_pick: Option<(usize, usize)> = None;
+    // a widget of the panel clicked with Ctrl/Cmd or Shift held: (the widget, shift, command)
+    let mut group_click: Option<(usize, bool, bool)> = None;
     {
         let PanelDesign {
             preview,
@@ -842,6 +993,7 @@ fn preview_column(ui: &mut egui::Ui, d: &mut PanelDesign, rect: Rect, accent: Co
             body_scroll,
             show,
             inner: grid_pick,
+            group,
             ..
         } = d;
         let Some(p) = preview.as_mut() else {
@@ -1009,7 +1161,12 @@ fn preview_column(ui: &mut egui::Ui, d: &mut PanelDesign, rect: Rect, accent: Co
             } else if at.y < foot_top
                 && let Some(i) = rects.iter().position(|r| r.contains(at))
             {
-                next = Some(Sel::Widget(i));
+                let (shift, command) = ui.input(|inp| (inp.modifiers.shift, inp.modifiers.command));
+                if shift || command {
+                    group_click = Some((i, shift, command));
+                } else {
+                    next = Some(Sel::Widget(i));
+                }
             }
         }
         // a button that changes when pressed does it here too, so what the person designed can be
@@ -1058,8 +1215,20 @@ fn preview_column(ui: &mut egui::Ui, d: &mut PanelDesign, rect: Rect, accent: Co
         let painter = ui
             .painter()
             .with_clip_rect(on_screen.expand(8.0).intersect(rect));
+        // every widget of a group has its outline
+        for i in group.iter() {
+            if let Some(r) = rects.get(*i).copied().filter(|r| r.is_finite()) {
+                painter.rect_stroke(
+                    (to_screen * r).expand(5.0),
+                    8.0,
+                    Stroke::new(2.0, accent),
+                    egui::StrokeKind::Outside,
+                );
+            }
+        }
         let outline = match *sel {
             Sel::Widget(i) => rects.get(i).copied().filter(|r| r.is_finite()),
+            Sel::Panel if !group.is_empty() => None,
             Sel::Panel => Some(head),
             Sel::Button(_) => None,
         };
@@ -1139,6 +1308,9 @@ fn preview_column(ui: &mut egui::Ui, d: &mut PanelDesign, rect: Rect, accent: Co
         // what a click on the trash of the bottom bar removes (None: nothing is selected)
         let remove = match (*grid_pick, *sel) {
             (Some(_), _) => Some("Remove the selected button (Delete)"),
+            (None, Sel::Panel) if !group.is_empty() => {
+                Some("Remove the selected elements (Delete)")
+            }
             (None, Sel::Panel) => None,
             (None, Sel::Widget(_)) => Some("Remove the selected element (Delete)"),
             (None, Sel::Button(_)) => Some("Remove the selected button (Delete)"),
@@ -1152,7 +1324,13 @@ fn preview_column(ui: &mut egui::Ui, d: &mut PanelDesign, rect: Rect, accent: Co
     }
     if let Some(sel) = next {
         // a click on the panel itself: it is already in view
+        if let Sel::Widget(i) = sel {
+            d.anchor = Some(i);
+        }
         d.select_in_place(sel);
+    }
+    if let Some((i, shift, command)) = group_click {
+        d.click_widget(i, shift, command, false);
     }
     if let Some(pick) = inner_pick {
         d.inner = Some(pick);
@@ -1338,6 +1516,12 @@ enum Act {
 }
 
 fn right_column(ui: &mut egui::Ui, d: &mut PanelDesign, accent: Color32) -> bool {
+    if d.look.is_some_and(|(sel, _)| sel != d.sel) || !d.group.is_empty() {
+        d.look = None;
+    }
+    if !d.group.is_empty() {
+        return group_column(ui, d, accent);
+    }
     let mut changed = false;
     let sel = d.sel;
     let (title, can_up, can_down, can_copy) = match sel {
@@ -1415,6 +1599,158 @@ fn right_column(ui: &mut egui::Ui, d: &mut PanelDesign, accent: Color32) -> bool
     changed
 }
 
+/// Carries out a cut, copy or paste of the keyboard on the selected widgets. Returns whether the
+/// panel changed.
+fn run_clip(ctx: &egui::Context, d: &mut PanelDesign, clipped: Clip) -> bool {
+    let cut = matches!(clipped, Clip::Cut);
+    match clipped {
+        Clip::Copy | Clip::Cut => {
+            let at = d.selected_widgets();
+            let Some(text) = design::copy_widgets(&d.spec, &at) else {
+                return false;
+            };
+            ctx.copy_text(text);
+            if cut {
+                // the widgets go, not the one button of a grid that may be picked
+                d.inner = None;
+                return delete_selected(d);
+            }
+            false
+        }
+        Clip::Paste(text) => {
+            let at = d
+                .selected_widgets()
+                .last()
+                .map_or(d.spec.widgets.len(), |i| *i + 1);
+            d.note = None;
+            match design::paste_widgets(&mut d.spec, at, &text) {
+                PasteWidgets::Done(now) => {
+                    if let Some(first) = now.first().copied() {
+                        d.show = Some((Sel::Widget(first), SHOW_TRIES));
+                    }
+                    d.set_widgets(now.into_iter().collect());
+                    true
+                }
+                PasteWidgets::Full => {
+                    d.note = Some(format!(
+                        "A panel has at most {} widgets.",
+                        crate::panel::spec::MAX_WIDGETS
+                    ));
+                    false
+                }
+                PasteWidgets::NotWidgets => false,
+            }
+        }
+    }
+}
+
+/// Carries out the move, duplicate or removal that the header of the inspector asked for on a
+/// group of widgets.
+fn run_group(d: &mut PanelDesign, act: Act) -> bool {
+    d.note = None;
+    let at: Vec<usize> = d.group.iter().copied().collect();
+    match act {
+        Act::Up | Act::Down => {
+            let delta = if act == Act::Up { -1 } else { 1 };
+            match design::move_widgets(&mut d.spec, &at, delta) {
+                Some(now) => {
+                    d.group = now.into_iter().collect();
+                    true
+                }
+                None => false,
+            }
+        }
+        Act::Copy => match design::duplicate_widgets(&mut d.spec, &at) {
+            Some(now) => {
+                if let Some(first) = now.first().copied() {
+                    d.show = Some((Sel::Widget(first), SHOW_TRIES));
+                }
+                d.set_widgets(now.into_iter().collect());
+                true
+            }
+            None => {
+                d.note = Some(format!(
+                    "A panel has at most {} widgets.",
+                    crate::panel::spec::MAX_WIDGETS
+                ));
+                false
+            }
+        },
+        Act::Remove => delete_selected(d),
+    }
+}
+
+/// The inspector while several widgets are selected: what they are, and what can be done with all of
+/// them at once.
+fn group_column(ui: &mut egui::Ui, d: &mut PanelDesign, accent: Color32) -> bool {
+    let at: Vec<usize> = d.group.iter().copied().collect();
+    let len = d.spec.widgets.len();
+    let can_up = at.iter().any(|i| *i > 0 && !d.group.contains(&(*i - 1)));
+    let can_down = at
+        .iter()
+        .any(|i| *i + 1 < len && !d.group.contains(&(*i + 1)));
+    let mut act = None;
+    ui.horizontal(|ui| {
+        ui.label(fonts::title(
+            format!("{} elements", at.len()),
+            15.0,
+            pal().text,
+        ));
+        ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+            if icon_button_look(ui, Look::Danger, symbols::TRASH, "Remove", true).clicked() {
+                act = Some(Act::Remove);
+            }
+            if icon_button_look(ui, Look::Plain, symbols::COPY, "Duplicate", true).clicked() {
+                act = Some(Act::Copy);
+            }
+            if icon_button_look(ui, Look::Plain, symbols::ARROW_DOWN, "Move down", can_down)
+                .clicked()
+            {
+                act = Some(Act::Down);
+            }
+            if icon_button_look(ui, Look::Plain, symbols::ARROW_UP, "Move up", can_up).clicked() {
+                act = Some(Act::Up);
+            }
+        });
+    });
+    let changed = act.is_some_and(|act| run_group(d, act));
+    if let Some(note) = d.note.clone() {
+        note_line(ui, &note, pal().bad);
+    }
+    note_line(
+        ui,
+        "Ctrl/Cmd + click adds or removes one, Shift + click picks a range, Ctrl/Cmd + A picks all. \
+         Ctrl/Cmd + C copies, X cuts and V pastes (into another panel too). Click one below to work on it alone.",
+        pal().muted,
+    );
+    ui.add_space(4.0);
+    let mut alone = None;
+    egui::ScrollArea::vertical()
+        .id_salt("panel_design_group")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 2.0;
+            for i in at {
+                let Some(w) = d.spec.widgets.get(i) else {
+                    continue;
+                };
+                let kind = design::kind_of(w);
+                let mut text = design::summary(w);
+                if text.is_empty() {
+                    text = kind.label().to_string();
+                }
+                if list_row(ui, kind_icon(kind), &text, true, accent).clicked() {
+                    alone = Some(i);
+                }
+            }
+        });
+    if let Some(i) = alone {
+        d.anchor = Some(i);
+        d.select(Sel::Widget(i));
+    }
+    changed
+}
+
 /// Carries out the move, copy or removal asked for by the header of the inspector.
 fn run_act(d: &mut PanelDesign, sel: Sel, act: Act) -> bool {
     d.note = None;
@@ -1452,6 +1788,11 @@ fn run_act(d: &mut PanelDesign, sel: Sel, act: Act) -> bool {
             if i < d.spec.buttons.len() {
                 d.spec.buttons.remove(i);
             }
+            // taking away the last one leaves the panel without buttons (the X still closes it)
+            // instead of bringing Cancel and OK back
+            if d.spec.buttons.is_empty() {
+                d.spec.no_buttons = true;
+            }
             Some(if d.spec.buttons.is_empty() {
                 Sel::Panel
             } else {
@@ -1464,178 +1805,501 @@ fn run_act(d: &mut PanelDesign, sel: Sel, act: Act) -> bool {
     .is_some()
 }
 
+/// The inspector of the panel itself, in four small cards: what the header says, how the card looks,
+/// how big it is and how it behaves. What is touched only now and then (how the three texts are
+/// written and the space inside the card) is one step in, behind a row that sums it up, so the
+/// first screen stays short and every line on it is one thing to decide.
 fn panel_fields(ui: &mut egui::Ui, d: &mut PanelDesign, accent: Color32) -> bool {
+    if let Some((Sel::Panel, which)) = d.look {
+        return look_page(ui, d, which, accent);
+    }
     let mut c = false;
+    let mut open = None;
     let spec = &mut d.spec;
-    c |= text_in(ui, "Title", "Shown at the top", &mut spec.title, 1);
-    c |= text_in(
-        ui,
-        "Subtitle",
-        "A line under the title",
-        &mut spec.subtitle,
-        1,
-    );
 
-    field_label(ui, "Icon");
-    let icons = [
-        (Icon::Flow, "Flow"),
-        (Icon::App, "App"),
-        (Icon::Link, "Link"),
-        (Icon::File, "File"),
-        (Icon::Shortcut, "Shortcut"),
-        (Icon::Command, "Command"),
-        (Icon::Browser, "Browser"),
-    ];
-    let names: Vec<&str> = icons.iter().map(|(_, n)| *n).collect();
-    let at = icons.iter().position(|(i, _)| *i == spec.icon).unwrap_or(0);
-    let width = ui.available_width();
-    if let Some(i) = select(ui, width, names[at], &names, at) {
-        spec.icon = icons[i].0;
-        c = true;
-    }
+    panel(ui, "Header", |ui| {
+        c |= field(ui, "Title", |ui| {
+            ui.add(
+                text_field(&mut spec.title)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("Shown at the top"),
+            )
+            .changed()
+        });
+        c |= field(ui, "Subtitle", |ui| {
+            ui.add(
+                text_field(&mut spec.subtitle)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("A line under the title"),
+            )
+            .changed()
+        });
+        c |= row_wide(ui, "Icon", "", CHOICE_W, |ui| {
+            let icons = [
+                (Icon::Flow, "Flow"),
+                (Icon::App, "App"),
+                (Icon::Link, "Link"),
+                (Icon::File, "File"),
+                (Icon::Shortcut, "Shortcut"),
+                (Icon::Command, "Command"),
+                (Icon::Browser, "Browser"),
+            ];
+            let names: Vec<&str> = icons.iter().map(|(_, n)| *n).collect();
+            let at = icons.iter().position(|(i, _)| *i == spec.icon).unwrap_or(0);
+            let width = ui.available_width();
+            match select(ui, width, names[at], &names, at) {
+                Some(i) => {
+                    spec.icon = icons[i].0;
+                    true
+                }
+                None => false,
+            }
+        });
+    });
 
-    field_label(ui, "Appears");
-    let places = [Place::Cursor, Place::Center, Place::Top, Place::Bottom];
-    let at = places.iter().position(|p| *p == spec.place).unwrap_or(0);
-    let items = [
-        (None, "Cursor"),
-        (None, "Center"),
-        (None, "Top"),
-        (None, "Bottom"),
-    ];
-    if let Some(i) = segmented(ui, &items, at) {
-        spec.place = places[i];
-        c = true;
-    }
-
-    let mut w = spec.width.unwrap_or(WIDTH_DEFAULT);
-    field_label(ui, &format!("Width: {} pt", w.round()));
-    if slider(ui, &mut w, WIDTH_MIN..=WIDTH_MAX, accent).changed() {
-        spec.width = Some(w.round());
-        c = true;
-    }
-
-    // height: as tall as the content needs (the default), or a fixed one
-    let fixed = spec.height.is_some();
-    field_label(
-        ui,
-        &match spec.height {
-            Some(h) => format!("Height: {} pt", h.round()),
-            None => "Height: fits the content".to_string(),
-        },
-    );
-    let items = [(None, "Auto"), (None, "Fixed")];
-    if let Some(i) = segmented(ui, &items, usize::from(fixed)) {
-        spec.height = if i == 1 {
-            // start from the height the card has now, so switching does not make it jump
-            Some(card_size(spec).1.clamp(HEIGHT_MIN, HEIGHT_MAX).round())
+    panel(ui, "Look", |ui| {
+        let [r, g, b, _] = accent.to_array();
+        let usual = [r, g, b];
+        let mut swatches: Vec<(&str, [u8; 3])> = vec![("Color of Settings", usual)];
+        swatches.extend(ACCENTS.iter().filter(|(_, rgb)| *rgb != usual).copied());
+        let mut slot = spec.accent.as_deref().and_then(parse_hex);
+        if field(ui, "Badge and main button", |ui| {
+            color_dots(ui, &mut slot, &swatches)
+        }) {
+            spec.accent = slot.map(format_hex);
+            c = true;
+        }
+        // the looks of the texts: one row each, with what is set now on the right
+        let rows = [("Title", 0u8), ("Subtitle", 1), ("Field labels", 2)];
+        for (name, which) in rows {
+            let (fmt, range) = look_of(spec, which);
+            if nav_row(ui, name, &fmt_summary(fmt, &range)) {
+                open = Some(which);
+            }
+        }
+        let now = layout::insets(spec);
+        let sides = [now.top, now.right, now.bottom, now.left];
+        let summary = if sides.iter().all(|x| *x == sides[0]) {
+            format!("{} pt", sides[0].round())
         } else {
-            None
+            "Custom".to_string()
         };
-        c = true;
-    }
-    if let Some(mut h) = spec.height
-        && slider(ui, &mut h, HEIGHT_MIN..=HEIGHT_MAX, accent).changed()
-    {
-        spec.height = Some(h.round());
-        c = true;
-    }
+        if nav_row(ui, "Inner space", &summary) {
+            open = Some(3);
+        }
+    });
 
-    c |= padding_fields(ui, spec);
+    panel(ui, "Size and place", |ui| {
+        c |= row_wide(ui, "Appears", "", CHOICE_W, |ui| {
+            let places = [Place::Cursor, Place::Center, Place::Top, Place::Bottom];
+            let names = ["Cursor", "Center", "Top", "Bottom"];
+            let at = places.iter().position(|p| *p == spec.place).unwrap_or(0);
+            let width = ui.available_width();
+            match select(ui, width, names[at], &names, at) {
+                Some(i) => {
+                    spec.place = places[i];
+                    true
+                }
+                None => false,
+            }
+        });
+        let mut w = spec.width.unwrap_or(WIDTH_DEFAULT);
+        if slider_row(ui, "Width", &mut w, WIDTH_MIN..=WIDTH_MAX, " pt", accent).changed() {
+            spec.width = Some(w.round());
+            c = true;
+        }
+        // height: as tall as the content needs (the default), or a fixed one
+        let fixed = spec.height.is_some();
+        c |= row_wide(ui, "Height", "", CHOICE_W, |ui| {
+            let items = [(None, "Auto"), (None, "Fixed")];
+            match segmented(ui, &items, usize::from(fixed)) {
+                Some(i) => {
+                    spec.height = if i == 1 {
+                        // start from the height the card has now, so switching does not make it jump
+                        Some(card_size(spec).1.clamp(HEIGHT_MIN, HEIGHT_MAX).round())
+                    } else {
+                        None
+                    };
+                    true
+                }
+                None => false,
+            }
+        });
+        if let Some(mut h) = spec.height
+            && slider_row(
+                ui,
+                "Fixed height",
+                &mut h,
+                HEIGHT_MIN..=HEIGHT_MAX,
+                " pt",
+                accent,
+            )
+            .changed()
+        {
+            spec.height = Some(h.round());
+            c = true;
+        }
+    });
 
-    field_label(ui, "Gives up after (0 = never)");
-    let mut secs = spec.timeout_s.unwrap_or(DEFAULT_TIMEOUT_S);
-    if ui
-        .add_sized(
-            [ui.available_width(), CONTROL_H],
-            egui::DragValue::new(&mut secs)
-                .range(0..=MAX_TIMEOUT_S)
-                .suffix(" s"),
+    panel(ui, "Behavior", |ui| {
+        let mut show_close = !spec.hide_close;
+        if toggle_row(
+            ui,
+            &mut show_close,
+            "Close button",
+            "A small X at the top right closes the panel.",
+            accent,
         )
         .changed()
-    {
-        spec.timeout_s = Some(secs);
-        c = true;
-    }
-
-    field_label(ui, "Buttons at the bottom");
-    let aligns = [
-        ButtonAlign::End,
-        ButtonAlign::Start,
-        ButtonAlign::Center,
-        ButtonAlign::Stretch,
-    ];
-    let at = aligns
-        .iter()
-        .position(|a| *a == spec.buttons_align)
-        .unwrap_or(0);
-    let items = [
-        (None, "Right"),
-        (None, "Left"),
-        (None, "Center"),
-        (None, "Wide"),
-    ];
-    if let Some(k) = segmented(ui, &items, at) {
-        spec.buttons_align = aligns[k];
-        c = true;
-    }
-    ui.add_space(GAP);
-    panel(ui, "", |ui| {
+        {
+            spec.hide_close = !show_close;
+            c = true;
+        }
         c |= toggle_row(
             ui,
             &mut spec.keep_open,
-            "Stay open after a button",
-            "The panel does not go away and come back while the flow answers each press. Give it a name below.",
+            "Stay open",
+            "Stays after a button press. Give it a name.",
             accent,
         )
         .changed();
+        c |= toggle_row(
+            ui,
+            &mut spec.restore,
+            "Remember values",
+            "A flow shows every field with the variable of its answer name (a slider stays where it was left).",
+            accent,
+        )
+        .changed();
+        c |= row_wide(ui, "Gives up after", "0 means never", 110.0, |ui| {
+            let mut secs = spec.timeout_s.unwrap_or(DEFAULT_TIMEOUT_S);
+            let resp = ui.add_sized(
+                [ui.available_width(), CONTROL_H],
+                egui::DragValue::new(&mut secs)
+                    .range(0..=MAX_TIMEOUT_S)
+                    .suffix(" s"),
+            );
+            if resp.changed() {
+                spec.timeout_s = Some(secs);
+            }
+            resp.changed()
+        });
+        c |= row_wide(ui, "Buttons", "", CHOICE_W, |ui| {
+            let aligns = [
+                ButtonAlign::End,
+                ButtonAlign::Start,
+                ButtonAlign::Center,
+                ButtonAlign::Stretch,
+            ];
+            let names = ["Right", "Left", "Center", "Wide"];
+            let at = aligns
+                .iter()
+                .position(|a| *a == spec.buttons_align)
+                .unwrap_or(0);
+            let width = ui.available_width();
+            match select(ui, width, names[at], &names, at) {
+                Some(k) => {
+                    spec.buttons_align = aligns[k];
+                    true
+                }
+                None => false,
+            }
+        });
+        c |= field(ui, "Name (optional)", |ui| {
+            ui.add(
+                text_field(&mut spec.id)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("so a flow or the extension can update it"),
+            )
+            .changed()
+        });
     });
 
-    field_label(ui, "Color of the badge and the main button");
-    let [r, g, b, _] = accent.to_array();
-    let mut rgb = spec
-        .accent
-        .as_deref()
-        .and_then(parse_hex)
-        .unwrap_or([r, g, b]);
-    let before = rgb;
-    ui.allocate_ui_with_layout(
-        vec2(ui.available_width(), CONTROL_H),
-        egui::Layout::right_to_left(Align::Center),
-        |ui| accent_picker(ui, &mut rgb),
-    );
-    if rgb != before {
-        spec.accent = Some(format_hex(rgb));
-        c = true;
-    }
-    if spec.accent.is_some() && button(ui, Look::Plain, None, "Use the color of Settings").clicked()
-    {
-        spec.accent = None;
-        c = true;
-    }
-
-    c |= text_in(
-        ui,
-        "Name (optional)",
-        "so a flow or the extension can update it",
-        &mut spec.id,
-        1,
-    );
-
     if design::uses_default_buttons(spec) {
-        ui.add_space(GAP);
-        note_line(ui, "The buttons are Cancel and OK.", pal().muted);
-        if button(ui, Look::Soft, None, "Customize the buttons").clicked() {
-            let menu = spec
-                .widgets
-                .iter()
-                .any(|w| matches!(w, Widget::Choice { submit: true, .. }));
-            spec.buttons = default_buttons(menu);
-            d.sel = Sel::Button(0);
+        note_line(
+            ui,
+            "The buttons are Cancel and OK. The X at the top right closes the panel too.",
+            pal().muted,
+        );
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            if button(ui, Look::Soft, None, "Customize the buttons").clicked() {
+                let menu = spec
+                    .widgets
+                    .iter()
+                    .any(|w| matches!(w, Widget::Choice { submit: true, .. }));
+                spec.buttons = default_buttons(menu);
+                d.sel = Sel::Button(0);
+                c = true;
+            }
+            if button(ui, Look::Plain, None, "No buttons").clicked() {
+                spec.no_buttons = true;
+                c = true;
+            }
+        });
+    } else if spec.buttons.is_empty() {
+        note_line(
+            ui,
+            "No buttons: the X at the top right closes the panel. Add your own on the left.",
+            pal().muted,
+        );
+        ui.add_space(4.0);
+        if button(ui, Look::Soft, None, "Use Cancel and OK").clicked() {
+            spec.no_buttons = false;
             c = true;
         }
     }
+    if let Some(which) = open {
+        d.look = Some((Sel::Panel, which));
+    }
     c
+}
+
+/// How wide the control of a row is when it is a list or a choice of two.
+const CHOICE_W: f32 = 140.0;
+
+/// The page one step in: the look of one text (0 title, 1 subtitle, 2 labels) or the space inside
+/// the card (3), with a way back.
+fn look_page(ui: &mut egui::Ui, d: &mut PanelDesign, which: u8, accent: Color32) -> bool {
+    let mut c = false;
+    let name = match which {
+        0 => "Title",
+        1 => "Subtitle",
+        2 => "Field labels",
+        _ => "Inner space",
+    };
+    ui.horizontal(|ui| {
+        if icon_button_look(ui, Look::Plain, symbols::ARROW_LEFT, "Back", true).clicked() {
+            d.look = None;
+        }
+        ui.label(fonts::title(name, 14.0, pal().text));
+    });
+    ui.add_space(4.0);
+    if which < 3 {
+        let (fmt, range) = look_of(&mut d.spec, which);
+        c |= text_format_fields(ui, fmt, &range, accent);
+    } else {
+        c |= padding_fields(ui, &mut d.spec);
+    }
+    c
+}
+
+/// The format of one of the three texts of the panel, with what it can change.
+fn look_of(spec: &mut PanelSpec, which: u8) -> (&mut TextFmt, FmtRange) {
+    match which {
+        0 => (
+            &mut spec.title_fmt,
+            FmtRange {
+                usual: layout::TITLE_SIZE,
+                least: 12.0,
+                most: layout::TITLE_SIZE_MAX,
+                bold: true,
+                extra: FmtExtra::Header,
+            },
+        ),
+        1 => (
+            &mut spec.subtitle_fmt,
+            FmtRange {
+                usual: layout::SUBTITLE_SIZE,
+                least: f32::from(FONT_SIZE_MIN),
+                most: layout::SUBTITLE_SIZE_MAX,
+                bold: false,
+                extra: FmtExtra::Header,
+            },
+        ),
+        _ => (
+            &mut spec.label_fmt,
+            FmtRange {
+                usual: layout::LABEL_SIZE,
+                least: f32::from(FONT_SIZE_MIN),
+                most: layout::LABEL_SIZE_MAX,
+                bold: true,
+                extra: FmtExtra::None,
+            },
+        ),
+    }
+}
+
+/// A look in a few words for the row that opens it: "Bold, 22 pt", "Regular, italic, 13 pt".
+fn fmt_summary(fmt: &TextFmt, range: &FmtRange) -> String {
+    let mut parts = vec![if fmt.bold.unwrap_or(range.bold) {
+        "Bold".to_string()
+    } else {
+        "Regular".to_string()
+    }];
+    if fmt.italic {
+        parts.push("italic".into());
+    }
+    if fmt.underline {
+        parts.push("underline".into());
+    }
+    if fmt.strike {
+        parts.push("strike".into());
+    }
+    parts.push(format!(
+        "{} pt",
+        fmt.size.map_or(range.usual, f32::from).round()
+    ));
+    parts.join(", ")
+}
+
+/// Whether something was already added to `ui`, so the next field starts with a hairline.
+fn has_content(ui: &egui::Ui) -> bool {
+    ui.cursor().min.y > ui.min_rect().min.y + 0.5
+}
+
+/// A pale line across a card, between two fields.
+fn rule(ui: &mut egui::Ui) {
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+    ui.painter().rect_filled(rect, 0.0, pal().divider);
+}
+
+/// A field of a card whose control is as wide as the card: the name small and muted above it, a
+/// hairline from the field before. Returns what `add_control` returns.
+fn field<R>(ui: &mut egui::Ui, label: &str, add_control: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    if has_content(ui) {
+        rule(ui);
+    }
+    ui.add_space(10.0);
+    ui.label(egui::RichText::new(label).size(13.0).color(pal().muted));
+    ui.add_space(6.0);
+    let out = add_control(ui);
+    ui.add_space(12.0);
+    out
+}
+
+/// A row of a card that opens a page one step in: the name on the left, what is set now and a
+/// caret on the right. The whole row is the click target. Returns whether it was clicked.
+fn nav_row(ui: &mut egui::Ui, label: &str, summary: &str) -> bool {
+    if has_content(ui) {
+        rule(ui);
+    }
+    let (rect, resp) =
+        ui.allocate_exact_size(vec2(ui.available_width(), CONTROL_H + 18.0), Sense::click());
+    let hot = resp.hovered();
+    let painter = ui.painter();
+    if hot {
+        painter.rect_filled(rect.shrink2(vec2(-6.0, 5.0)), CONTROL_R, pal().idle);
+    }
+    painter.text(
+        pos2(rect.min.x, rect.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        FontId::proportional(14.5),
+        pal().text,
+    );
+    fonts::paint_icon(
+        painter,
+        pos2(rect.max.x - 8.0, rect.center().y),
+        symbols::CARET_RIGHT,
+        16.0,
+        pal().muted,
+        false,
+    );
+    painter.text(
+        pos2(rect.max.x - 24.0, rect.center().y),
+        Align2::RIGHT_CENTER,
+        summary,
+        FontId::proportional(13.0),
+        pal().muted,
+    );
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
+}
+
+/// Toggles of equal width on one line, each lit with the accent while on. Returns the one clicked.
+fn chips(ui: &mut egui::Ui, items: &[(&str, bool)], accent: Color32) -> Option<usize> {
+    let gap = 6.0;
+    let n = items.len().max(1) as f32;
+    let width = ((ui.available_width() - gap * (n - 1.0)) / n).floor();
+    let mut picked = None;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = gap;
+        for (i, (label, on)) in items.iter().enumerate() {
+            let (rect, resp) = ui.allocate_exact_size(vec2(width, CONTROL_H - 4.0), Sense::click());
+            let fill = if *on {
+                wash(accent, 0.16)
+            } else if resp.hovered() {
+                pal().hot
+            } else {
+                pal().idle
+            };
+            ui.painter().rect_filled(rect, CONTROL_R, fill);
+            let fg = if *on { accent_text(accent) } else { pal().text };
+            ui.painter().text(
+                rect.center(),
+                Align2::CENTER_CENTER,
+                *label,
+                text_font(12.5, *on),
+                fg,
+            );
+            if resp
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
+            {
+                picked = Some(i);
+            }
+        }
+    });
+    picked
+}
+
+/// Round color swatches that wrap to the width they are given, and after them the system color
+/// picker. `swatches` are `(name, rgb)`; the first is the color that is used while nothing is
+/// chosen: it is the lit one while `slot` is `None`, and picking it empties `slot` again.
+fn color_dots(ui: &mut egui::Ui, slot: &mut Option<[u8; 3]>, swatches: &[(&str, [u8; 3])]) -> bool {
+    let mut changed = false;
+    let default = swatches.first().map_or([0; 3], |s| s.1);
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+        for (i, (name, rgb)) in swatches.iter().enumerate() {
+            let (rect, resp) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
+            let c = Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
+            let on = if i == 0 {
+                slot.is_none()
+            } else {
+                *slot == Some(*rgb)
+            };
+            let painter = ui.painter();
+            painter.circle_filled(rect.center(), 10.0, c);
+            // the pale colors are as light as the card: a hairline keeps them visible
+            painter.circle_stroke(rect.center(), 10.0, Stroke::new(1.0, pal().border));
+            if on {
+                painter.circle_stroke(rect.center(), 13.0, Stroke::new(2.0, accent_text(c)));
+                fonts::paint_icon(
+                    painter,
+                    rect.center(),
+                    symbols::CHECK,
+                    13.0,
+                    on_accent(c),
+                    false,
+                );
+            }
+            let tip = if i == 0 {
+                format!("{name} (the usual)")
+            } else {
+                (*name).to_string()
+            };
+            if resp
+                .on_hover_text(tip)
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
+            {
+                *slot = (i != 0).then_some(*rgb);
+                changed = true;
+            }
+        }
+        let mut rgb = slot.unwrap_or(default);
+        if ui
+            .color_edit_button_srgb(&mut rgb)
+            .on_hover_text("Any color")
+            .changed()
+        {
+            *slot = Some(rgb);
+            changed = true;
+        }
+    });
+    changed
 }
 
 /// A label and a number of points for one edge of the padding.
@@ -1674,48 +2338,52 @@ fn padding_fields(ui: &mut egui::Ui, spec: &mut PanelSpec) -> bool {
     };
     let key = egui::Id::new("panel_design_padding_mode");
     let mut mode = ui.data(|d| d.get_temp::<u8>(key)).unwrap_or(0).max(needed);
-    field_label(ui, "Space between the edge and the content");
-    let items = [(None, "All"), (None, "H and V"), (None, "Each side")];
-    if let Some(k) = segmented(ui, &items, usize::from(mode)) {
-        mode = k as u8;
-        // a mode with fewer numbers makes the sides alike again
-        if mode == 0 {
-            v = [v[0]; 4];
-        } else if mode == 1 {
-            v[2] = v[0];
-            v[3] = v[1];
-        }
-    }
-    match mode {
-        0 => {
-            if pad_box(ui, "All sides", &mut v[0]) {
-                v = [v[0]; 4];
+    panel(ui, "", |ui| {
+        field(ui, "Which sides", |ui| {
+            let items = [(None, "All"), (None, "H and V"), (None, "Each side")];
+            if let Some(k) = segmented(ui, &items, usize::from(mode)) {
+                mode = k as u8;
+                // a mode with fewer numbers makes the sides alike again
+                if mode == 0 {
+                    v = [v[0]; 4];
+                } else if mode == 1 {
+                    v[2] = v[0];
+                    v[3] = v[1];
+                }
+            }
+        });
+        match mode {
+            0 => {
+                if pad_box(ui, "All sides", &mut v[0]) {
+                    v = [v[0]; 4];
+                }
+            }
+            1 => {
+                let (h, t) = ui.columns(2, |cols| {
+                    let h = pad_box(&mut cols[0], "Left and right", &mut v[1]);
+                    let t = pad_box(&mut cols[1], "Top and bottom", &mut v[0]);
+                    (h, t)
+                });
+                if h {
+                    v[3] = v[1];
+                }
+                if t {
+                    v[2] = v[0];
+                }
+            }
+            _ => {
+                ui.columns(2, |cols| {
+                    pad_box(&mut cols[0], "Top", &mut v[0]);
+                    pad_box(&mut cols[1], "Right", &mut v[1]);
+                });
+                ui.columns(2, |cols| {
+                    pad_box(&mut cols[0], "Bottom", &mut v[2]);
+                    pad_box(&mut cols[1], "Left", &mut v[3]);
+                });
             }
         }
-        1 => {
-            let (h, t) = ui.columns(2, |cols| {
-                let h = pad_box(&mut cols[0], "Left and right", &mut v[1]);
-                let t = pad_box(&mut cols[1], "Top and bottom", &mut v[0]);
-                (h, t)
-            });
-            if h {
-                v[3] = v[1];
-            }
-            if t {
-                v[2] = v[0];
-            }
-        }
-        _ => {
-            ui.columns(2, |cols| {
-                pad_box(&mut cols[0], "Top", &mut v[0]);
-                pad_box(&mut cols[1], "Right", &mut v[1]);
-            });
-            ui.columns(2, |cols| {
-                pad_box(&mut cols[0], "Bottom", &mut v[2]);
-                pad_box(&mut cols[1], "Left", &mut v[3]);
-            });
-        }
-    }
+        ui.add_space(8.0);
+    });
     ui.data_mut(|d| d.insert_temp(key, mode));
     let mut c = false;
     if v != before {
@@ -1726,7 +2394,14 @@ fn padding_fields(ui: &mut egui::Ui, spec: &mut PanelSpec) -> bool {
         set_pad(&mut p.left, v[3]);
         c = true;
     }
-    if spec.padding != Padding::default() && button(ui, Look::Plain, None, "Usual space").clicked()
+    if spec.padding != Padding::default()
+        && button(
+            ui,
+            Look::Plain,
+            Some(symbols::ARROW_COUNTER_CLOCKWISE),
+            "Usual space",
+        )
+        .clicked()
     {
         spec.padding = Padding::default();
         c = true;
@@ -1754,6 +2429,87 @@ fn icon_fields_after(ui: &mut egui::Ui, icon: &mut String) -> bool {
     icon_fields_titled(ui, "Icon after a press", "Same icon", icon)
 }
 
+/// A box to type in, as a field of a card: the name above it and a hairline from the field before.
+fn text_field_in(
+    ui: &mut egui::Ui,
+    label: &str,
+    hint: &str,
+    text: &mut String,
+    rows: usize,
+) -> bool {
+    field(ui, label, |ui| {
+        let resp = if rows > 1 {
+            ui.add(text_area(text, rows).desired_width(f32::INFINITY))
+        } else {
+            ui.add(
+                text_field(text)
+                    .desired_width(f32::INFINITY)
+                    .hint_text(hint),
+            )
+        };
+        resp.changed()
+    })
+}
+
+/// A choice among a few, as a [`field`] of a card. Returns the index that was clicked.
+fn choice_field(
+    ui: &mut egui::Ui,
+    label: &str,
+    items: &[(Option<char>, &str)],
+    at: usize,
+) -> Option<usize> {
+    field(ui, label, |ui| segmented(ui, items, at))
+}
+
+/// Two numbers side by side with their names above, as a field of a card. Returns which of the
+/// two was changed.
+fn pair_field(
+    ui: &mut egui::Ui,
+    label_a: &str,
+    a: &mut f64,
+    label_b: &str,
+    b: &mut f64,
+) -> (bool, bool) {
+    if has_content(ui) {
+        rule(ui);
+    }
+    ui.add_space(6.0);
+    let out = number_pair(ui, label_a, a, label_b, b);
+    ui.add_space(10.0);
+    out
+}
+
+/// A number of points that says "auto" at 0, as a [`DragValue`](egui::DragValue).
+fn auto_drag(v: &mut f64, most: f64) -> egui::DragValue<'_> {
+    egui::DragValue::new(v)
+        .range(0.0..=most)
+        .speed(1.0)
+        .custom_formatter(|n, _| {
+            if n < 1.0 {
+                "auto".to_owned()
+            } else {
+                format!("{n:.0} pt")
+            }
+        })
+        .custom_parser(|t| {
+            let t = t.trim().trim_end_matches("pt").trim();
+            if t.eq_ignore_ascii_case("auto") {
+                Some(0.0)
+            } else {
+                t.parse::<f64>().ok()
+            }
+        })
+}
+
+/// A row of a card with an "auto" number on the right and what auto means under the name.
+fn auto_row(ui: &mut egui::Ui, label: &str, hint: &str, v: &mut f64, most: f64) -> bool {
+    row_wide(ui, label, hint, 110.0, |ui| {
+        let width = ui.available_width();
+        ui.add_sized([width, CONTROL_H], auto_drag(v, most))
+            .changed()
+    })
+}
+
 fn icon_fields_titled(
     ui: &mut egui::Ui,
     title: &str,
@@ -1761,27 +2517,31 @@ fn icon_fields_titled(
     icon: &mut String,
 ) -> bool {
     let mut c = false;
-    field_label(ui, title);
-    let name = icon
-        .strip_prefix(symbols::PREFIX)
-        .unwrap_or(icon.as_str())
-        .to_string();
-    let mut items: Vec<(Option<char>, &str)> = vec![(None, none)];
-    items.extend(symbols::ALL.iter().map(|(n, ch)| (Some(*ch), *n)));
-    let at = symbols::ALL
-        .iter()
-        .position(|(n, _)| *n == name)
-        .map_or(0, |p| p + 1);
-    let width = ui.available_width();
-    if let Some(k) = select_icons(ui, width, &items, at) {
-        *icon = if k == 0 {
-            String::new()
-        } else {
-            symbols::ALL[k - 1].0.to_string()
-        };
-        c = true;
-    }
-    c |= text_in(
+    c |= field(ui, title, |ui| {
+        let name = icon
+            .strip_prefix(symbols::PREFIX)
+            .unwrap_or(icon.as_str())
+            .to_string();
+        let mut items: Vec<(Option<char>, &str)> = vec![(None, none)];
+        items.extend(symbols::ALL.iter().map(|(n, ch)| (Some(*ch), *n)));
+        let at = symbols::ALL
+            .iter()
+            .position(|(n, _)| *n == name)
+            .map_or(0, |p| p + 1);
+        let width = ui.available_width();
+        match select_icons(ui, width, &items, at) {
+            Some(k) => {
+                *icon = if k == 0 {
+                    String::new()
+                } else {
+                    symbols::ALL[k - 1].0.to_string()
+                };
+                true
+            }
+            None => false,
+        }
+    });
+    c |= text_field_in(
         ui,
         "Icon name, or a picture",
         "play, or file:/path/to/picture.png",
@@ -1791,33 +2551,34 @@ fn icon_fields_titled(
     c
 }
 
-/// Everything a button has, at the bottom or in a grid.
+/// Everything a button has, at the bottom or in a grid, in cards: what it says and looks like,
+/// what it does, what it shows after a press, and its size.
 fn one_button_fields(ui: &mut egui::Ui, b: &mut Button, in_footer: bool, accent: Color32) -> bool {
     let mut c = false;
-    c |= text_in(
-        ui,
-        "Label",
-        "What it says (empty: only the icon)",
-        &mut b.label,
-        1,
-    );
-    c |= text_in(
-        ui,
-        "Answer name",
-        "The flow gets this when it is pressed",
-        &mut b.id,
-        1,
-    );
-    c |= icon_fields(ui, &mut b.icon);
-    field_label(ui, "Look");
-    let tones = [Tone::Secondary, Tone::Primary, Tone::Danger];
-    let at = tones.iter().position(|t| *t == b.tone).unwrap_or(0);
-    let items = [(None, "Normal"), (None, "Main"), (None, "Danger")];
-    if let Some(i) = segmented(ui, &items, at) {
-        b.tone = tones[i];
-        c = true;
-    }
-    ui.add_space(GAP);
+    panel(ui, "Button", |ui| {
+        c |= text_field_in(
+            ui,
+            "Label",
+            "What it says (empty: only the icon)",
+            &mut b.label,
+            1,
+        );
+        c |= text_field_in(
+            ui,
+            "Answer name",
+            "The flow gets this when it is pressed",
+            &mut b.id,
+            1,
+        );
+        c |= icon_fields(ui, &mut b.icon);
+        let tones = [Tone::Secondary, Tone::Primary, Tone::Danger];
+        let at = tones.iter().position(|t| *t == b.tone).unwrap_or(0);
+        let items = [(None, "Normal"), (None, "Main"), (None, "Danger")];
+        if let Some(i) = choice_field(ui, "Look", &items, at) {
+            b.tone = tones[i];
+            c = true;
+        }
+    });
     panel(ui, "", |ui| {
         c |= toggle_row(
             ui,
@@ -1847,44 +2608,64 @@ fn one_button_fields(ui: &mut egui::Ui, b: &mut Button, in_footer: bool, accent:
         }
     });
     if b.toggle && !b.cancel {
-        ui.add_space(GAP);
-        section_title(ui, "After a press");
-        c |= text_in(
-            ui,
-            "Text after a press",
-            "Empty: the same text",
-            &mut b.on_label,
-            1,
-        );
-        c |= icon_fields_after(ui, &mut b.on_icon);
-        field_label(ui, "Look after a press");
-        let tones = [
-            None,
-            Some(Tone::Secondary),
-            Some(Tone::Primary),
-            Some(Tone::Danger),
-        ];
-        let at = tones.iter().position(|t| *t == b.on_tone).unwrap_or(0);
-        let items = [
-            (None, "Same"),
-            (None, "Normal"),
-            (None, "Main"),
-            (None, "Danger"),
-        ];
-        if let Some(i) = segmented(ui, &items, at) {
-            b.on_tone = tones[i];
-            c = true;
-        }
-        ui.add_space(GAP);
-        panel(ui, "", |ui| {
+        panel(ui, "After a press", |ui| {
+            c |= text_field_in(
+                ui,
+                "Text after a press",
+                "Empty: the same text",
+                &mut b.on_label,
+                1,
+            );
+            c |= icon_fields_after(ui, &mut b.on_icon);
+            let tones = [
+                None,
+                Some(Tone::Secondary),
+                Some(Tone::Primary),
+                Some(Tone::Danger),
+            ];
+            let at = tones.iter().position(|t| *t == b.on_tone).unwrap_or(0);
+            let items = [
+                (None, "Same"),
+                (None, "Normal"),
+                (None, "Main"),
+                (None, "Danger"),
+            ];
+            if let Some(i) = choice_field(ui, "Look after a press", &items, at) {
+                b.on_tone = tones[i];
+                c = true;
+            }
             c |= toggle_row(
                 ui,
                 &mut b.on,
                 "Starts changed",
-                "The panel opens with the button already showing how it looks after a press.",
+                if b.bind.is_empty() {
+                    "The panel opens with the button already showing how it looks after a press."
+                } else {
+                    "How it opens while the variable below has no value yet."
+                },
                 accent,
             )
             .changed();
+        });
+        panel(ui, "Kept by the flow", |ui| {
+            // a variable name: letters, digits and _, so a wrong key is never typed in
+            if text_field_in(
+                ui,
+                "Remember in variable",
+                "Empty: only while the panel is open",
+                &mut b.bind,
+                1,
+            ) {
+                b.bind = crate::config::flow::clean_var_name(&b.bind);
+                c = true;
+            }
+            note_line(
+                ui,
+                "The button opens with the look this variable says (1 = after a press, 0 = \
+                 before) and every press writes it back. A name that starts with keep_ is also \
+                 saved between runs.",
+                pal().muted,
+            );
         });
     }
     c |= size_and_shape(ui, b, in_footer);
@@ -1894,63 +2675,80 @@ fn one_button_fields(ui: &mut egui::Ui, b: &mut Button, in_footer: bool, accent:
 /// Where a button sits (at the bottom), how wide and how tall it is, and how round its corners are.
 fn size_and_shape(ui: &mut egui::Ui, b: &mut Button, in_footer: bool) -> bool {
     let mut c = false;
-    ui.add_space(GAP);
-    section_title(ui, "Size and shape");
-    if in_footer {
-        field_label(ui, "Place in the row");
-        let sides = [
-            None,
-            Some(ButtonSide::Start),
-            Some(ButtonSide::Center),
-            Some(ButtonSide::End),
-        ];
-        let at = sides.iter().position(|x| *x == b.side).unwrap_or(0);
-        let items = [
-            (None, "Panel"),
-            (None, "Left"),
-            (None, "Center"),
-            (None, "Right"),
-        ];
-        if let Some(i) = segmented(ui, &items, at) {
-            b.side = sides[i];
+    panel(ui, "Size and shape", |ui| {
+        if in_footer {
+            let sides = [
+                None,
+                Some(ButtonSide::Start),
+                Some(ButtonSide::Center),
+                Some(ButtonSide::End),
+            ];
+            let at = sides.iter().position(|x| *x == b.side).unwrap_or(0);
+            let items = [
+                (None, "Panel"),
+                (None, "Left"),
+                (None, "Center"),
+                (None, "Right"),
+            ];
+            if let Some(i) = choice_field(ui, "Place in the row", &items, at) {
+                b.side = sides[i];
+                c = true;
+            }
+        }
+        let mut w = f64::from(b.width);
+        if auto_row(
+            ui,
+            "Width",
+            "As the text needs",
+            &mut w,
+            f64::from(BUTTON_W_MAX),
+        ) {
+            b.width = w as u16;
             c = true;
         }
-    }
-    field_label(ui, "Width in points (0 = as the text needs)");
-    let mut w = f64::from(b.width);
-    if number_in(ui, &mut w, 0.0..=f64::from(BUTTON_W_MAX), 1.0) {
-        b.width = w as u16;
-        c = true;
-    }
-    field_label(ui, "Height in points (0 = the usual)");
-    let mut h = f64::from(b.height);
-    if number_in(ui, &mut h, 0.0..=f64::from(BUTTON_H_MAX), 1.0) {
-        b.height = h as u16;
-        c = true;
-    }
-    field_label(ui, "Corners");
-    let radii = [None, Some(0), Some(8), Some(14), Some(BUTTON_RADIUS_MAX)];
-    let at = radii.iter().position(|r| *r == b.radius);
-    let items = [
-        (None, "Usual"),
-        (None, "Square"),
-        (None, "Soft"),
-        (None, "Round"),
-        (None, "Pill"),
-    ];
-    // a roundness that is none of the five is shown with no choice lit, and its number below
-    if let Some(i) = segmented(ui, &items, at.unwrap_or(usize::MAX)) {
-        b.radius = radii[i];
-        c = true;
-    }
-    if let Some(r) = b.radius {
-        let mut r = f64::from(r);
-        field_label(ui, "Roundness in points");
-        if number_in(ui, &mut r, 0.0..=f64::from(BUTTON_RADIUS_MAX), 1.0) {
-            b.radius = Some(r as u8);
+        let mut h = f64::from(b.height);
+        if auto_row(ui, "Height", "The usual", &mut h, f64::from(BUTTON_H_MAX)) {
+            b.height = h as u16;
             c = true;
         }
-    }
+        c |= row_wide(ui, "Corners", "", CHOICE_W, |ui| {
+            let radii = [None, Some(0), Some(8), Some(14), Some(BUTTON_RADIUS_MAX)];
+            let at = radii.iter().position(|r| *r == b.radius);
+            let mut names = vec!["Usual", "Square", "Soft", "Round", "Pill"];
+            // a roundness that is none of the five has a name of its own, and its number below
+            if at.is_none() {
+                names.push("Custom");
+            }
+            let shown = at.unwrap_or(names.len() - 1);
+            let width = ui.available_width();
+            match select(ui, width, names[shown], &names, shown) {
+                Some(i) if i < radii.len() => {
+                    b.radius = radii[i];
+                    true
+                }
+                _ => false,
+            }
+        });
+        if let Some(r) = b.radius {
+            let mut r = f64::from(r);
+            let changed = row_wide(ui, "Roundness", "", 110.0, |ui| {
+                let width = ui.available_width();
+                ui.add_sized(
+                    [width, CONTROL_H],
+                    egui::DragValue::new(&mut r)
+                        .range(0.0..=f64::from(BUTTON_RADIUS_MAX))
+                        .speed(1.0)
+                        .max_decimals(0)
+                        .suffix(" pt"),
+                )
+                .changed()
+            });
+            if changed {
+                b.radius = Some(r as u8);
+                c = true;
+            }
+        }
+    });
     c
 }
 
@@ -2041,7 +2839,13 @@ fn grid_buttons_editor(
 
 /// Fields of one widget, then what every widget has: its name and the condition that shows it.
 fn widget_fields(ui: &mut egui::Ui, d: &mut PanelDesign, i: usize, accent: Color32) -> bool {
+    if let Some((Sel::Widget(w), INPUT_LOOK)) = d.look
+        && w == i
+    {
+        return input_look_page(ui, d, i, accent);
+    }
     let mut c = false;
+    let mut open_look = false;
     let candidates = design::conditions_for(&d.spec, i);
     let taken_buttons = design::taken_button_ids(&d.spec);
     {
@@ -2054,10 +2858,392 @@ fn widget_fields(ui: &mut egui::Ui, d: &mut PanelDesign, i: usize, accent: Color
         let Some(w) = spec.widgets.get_mut(i) else {
             return false;
         };
-        c |= type_fields(ui, w, i, options_buf, options_for, &taken_buttons, accent);
+        c |= type_fields(
+            ui,
+            w,
+            i,
+            options_buf,
+            options_for,
+            &taken_buttons,
+            accent,
+            &mut open_look,
+        );
+    }
+    if open_look {
+        d.look = Some((Sel::Widget(i), INPUT_LOOK));
     }
     c |= id_field(ui, &mut d.spec, i);
     c |= show_if_fields(ui, &mut d.spec, i, &candidates, accent);
+    c
+}
+
+/// The page one step in of an input box: how the text inside it looks.
+const INPUT_LOOK: u8 = 4;
+
+/// What the text inside an input box can change.
+fn box_range() -> FmtRange {
+    FmtRange {
+        usual: layout::BOX_TEXT_SIZE,
+        least: f32::from(FONT_SIZE_MIN),
+        most: f32::from(FONT_SIZE_MAX),
+        bold: false,
+        extra: FmtExtra::Box,
+    }
+}
+
+/// The look of the text inside the input box `i` (the label above it follows the panel's label
+/// look), with a way back.
+fn input_look_page(ui: &mut egui::Ui, d: &mut PanelDesign, i: usize, accent: Color32) -> bool {
+    let mut c = false;
+    ui.horizontal(|ui| {
+        if icon_button_look(ui, Look::Plain, symbols::ARROW_LEFT, "Back", true).clicked() {
+            d.look = None;
+        }
+        ui.label(fonts::title("Text inside the box", 14.0, pal().text));
+    });
+    ui.add_space(4.0);
+    if let Some(Widget::Input {
+        value_fmt, secret, ..
+    }) = d.spec.widgets.get_mut(i)
+    {
+        c |= text_format_fields(ui, value_fmt, &box_range(), accent);
+        if *secret {
+            note_line(
+                ui,
+                "A password shows dots: slant and lines do not apply to them.",
+                pal().muted,
+            );
+        }
+    }
+    c
+}
+
+/// What the format of one text can change, and where it starts from.
+struct FmtRange {
+    /// The size when none is asked for, and the smallest and the biggest that can be asked for.
+    usual: f32,
+    least: f32,
+    most: f32,
+    /// Whether the text is bold when nothing is asked for (a heading, a title, a label).
+    bold: bool,
+    /// What else can be set: where the text sits in its box, and a nudge from where it was put.
+    extra: FmtExtra,
+}
+
+/// The controls beyond the common ones that a place for text offers.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FmtExtra {
+    /// Nothing more (a paragraph, the labels).
+    None,
+    /// A nudge to either side and up or down, and a button that centers on the whole card (the
+    /// title and the subtitle share the header with the badge, so their "center" is a little off).
+    Header,
+    /// A nudge, and where the text sits in the height of its box (the text inside an input box).
+    Box,
+}
+
+/// The controls of a [`TextFmt`]: where the text sits, bold, italic, underline, strike-through,
+/// size and color, in one card, and a second card for the fine position when the place has one.
+/// What is left alone stays out of the panel's JSON.
+fn text_format_fields(
+    ui: &mut egui::Ui,
+    fmt: &mut TextFmt,
+    range: &FmtRange,
+    accent: Color32,
+) -> bool {
+    let mut c = false;
+    panel(ui, "", |ui| {
+        c |= field(ui, "Position", |ui| {
+            let aligns = [TextAlign::Left, TextAlign::Center, TextAlign::Right];
+            let at = aligns.iter().position(|a| *a == fmt.align).unwrap_or(0);
+            let items = [(None, "Left"), (None, "Center"), (None, "Right")];
+            match segmented(ui, &items, at) {
+                Some(k) => {
+                    fmt.align = aligns[k];
+                    true
+                }
+                None => false,
+            }
+        });
+
+        c |= field(ui, "Letters", |ui| {
+            let bold = fmt.bold.unwrap_or(range.bold);
+            let marks = [
+                ("Bold", bold),
+                ("Italic", fmt.italic),
+                ("Underline", fmt.underline),
+                ("Strike", fmt.strike),
+            ];
+            match chips(ui, &marks, accent) {
+                Some(k) => {
+                    let on = marks[k].1;
+                    match k {
+                        // only what differs from the usual weight is written down
+                        0 => fmt.bold = (!on != range.bold).then_some(!on),
+                        1 => fmt.italic = !on,
+                        2 => fmt.underline = !on,
+                        _ => fmt.strike = !on,
+                    }
+                    true
+                }
+                None => false,
+            }
+        });
+
+        // the size: its name and number on one line, a way back to the usual one, the slider under
+        if has_content(ui) {
+            rule(ui);
+        }
+        ui.add_space(10.0);
+        let mut size = fmt
+            .size
+            .map_or(range.usual, f32::from)
+            .clamp(range.least, range.most);
+        let set = fmt.size.is_some();
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Size").size(13.0).color(pal().muted));
+            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                if set
+                    && ui
+                        .add(
+                            egui::Label::new(
+                                egui::RichText::new("Reset")
+                                    .size(13.0)
+                                    .color(accent_text(accent)),
+                            )
+                            .sense(Sense::click()),
+                        )
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .clicked()
+                {
+                    fmt.size = None;
+                    c = true;
+                }
+                let shown = if set {
+                    format!("{} pt", size.round())
+                } else {
+                    format!("{} pt, usual", range.usual.round())
+                };
+                ui.label(egui::RichText::new(shown).size(13.0).color(pal().text));
+            });
+        });
+        ui.add_space(6.0);
+        if slider(ui, &mut size, range.least..=range.most, accent).changed() {
+            fmt.size = Some(size.round().clamp(range.least, range.most) as u8);
+            c = true;
+        }
+        ui.add_space(4.0);
+
+        c |= field(ui, "Color", |ui| {
+            let [cr, cg, cb, _] = pal().text.to_array();
+            let mut swatches: Vec<(&str, [u8; 3])> = vec![("Usual", [cr, cg, cb])];
+            swatches.extend(ACCENTS.iter().copied());
+            let mut slot = fmt.rgb();
+            let changed = color_dots(ui, &mut slot, &swatches);
+            if changed {
+                fmt.color = slot.map(format_hex);
+            }
+            changed
+        });
+    });
+
+    if range.extra != FmtExtra::None {
+        c |= text_place_fields(ui, fmt, range.extra);
+    }
+
+    if !fmt.is_plain()
+        && button(
+            ui,
+            Look::Plain,
+            Some(symbols::ARROW_COUNTER_CLOCKWISE),
+            "Reset style",
+        )
+        .clicked()
+    {
+        *fmt = TextFmt::default();
+        c = true;
+    }
+    c
+}
+
+/// How far the header's text sits from the left edge of the text area compared with the middle of
+/// the whole card (the round badge and its gap are in front of the text): `dx` of this much puts
+/// a centered title or subtitle in the exact middle of the card.
+const HEADER_CENTER_DX: i16 = 0;
+
+/// Where the text sits: in the height of its box and a nudge in points, for the places that
+/// are not laid out by their alignment alone.
+fn text_place_fields(ui: &mut egui::Ui, fmt: &mut TextFmt, extra: FmtExtra) -> bool {
+    let mut c = false;
+    panel(ui, "Fine position", |ui| {
+        if extra == FmtExtra::Box {
+            c |= field(ui, "Up and down in the box", |ui| {
+                let mut r = false;
+                let aligns = [TextVAlign::Top, TextVAlign::Middle, TextVAlign::Bottom];
+                // missing: what the box does by itself, which the first look of the panel shows
+                let at = fmt.valign.and_then(|v| aligns.iter().position(|a| *a == v));
+                let items = [(None, "Top"), (None, "Middle"), (None, "Bottom")];
+                if let Some(k) = segmented(ui, &items, at.unwrap_or(usize::MAX)) {
+                    fmt.valign = Some(aligns[k]);
+                    r = true;
+                }
+                if fmt.valign.is_some()
+                    && button(ui, Look::Plain, None, "Use the usual position").clicked()
+                {
+                    fmt.valign = None;
+                    r = true;
+                }
+                r
+            });
+        }
+
+        c |= field(ui, "Nudge", |ui| {
+            let mut r = false;
+            let mut dx = f64::from(fmt.dx);
+            let mut dy = f64::from(fmt.dy);
+            let lim = f64::from(NUDGE_MAX);
+            let (dx_c, dy_c) = ui.columns(2, |cols| {
+                let wa = cols[0].available_width();
+                let a = cols[0]
+                    .add_sized(
+                        [wa, CONTROL_H],
+                        egui::DragValue::new(&mut dx)
+                            .range(-lim..=lim)
+                            .speed(0.5)
+                            .max_decimals(0)
+                            .prefix("X  ")
+                            .suffix(" pt"),
+                    )
+                    .changed();
+                let wb = cols[1].available_width();
+                let b = cols[1]
+                    .add_sized(
+                        [wb, CONTROL_H],
+                        egui::DragValue::new(&mut dy)
+                            .range(-lim..=lim)
+                            .speed(0.5)
+                            .max_decimals(0)
+                            .prefix("Y  ")
+                            .suffix(" pt"),
+                    )
+                    .changed();
+                (a, b)
+            });
+            if dx_c {
+                fmt.dx = (dx.round() as i16).clamp(-NUDGE_MAX, NUDGE_MAX);
+                r = true;
+            }
+            if dy_c {
+                fmt.dy = (dy.round() as i16).clamp(-NUDGE_MAX, NUDGE_MAX);
+                r = true;
+            }
+            ui.add_space(4.0);
+            note_line(
+                ui,
+                "X moves the text right, Y moves it down. A number below zero goes the other way.",
+                pal().muted,
+            );
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                if extra == FmtExtra::Header
+                    && button(ui, Look::Soft, None, "Center on the card").clicked()
+                {
+                    fmt.align = TextAlign::Center;
+                    fmt.dx = HEADER_CENTER_DX;
+                    r = true;
+                }
+                if (fmt.dx != 0 || fmt.dy != 0) && button(ui, Look::Plain, None, "Reset").clicked()
+                {
+                    fmt.dx = 0;
+                    fmt.dy = 0;
+                    r = true;
+                }
+            });
+            r
+        });
+    });
+    c
+}
+
+/// Width and height of an input box, and the space between its edge and its text.
+fn box_size_fields(
+    ui: &mut egui::Ui,
+    multiline: bool,
+    width: &mut Option<f32>,
+    height: &mut Option<f32>,
+    pad: &mut Padding,
+) -> bool {
+    let mut c = false;
+    panel(ui, "Size of the box", |ui| {
+        let mut w = f64::from(width.unwrap_or(0.0));
+        let mut h = f64::from(height.unwrap_or(0.0));
+        // from 0 ("auto") the first step jumps to the least that makes sense
+        if auto_row(
+            ui,
+            "Width",
+            "As wide as the card",
+            &mut w,
+            f64::from(WIDTH_MAX),
+        ) {
+            *width = (w >= 1.0).then(|| (w as f32).clamp(BOX_W_MIN, WIDTH_MAX).round());
+            c = true;
+        }
+        if auto_row(ui, "Height", "The usual", &mut h, f64::from(BOX_H_MAX)) {
+            *height = (h >= 1.0).then(|| (h as f32).clamp(BOX_H_MIN, BOX_H_MAX).round());
+            c = true;
+        }
+
+        // the usual space: the sides, and above and below (a line or several lines)
+        let base_y = if multiline {
+            layout::BOX_PAD_Y_MANY
+        } else {
+            layout::BOX_PAD_Y_ONE
+        };
+        let shown = |own: Option<f32>, usual: f32| f64::from(own.unwrap_or(usual));
+        let mut v = [
+            shown(pad.top, base_y),
+            shown(pad.right, layout::BOX_PAD_X),
+            shown(pad.bottom, base_y),
+            shown(pad.left, layout::BOX_PAD_X),
+        ];
+        let before = v;
+        field(ui, "Space between the edge and the text", |ui| {
+            ui.columns(2, |cols| {
+                pad_box(&mut cols[0], "Top", &mut v[0]);
+                pad_box(&mut cols[1], "Right", &mut v[1]);
+            });
+            ui.columns(2, |cols| {
+                pad_box(&mut cols[0], "Bottom", &mut v[2]);
+                pad_box(&mut cols[1], "Left", &mut v[3]);
+            });
+        });
+        if v != before {
+            // only what differs from the usual space is written down
+            let keep = |x: f64, usual: f32| {
+                ((x as f32 - usual).abs() >= 0.5).then_some((x as f32).round())
+            };
+            pad.top = keep(v[0], base_y);
+            pad.right = keep(v[1], layout::BOX_PAD_X);
+            pad.bottom = keep(v[2], base_y);
+            pad.left = keep(v[3], layout::BOX_PAD_X);
+            c = true;
+        }
+        if (*pad != Padding::default() || width.is_some() || height.is_some())
+            && button(
+                ui,
+                Look::Plain,
+                Some(symbols::ARROW_COUNTER_CLOCKWISE),
+                "Usual size and space",
+            )
+            .clicked()
+        {
+            *pad = Padding::default();
+            *width = None;
+            *height = None;
+            c = true;
+        }
+        ui.add_space(6.0);
+    });
     c
 }
 
@@ -2070,24 +3256,29 @@ fn id_field(ui: &mut egui::Ui, spec: &mut PanelSpec, i: usize) -> bool {
     }
     let field = w.is_field();
     let mut id = w.id().unwrap_or_default().to_string();
-    let (label, hint) = if field {
-        ("Answer name", "letters, digits and _")
+    let (title, label, hint) = if field {
+        ("Answer", "Answer name", "letters, digits and _")
     } else {
         (
+            "Name",
             "Name (optional)",
             "so a flow can change it while the panel is open",
         )
     };
-    let changed = text_in(ui, label, hint, &mut id, 1);
-    if changed {
-        design::rename_widget(spec, i, &id);
-    }
-    if field && !id.is_empty() {
-        note_line(ui, &format!("In the flow: {{{{{id}}}}}"), pal().muted);
-    }
-    changed
+    panel(ui, title, |ui| {
+        let changed = text_field_in(ui, label, hint, &mut id, 1);
+        if changed {
+            design::rename_widget(spec, i, &id);
+        }
+        if field && !id.is_empty() {
+            note_line(ui, &format!("In the flow: {{{{{id}}}}}"), pal().muted);
+            ui.add_space(10.0);
+        }
+        changed
+    })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn type_fields(
     ui: &mut egui::Ui,
     w: &mut Widget,
@@ -2096,38 +3287,58 @@ fn type_fields(
     options_for: &mut Option<usize>,
     taken_buttons: &BTreeSet<String>,
     accent: Color32,
+    open_look: &mut bool,
 ) -> bool {
     let mut c = false;
     match w {
-        Widget::Text { text, style, .. } => {
-            c |= text_in(ui, "Text", "", text, 4);
-            field_label(ui, "Style");
-            let styles = [Style::Body, Style::Heading, Style::Muted, Style::Code];
-            let at = styles.iter().position(|s| s == style).unwrap_or(0);
-            let items = [
-                (None, "Text"),
-                (None, "Heading"),
-                (None, "Muted"),
-                (None, "Code"),
-            ];
-            if let Some(k) = segmented(ui, &items, at) {
-                *style = styles[k];
-                c = true;
-            }
+        Widget::Text {
+            text, style, fmt, ..
+        } => {
+            panel(ui, "Text", |ui| {
+                c |= text_field_in(ui, "Text", "", text, 4);
+                let styles = [Style::Body, Style::Heading, Style::Muted, Style::Code];
+                let at = styles.iter().position(|s| s == style).unwrap_or(0);
+                let items = [
+                    (None, "Text"),
+                    (None, "Heading"),
+                    (None, "Muted"),
+                    (None, "Code"),
+                ];
+                if let Some(k) = choice_field(ui, "Style", &items, at) {
+                    *style = styles[k];
+                    c = true;
+                }
+            });
+            let range = FmtRange {
+                usual: layout::style_size(*style),
+                least: f32::from(FONT_SIZE_MIN),
+                most: f32::from(FONT_SIZE_MAX),
+                bold: *style == Style::Heading,
+                extra: FmtExtra::None,
+            };
+            c |= text_format_fields(ui, fmt, &range, accent);
         }
         Widget::Separator { .. } => note_line(ui, "A thin line between two groups.", pal().muted),
         Widget::Spacer { height, .. } => {
-            field_label(ui, "Height (points)");
-            let mut h = f64::from(height.unwrap_or(SPACER_DEFAULT));
-            if number_in(
-                ui,
-                &mut h,
-                f64::from(SPACER_MIN)..=f64::from(SPACER_MAX),
-                1.0,
-            ) {
-                *height = Some(h as f32);
-                c = true;
-            }
+            panel(ui, "", |ui| {
+                let mut h = f64::from(height.unwrap_or(SPACER_DEFAULT));
+                let changed = row_wide(ui, "Height", "", 110.0, |ui| {
+                    let width = ui.available_width();
+                    ui.add_sized(
+                        [width, CONTROL_H],
+                        egui::DragValue::new(&mut h)
+                            .range(f64::from(SPACER_MIN)..=f64::from(SPACER_MAX))
+                            .speed(1.0)
+                            .max_decimals(0)
+                            .suffix(" pt"),
+                    )
+                    .changed()
+                });
+                if changed {
+                    *height = Some(h as f32);
+                    c = true;
+                }
+            });
         }
         Widget::Buttons {
             label,
@@ -2136,33 +3347,35 @@ fn type_fields(
             align,
             ..
         } => {
-            c |= text_in(ui, "Label (optional)", "", label, 1);
-            field_label(ui, "Buttons per row");
-            let items = [
-                (None, "Auto"),
-                (None, "1"),
-                (None, "2"),
-                (None, "3"),
-                (None, "4"),
-                (None, "5"),
-                (None, "6"),
-            ];
-            if let Some(k) = segmented(ui, &items, usize::from(*columns).min(6)) {
-                *columns = k as u8;
-                c = true;
-            }
-            field_label(ui, "A narrow button sits");
-            let sides = [ButtonSide::Start, ButtonSide::Center, ButtonSide::End];
-            let items = [(None, "Left"), (None, "Middle"), (None, "Right")];
-            let at = sides
-                .iter()
-                .position(|x| *x == align.unwrap_or(ButtonSide::Center))
-                .unwrap_or(1);
-            if let Some(k) = segmented(ui, &items, at) {
-                *align = (sides[k] != ButtonSide::Center).then_some(sides[k]);
-                c = true;
-            }
-            field_label(ui, "Buttons (drag a row to move it)");
+            panel(ui, "Grid", |ui| {
+                c |= text_field_in(ui, "Label (optional)", "", label, 1);
+                let items = [
+                    (None, "Auto"),
+                    (None, "1"),
+                    (None, "2"),
+                    (None, "3"),
+                    (None, "4"),
+                    (None, "5"),
+                    (None, "6"),
+                ];
+                if let Some(k) =
+                    choice_field(ui, "Buttons per row", &items, usize::from(*columns).min(6))
+                {
+                    *columns = k as u8;
+                    c = true;
+                }
+                let sides = [ButtonSide::Start, ButtonSide::Center, ButtonSide::End];
+                let items = [(None, "Left"), (None, "Middle"), (None, "Right")];
+                let at = sides
+                    .iter()
+                    .position(|x| *x == align.unwrap_or(ButtonSide::Center))
+                    .unwrap_or(1);
+                if let Some(k) = choice_field(ui, "A narrow button sits", &items, at) {
+                    *align = (sides[k] != ButtonSide::Center).then_some(sides[k]);
+                    c = true;
+                }
+            });
+            section_title(ui, "Buttons (drag a row to move it)");
             c |= grid_buttons_editor(ui, i, buttons, taken_buttons, accent);
             note_line(
                 ui,
@@ -2177,12 +3390,17 @@ fn type_fields(
             secret,
             multiline,
             required,
+            value_fmt,
+            width,
+            height,
+            text_padding,
             ..
         } => {
-            c |= text_in(ui, "Label", "", label, 1);
-            c |= text_in(ui, "Hint inside the box", "", hint, 1);
-            c |= text_in(ui, "Starts with", "", value, 1);
-            ui.add_space(GAP);
+            panel(ui, "Input", |ui| {
+                c |= text_field_in(ui, "Label", "", label, 1);
+                c |= text_field_in(ui, "Hint inside the box", "", hint, 1);
+                c |= text_field_in(ui, "Starts with", "", value, 1);
+            });
             panel(ui, "", |ui| {
                 c |= toggle_row(
                     ui,
@@ -2195,6 +3413,17 @@ fn type_fields(
                 c |= toggle_row(ui, secret, "Password", "Shown as dots.", accent).changed();
                 c |= toggle_row(ui, multiline, "Several lines", "", accent).changed();
             });
+            c |= box_size_fields(ui, *multiline, width, height, text_padding);
+            // how the text inside the box looks (the label above it follows the panel's label look)
+            panel(ui, "", |ui| {
+                if nav_row(
+                    ui,
+                    "Text inside the box",
+                    &fmt_summary(value_fmt, &box_range()),
+                ) {
+                    *open_look = true;
+                }
+            });
         }
         Widget::Number {
             label,
@@ -2205,42 +3434,44 @@ fn type_fields(
             unit,
             ..
         } => {
-            c |= text_in(ui, "Label", "", label, 1);
-            c |= text_in(ui, "Unit", "px, min, ...", unit, 1);
-            let mut lo = min.unwrap_or(0.0);
-            let mut hi = max.unwrap_or(100.0);
-            let (lo_c, hi_c) = number_pair(ui, "Smallest", &mut lo, "Largest", &mut hi);
-            if lo_c {
-                *min = Some(lo);
-                c = true;
-            }
-            if hi_c {
-                *max = Some(hi);
-                c = true;
-            }
-            let mut v = value.unwrap_or(0.0);
-            let mut s = step.unwrap_or(1.0);
-            let (v_c, s_c) = number_pair(ui, "Starts at", &mut v, "Step (+ and -)", &mut s);
-            if v_c {
-                *value = Some(v);
-                c = true;
-            }
-            if s_c {
-                *step = Some(s.max(0.001));
-                c = true;
-            }
-            if (min.is_some() || max.is_some())
-                && button(ui, Look::Plain, None, "No limits").clicked()
-            {
-                *min = None;
-                *max = None;
-                c = true;
-            }
+            panel(ui, "Number", |ui| {
+                c |= text_field_in(ui, "Label", "", label, 1);
+                c |= text_field_in(ui, "Unit", "px, min, ...", unit, 1);
+                let mut lo = min.unwrap_or(0.0);
+                let mut hi = max.unwrap_or(100.0);
+                let (lo_c, hi_c) = pair_field(ui, "Smallest", &mut lo, "Largest", &mut hi);
+                if lo_c {
+                    *min = Some(lo);
+                    c = true;
+                }
+                if hi_c {
+                    *max = Some(hi);
+                    c = true;
+                }
+                let mut v = value.unwrap_or(0.0);
+                let mut s = step.unwrap_or(1.0);
+                let (v_c, s_c) = pair_field(ui, "Starts at", &mut v, "Step (+ and -)", &mut s);
+                if v_c {
+                    *value = Some(v);
+                    c = true;
+                }
+                if s_c {
+                    *step = Some(s.max(0.001));
+                    c = true;
+                }
+                if (min.is_some() || max.is_some())
+                    && button(ui, Look::Plain, None, "No limits").clicked()
+                {
+                    *min = None;
+                    *max = None;
+                    c = true;
+                }
+                ui.add_space(6.0);
+            });
         }
         Widget::Toggle { label, value, .. } => {
-            c |= text_in(ui, "Label", "", label, 1);
-            ui.add_space(GAP);
-            panel(ui, "", |ui| {
+            panel(ui, "Switch", |ui| {
+                c |= text_field_in(ui, "Label", "", label, 1);
                 c |= toggle_row(ui, value, "On at the start", "", accent).changed();
             });
         }
@@ -2253,39 +3484,40 @@ fn type_fields(
             unit,
             ..
         } => {
-            c |= text_in(ui, "Label", "", label, 1);
-            c |= text_in(ui, "Unit", "%, s, ...", unit, 1);
-            let (lo_c, hi_c) = number_pair(ui, "Smallest", min, "Largest", max);
-            c |= lo_c || hi_c;
-            let mut s = step.unwrap_or(1.0);
-            let mut v = value.unwrap_or(*min);
-            let (s_c, v_c) = number_pair(ui, "Step", &mut s, "Starts at", &mut v);
-            if s_c {
-                *step = Some(s.max(0.001));
-                c = true;
-            }
-            if v_c {
-                *value = Some(v);
-                c = true;
-            }
+            panel(ui, "Slider", |ui| {
+                c |= text_field_in(ui, "Label", "", label, 1);
+                c |= text_field_in(ui, "Unit", "%, s, ...", unit, 1);
+                let (lo_c, hi_c) = pair_field(ui, "Smallest", min, "Largest", max);
+                c |= lo_c || hi_c;
+                let mut s = step.unwrap_or(1.0);
+                let mut v = value.unwrap_or(*min);
+                let (s_c, v_c) = pair_field(ui, "Step", &mut s, "Starts at", &mut v);
+                if s_c {
+                    *step = Some(s.max(0.001));
+                    c = true;
+                }
+                if v_c {
+                    *value = Some(v);
+                    c = true;
+                }
+            });
             if *min >= *max {
                 note_line(ui, "The smallest has to be below the largest.", pal().bad);
             }
         }
         Widget::Color { label, value, .. } => {
-            c |= text_in(ui, "Label", "", label, 1);
-            field_label(ui, "Starts as");
-            let mut rgb = parse_hex(value).unwrap_or([0x3b, 0x82, 0xf6]);
-            let before = rgb;
-            ui.allocate_ui_with_layout(
-                vec2(ui.available_width(), CONTROL_H),
-                egui::Layout::right_to_left(Align::Center),
-                |ui| accent_picker(ui, &mut rgb),
-            );
-            if rgb != before || value.is_empty() {
-                *value = format_hex(rgb);
-                c = true;
-            }
+            panel(ui, "Color", |ui| {
+                c |= text_field_in(ui, "Label", "", label, 1);
+                let usual = [0x3b, 0x82, 0xf6];
+                let mut swatches: Vec<(&str, [u8; 3])> = vec![("Blue", usual)];
+                swatches.extend(ACCENTS.iter().filter(|(_, rgb)| *rgb != usual).copied());
+                let mut slot = parse_hex(value).filter(|rgb| *rgb != usual);
+                let changed = field(ui, "Starts as", |ui| color_dots(ui, &mut slot, &swatches));
+                if changed || value.is_empty() {
+                    *value = format_hex(slot.unwrap_or(usual));
+                    c = true;
+                }
+            });
         }
         Widget::Choice {
             label,
@@ -2295,39 +3527,43 @@ fn type_fields(
             submit,
             ..
         } => {
-            c |= text_in(ui, "Label", "", label, 1);
-            field_label(ui, "Shown as");
-            let layouts = [ListLayout::List, ListLayout::Chips, ListLayout::Dropdown];
-            let at = layouts.iter().position(|l| l == layout).unwrap_or(0);
-            let items = [(None, "List"), (None, "Chips"), (None, "Dropdown")];
-            if let Some(k) = segmented(ui, &items, at) {
-                *layout = layouts[k];
-                c = true;
-            }
-            c |= options_editor(ui, options_buf, options_for, i, options);
-            field_label(ui, "Picked at the start");
-            let mut names: Vec<&str> = vec!["(nothing)"];
-            names.extend(options.iter().map(|o| {
-                if o.label.is_empty() {
-                    o.value.as_str()
-                } else {
-                    o.label.as_str()
+            panel(ui, "Choice", |ui| {
+                c |= text_field_in(ui, "Label", "", label, 1);
+                let layouts = [ListLayout::List, ListLayout::Chips, ListLayout::Dropdown];
+                let at = layouts.iter().position(|l| l == layout).unwrap_or(0);
+                let items = [(None, "List"), (None, "Chips"), (None, "Dropdown")];
+                if let Some(k) = choice_field(ui, "Shown as", &items, at) {
+                    *layout = layouts[k];
+                    c = true;
                 }
-            }));
-            let at = options
-                .iter()
-                .position(|o| o.value == *value)
-                .map_or(0, |p| p + 1);
-            let width = ui.available_width();
-            if let Some(k) = select_capped(ui, width, names[at], &names, at, 220.0) {
-                *value = if k == 0 {
-                    String::new()
-                } else {
-                    options[k - 1].value.clone()
-                };
-                c = true;
-            }
-            ui.add_space(GAP);
+            });
+            panel(ui, "Options", |ui| {
+                c |= options_editor(ui, options_buf, options_for, i, options);
+                let picked = field(ui, "Picked at the start", |ui| {
+                    let mut names: Vec<&str> = vec!["(nothing)"];
+                    names.extend(options.iter().map(|o| {
+                        if o.label.is_empty() {
+                            o.value.as_str()
+                        } else {
+                            o.label.as_str()
+                        }
+                    }));
+                    let at = options
+                        .iter()
+                        .position(|o| o.value == *value)
+                        .map_or(0, |p| p + 1);
+                    let width = ui.available_width();
+                    select_capped(ui, width, names[at], &names, at, 220.0)
+                });
+                if let Some(k) = picked {
+                    *value = if k == 0 {
+                        String::new()
+                    } else {
+                        options[k - 1].value.clone()
+                    };
+                    c = true;
+                }
+            });
             panel(ui, "", |ui| {
                 c |= toggle_row(
                     ui,
@@ -2340,14 +3576,17 @@ fn type_fields(
             });
         }
         Widget::Multi { label, options, .. } => {
-            c |= text_in(ui, "Label", "", label, 1);
-            c |= options_editor(ui, options_buf, options_for, i, options);
+            panel(ui, "Multiple choice", |ui| {
+                c |= text_field_in(ui, "Label", "", label, 1);
+            });
+            panel(ui, "Options", |ui| {
+                c |= options_editor(ui, options_buf, options_for, i, options);
+            });
         }
         Widget::Progress { label, value, .. } => {
-            c |= text_in(ui, "Label", "", label, 1);
-            ui.add_space(GAP);
-            let mut busy = *value < 0.0;
-            panel(ui, "", |ui| {
+            panel(ui, "Progress", |ui| {
+                c |= text_field_in(ui, "Label", "", label, 1);
+                let mut busy = *value < 0.0;
                 if toggle_row(
                     ui,
                     &mut busy,
@@ -2360,13 +3599,12 @@ fn type_fields(
                     *value = if busy { -1.0 } else { 0.0 };
                     c = true;
                 }
-            });
-            if !busy {
-                field_label(ui, "Done");
-                if slider(ui, value, 0.0..=1.0, accent).changed() {
-                    c = true;
+                if !busy {
+                    c |= field(ui, "Done", |ui| {
+                        slider(ui, value, 0.0..=1.0, accent).changed()
+                    });
                 }
-            }
+            });
             note_line(
                 ui,
                 "A flow or the extension moves it while the panel is open: give it a name below.",
@@ -2377,7 +3615,7 @@ fn type_fields(
     c
 }
 
-/// The options of a list, a line each (`value | label | hint`).
+/// The options of a list, a line each (`value | label | hint`), as a field of a card.
 fn options_editor(
     ui: &mut egui::Ui,
     buf: &mut String,
@@ -2389,17 +3627,18 @@ fn options_editor(
         *buf = design::options_to_text(options);
         *for_widget = Some(i);
     }
-    field_label(ui, "Options (one per line: value | label | hint)");
-    let resp = ui.add(
-        text_area(buf, 4)
-            .font(egui::TextStyle::Monospace)
-            .desired_width(f32::INFINITY),
-    );
-    if resp.changed() {
+    let changed = field(ui, "Options (one per line: value | label | hint)", |ui| {
+        ui.add(
+            text_area(buf, 4)
+                .font(egui::TextStyle::Monospace)
+                .desired_width(f32::INFINITY),
+        )
+        .changed()
+    });
+    if changed {
         *options = design::text_to_options(buf);
-        return true;
     }
-    false
+    changed
 }
 
 /// "Show only when": which field the widget waits for, and what it has to hold.
@@ -2410,116 +3649,116 @@ fn show_if_fields(
     candidates: &[String],
     accent: Color32,
 ) -> bool {
-    ui.add_space(GAP);
-    field_label(ui, "Show only when");
-    let current = spec.widgets[i].show_if().cloned();
-    let mut names: Vec<String> = vec!["Always".to_string()];
-    names.extend(candidates.iter().cloned());
-    if let Some(c) = &current
-        && !names.contains(&c.id)
-    {
-        names.push(c.id.clone());
-    }
-    let at = current
-        .as_ref()
-        .and_then(|c| names.iter().position(|n| *n == c.id))
-        .unwrap_or(0);
-    let labels: Vec<&str> = names.iter().map(String::as_str).collect();
-    let width = ui.available_width();
-    let mut changed = false;
-    if let Some(k) = select_capped(ui, width, labels[at], &labels, at, 220.0) {
-        let condition = (k > 0).then(|| ShowIf {
-            id: names[k].clone(),
-            is: None,
-            not: false,
+    panel(ui, "Visibility", |ui| {
+        let current = spec.widgets[i].show_if().cloned();
+        let mut names: Vec<String> = vec!["Always".to_string()];
+        names.extend(candidates.iter().cloned());
+        if let Some(c) = &current
+            && !names.contains(&c.id)
+        {
+            names.push(c.id.clone());
+        }
+        let at = current
+            .as_ref()
+            .and_then(|c| names.iter().position(|n| *n == c.id))
+            .unwrap_or(0);
+        let labels: Vec<&str> = names.iter().map(String::as_str).collect();
+        let mut changed = false;
+        let picked = field(ui, "Show only when", |ui| {
+            let width = ui.available_width();
+            select_capped(ui, width, labels[at], &labels, at, 220.0)
         });
-        spec.widgets[i].set_show_if(condition);
-        changed = true;
-    }
-    let Some(mut cond) = spec.widgets[i].show_if().cloned() else {
-        note_line(ui, "The widget is always there.", pal().muted);
-        return changed;
-    };
-    // what the field it waits for is
-    let target = spec
-        .widgets
-        .iter()
-        .find(|w| w.id() == Some(cond.id.as_str()));
-    let is_toggle = matches!(target, Some(Widget::Toggle { .. }));
-    let target_options: Option<Vec<Opt>> = match target {
-        Some(Widget::Choice { options, .. } | Widget::Multi { options, .. }) => {
-            Some(options.clone())
+        if let Some(k) = picked {
+            let condition = (k > 0).then(|| ShowIf {
+                id: names[k].clone(),
+                is: None,
+                not: false,
+            });
+            spec.widgets[i].set_show_if(condition);
+            changed = true;
         }
-        _ => None,
-    };
-    let before = cond.clone();
-    if !is_toggle {
-        field_label(ui, "It has to");
-        let items = [(None, "Have a value"), (None, "Equal")];
-        if let Some(k) = segmented(ui, &items, usize::from(cond.is.is_some())) {
-            cond.is = if k == 0 {
-                None
-            } else {
-                Some(
-                    target_options
-                        .as_ref()
-                        .and_then(|o| o.first())
-                        .map(|o| o.value.clone())
-                        .unwrap_or_default(),
-                )
-            };
-        }
-        if let Some(value) = cond.is.as_mut() {
-            match &target_options {
-                Some(options) if !options.is_empty() => {
-                    let labels: Vec<&str> = options
-                        .iter()
-                        .map(|o| {
-                            if o.label.is_empty() {
-                                o.value.as_str()
-                            } else {
-                                o.label.as_str()
-                            }
-                        })
-                        .collect();
-                    let at = options
-                        .iter()
-                        .position(|o| o.value == *value)
-                        .unwrap_or(usize::MAX);
-                    let shown = labels
-                        .get(at)
-                        .copied()
-                        .unwrap_or(value.as_str())
-                        .to_string();
-                    let width = ui.available_width();
-                    if let Some(k) = select_capped(ui, width, &shown, &labels, at, 220.0) {
-                        *value = options[k].value.clone();
+        let Some(mut cond) = spec.widgets[i].show_if().cloned() else {
+            note_line(ui, "The widget is always there.", pal().muted);
+            ui.add_space(10.0);
+            return changed;
+        };
+        // what the field it waits for is
+        let target = spec
+            .widgets
+            .iter()
+            .find(|w| w.id() == Some(cond.id.as_str()));
+        let is_toggle = matches!(target, Some(Widget::Toggle { .. }));
+        let target_options: Option<Vec<Opt>> = match target {
+            Some(Widget::Choice { options, .. } | Widget::Multi { options, .. }) => {
+                Some(options.clone())
+            }
+            _ => None,
+        };
+        let before = cond.clone();
+        if !is_toggle {
+            let items = [(None, "Have a value"), (None, "Equal")];
+            if let Some(k) = choice_field(ui, "It has to", &items, usize::from(cond.is.is_some())) {
+                cond.is = if k == 0 {
+                    None
+                } else {
+                    Some(
+                        target_options
+                            .as_ref()
+                            .and_then(|o| o.first())
+                            .map(|o| o.value.clone())
+                            .unwrap_or_default(),
+                    )
+                };
+            }
+            if let Some(value) = cond.is.as_mut() {
+                field(ui, "Equal to", |ui| match &target_options {
+                    Some(options) if !options.is_empty() => {
+                        let labels: Vec<&str> = options
+                            .iter()
+                            .map(|o| {
+                                if o.label.is_empty() {
+                                    o.value.as_str()
+                                } else {
+                                    o.label.as_str()
+                                }
+                            })
+                            .collect();
+                        let at = options
+                            .iter()
+                            .position(|o| o.value == *value)
+                            .unwrap_or(usize::MAX);
+                        let shown = labels
+                            .get(at)
+                            .copied()
+                            .unwrap_or(value.as_str())
+                            .to_string();
+                        let width = ui.available_width();
+                        if let Some(k) = select_capped(ui, width, &shown, &labels, at, 220.0) {
+                            *value = options[k].value.clone();
+                        }
                     }
-                }
-                _ => {
-                    ui.add(
-                        text_field(value)
-                            .desired_width(f32::INFINITY)
-                            .hint_text("the value"),
-                    );
-                }
+                    _ => {
+                        ui.add(
+                            text_field(value)
+                                .desired_width(f32::INFINITY)
+                                .hint_text("the value"),
+                        );
+                    }
+                });
             }
         }
-    }
-    ui.add_space(GAP);
-    let (label, hint) = if is_toggle {
-        ("Show when it is off", "Otherwise: when it is on.")
-    } else {
-        ("Show when this is not so", "Turns the test round.")
-    };
-    panel(ui, "", |ui| {
+        let (label, hint) = if is_toggle {
+            ("Show when it is off", "Otherwise: when it is on.")
+        } else {
+            ("Show when this is not so", "Turns the test round.")
+        };
         toggle_row(ui, &mut cond.not, label, hint, accent);
-    });
-    if cond != before {
-        spec.widgets[i].set_show_if(Some(cond));
-        changed = true;
-    }
-    changed
+        if cond != before {
+            spec.widgets[i].set_show_if(Some(cond));
+            changed = true;
+        }
+        changed
+    })
 }
 
 #[cfg(test)]
@@ -2664,6 +3903,10 @@ mod tests {
         d.select(Sel::Button(0));
         assert!(delete_selected(&mut d));
         assert!(d.spec.buttons.is_empty());
+        assert!(
+            d.spec.no_buttons,
+            "the last button gone means none, not Cancel and OK again"
+        );
 
         assert!(add_widget(&mut d, Kind::Buttons));
         let grid = d.spec.widgets.len() - 1;
@@ -2683,6 +3926,136 @@ mod tests {
         // not picked on its own: the whole grid goes
         assert!(delete_selected(&mut d));
         assert_eq!(d.spec.widgets.len(), grid);
+    }
+
+    const FOUR: &str = r#"{"widgets":[{"type":"toggle","id":"a"},{"type":"toggle","id":"b"},{"type":"toggle","id":"c"},{"type":"toggle","id":"d"}]}"#;
+
+    #[test]
+    fn ctrl_and_shift_pick_several_widgets_and_a_plain_click_picks_one() {
+        let mut d = PanelDesign::load(0, 1, FOUR);
+        d.click_widget(0, false, false, false);
+        assert_eq!(d.sel, Sel::Widget(0));
+        d.click_widget(2, false, true, false);
+        assert_eq!(d.selected_widgets(), vec![0, 2]);
+        assert_eq!(d.sel, Sel::Panel, "a group is not a single pick");
+        assert!(d.widget_on(0) && d.widget_on(2) && !d.widget_on(1));
+        // Shift counts from the last one picked
+        d.click_widget(3, true, false, false);
+        assert_eq!(d.selected_widgets(), vec![2, 3]);
+        // Ctrl on one of the group takes it out; one left is a plain pick again
+        d.click_widget(3, false, true, false);
+        assert_eq!((d.sel, d.group.len()), (Sel::Widget(2), 0));
+        d.click_widget(1, false, false, false);
+        assert_eq!((d.sel, d.group.len()), (Sel::Widget(1), 0));
+    }
+
+    #[test]
+    fn a_group_is_removed_moved_and_duplicated_together() {
+        let mut d = PanelDesign::load(0, 1, FOUR);
+        d.set_widgets(BTreeSet::from([1, 2]));
+        assert!(run_group(&mut d, Act::Up));
+        assert_eq!(d.group, BTreeSet::from([0, 1]));
+        assert_eq!(d.spec.widgets[2].id(), Some("a"));
+        assert!(!run_group(&mut d, Act::Up), "already first");
+        assert!(run_group(&mut d, Act::Copy));
+        assert_eq!(d.spec.widgets.len(), 6);
+        assert_eq!(d.group, BTreeSet::from([2, 3]), "the copies are selected");
+        assert!(run_group(&mut d, Act::Remove));
+        assert_eq!(d.spec.widgets.len(), 4);
+        assert!(d.group.is_empty());
+        d.set_widgets((0..d.spec.widgets.len()).collect());
+        assert!(delete_selected(&mut d));
+        assert!(d.spec.widgets.is_empty());
+        assert_eq!(d.sel, Sel::Panel);
+    }
+
+    #[test]
+    fn copy_cut_and_paste_work_on_the_selected_widgets() {
+        let ctx = egui::Context::default();
+        let mut d = PanelDesign::load(0, 1, FOUR);
+        d.set_widgets(BTreeSet::from([0, 1]));
+        assert!(
+            !run_clip(&ctx, &mut d, Clip::Copy),
+            "a copy changes nothing"
+        );
+        let text = design::copy_widgets(&d.spec, &d.selected_widgets()).unwrap();
+        assert!(run_clip(&ctx, &mut d, Clip::Paste(text.clone())));
+        assert_eq!(d.spec.widgets.len(), 6);
+        assert_eq!(
+            d.group,
+            BTreeSet::from([2, 3]),
+            "pasted after the last one picked"
+        );
+        assert!(!run_clip(&ctx, &mut d, Clip::Paste("hello".into())));
+        assert_eq!(d.spec.widgets.len(), 6);
+        assert!(run_clip(&ctx, &mut d, Clip::Cut));
+        assert_eq!(d.spec.widgets.len(), 4);
+        // nothing selected: a paste goes to the end
+        d.select(Sel::Panel);
+        assert!(run_clip(&ctx, &mut d, Clip::Paste(text)));
+        assert_eq!(d.group, BTreeSet::from([4, 5]));
+    }
+
+    #[test]
+    fn a_group_that_lost_widgets_shrinks_when_the_block_is_read_again() {
+        let mut d = PanelDesign::load(0, 1, FOUR);
+        d.set_widgets(BTreeSet::from([1, 3]));
+        d.reload(r#"{"widgets":[{"type":"toggle","id":"a"},{"type":"toggle","id":"b"}]}"#);
+        assert_eq!((d.sel, d.group.len()), (Sel::Widget(1), 0));
+    }
+
+    #[test]
+    fn a_look_is_summed_up_in_a_few_words() {
+        let range = FmtRange {
+            usual: 22.0,
+            least: 12.0,
+            most: 28.0,
+            bold: true,
+            extra: FmtExtra::None,
+        };
+        let mut fmt = TextFmt::default();
+        assert_eq!(fmt_summary(&fmt, &range), "Bold, 22 pt");
+        fmt.bold = Some(false);
+        fmt.italic = true;
+        fmt.size = Some(18);
+        assert_eq!(fmt_summary(&fmt, &range), "Regular, italic, 18 pt");
+    }
+
+    #[test]
+    fn every_page_of_the_panel_inspector_draws_and_closes_when_something_else_is_picked() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        let mut d = PanelDesign::load(0, 1, FOUR);
+        for page in 0..4u8 {
+            d.sel = Sel::Panel;
+            d.look = Some((Sel::Panel, page));
+            frame(&ctx, &mut d);
+            frame(&ctx, &mut d);
+            assert_eq!(
+                d.look,
+                Some((Sel::Panel, page)),
+                "drawing a page does not leave it"
+            );
+        }
+        d.sel = Sel::Widget(0);
+        frame(&ctx, &mut d);
+        assert_eq!(d.look, None, "picking a widget closes the page");
+        // the first page of the panel draws too
+        d.sel = Sel::Panel;
+        frame(&ctx, &mut d);
+        assert_eq!(d.look, None);
+    }
+
+    #[test]
+    fn a_group_draws_in_the_list_the_panel_and_the_inspector() {
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        let mut d = PanelDesign::load(0, 1, FOUR);
+        d.set_widgets((0..4).collect());
+        frame(&ctx, &mut d);
+        frame(&ctx, &mut d);
+        assert!(d.preview.is_some());
+        assert_eq!(d.group.len(), 4, "drawing does not change the selection");
     }
 
     #[test]

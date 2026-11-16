@@ -25,6 +25,7 @@ the flow in the editor and re-record each shortcut (Ctrl instead of Cmd), or cha
 | `browser-go-to-tab` | Asks for a word and goes to the tab that has it | all | [browser extension](../BROWSER_EXTENSION.md) |
 | `browser-pause-if-playing` | Pauses the music only if it plays | all | browser extension |
 | `browser-remote-panel` | A browser remote panel that stays open | all | browser extension, panels |
+| `browser-remote-panel-state` | The same remote with one panel: play and mute remember their look in `keep_` variables (`bind`) | all | browser extension, panels |
 | `quick-reply-unread-chats` | Quick reply to every unread chat | all | browser extension; sends messages |
 | `send-then-wait-for-answer` | Sends a message, then waits for the answer | all | browser extension; sends messages |
 | `telegram-folder-triage` | Looks at one Telegram folder at a time | all | browser extension (Telegram Web) |
