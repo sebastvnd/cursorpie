@@ -21,7 +21,7 @@
 //!   so scrolling never waits for them (on macOS one icon is a multi-size TIFF of several MiB).
 
 use crate::cache::Lru;
-use crate::config::{Config, Item, ItemKind};
+use crate::config::{Config, Item, ItemKind, Profile};
 use crate::ui::appicon;
 use crate::ui::draw::{icon_path, load_icon};
 use eframe::egui;
@@ -460,6 +460,34 @@ pub fn icons_to_keep_asleep(c: &Config) -> Vec<String> {
     out
 }
 
+/// The icon strings a pie asks to have loaded ahead: none empty, none twice, at most [`CAPACITY`].
+/// [`icons_on_first_frame`] and [`icons_to_warm`] both build one, so they agree on what comes first.
+struct WarmList(Vec<String>);
+
+impl WarmList {
+    /// A list that starts with what both of them put first: the icon of the active mode, then the
+    /// app icon of the center (in the style that will be drawn) when the profile shows it.
+    fn start(c: &Config, p: &Profile, target: Option<&str>) -> Self {
+        let mut list = Self(Vec::new());
+        if let Some(i) = p.active_item() {
+            list.add(&i.icon);
+        }
+        if c.center_app_icon
+            && let Some(b) = appicon::bundle_for(&p.apps, target)
+        {
+            list.add(&appicon::icon_string(c.app_icon_style, b));
+        }
+        list
+    }
+
+    /// Adds `icon` unless it is empty, already there, or the list is full.
+    fn add(&mut self, icon: &str) {
+        if !icon.is_empty() && self.0.len() < CAPACITY && !self.0.iter().any(|o| o == icon) {
+            self.0.push(icon.to_string());
+        }
+    }
+}
+
 /// The icon strings the very first frame of the pie of `profile` paints: the icon of the active
 /// mode, the app icon of the center and the top ring. Submenus are not in it. This is the part of
 /// [`icons_to_warm`] that is read on the UI thread while the hold timer runs; the rest (the icons
@@ -470,24 +498,11 @@ pub fn icons_on_first_frame(c: &Config, profile: usize, target: Option<&str>) ->
     let Some(p) = c.profiles.get(profile) else {
         return Vec::new();
     };
-    let mut out: Vec<String> = Vec::new();
-    let mut add = |s: &str| {
-        if !s.is_empty() && out.len() < CAPACITY && !out.iter().any(|o| o == s) {
-            out.push(s.to_string());
-        }
-    };
-    if let Some(i) = p.active_item() {
-        add(&i.icon);
-    }
-    if c.center_app_icon
-        && let Some(b) = appicon::bundle_for(&p.apps, target)
-    {
-        add(&appicon::icon_string(c.app_icon_style, b));
-    }
+    let mut warm = WarmList::start(c, p, target);
     for it in &p.items {
-        add(&it.icon);
+        warm.add(&it.icon);
     }
-    out
+    warm.0
 }
 
 /// The icon strings a pie of `profile` needs on its first frames: its top ring, the submenus at
@@ -497,20 +512,7 @@ pub fn icons_to_warm(c: &Config, profile: usize, target: Option<&str>) -> Vec<St
     let Some(p) = c.profiles.get(profile) else {
         return Vec::new();
     };
-    let mut out: Vec<String> = Vec::new();
-    let mut add = |s: &str| {
-        if !s.is_empty() && out.len() < CAPACITY && !out.iter().any(|o| o == s) {
-            out.push(s.to_string());
-        }
-    };
-    if let Some(i) = p.active_item() {
-        add(&i.icon);
-    }
-    if c.center_app_icon
-        && let Some(b) = appicon::bundle_for(&p.apps, target)
-    {
-        add(&appicon::icon_string(c.app_icon_style, b));
-    }
+    let mut warm = WarmList::start(c, p, target);
     // level by level: the top ring first, then the submenus of that ring, then the submenus of
     // those, and so on. Shallow icons come first because they are on screen first, and if the
     // bound is reached it is the deepest ones that wait for the worker thread.
@@ -518,14 +520,14 @@ pub fn icons_to_warm(c: &Config, profile: usize, target: Option<&str>) -> Vec<St
     while !level.is_empty() {
         let mut next: Vec<&Item> = Vec::new();
         for it in level {
-            add(&it.icon);
+            warm.add(&it.icon);
             if let ItemKind::Submenu(children) = &it.kind {
                 next.extend(children.iter());
             }
         }
         level = next;
     }
-    out
+    warm.0
 }
 
 #[cfg(test)]

@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+## 0.8.20
+
+- **Changed: code that existed twice or more now exists once (no change in behavior).** The sheets of Settings
+  share their heading, paragraph and bullet list (`sheet_heading`, `sheet_text`, `sheet_bullets`); the color swatch
+  and the "any color" button are one function for Settings and the panel designer; the sliding highlight of the icon
+  switch and the navigation is one `slide`; opening Settings and the welcome window share `take_window_for_card`, and
+  the notice and a panel share `show_overlay`; the `curl` and `wget` arguments of a request and of a download share
+  `base_args`; the first-frame and warm-up icon lists share `WarmList`; the process helpers of Linux and macOS (two
+  identical files) are `platform/unix_process.rs`; the test helper that fakes the environment is `linux::env_of`.
+  The leftover `src/diag.rs` (the log moved to the `diag/` crate and the file was no longer part of the build) is
+  removed.
+
+- **Fixed: an update gave no sign of life and CursorPie just vanished for minutes (Windows, macOS, Linux).** After
+  *Install update* the window disappeared while the new version was swapped in, with nothing to say whether it was
+  still working or finished. Now a progress sheet stays over Settings while the update downloads and says what
+  follows (CursorPie closes by itself, the new version is put in place and starts again, which can take a few
+  minutes). On Windows, Setup now runs with its small progress window (`/SILENT` instead of `/VERYSILENT`), so the
+  installation is visible. The first start after the update opens Settings on the About tab with a sheet that says
+  "CursorPie is now X", or, when the swap did not happen (for example a cancelled password prompt), that the old
+  version is running again and what to do.
+
 ## 0.8.19
 
 - **Changed: the website is now a one-page scroll with a new look, and the documentation viewer is much better.** The

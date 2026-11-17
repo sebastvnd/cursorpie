@@ -29,10 +29,23 @@ pub(crate) mod backend;
 #[cfg(target_os = "linux")]
 pub(crate) mod pinch;
 #[cfg(target_os = "linux")]
-pub(crate) mod process;
+pub(crate) use crate::platform::unix_process as process;
 #[cfg(target_os = "linux")]
 pub(crate) mod tray;
 #[cfg(target_os = "linux")]
 pub(crate) mod x11;
 #[cfg(target_os = "linux")]
 pub(crate) mod xlib;
+
+/// A lookup of environment variables from a fixed list of pairs, for the tests of the pieces that
+/// read the session (`session`, `wayland::sway`, `wayland::hyprland`): they take the lookup as a
+/// function so no test touches the real environment.
+#[cfg(test)]
+pub(crate) fn env_of<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+    move |k| {
+        pairs
+            .iter()
+            .find(|(n, _)| *n == k)
+            .map(|(_, v)| v.to_string())
+    }
+}

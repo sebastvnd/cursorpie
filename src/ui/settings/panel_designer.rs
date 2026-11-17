@@ -2253,51 +2253,9 @@ fn color_dots(ui: &mut egui::Ui, slot: &mut Option<[u8; 3]>, swatches: &[(&str, 
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
         for (i, (name, rgb)) in swatches.iter().enumerate() {
-            let (rect, resp) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
-            let c = Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
-            let on = if i == 0 {
-                slot.is_none()
-            } else {
-                *slot == Some(*rgb)
-            };
-            let painter = ui.painter();
-            painter.circle_filled(rect.center(), 10.0, c);
-            // the pale colors are as light as the card: a hairline keeps them visible
-            painter.circle_stroke(rect.center(), 10.0, Stroke::new(1.0, pal().border));
-            if on {
-                painter.circle_stroke(rect.center(), 13.0, Stroke::new(2.0, accent_text(c)));
-                fonts::paint_icon(
-                    painter,
-                    rect.center(),
-                    symbols::CHECK,
-                    13.0,
-                    on_accent(c),
-                    false,
-                );
-            }
-            let tip = if i == 0 {
-                format!("{name} (the usual)")
-            } else {
-                (*name).to_string()
-            };
-            if resp
-                .on_hover_text(tip)
-                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .clicked()
-            {
-                *slot = (i != 0).then_some(*rgb);
-                changed = true;
-            }
+            changed |= swatch_dot(ui, slot, i, name, *rgb);
         }
-        let mut rgb = slot.unwrap_or(default);
-        if ui
-            .color_edit_button_srgb(&mut rgb)
-            .on_hover_text("Any color")
-            .changed()
-        {
-            *slot = Some(rgb);
-            changed = true;
-        }
+        changed |= any_color_button(ui, slot, default);
     });
     changed
 }

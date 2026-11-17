@@ -386,6 +386,43 @@ pub(in crate::ui::settings) fn round_button(
 /// How long the circle of an [`icon_switch`] takes to travel, in seconds.
 const SWITCH_SECS: f64 = 0.28;
 
+/// A highlight that slides from the cell it was on to the one that is selected now (the thumb of
+/// an icon switch, the wash of the navigation): the cells it moves between, and how far along each
+/// of its two edges is (0 at the start, 1 at the end). The leading edge runs ahead of the trailing
+/// one, which is what makes the highlight stretch while it moves. `id` keeps the move apart from
+/// that of another control in the same `ui`.
+struct Slide {
+    from: usize,
+    to: usize,
+    lead: f32,
+    lag: f32,
+}
+
+/// Follows the move of a sliding highlight and asks for frames while it goes on (see [`Slide`]).
+fn slide(ui: &mut egui::Ui, id: &str, selected: usize) -> Slide {
+    let now = ui.input(|i| i.time);
+    let key = ui.id().with(id);
+    let (from, to, since) = ui
+        .data(|d| d.get_temp::<(usize, usize, f64)>(key))
+        .unwrap_or((selected, selected, -1.0e9));
+    let (from, to, since) = if to != selected {
+        (to, selected, now)
+    } else {
+        (from, to, since)
+    };
+    ui.data_mut(|d| d.insert_temp(key, (from, to, since)));
+    let u = (((now - since) / SWITCH_SECS) as f32).clamp(0.0, 1.0);
+    if u < 1.0 {
+        ui.ctx().request_repaint();
+    }
+    Slide {
+        from,
+        to,
+        lead: egui::emath::easing::cubic_out(u),
+        lag: egui::emath::easing::cubic_in(u),
+    }
+}
+
 /// A switch between two or more pages, with icons only: one round track, one round cell for each
 /// page, and a circle in the accent color under the chosen one. When another is picked the circle
 /// travels to it, stretching on the way (the edge it moves towards leaves first, the other follows)
@@ -436,24 +473,13 @@ pub(in crate::ui::settings) fn icon_switch(
             picked = Some(i);
         }
     }
-    // the move that is going on: from which cell, to which, since when
-    let now = ui.input(|i| i.time);
-    let key = ui.id().with("icon_switch_move");
-    let (from, to, since) = ui
-        .data(|d| d.get_temp::<(usize, usize, f64)>(key))
-        .unwrap_or((selected, selected, -1.0e9));
-    let (from, to, since) = if to != selected {
-        (to, selected, now)
-    } else {
-        (from, to, since)
-    };
-    ui.data_mut(|d| d.insert_temp(key, (from, to, since)));
-    let u = (((now - since) / SWITCH_SECS) as f32).clamp(0.0, 1.0);
-    if u < 1.0 {
-        ui.ctx().request_repaint();
-    }
-    let lead = egui::emath::easing::cubic_out(u);
-    let lag = egui::emath::easing::cubic_in(u);
+    // the move that is going on: from which cell, to which, and how far each edge has got
+    let Slide {
+        from,
+        to,
+        lead,
+        lag,
+    } = slide(ui, "icon_switch_move", selected);
     let (a, b) = (cell_at(from), cell_at(to));
     let right = b.min.x >= a.min.x;
     let left_edge = a.min.x + (b.min.x - a.min.x) * if right { lag } else { lead };
@@ -950,23 +976,12 @@ pub(in crate::ui::settings) fn nav_highlight(
             Vec2::new(width, NAV_H),
         )
     };
-    let now = ui.input(|i| i.time);
-    let key = ui.id().with("nav_highlight_move");
-    let (from, to, since) = ui
-        .data(|d| d.get_temp::<(usize, usize, f64)>(key))
-        .unwrap_or((selected, selected, -1.0e9));
-    let (from, to, since) = if to != selected {
-        (to, selected, now)
-    } else {
-        (from, to, since)
-    };
-    ui.data_mut(|d| d.insert_temp(key, (from, to, since)));
-    let u = (((now - since) / SWITCH_SECS) as f32).clamp(0.0, 1.0);
-    if u < 1.0 {
-        ui.ctx().request_repaint();
-    }
-    let lead = egui::emath::easing::cubic_out(u);
-    let lag = egui::emath::easing::cubic_in(u);
+    let Slide {
+        from,
+        to,
+        lead,
+        lag,
+    } = slide(ui, "nav_highlight_move", selected);
     let (a, b) = (row(from), row(to));
     let down = b.min.y >= a.min.y;
     let top = a.min.y + (b.min.y - a.min.y) * if down { lag } else { lead };
@@ -1421,6 +1436,46 @@ fn floating_header(ui: &mut egui::Ui, title: &str) -> bool {
     });
     ui.add_space(GAP);
     close
+}
+
+/// The first line inside a sheet: `glyph` (18 pt, in `color`) with the title next to it, and a
+/// small gap under it. The sheets of Settings (quit, discard, reports, update) all start like this.
+pub(in crate::ui::settings) fn sheet_heading(
+    ui: &mut egui::Ui,
+    glyph: char,
+    color: Color32,
+    title: &str,
+) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        ui.label(fonts::icon(glyph, 18.0, color));
+        ui.add(egui::Label::new(fonts::title(title, 15.0, pal().text)).truncate());
+    });
+    ui.add_space(6.0);
+}
+
+/// A paragraph of a sheet: wrapped, in the muted color.
+pub(in crate::ui::settings) fn sheet_text(ui: &mut egui::Ui, text: &str) {
+    ui.add(egui::Label::new(RichText::new(text).size(13.5).color(pal().muted)).wrap());
+}
+
+/// The lines of a report, one bullet each, in a scroll area at most `max_height` high.
+pub(in crate::ui::settings) fn sheet_bullets(ui: &mut egui::Ui, lines: &[String], max_height: f32) {
+    egui::ScrollArea::vertical()
+        .max_height(max_height)
+        .show(ui, |ui| {
+            for line in lines {
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(format!("\u{2022} {line}"))
+                            .size(13.5)
+                            .color(pal().text),
+                    )
+                    .wrap(),
+                );
+                ui.add_space(3.0);
+            }
+        });
 }
 
 /// A modal sheet centered over the window: the window dims, and the sheet floats above it. All
@@ -2156,50 +2211,75 @@ pub(in crate::ui::settings) fn swatch_picker(
     ui.spacing_mut().item_spacing.x = 8.0;
     let default = swatches.first().map_or([0; 3], |s| s.1);
     // added from the right edge, so the picker comes first and the swatches fill in toward the left
+    any_color_button(ui, slot, default);
+    for (i, (name, rgb)) in swatches.iter().enumerate().rev() {
+        swatch_dot(ui, slot, i, name, *rgb);
+    }
+}
+
+/// One round swatch of a [`swatch_picker`] row (also used by the panel designer): lit while it is
+/// the chosen color, `i == 0` being the color the appearance comes with (lit while `slot` is `None`,
+/// and picking it empties `slot`). Returns whether `slot` changed.
+pub(in crate::ui::settings) fn swatch_dot(
+    ui: &mut egui::Ui,
+    slot: &mut Option<[u8; 3]>,
+    i: usize,
+    name: &str,
+    rgb: [u8; 3],
+) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(24.0), egui::Sense::click());
+    let c = Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
+    let on = if i == 0 {
+        slot.is_none()
+    } else {
+        *slot == Some(rgb)
+    };
+    let painter = ui.painter();
+    painter.circle_filled(rect.center(), 10.0, c);
+    // the pale colors are as light as the card: a hairline keeps them visible
+    painter.circle_stroke(rect.center(), 10.0, Stroke::new(1.0, pal().border));
+    if on {
+        painter.circle_stroke(rect.center(), 13.0, Stroke::new(2.0, accent_text(c)));
+        fonts::paint_icon(
+            painter,
+            rect.center(),
+            symbols::CHECK,
+            13.0,
+            on_accent(c),
+            false,
+        );
+    }
+    let tip = if i == 0 {
+        format!("{name} (the usual)")
+    } else {
+        name.to_string()
+    };
+    let clicked = resp
+        .on_hover_text(tip)
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked();
+    if clicked {
+        *slot = (i != 0).then_some(rgb);
+    }
+    clicked
+}
+
+/// The system color picker that follows a row of swatches: it shows `slot` (or `default` while
+/// nothing is chosen) and fills `slot` when another color is picked. Returns whether it changed.
+pub(in crate::ui::settings) fn any_color_button(
+    ui: &mut egui::Ui,
+    slot: &mut Option<[u8; 3]>,
+    default: [u8; 3],
+) -> bool {
     let mut rgb = slot.unwrap_or(default);
-    if ui
+    let changed = ui
         .color_edit_button_srgb(&mut rgb)
         .on_hover_text("Any color")
-        .changed()
-    {
+        .changed();
+    if changed {
         *slot = Some(rgb);
     }
-    for (i, (name, rgb)) in swatches.iter().enumerate().rev() {
-        let (rect, resp) = ui.allocate_exact_size(Vec2::splat(24.0), egui::Sense::click());
-        let c = Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
-        let on = if i == 0 {
-            slot.is_none()
-        } else {
-            *slot == Some(*rgb)
-        };
-        let painter = ui.painter();
-        painter.circle_filled(rect.center(), 10.0, c);
-        // the pale colors are as light as the panel: a hairline keeps them visible
-        painter.circle_stroke(rect.center(), 10.0, Stroke::new(1.0, pal().border));
-        if on {
-            painter.circle_stroke(rect.center(), 13.0, Stroke::new(2.0, accent_text(c)));
-            fonts::paint_icon(
-                painter,
-                rect.center(),
-                symbols::CHECK,
-                13.0,
-                on_accent(c),
-                false,
-            );
-        }
-        let tip = if i == 0 {
-            format!("{name} (the usual)")
-        } else {
-            (*name).to_string()
-        };
-        if resp
-            .on_hover_text(tip)
-            .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .clicked()
-        {
-            *slot = (i != 0).then_some(*rgb);
-        }
-    }
+    changed
 }
 
 #[cfg(test)]

@@ -216,14 +216,7 @@ mod tests {
     use super::*;
     use crate::geometry::Point;
 
-    fn env<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
-        move |k| {
-            pairs
-                .iter()
-                .find(|(n, _)| *n == k)
-                .map(|(_, v)| v.to_string())
-        }
-    }
+    use crate::platform::linux::env_of as env;
 
     // The shape `swaymsg -t get_tree -r` prints, cut down to what matters: the scratchpad's pseudo
     // output, two real ones, a tiled native window, a tiled X11 window on a workspace that is not

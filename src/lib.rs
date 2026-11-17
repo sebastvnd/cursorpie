@@ -225,6 +225,12 @@ pub fn run() -> eframe::Result<()> {
                 let (x, y) = platform::cursor_pos().unwrap_or((400.0, 300.0));
                 notifier.send(msg::Msg::OpenWelcome { x, y });
             }
+            // the first start after an update that CursorPie installed by itself: tell how it ended
+            // (the program quit while the swap ran, so this is the first the person can be told)
+            if !first_start && let Some(outcome) = update::take_outcome() {
+                let (x, y) = platform::cursor_pos().unwrap_or((400.0, 300.0));
+                notifier.send(msg::Msg::UpdateOutcome { x, y, outcome });
+            }
             Ok(Box::new(App::new(rx, tx, win, tray)))
         }),
     )

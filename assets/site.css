@@ -56,9 +56,9 @@ code{font-family:var(--mono);font-size:.88em;padding:.12em .4em;border-radius:6p
 
 /* ---------- Progress bar + cursor glow ---------- */
 .progress{position:fixed;left:0;top:0;height:5px;width:100%;z-index:400;transform-origin:0 50%;transform:scaleX(0);background:linear-gradient(90deg,var(--pink),var(--violet),var(--sky),var(--lime))}
-.cursor-glow{position:fixed;left:0;top:0;width:420px;height:420px;margin:-210px 0 0 -210px;border-radius:50%;pointer-events:none;z-index:0;opacity:0;transition:opacity .4s;background:radial-gradient(circle,color-mix(in srgb,var(--violet) 26%,transparent),transparent 62%);will-change:transform}
+.cursor-glow{position:fixed;left:0;top:0;width:420px;height:420px;margin:-210px 0 0 -210px;border-radius:50%;pointer-events:none;z-index:0;opacity:0;transition:opacity .4s;background:radial-gradient(circle,rgba(141,107,255,.26),transparent 62%);background:radial-gradient(circle,color-mix(in srgb,var(--violet) 26%,transparent),transparent 62%);will-change:transform}
 .cursor-glow.on{opacity:1}
-:root[data-theme="dark"] .cursor-glow{background:radial-gradient(circle,color-mix(in srgb,var(--violet) 34%,transparent),transparent 62%)}
+:root[data-theme="dark"] .cursor-glow{background:radial-gradient(circle,rgba(141,107,255,.34),transparent 62%);background:radial-gradient(circle,color-mix(in srgb,var(--violet) 34%,transparent),transparent 62%)}
 main,.site-footer{position:relative;z-index:1}
 
 /* ---------- Buttons, pills, stickers ---------- */
@@ -196,7 +196,7 @@ main,.site-footer{position:relative;z-index:1}
 .how-stage[data-step="3"] #how-pie{transform:scale(.88);opacity:1}
 .hs-ring{position:absolute;width:92px;height:92px;border-radius:50%;border:5px solid var(--ink);opacity:0;transform:scale(.4);transition:opacity .3s,transform .6s var(--ease)}
 .how-stage[data-step="1"] .hs-ring{opacity:1;transform:scale(1.9);animation:ringfill 1.8s ease-in-out infinite}
-@keyframes ringfill{0%{border-color:var(--ink);box-shadow:0 0 0 0 var(--lime)}60%{box-shadow:0 0 0 22px color-mix(in srgb,var(--lime) 0%,transparent);border-color:var(--pink)}100%{box-shadow:0 0 0 0 transparent;border-color:var(--ink)}}
+@keyframes ringfill{0%{border-color:var(--ink);box-shadow:0 0 0 0 var(--lime)}60%{box-shadow:0 0 0 22px transparent;border-color:var(--pink)}100%{box-shadow:0 0 0 0 transparent;border-color:var(--ink)}}
 .hs-cursor{position:absolute;left:50%;top:50%;width:34px;height:34px;margin:-6px 0 0 -6px;fill:#fff;stroke:#14110f;stroke-width:1.6;stroke-linejoin:round;filter:drop-shadow(2px 3px 0 rgba(0,0,0,.35));transition:transform .8s var(--ease);z-index:3}
 .how-stage[data-step="1"] .hs-cursor{transform:translate(0,0)}
 .how-stage[data-step="2"] .hs-cursor{transform:translate(0,-84px)}
@@ -509,14 +509,18 @@ details p b,details p em{color:var(--ink)}
 }
 
 /* ---------- Motion preferences ---------- */
+/* "Reduce motion" (macOS, iOS, Windows, Android) asks for less movement, not for a dead page.
+   Remove only large, looping or auto-playing movement and keep fades, colour changes and
+   small feedback. A visitor can opt back in with ?motion=full (remembered), ?motion=auto resets. */
 @media(prefers-reduced-motion:reduce){
-  html{scroll-behavior:auto}
-  *,*::before,*::after{animation:none!important;transition:none!important}
-  .js .rv{opacity:1;transform:none}
-  .js .h-line>span{transform:none}
-  .mark{background-size:100% var(--mh)}
-  .cursor-glow{display:none}
+  :root:not([data-motion="full"]){scroll-behavior:auto}
+  :root:not([data-motion="full"]) :is(.blob,.sticker,.marquee-track,.rings i,.orbit,.timeline i.now,.flowdemo i,.pill .live,.hs-ring){animation:none!important}
+  :root:not([data-motion="full"]).js .rv{transform:none;transition:opacity .6s var(--ease);transition-delay:var(--d,0s)}
+  :root:not([data-motion="full"]).js .rv.done{transition:opacity .3s,box-shadow .25s,background-color .35s}
+  :root:not([data-motion="full"]).js .h-line>span{transform:none;animation:fadein .7s var(--ease) both;animation-delay:calc(var(--i)*.11s + .1s)}
+  :root:not([data-motion="full"]) .demo-card,:root:not([data-motion="full"]) .bcard{transform:none!important}
 }
+@keyframes fadein{from{opacity:0}}
 .theme-switching,.theme-switching *,.theme-switching *::before,.theme-switching *::after{transition:none!important}
 ::view-transition-old(root),::view-transition-new(root){animation-duration:.25s}
 

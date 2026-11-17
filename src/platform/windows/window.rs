@@ -81,13 +81,20 @@ unsafe extern "system" fn frameless_proc(
 /// The window the DWM attributes were last applied to (they stay on the window, so once is enough).
 static DWM_DONE: AtomicIsize = AtomicIsize::new(0);
 
-/// Whether the window should not take the focus when it is shown (the notice of an action, see
-/// [`set_window_passive`]).
-static PASSIVE: AtomicBool = AtomicBool::new(false);
+/// Whether the window should not take the focus when it is shown. It is the state of the window
+/// **unless** an interactive card is on it (a panel that takes the keyboard, Settings, the welcome
+/// window): the pie and the notice never take the focus, as on macOS and Linux, and winit already
+/// builds the window that way (`with_active(false)`). See [`set_window_passive`].
+static PASSIVE: AtomicBool = AtomicBool::new(true);
 
-/// The window of the notice on the screen (`ui::hud`) must not take the keyboard from the app the
-/// action is for, so while it is on, the window gets `WS_EX_NOACTIVATE`: a click-through window
-/// that is shown without being activated. Applied at once to the window the frame code has seen, and
+/// The pie and the notice of an action (`ui::hud`) must not take the keyboard from the app the
+/// action is for, so the window has `WS_EX_NOACTIVATE`: a window that is shown without being
+/// activated. Only a card that is for typing and clicking (a panel, Settings, the welcome window)
+/// turns it off with `set_window_passive(false)`, and whatever ends it turns it on again.
+///
+/// It used to be off for everything but the notice, so the first panel or Settings left the window
+/// activatable for good, and every pie after it was shown (and activated, taking the foreground)
+/// like a card. Applied at once to the window the frame code has seen, and
 /// again by every `clear_window_frame` (winit rewrites the styles when it shows or hides the window).
 pub fn set_window_passive(on: bool) {
     PASSIVE.store(on, Ordering::Relaxed);
@@ -113,7 +120,29 @@ fn apply_passive(hwnd: HWND) {
         };
         if want != ex {
             SetWindowLongW(hwnd, GWL_EXSTYLE, want as i32);
+            diag::log!(
+                "win",
+                "passive_style",
+                noactivate = want & WS_EX_NOACTIVATE != 0
+            );
         }
+    }
+}
+
+/// Whether the window in front belongs to this program, for the diagnostic log: a press of the
+/// trigger that finds CursorPie's own window in front (a panel that kept the focus) is not an
+/// ordinary one. Reads one handle and one process id; never waits for another thread.
+pub fn foreground_is_own() -> bool {
+    use windows_sys::Win32::System::Threading::GetCurrentProcessId;
+    // SAFETY: plain queries; `pid` is a valid out-pointer.
+    unsafe {
+        let fg = GetForegroundWindow();
+        if fg.is_null() {
+            return false;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(fg, &mut pid);
+        pid == GetCurrentProcessId()
     }
 }
 
@@ -250,6 +279,7 @@ fn take_pending_raise(hwnd: HWND) {
             ShowWindow(hwnd, SW_RESTORE);
         }
         let fg = GetForegroundWindow();
+        diag::log!("win", "raise_own", already_front = fg == hwnd);
         if fg == hwnd {
             return;
         }

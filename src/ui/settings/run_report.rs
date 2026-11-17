@@ -30,40 +30,10 @@ impl App {
             Vec2::new(620.0, height),
             "A flow had a problem",
             |ui| {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 8.0;
-                    ui.label(
-                        RichText::new(symbols::WARNING.to_string())
-                            .font(egui::FontId::new(18.0, crate::ui::fonts::icons()))
-                            .color(pal().bad),
-                    );
-                    ui.add(
-                        egui::Label::new(crate::ui::fonts::title(&report.flow, 15.0, pal().text))
-                            .truncate(),
-                    );
-                });
-                ui.add_space(6.0);
-                ui.label(
-                    RichText::new(format!("{}. The flow ran, but:", report.title))
-                        .size(13.5)
-                        .color(pal().muted),
-                );
+                sheet_heading(ui, symbols::WARNING, pal().bad, &report.flow);
+                sheet_text(ui, &format!("{}. The flow ran, but:", report.title));
                 ui.add_space(4.0);
-                egui::ScrollArea::vertical()
-                    .max_height(height - 170.0)
-                    .show(ui, |ui| {
-                        for line in &report.lines {
-                            ui.add(
-                                egui::Label::new(
-                                    RichText::new(format!("\u{2022} {line}"))
-                                        .size(13.5)
-                                        .color(pal().text),
-                                )
-                                .wrap(),
-                            );
-                            ui.add_space(3.0);
-                        }
-                    });
+                sheet_bullets(ui, &report.lines, height - 170.0);
                 ui.add_space(6.0);
                 ui.add(
                     egui::Label::new(

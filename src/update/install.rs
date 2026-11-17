@@ -7,7 +7,7 @@
 //! | download | with the system's `curl`, from the release's own address, never from an address in the answer |
 //! | check | the size and the SHA-256 that GitHub publishes for the file ([`verify`]); with no checksum nothing is installed |
 //! | stage | macOS: the app is copied out of the disk image next to the installed one; Linux: the program is unpacked from the archive next to the installed one; both are started once with `--selftest`; Windows: the Setup program is kept as it is |
-//! | swap | after CursorPie quit: macOS and Linux replace the old copy and start the new one (`APPLY_SCRIPT`); Windows runs Setup silently, which replaces the files and starts the new one |
+//! | swap | after CursorPie quit: macOS and Linux replace the old copy and start the new one (`APPLY_SCRIPT`); Windows runs Setup without wizard pages but with its progress window, which replaces the files and starts the new one |
 //!
 //! A Linux copy in a folder the person cannot write to (`install.sh` without `--user` puts it in
 //! `/usr/local/bin`) is updated too, when `pkexec` is there: the program is staged in the updates
@@ -46,11 +46,13 @@ const UPDATES_DIR: &str = "updates";
 /// What the swap leaves next to the installed copy while it works.
 const NEW_SUFFIX: &str = ".cursorpie-new";
 
-/// How Setup is started on Windows: silent, no message boxes, no restart of the PC, the "start at
+/// How Setup is started on Windows: no wizard pages and no message boxes, but with its small
+/// progress window (`/SILENT`, not `/VERYSILENT`: CursorPie has quit by then, and a replacement that
+/// takes minutes with nothing on screen looks like a crash), no restart of the PC, the "start at
 /// login" task left as the person has it, and the new program started when it is done
 /// (`installer/cursorpie.iss` reads `RESTARTAPP`).
 const SETUP_ARGS: [&str; 5] = [
-    "/VERYSILENT",
+    "/SILENT",
     "/SUPPRESSMSGBOXES",
     "/NORESTART",
     "/MERGETASKS=!startup",
@@ -787,11 +789,16 @@ pub fn spawn_prepare(notifier: Notifier) {
 /// [`InstallError::Launch`] when the step that swaps the files could not be started; nothing has
 /// changed then.
 pub fn apply(staged: &Staged) -> Result<(), InstallError> {
+    // the program that starts afterwards tells the person how the swap ended (see `update::take_outcome`)
+    crate::update::mark_applied(staged.version);
     let started = match staged.os {
         Os::Windows => apply_windows(staged),
         Os::Mac | Os::Linux => apply_unix(staged),
     };
-    started.map_err(|_| InstallError::Launch)
+    started.map_err(|_| {
+        crate::update::clear_applied();
+        InstallError::Launch
+    })
 }
 
 /// Windows: runs Setup silently and detached, so it outlives this program.
@@ -1285,7 +1292,11 @@ mod tests {
 
     #[test]
     fn setup_is_started_silently_and_keeps_the_login_choice() {
-        assert!(SETUP_ARGS.contains(&"/VERYSILENT"));
+        assert!(
+            SETUP_ARGS.contains(&"/SILENT"),
+            "Setup shows its progress window"
+        );
+        assert!(!SETUP_ARGS.contains(&"/VERYSILENT"));
         assert!(SETUP_ARGS.contains(&"/MERGETASKS=!startup"));
         assert!(SETUP_ARGS.contains(&"/RESTARTAPP=1"));
     }

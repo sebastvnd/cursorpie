@@ -153,14 +153,7 @@ impl Session {
 mod tests {
     use super::*;
 
-    fn env<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
-        move |k| {
-            pairs
-                .iter()
-                .find(|(n, _)| *n == k)
-                .map(|(_, v)| v.to_string())
-        }
-    }
+    use crate::platform::linux::env_of as env;
 
     #[test]
     fn a_plain_x11_session() {

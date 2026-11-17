@@ -66,6 +66,11 @@ pub mod native;
 // functions of the backends, so it is the same on every OS.
 pub mod web;
 
+// The process and file helpers that Linux and macOS share (`linux/mod.rs` and `macos/mod.rs` use it as
+// their `process` module).
+#[cfg(unix)]
+pub(crate) mod unix_process;
+
 // Runs the file choosers that are separate programs: zenity and kdialog on Linux, osascript on macOS.
 #[cfg(unix)]
 pub(crate) mod chooser;

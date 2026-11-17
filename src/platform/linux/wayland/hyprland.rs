@@ -253,14 +253,7 @@ pub(crate) fn focus_command(id: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    fn env<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
-        move |k| {
-            pairs
-                .iter()
-                .find(|(n, _)| *n == k)
-                .map(|(_, v)| v.to_string())
-        }
-    }
+    use crate::platform::linux::env_of as env;
 
     // The shape `hyprctl clients -j` prints (fields the adapter does not read are left in).
     const CLIENTS: &str = r#"[

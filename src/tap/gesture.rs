@@ -51,6 +51,19 @@ pub(crate) enum Gesture {
 }
 
 impl Gesture {
+    /// The state as one word, for the diagnostic log.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub(crate) fn name(&self) -> &'static str {
+        match self {
+            Gesture::Idle => "idle",
+            Gesture::Pending { .. } => "pending",
+            Gesture::WaitSecond { .. } => "wait_second",
+            Gesture::ActivePie { .. } => "active_pie",
+            Gesture::InSettings(_) => "in_settings",
+            Gesture::Passthrough => "passthrough",
+        }
+    }
+
     /// Who started the gesture that is running. `None` when nothing is running (`Idle`) or when the
     /// press was handed back to the app (`Passthrough`, always a mouse).
     pub(crate) fn source(&self) -> Option<Source> {

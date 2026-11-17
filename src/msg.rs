@@ -27,6 +27,13 @@ pub enum Msg {
     /// Open the welcome window centered on the screen containing (x, y) (first launch, or the
     /// tray item "Welcome guide...").
     OpenWelcome { x: f64, y: f64 },
+    /// The program started after an update was handed to the swap: Settings opens on the About tab
+    /// (centered on the display that contains (x, y)) and a sheet tells how it ended.
+    UpdateOutcome {
+        x: f64,
+        y: f64,
+        outcome: crate::update::Outcome,
+    },
     /// The hovered slice of the open pie changed.
     Hover(Option<usize>),
     /// Close the pie (also used to reset the UI after the tap was disabled or paused).

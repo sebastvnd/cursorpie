@@ -83,7 +83,7 @@ impl App {
             return;
         };
         let showing = self.settings_open && self.welcome.is_none() && self.closing.is_none();
-        if !showing || self.ed.update_offer.is_some() {
+        if !showing || self.ed.update_offer.is_some() || self.ed.update_done.is_some() {
             return;
         }
         let Some(current) = current else {

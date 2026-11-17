@@ -12,7 +12,7 @@ use crate::ui::app::App;
 use crate::ui::settings::theme::*;
 use crate::ui::settings::widgets::*;
 use crate::ui::symbols;
-use eframe::egui::{self, RichText, Vec2};
+use eframe::egui::{self, Vec2};
 
 /// What the sheet asked for this frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103,30 +103,11 @@ impl App {
             Vec2::new(520.0, 200.0),
             "Discard changes?",
             |ui| {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 8.0;
-                    ui.label(
-                        RichText::new(symbols::WARNING.to_string())
-                            .font(egui::FontId::new(18.0, crate::ui::fonts::icons()))
-                            .color(pal().bad),
-                    );
-                    ui.label(crate::ui::fonts::title(
-                        "You have unsaved changes",
-                        15.0,
-                        pal().text,
-                    ));
-                });
-                ui.add_space(6.0);
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(
-                            "If you cancel now, the changes you made in Settings are lost. \
-                             Press Enter to discard them, or Esc to keep editing.",
-                        )
-                        .size(13.5)
-                        .color(pal().muted),
-                    )
-                    .wrap(),
+                sheet_heading(ui, symbols::WARNING, pal().bad, "You have unsaved changes");
+                sheet_text(
+                    ui,
+                    "If you cancel now, the changes you made in Settings are lost. \
+                     Press Enter to discard them, or Esc to keep editing.",
                 );
                 ui.add_space(GAP);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
@@ -170,20 +151,7 @@ impl App {
             "Quit CursorPie?",
             |ui| {
                 if unsaved {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 8.0;
-                        ui.label(
-                            RichText::new(symbols::WARNING.to_string())
-                                .font(egui::FontId::new(18.0, crate::ui::fonts::icons()))
-                                .color(pal().bad),
-                        );
-                        ui.label(crate::ui::fonts::title(
-                            "You have unsaved changes",
-                            15.0,
-                            pal().text,
-                        ));
-                    });
-                    ui.add_space(6.0);
+                    sheet_heading(ui, symbols::WARNING, pal().bad, "You have unsaved changes");
                 }
                 let text = if unsaved {
                     "Some changes in Settings were not saved yet. If you quit now they are lost. \
@@ -192,7 +160,7 @@ impl App {
                     "CursorPie will stop, and the pie will not open until you start it again. \
                  Do you really want to quit?"
                 };
-                ui.add(egui::Label::new(RichText::new(text).size(13.5).color(pal().muted)).wrap());
+                sheet_text(ui, text);
                 ui.add_space(GAP);
                 // the buttons sit at the right: the way back first, the way out last
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {

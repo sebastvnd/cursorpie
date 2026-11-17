@@ -29,9 +29,12 @@ What is remembered (day of the last check, newest version, day of the last offer
    keeps the Setup program as it is.
 5. Swaps it in. CursorPie quits (unsaved changes in Settings stop this: save or cancel, then **Restart to update**).
    macOS and Linux: a small shell script waits for CursorPie to end, moves the old copy aside, moves the new one in
-   (the old one is put back if that fails) and starts the program. Windows: Setup runs silently
-   (`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /MERGETASKS=!startup /RESTARTAPP=1`), replaces the files for the current
+   (the old one is put back if that fails) and starts the program. Windows: Setup runs with only its progress window
+   (`/SILENT /SUPPRESSMSGBOXES /NORESTART /MERGETASKS=!startup /RESTARTAPP=1`), replaces the files for the current
    user and starts the new version; the "start at login" choice is left as it is.
+6. Tells you how it ended. While the package downloads, a progress sheet stays over Settings. The first start after
+   the swap opens Settings on the About tab with a sheet: "CursorPie is now X", or, when the old version is running
+   again because the swap did not happen, why nothing changed and how to try again.
 
 Only an ordinary install is updated: macOS `CursorPie.app` in a folder you can write to, Windows
 `%LOCALAPPDATA%\Programs\CursorPie\cursorpie.exe`, Linux a program outside a `target/` folder (in a folder you cannot

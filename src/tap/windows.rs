@@ -232,6 +232,17 @@ fn on_mouse(ctx: &Ctx, msg: u32, info: &MSLLHOOKSTRUCT) -> bool {
         }
         button = cfg().trigger_button;
     }
+    if diag::enabled("tap") && kind == Kind::Down && button == cfg().trigger_button {
+        // what the press finds: who is in front and what the gesture is (try_lock: a log line must
+        // never make the hook wait)
+        let gesture = ctx.state.try_lock().map_or("locked", |g| g.name());
+        diag::log!(
+            "tap",
+            "press_focus",
+            own_in_front = crate::platform::windows::foreground_is_own(),
+            gesture = gesture
+        );
+    }
     let scale = scale_at_physical(info.pt.x, info.pt.y);
     set_last_scale(scale);
     let pos = Point::new(

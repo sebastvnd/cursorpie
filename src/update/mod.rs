@@ -277,6 +277,81 @@ pub fn spawn_check(notifier: Notifier, manual: bool) {
 
 // ---------------------------------------------------------------------------- what is shown
 
+// ---------------------------------------------------------------------------- what the swap did
+
+/// Name of the file that remembers an update that was handed to the swap (see [`mark_applied`]).
+pub const APPLIED_FILE: &str = "update_applied.json";
+
+/// Largest applied file that is read. A real one is under 100 bytes.
+const MAX_APPLIED_BYTES: u64 = 4 * 1024;
+
+/// What the swap of an update came to, found by the program that starts afterwards. The app quits
+/// while the swap runs, so this is the only way to tell the person how it ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Outcome {
+    /// The new version is the one that is running now.
+    Updated { from: Version, to: Version },
+    /// The old version started again: the swap did not happen or was cancelled (for example the
+    /// password prompt of an administrator's copy).
+    Unfinished { from: Version, to: Version },
+}
+
+/// What the file [`APPLIED_FILE`] holds: the version that handed the update over and the one it
+/// handed over.
+#[derive(Debug, Serialize, Deserialize)]
+struct Applied {
+    from: String,
+    to: String,
+}
+
+/// Remembers, just before the swap starts, which update is being installed. Errors are ignored: the
+/// update goes on without the closing message.
+pub fn mark_applied(to: Version) {
+    let Some(from) = Version::current() else {
+        return;
+    };
+    let applied = Applied {
+        from: from.to_string(),
+        to: to.to_string(),
+    };
+    if let Ok(data) = serde_json::to_string(&applied) {
+        let _ = write_atomic(&app_support_dir().join(APPLIED_FILE), &data);
+    }
+}
+
+/// Forgets the remembered update (the swap could not even be started).
+pub fn clear_applied() {
+    let _ = std::fs::remove_file(app_support_dir().join(APPLIED_FILE));
+}
+
+/// Decides what a remembered update came to, from the text of the file and the version that runs
+/// now. `None` for text that is not an applied file, so nothing wrong is ever announced.
+pub fn outcome_of(text: &str, current: Version) -> Option<Outcome> {
+    let applied: Applied = serde_json::from_str(text).ok()?;
+    let from = Version::parse(&applied.from)?;
+    let to = Version::parse(&applied.to)?;
+    if current >= to {
+        Some(Outcome::Updated { from, to: current })
+    } else {
+        Some(Outcome::Unfinished { from, to })
+    }
+}
+
+/// Reads and removes the remembered update of `dir`: what happened to the update the last run
+/// handed over, or `None` when there was none. It is announced once.
+fn take_outcome_from(dir: &Path, current: Version) -> Option<Outcome> {
+    let file = dir.join(APPLIED_FILE);
+    let text = read_text_capped(&file, MAX_APPLIED_BYTES);
+    let _ = std::fs::remove_file(&file);
+    outcome_of(&text?, current)
+}
+
+/// What the update that the last run handed to the swap came to (see [`Outcome`]). Reads and removes
+/// the file, so it answers once. Call it when the program starts.
+pub fn take_outcome() -> Option<Outcome> {
+    take_outcome_from(&app_support_dir(), Version::current()?)
+}
+
 /// What the About tab says about updates.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Status {
@@ -490,5 +565,39 @@ mod tests {
         assert_eq!(Failure::from(HttpError::NoClient), Failure::NoClient);
         assert_eq!(Failure::from(HttpError::Failed), Failure::Unreachable);
         assert_eq!(Failure::from(HttpError::BadAnswer), Failure::BadAnswer);
+    }
+
+    #[test]
+    fn the_swap_is_told_apart_by_the_version_that_runs_afterwards() {
+        let text = r#"{"from":"0.8.19","to":"0.9.0"}"#;
+        assert_eq!(
+            outcome_of(text, v("0.9.0")),
+            Some(Outcome::Updated {
+                from: v("0.8.19"),
+                to: v("0.9.0")
+            })
+        );
+        assert_eq!(
+            outcome_of(text, v("0.8.19")),
+            Some(Outcome::Unfinished {
+                from: v("0.8.19"),
+                to: v("0.9.0")
+            })
+        );
+        assert_eq!(outcome_of("not json", v("0.9.0")), None);
+        assert_eq!(outcome_of(r#"{"from":"x","to":"y"}"#, v("0.9.0")), None);
+    }
+
+    #[test]
+    fn the_outcome_is_announced_once() {
+        let dir = std::env::temp_dir().join(format!("cursorpie-applied-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        std::fs::write(dir.join(APPLIED_FILE), r#"{"from":"0.8.19","to":"0.9.0"}"#).unwrap();
+        assert!(take_outcome_from(&dir, v("0.9.0")).is_some());
+        assert!(
+            take_outcome_from(&dir, v("0.9.0")).is_none(),
+            "the file is gone"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

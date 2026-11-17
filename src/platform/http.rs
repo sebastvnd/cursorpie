@@ -51,10 +51,9 @@ impl Client {
         }
     }
 
-    /// The arguments for a `GET` of `url` that gives up after `timeout_s` seconds. Only `https` is
-    /// followed, also across redirects.
-    fn args(self, url: &str, timeout_s: u64) -> Vec<String> {
-        let accept = "Accept: application/vnd.github+json".to_string();
+    /// What every request has in common, whatever it fetches: quiet, `https` only (also across
+    /// redirects), a time limit of `timeout_s` seconds, no retry, and the program's own user agent.
+    fn base_args(self, timeout_s: u64) -> Vec<String> {
         match self {
             Client::Curl => vec![
                 "--silent".into(),
@@ -68,56 +67,47 @@ impl Client {
                 timeout_s.to_string(),
                 "--user-agent".into(),
                 user_agent(),
-                "--header".into(),
-                accept,
-                url.into(),
             ],
             Client::Wget => vec![
                 "--quiet".into(),
-                "--output-document=-".into(),
                 format!("--timeout={timeout_s}"),
                 "--tries=1".into(),
                 format!("--user-agent={}", user_agent()),
-                format!("--header={accept}"),
-                url.into(),
             ],
         }
     }
-}
 
-impl Client {
+    /// The arguments for a `GET` of `url` that gives up after `timeout_s` seconds. Only `https` is
+    /// followed, also across redirects.
+    fn args(self, url: &str, timeout_s: u64) -> Vec<String> {
+        let accept = "Accept: application/vnd.github+json";
+        let mut args = self.base_args(timeout_s);
+        match self {
+            Client::Curl => args.extend(["--header".into(), accept.into()]),
+            Client::Wget => {
+                args.extend(["--output-document=-".into(), format!("--header={accept}")])
+            }
+        }
+        args.push(url.into());
+        args
+    }
+
     /// The arguments for a download of `url` into the file `dest`: the same rules as [`Client::args`],
     /// and `curl` also refuses a file of more than `max_bytes` when the server says how big it is.
     fn download_args(self, url: &str, dest: &Path, timeout_s: u64, max_bytes: u64) -> Vec<String> {
         let dest = dest.to_string_lossy().into_owned();
+        let mut args = self.base_args(timeout_s);
         match self {
-            Client::Curl => vec![
-                "--silent".into(),
-                "--fail".into(),
-                "--location".into(),
-                "--proto".into(),
-                "=https".into(),
-                "--proto-redir".into(),
-                "=https".into(),
-                "--max-time".into(),
-                timeout_s.to_string(),
+            Client::Curl => args.extend([
                 "--max-filesize".into(),
                 max_bytes.to_string(),
-                "--user-agent".into(),
-                user_agent(),
                 "--output".into(),
                 dest,
-                url.into(),
-            ],
-            Client::Wget => vec![
-                "--quiet".into(),
-                format!("--output-document={dest}"),
-                format!("--timeout={timeout_s}"),
-                "--tries=1".into(),
-                format!("--user-agent={}", user_agent()),
-                url.into(),
-            ],
+            ]),
+            Client::Wget => args.push(format!("--output-document={dest}")),
         }
+        args.push(url.into());
+        args
     }
 }
 

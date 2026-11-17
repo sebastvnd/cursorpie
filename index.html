@@ -65,6 +65,16 @@
     (function () {
       var d = document.documentElement;
       d.classList.add('js');
+      /* Motion opt-in: ?motion=full keeps animations on even when the OS asks for reduced motion. */
+      try {
+        var mq = new URLSearchParams(location.search).get('motion');
+        if (mq === 'full') localStorage.setItem('cursorpie-motion', 'full');
+        else if (mq === 'auto') localStorage.removeItem('cursorpie-motion');
+        if (localStorage.getItem('cursorpie-motion') === 'full') d.dataset.motion = 'full';
+      } catch (e) {}
+      /* Safety net: if assets/site.js never finishes (blocked, failed to load, unsupported engine),
+         stop hiding .rv content so the page is not left blank. */
+      setTimeout(function () { if (!window.__cursorpieReady) d.classList.remove('js'); }, 4000);
       try {
         var t = localStorage.getItem('cursorpie-theme');
         if (t !== 'light' && t !== 'dark') t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';

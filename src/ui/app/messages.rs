@@ -40,6 +40,11 @@ impl App {
             Msg::OpenSettings { x, y, about } => {
                 self.open_settings(ctx, egui::pos2(x as f32, y as f32), about);
             }
+            Msg::UpdateOutcome { x, y, outcome } => {
+                self.open_settings(ctx, egui::pos2(x as f32, y as f32), true);
+                self.ed.update_offer = None;
+                self.ed.update_done = Some(outcome);
+            }
             Msg::OpenWelcome { x, y } => self.open_welcome(ctx, egui::pos2(x as f32, y as f32)),
             Msg::Hover(h) => {
                 if h.is_some()

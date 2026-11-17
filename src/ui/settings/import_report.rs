@@ -9,7 +9,7 @@ use crate::ui::app::App;
 use crate::ui::settings::theme::*;
 use crate::ui::settings::widgets::*;
 use crate::ui::symbols;
-use eframe::egui::{self, RichText, Vec2};
+use eframe::egui::{self, Vec2};
 
 impl App {
     /// Draws the import sheet while `import_report` is set.
@@ -32,38 +32,15 @@ impl App {
                 "Could not import"
             },
             |ui| {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 8.0;
-                    ui.label(
-                        RichText::new(symbols::WARNING.to_string())
-                            .font(egui::FontId::new(18.0, crate::ui::fonts::icons()))
-                            .color(pal().bad),
-                    );
-                    ui.label(crate::ui::fonts::title(&report.file, 15.0, pal().text));
-                });
-                ui.add_space(6.0);
+                sheet_heading(ui, symbols::WARNING, pal().bad, &report.file);
                 let intro = if report.imported {
                     "The file was imported, but you should know this before you Save:"
                 } else {
                     "The file was not imported, because:"
                 };
-                ui.label(RichText::new(intro).size(13.5).color(pal().muted));
+                sheet_text(ui, intro);
                 ui.add_space(4.0);
-                egui::ScrollArea::vertical()
-                    .max_height(height - 130.0)
-                    .show(ui, |ui| {
-                        for line in &report.lines {
-                            ui.add(
-                                egui::Label::new(
-                                    RichText::new(format!("\u{2022} {line}"))
-                                        .size(13.5)
-                                        .color(pal().text),
-                                )
-                                .wrap(),
-                            );
-                            ui.add_space(3.0);
-                        }
-                    });
+                sheet_bullets(ui, &report.lines, height - 130.0);
                 ui.add_space(GAP);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
                     if button(ui, Look::Soft, None, "OK (Enter)").clicked() {

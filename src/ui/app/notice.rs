@@ -124,22 +124,8 @@ impl App {
 
         // it must not take the keyboard from the app the action is for
         platform::set_window_passive(true);
-        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(win));
-        ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
-        ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(true));
-        ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
-            egui::WindowLevel::AlwaysOnTop,
-        ));
-        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(top_left));
         self.hud = Some(Hud::new(note, hold).with_scale(scale));
-        self.visible = true;
-        self.show_window(ctx, win);
-        ctx.request_repaint();
-        if platform::window_manager_may_recenter() {
-            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(top_left));
-            self.want_pos = Some((top_left, Instant::now()));
-            ctx.request_repaint();
-        }
+        self.show_overlay(ctx, win, top_left, true);
     }
 
     /// A panel wants the window the notice is on. The notice does not vanish at once (that looked
@@ -163,7 +149,7 @@ impl App {
     pub(super) fn drop_hud(&mut self, ctx: &egui::Context) {
         self.hud_pending = None;
         if self.hud.take().is_some() {
-            platform::set_window_passive(false);
+            platform::set_window_passive(true);
             self.visible = false;
             self.show_wait = None;
             self.want_pos = None;
@@ -189,7 +175,7 @@ impl App {
             self.begin_panel(ctx, req);
             return;
         }
-        platform::set_window_passive(false);
+        platform::set_window_passive(true);
         self.visible = false;
         self.hide_root(ctx);
         if !self.panel_queue.is_empty() {

@@ -121,6 +121,7 @@ impl App {
         crate::ui::fonts::reset_atlas(ctx);
         self.win = cfg().pie_size;
         self.set_settings_open(false);
+        platform::set_window_passive(true); // the pie never takes the focus
         self.welcome = None;
         self.closing = None;
         self.settings_anim = 0.0;
@@ -144,6 +145,53 @@ impl App {
     /// Puts the window away: hides it.
     pub(crate) fn hide_root(&mut self, ctx: &egui::Context) {
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+    }
+
+    /// Turns the window into a borderless, always-on-top overlay of size `win` with its top-left
+    /// corner at `top_left` and shows it: the notice pill (`click_through`, the pointer goes to the
+    /// window below) and a panel (which takes the pointer). The caller has already set what the
+    /// overlay holds (`hud` or `panel`) and whether the window takes the keyboard. Where the window
+    /// manager may put the window somewhere else, the position is sent again and watched
+    /// (`want_pos`).
+    pub(super) fn show_overlay(
+        &mut self,
+        ctx: &egui::Context,
+        win: Vec2,
+        top_left: Pos2,
+        click_through: bool,
+    ) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(win));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
+        ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(click_through));
+        ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
+            egui::WindowLevel::AlwaysOnTop,
+        ));
+        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(top_left));
+        self.visible = true;
+        self.show_window(ctx, win);
+        ctx.request_repaint();
+        if platform::window_manager_may_recenter() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(top_left));
+            self.want_pos = Some((top_left, Instant::now()));
+            ctx.request_repaint();
+        }
+    }
+
+    /// What Settings and the welcome window both start with: the pie, a notice and a panel give the
+    /// window up, the editing state is reset, and `settings_open` is set. Returns whether the window
+    /// was showing something (for `place_card_window`).
+    fn take_window_for_card(&mut self, ctx: &egui::Context) -> bool {
+        let was_visible = self.visible;
+        self.drop_hud(ctx);
+        self.drop_panel(ctx, true);
+        self.pie_open = false;
+        self.set_settings_open(true);
+        self.visible = true;
+        self.closing = None;
+        self.settings_anim = 0.0;
+        self.ed.stop_recording();
+        self.ed.scan = None;
+        was_visible
     }
 
     /// Makes the (hidden) window appear. On Linux not at once: the window is mapped only after it
@@ -330,16 +378,7 @@ impl App {
             return;
         }
         crate::ui::memlog::mark("open_settings");
-        let was_visible = self.visible;
-        self.drop_hud(ctx);
-        self.drop_panel(ctx, true);
-        self.pie_open = false;
-        self.set_settings_open(true);
-        self.visible = true;
-        self.closing = None;
-        self.settings_anim = 0.0;
-        self.ed.stop_recording();
-        self.ed.scan = None;
+        let was_visible = self.take_window_for_card(ctx);
         self.ed.icons.revalidate();
         self.ed.profile = 0;
         self.ed.reset_nav();
@@ -422,16 +461,7 @@ impl App {
             self.raise_settings(ctx, "open_welcome");
             return;
         }
-        let was_visible = self.visible;
-        self.drop_hud(ctx);
-        self.drop_panel(ctx, true);
-        self.pie_open = false;
-        self.set_settings_open(true);
-        self.visible = true;
-        self.closing = None;
-        self.settings_anim = 0.0;
-        self.ed.stop_recording();
-        self.ed.scan = None;
+        let was_visible = self.take_window_for_card(ctx);
         self.welcome = Some(Welcome::new(platform::launch_at_login_enabled()));
         self.card_size = self.place_card_window(ctx, at, welcome_size_for, was_visible);
     }
@@ -465,6 +495,7 @@ impl App {
         );
         crate::debug::expect_window(top_left.x, top_left.y);
         self.settings_wait = Some((win_sz, Instant::now()));
+        platform::set_window_passive(false); // a card for typing and clicking takes the focus
 
         if was_visible && platform::OS == platform::Os::Linux {
             // the pie window is on screen (a held trigger opened Settings): resizing it while it is
@@ -587,9 +618,19 @@ impl App {
             return;
         }
         crate::ui::memlog::mark("show_pie");
+        diag::log!(
+            "ui",
+            "pie_focus",
+            focused = ctx.input(|i| i.viewport().focused).unwrap_or(false),
+            panel = self.panel.is_some(),
+            hud = self.hud.is_some(),
+            visible = self.visible
+        );
         // the pie takes the window over from a notice or a panel that is still on screen
         self.drop_hud(ctx);
         self.drop_panel(ctx, false);
+        // and it never takes the focus (a panel that was on this window left it activatable)
+        platform::set_window_passive(true);
         self.win = cfg().pie_size;
         self.profile = profile;
         let trail_on = cfg().submenu_trail;

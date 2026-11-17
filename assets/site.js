@@ -6,7 +6,8 @@
   const release = repo + '/releases/latest/download/';
   const $ = (sel, ctx) => (ctx || document).querySelector(sel);
   const $$ = (sel, ctx) => Array.from((ctx || document).querySelectorAll(sel));
-  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // Respect the OS "Reduce motion" setting unless the visitor opted back in with ?motion=full.
+  const reduceMotion = root.dataset.motion === 'full' ? false : window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const finePointer = window.matchMedia('(hover: hover) and (pointer: fine)').matches;
 
   // ---------------------------------------------------------------
@@ -106,7 +107,7 @@
     requestAnimationFrame(() => {
       const max = document.documentElement.scrollHeight - window.innerHeight;
       if (progress) progress.style.transform = 'scaleX(' + (max > 0 ? Math.min(1, window.scrollY / max) : 0) + ')';
-      $$('[data-parallax]').forEach((el) => {
+      if (!reduceMotion) $$('[data-parallax]').forEach((el) => {
         el.style.transform = 'translate3d(0,' + (window.scrollY * parseFloat(el.dataset.parallax)).toFixed(1) + 'px,0)';
       });
       ticking = false;
@@ -127,7 +128,7 @@
   if (menuBtn) menuBtn.addEventListener('click', () => setMenu(menuBtn.getAttribute('aria-expanded') !== 'true'));
 
   const glow = $('#cursor-glow');
-  if (glow && finePointer && !reduceMotion) {
+  if (glow && finePointer) {
     let gx = 0, gy = 0, pending = false;
     window.addEventListener('pointermove', (e) => {
       gx = e.clientX; gy = e.clientY;
@@ -136,7 +137,11 @@
       pending = true;
       requestAnimationFrame(() => { glow.style.transform = 'translate3d(' + gx + 'px,' + gy + 'px,0)'; pending = false; });
     }, { passive: true });
-    document.addEventListener('pointerleave', () => glow.classList.remove('on'));
+    // 'pointerleave' does not fire on document in every engine, so also listen to mouse events.
+    const glowOff = () => glow.classList.remove('on');
+    document.documentElement.addEventListener('mouseleave', glowOff);
+    document.addEventListener('mouseout', (e) => { if (!e.relatedTarget) glowOff(); });
+    window.addEventListener('blur', glowOff);
   }
 
   // Magnetic buttons and tilting cards (fine pointers only)
@@ -964,4 +969,5 @@
 
   window.__cursorpieRefreshPies = () => { if (resetDemo) requestAnimationFrame(resetDemo); };
   window.__cursorpieRefreshPies();
+  window.__cursorpieReady = true;
 })();

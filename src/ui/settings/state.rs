@@ -9,7 +9,7 @@ use crate::config::{Config, Item, blank_items, items_at, presets, quick_actions}
 use crate::mouse::Scan;
 use crate::tap::RECORDING;
 use crate::ui::icons::{IconCache, IconState};
-use crate::update::{Status, Version, install};
+use crate::update::{Outcome, Status, Version, install};
 use eframe::egui;
 use std::sync::atomic::Ordering;
 
@@ -515,6 +515,9 @@ pub struct Ed {
     pub update_needs_password: bool,
     /// The downloaded and checked update that waits for the restart
     pub update_staged: Option<install::Staged>,
+    /// How the update that the last run handed to the swap ended, while the sheet that tells it is
+    /// open (see `update_dialog`)
+    pub update_done: Option<Outcome>,
 }
 
 impl Default for Ed {
@@ -606,6 +609,7 @@ impl Ed {
             update_can_install: false,
             update_needs_password: false,
             update_staged: None,
+            update_done: None,
         }
     }
 
@@ -625,6 +629,8 @@ impl Ed {
             || self.flow_new.is_some()
             || self.panel_design.is_some()
             || self.update_offer.is_some()
+            || self.update_done.is_some()
+            || matches!(self.update, Status::Downloading(_))
     }
 
     /// Closes the open sheet. Returns whether there was one.
@@ -639,6 +645,7 @@ impl Ed {
         self.flow_new = None;
         self.panel_design = None;
         self.update_offer = None;
+        self.update_done = None;
         was
     }
 

@@ -569,6 +569,10 @@ impl App {
         self.run_report_dialog(&ctx);
         // the sheet that offers a newer release, once a day
         self.update_dialog(&ctx, accent);
+        // the sheet that tells what the update that was handed to the swap came to
+        self.update_done_dialog(&ctx, accent);
+        // the sheet that stays while the update downloads, and says what follows (CursorPie quits)
+        self.update_progress_dialog(&ctx, accent);
 
         match action {
             UiAction::Save => {

@@ -1,6 +1,7 @@
-//! Small process and file helpers whose implementation is specific to this OS (see the table in
-//! `platform/mod.rs`): the rest of the crate calls them through [`platform`](crate::platform) and
-//! never reaches for `std::os::*` itself.
+//! Small process and file helpers for the Unix systems (Linux and macOS, which do all of this the same
+//! way; Windows has its own in `windows/process.rs`). See the table in `platform/mod.rs`: the rest of
+//! the crate calls them through [`platform`](crate::platform) and never reaches for `std::os::*`
+//! itself. `linux/mod.rs` and `macos/mod.rs` bring this module in under the name `process`.
 
 use std::fs::{self, File, OpenOptions};
 use std::io;

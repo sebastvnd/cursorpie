@@ -376,9 +376,7 @@ impl App {
             }
         }
         if let Some(p) = self.panel.take() {
-            if p.form.spec.passive {
-                platform::set_window_passive(false);
-            }
+            platform::set_window_passive(true);
             let id = p.form.panel_id().to_string();
             let _ = p
                 .reply
@@ -415,6 +413,13 @@ impl App {
             h = win.y
         );
         crate::debug::expect_window(top_left.x, top_left.y);
+        diag::log!(
+            "ui",
+            "panel_focus",
+            passive = spec.passive,
+            was_visible = self.visible,
+            focused = ctx.input(|i| i.viewport().focused).unwrap_or(false)
+        );
 
         let deadline = match spec.timeout_s {
             Some(0) => None,
@@ -438,13 +443,6 @@ impl App {
         // it takes the keyboard (unlike the notice it is for typing), except a panel that only
         // shows progress
         platform::set_window_passive(spec.passive);
-        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(win));
-        ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
-        ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(false));
-        ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
-            egui::WindowLevel::AlwaysOnTop,
-        ));
-        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(top_left));
         self.panel = Some(ActivePanel {
             form: Form::new(spec),
             reply,
@@ -457,14 +455,7 @@ impl App {
             shown: None,
             pending: VecDeque::new(),
         });
-        self.visible = true;
-        self.show_window(ctx, win);
-        ctx.request_repaint();
-        if platform::window_manager_may_recenter() {
-            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(top_left));
-            self.want_pos = Some((top_left, Instant::now()));
-            ctx.request_repaint();
-        }
+        self.show_overlay(ctx, win, top_left, false);
     }
 
     /// The panel on screen was waiting for the flow to ask again (`keep_open`) and `req` is that
@@ -533,10 +524,14 @@ impl App {
 
     /// The panel is over: it is answered, and the window is hidden again after one empty frame.
     fn end_panel(&mut self, ctx: &egui::Context, result: PanelResult) {
+        diag::log!(
+            "ui",
+            "panel_end",
+            focused = ctx.input(|i| i.viewport().focused).unwrap_or(false),
+            pie_open = self.pie_open
+        );
         if let Some(p) = self.panel.take() {
-            if p.form.spec.passive {
-                platform::set_window_passive(false);
-            }
+            platform::set_window_passive(true);
             let _ = p.reply.send(result);
         }
         // The window is not hidden here: it still holds the last frame of the panel, and a hidden
