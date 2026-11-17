@@ -119,6 +119,25 @@ impl Config {
         if self.sleep_after_s != 0 {
             self.sleep_after_s = self.sleep_after_s.clamp(10, 3600);
         }
+        {
+            use crate::geometry::{
+                TRAIL_FAN_RANGE, TRAIL_GLIDE_RANGE, TRAIL_NODE_RANGE, TRAIL_REACH_RANGE,
+                TRAIL_SHRINK_RANGE,
+            };
+            self.trail_reach = self
+                .trail_reach
+                .clamp(TRAIL_REACH_RANGE.0, TRAIL_REACH_RANGE.1);
+            self.trail_node = self
+                .trail_node
+                .clamp(TRAIL_NODE_RANGE.0, TRAIL_NODE_RANGE.1);
+            self.trail_shrink = self
+                .trail_shrink
+                .clamp(TRAIL_SHRINK_RANGE.0, TRAIL_SHRINK_RANGE.1);
+            self.trail_fan = self.trail_fan.clamp(TRAIL_FAN_RANGE.0, TRAIL_FAN_RANGE.1);
+            self.trail_glide = self
+                .trail_glide
+                .clamp(TRAIL_GLIDE_RANGE.0, TRAIL_GLIDE_RANGE.1);
+        }
         self.glass_clear = self.glass_clear.min(100);
         self.glass_frost = self.glass_frost.min(100);
         self.glass_shine = self.glass_shine.min(100);

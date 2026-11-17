@@ -231,6 +231,8 @@ impl App {
             accent,
             profile: ed.profile,
             width: right.width(),
+            flat: false,
+            height: 0.0,
             trigger,
             mouse: &mouse,
             bounds: ed.card,

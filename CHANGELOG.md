@@ -2,6 +2,120 @@
 
 ## Unreleased
 
+## 0.8.19
+
+- **Changed: the website is now a one-page scroll with a new look, and the documentation viewer is much better.** The
+  landing page is a single scroll (hero with the live pie demo, a ticker of example actions, key numbers, a scroll
+  driven "how it works", a feature grid, privacy, downloads, FAQ) with a neon, thick-outline style, light and dark
+  themes, and animations that stop for `prefers-reduced-motion`. The documentation view gets a grouped, searchable
+  sidebar (press `/`), an "On this page" outline that follows the scroll, breadcrumbs, reading time, previous and next
+  links, Copy buttons on code blocks, callouts, and a drawer on phones; internal links no longer reload the page. The
+  privacy text now says what is true: no account and no telemetry, and the only network request is the optional daily
+  update check described in `docs/user/updates.md`.
+
+- **Fixed: "Open app" opened a newly started app on the main display, not on the display of the pie (Windows, macOS,
+  Linux).** With two displays and the pie opened on the second one, a slice that starts an app (that was not running
+  yet) showed the window on the first display, because the system picks the display of a new window by itself and
+  CursorPie only started the program. Right before it starts an app, CursorPie now notes the display the pointer is
+  on and the windows that exist; a new main window of the app that appears within a few seconds and whose center is on
+  another display is moved to the middle of the pie's display. Windows: the window is moved and scaled for the DPI of
+  the two displays (and maximized again if it was maximized). macOS: the first window is moved through Accessibility
+  (an app that already has a window is still dealt with by "Open app" as before). Linux: X11 through the window
+  manager (`_NET_MOVERESIZE_WINDOW`); Wayland through the KWin script and the GNOME Shell extension (the extension
+  has to be updated: it understands a new `move:` command; Sway and Hyprland tile their windows and are not
+  changed). Windows that already existed, minimized and full-screen windows and windows that are already on the right
+  display are left alone, and nothing is done with one display.
+
+- **Added: the flow kit now teaches an AI agent how to build a panel.** Until now the kit had the format of a flow and
+  one line about panels, so an agent that was asked for a panel guessed: too many fields, every button primary, panel
+  JSON pasted into the flow without escaping, a remote control with no loop. The kit now holds
+  `PANEL_DESIGN_FOR_AI.md` (when a panel is the right tool, the design rules with the real sizes and limits, four
+  models: form, menu, tool panel and progress panel, how the panel is put in a flow file and wired, a table of the
+  common mistakes, a checklist and a script that checks a panel), `PANELS.md` (the reference) and five panel examples
+  (the new `panel-settings-form` is a menu followed by a form with sections and `show_if`). `START_HERE.md` and
+  `FLOWS_FOR_AI.md` send the agent there whenever the flow shows a panel. A test loads every panel of the kit and of
+  the guide with the same checks the app uses, so what an agent is shown as good can never be refused.
+
+- **Fixed (macOS): the pointer disappeared while the pie of a mouse hold was open, and the first fix did not reach
+  the cause.** A terminal, an editor, a browser or a video player hides the pointer (while you type, or when the
+  mouse is idle) and shows it again only when it hears the mouse move. While the pie is open the tap swallows every
+  drag of the held button at the HID level, so neither the window server nor any app heard a single move for the
+  whole hold: the pie followed the hand and the pointer stayed hidden. The earlier fix posted one mouse move with no
+  distance when the pie opened, which says that nothing moved (and could not help once the app hid the pointer
+  again). Now (1) the swallowed drags are played back as plain mouse moves, no button and at most ten a second, so an
+  app below the pie hears the mouse move as it would with the button up while the drag itself stays swallowed, and
+  (2) a new pie posts a real move of one point and the move back (the pointer ends where it was) instead of a move
+  with no distance. A trackpad hold is not affected: its moves were never swallowed. Windows is not affected either
+  (its hook never swallows moves); Wayland was fixed in 0.8.14 by taking the pointer; on X11 the passive grab of the
+  held button has the same shape as the macOS tap (see `docs/user/known-issues.md`).
+
+- **Changed: the slice editor of the pie editor follows the design of the rest of CursorPie.** It was a small card at the
+  top of an empty column, and its "Pick..." button was cut off at the edge when a slice opens an app. It is now a
+  panel as tall as the canvas, on paper with one hairline and the same inside margin as the inspector of the Flow tab,
+  with the slice at the top (icon, name, kind), what it does under a small title ("Action", "Submenu", "Back button"...),
+  and a footer that stays at the bottom: where the slice stands in its ring ("Slice 2 of 6") and the two arrows that
+  move it. With nothing selected the "Pick a slice" message is in the middle of the panel. In a narrow panel the kind of
+  action has a line of its own and the fields a line under it, so nothing is cut off. The slice editor of the classic
+  Menu tab keeps its card, with the same footer and the same narrow layout.
+
+- **Fixed: in the pie editor, the groups of the list of slices did not take turns like the categories of the Flow tab.**
+  The three round cells after the **+** (Quick actions, Side buttons, Custom) filled the one that was clicked at once, so
+  the accent jumped from one to the other. They now have what the Flow bar has: a circle in the accent color under the
+  chosen group that travels to the next one, stretching on the way, with the icons changing ink as it passes (the same
+  0.28 s). The first choice appears in place, and a second click on the chosen group fades the circle out.
+
+- **Changed: the web mode is now the default way a submenu opens.** The pie you came from shrinks to a node and the
+  nodes keep the way back, as before this was a choice (`submenu_trail` is `true` by default). The classic mode, where a
+  submenu replaces the pie, stays as the "off" setting of "Submenus keep a trail (web mode)". A configuration that was
+  already saved keeps what it says; only a file that does not mention it (or a new install) gets the web mode.
+
+- **Added: the submenu trail (web mode) has its own settings and demo.** A new panel in Settings, Behavior, shows the
+  mode as a looping animation (a pie opens a submenu, the pie it left shrinks to a node, the nodes line up on an arc, the
+  pointer returns to one) that follows the settings as they move: the distance of the nodes (`trail_reach`), their size
+  (`trail_node`), how much smaller each older one is (`trail_shrink`), the spacing between them (`trail_fan`), whether the
+  thread is drawn (`trail_thread`) and how fast the nodes glide (`trail_glide`), with a button for the defaults. The
+  numbers are kept in range, and the shape is always usable: the nodes clear the pie, and big nodes never touch because
+  the spacing is widened. The pie window has the room the chosen distance needs.
+
+- **Fixed: entering a submenu, or coming back to the pie above it, stuttered.** Four things added up. (1) The pie was
+  repainted without end whenever nothing was hovered at the top ring, long after the "hold for Settings" ring it was
+  meant for had finished; every frame rebuilt the whole ring (glass is a mesh per slice), and that load fell exactly on the
+  moment the pointer came back from a submenu. It now repaints on its own only while that ring is growing. (2) A change of
+  level and the bloom of the ring were not kept apart: the bloom of a submenu (and of the ring that comes back when one is
+  left) now always runs from the start, at any level and with or without the web mode, like the pie that opens the gesture,
+  and it is smooth because nothing else happens in that frame (see 3 and 4). (The nodes of the web mode glide to their
+  places.) (3) Every change of level said it all again to a window that was
+  already on screen (size, decorations, always-on-top, click-through, and the move twice), which made the window manager
+  reconfigure a mapped window and the drawing surface with it. A window that is already the right size now only gets its
+  move, once. (4) The root of it: a submenu was shown by moving the pie window to be centered on the pointer, and a window
+  move is carried out by the window manager a few frames after it is asked for, so for those frames the new ring was drawn
+  for one window position while the window was still at the other: the pie was pulled aside, cut off or gone, and then
+  jumped. The window is now large enough (the pie, the room of the trail, and 2.5 radii on every side, never more than the
+  screen) for the ring of the next level to be drawn where the pointer is, away from the center of the window, and it stays
+  where it is: a change of level is one ordinary frame, with nothing to move or resize. Only a ring that would leave the
+  window (several levels in one direction) moves it, as before.
+
+- **New: a "web" mode for submenus, with a way back.** Until now a submenu replaced the pie and the only way out was to
+  release. With the new *Submenus keep a trail* switch (Behavior tab, `submenu_trail` in `config.json`, off by default) the
+  pie you came from shrinks to a small node showing the center of that pie, on a thread to the submenu. Every level you
+  left stays as a node on an arc around it, in the order they were opened (the nearest is the last one, each older one
+  smaller and paler, joined by a thread whose arrows point toward where you are), and moving the pointer onto one
+  returns straight to that pie. The submenu opens centered on the pointer, and the nodes glide to their places. The
+  window has a little more room around the pie for the nodes. Off, nothing changes.
+
+- **Fixed: the middle of the pie slid away from the pointer near the edge of the screen.** A window manager keeps a window
+  on the screen, so near an edge or a corner it put the pie window somewhere else, while the ring was still drawn at the
+  center of the window and the slices were still measured from the pointer. The ring (and, in the web mode, its nodes) is
+  now drawn on the point the pointer was on, wherever the window really is. The web mode made it easier to see: its window
+  is larger, so the zone along the edges where it is pushed in is wider.
+
+- **Fixed: the web mode did not follow the rules for giving memory back.** The icon of a node (a letter, an emoji or a glyph
+  of the icon font) was laid out at a size that changed on every frame while the node glided to its place, and egui keeps
+  every glyph size it ever cut. It is now cut at one of a few sizes (8 per doubling), the font atlas is rebuilt when the
+  program sleeps after the web mode was used, and the trail of the last gesture is dropped when the pie has gone away and
+  when the program sleeps. The test of the extra room of the window had bounds that the constants no longer met; it now
+  states the real figures and checks that the window holds the farthest node and no more.
+
 ## 0.8.18
 
 - **Changed: the pie editor selects and moves pies, and adds slices from a floating list.** The left button no longer

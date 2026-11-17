@@ -65,6 +65,9 @@ pub fn cursor_pos_fresh() -> Option<(f64, f64)> {
 /// No pointer to ask for.
 pub fn pointer_hot(_on: bool) {}
 
+/// Only macOS has apps that hide the pointer until the mouse moves.
+pub fn reveal_cursor() {}
+
 /// Only a Wayland session shows a black square when a transparent window is first mapped.
 pub fn set_window_veil(_window: std::os::raw::c_ulong, _on: bool) -> bool {
     false
@@ -110,6 +113,9 @@ pub fn window_count(_app: &str) -> Option<usize> {
 pub fn window_ids(_app: &str) -> Option<Windows> {
     None
 }
+/// Ignored.
+pub fn place_new_windows_on_pointer_display(_app: &str) {}
+
 /// No app is known to have a single window.
 pub fn declares_single_window(_app: &str) -> bool {
     false

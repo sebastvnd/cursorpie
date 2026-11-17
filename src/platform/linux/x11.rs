@@ -32,6 +32,7 @@ struct Atoms {
     current_desktop: Atom,
     wm_window_type: Atom,
     wm_pid: Atom,
+    moveresize: Atom,
     resource_manager: Atom,
 }
 
@@ -201,6 +202,7 @@ impl Conn {
                 current_desktop: atom("_NET_CURRENT_DESKTOP"),
                 wm_window_type: atom("_NET_WM_WINDOW_TYPE"),
                 wm_pid: atom("_NET_WM_PID"),
+                moveresize: atom("_NET_MOVERESIZE_WINDOW"),
                 resource_manager: atom("RESOURCE_MANAGER"),
             };
             let mut conn = Conn {
@@ -613,6 +615,45 @@ impl Conn {
             .copied()
             .collect();
         Windows { known, main }
+    }
+
+    /// Every window of the window manager's list, as numbers. The windows that exist before an app
+    /// is started, to tell the ones it opens from them (see [`Conn::new_main_windows`]).
+    pub fn window_set(&self) -> std::collections::HashSet<u64> {
+        self.stacking().into_iter().map(|w| w as u64).collect()
+    }
+
+    /// The main windows of `app` that are shown and were not in `known` (see [`Conn::window_set`]),
+    /// each with its position and size in root coordinates (pixels): the windows an app that was
+    /// just started has opened.
+    pub fn new_main_windows(
+        &self,
+        app: &str,
+        known: &std::collections::HashSet<u64>,
+    ) -> Vec<(u64, (f64, f64, f64, f64))> {
+        let aliases = index().unwrap_or_default().aliases(app);
+        self.stacking()
+            .into_iter()
+            .filter(|w| !known.contains(&(*w as u64)))
+            .filter(|w| toplevels::belongs_to(&self.window_names(*w), &aliases))
+            .filter(|w| self.is_main_window(*w) && !self.is_hidden(*w))
+            .filter_map(|w| Some((w as u64, self.geometry_of(w)?)))
+            .collect()
+    }
+
+    /// Asks the window manager to move the window `w` so that its own top-left corner (the corner
+    /// of the window, not of the frame the window manager draws around it) is at `(x, y)` in root
+    /// coordinates (pixels). The request is the one a pager makes (`_NET_MOVERESIZE_WINDOW`), which
+    /// a window manager honors for a window of another program, unlike a plain move.
+    pub fn move_window(&self, w: u64, x: i32, y: i32) {
+        // bits 0-7: the gravity, 10 is the static one, the reference point is the window itself;
+        // bits 8 and 9: x and y are given (the size is not); bits 12-15: the sender is a pager
+        const FLAGS: c_long = 10 | (1 << 8) | (1 << 9) | (2 << 12);
+        self.send_to_wm(
+            w as Window,
+            self.atoms.moveresize,
+            [FLAGS, c_long::from(x), c_long::from(y), 0, 0],
+        );
     }
 
     /// Whether `w` is a main window of its app: `_NET_WM_WINDOW_TYPE_NORMAL` (the default when the

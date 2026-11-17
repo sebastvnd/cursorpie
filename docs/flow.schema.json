@@ -92,7 +92,7 @@
         },
         {
           "type": "object", "required": ["Ask"], "additionalProperties": false,
-          "properties": { "Ask": { "type": "object", "properties": { "mode": { "enum": ["Text", "YesNo", "Panel"] }, "message": { "$ref": "#/$defs/text" }, "preset": { "$ref": "#/$defs/text" }, "out": { "$ref": "#/$defs/variable" } } } }
+          "properties": { "Ask": { "type": "object", "properties": { "mode": { "enum": ["Text", "YesNo", "Panel"] }, "message": { "$ref": "#/$defs/text", "description": "Text and YesNo: the question. Panel: the JSON of a panel kept as an escaped string (see PANEL_DESIGN_FOR_AI.md), at most 16384 characters." }, "preset": { "$ref": "#/$defs/text" }, "out": { "$ref": "#/$defs/variable" } } } }
         },
         {
           "type": "object", "required": ["PanelUpdate"], "additionalProperties": false,

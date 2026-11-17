@@ -185,6 +185,58 @@ mod tests {
     }
 
     #[test]
+    fn the_submenu_trail_is_on_by_default_and_the_classic_mode_is_stored() {
+        assert!(Config::default().submenu_trail);
+        let old = parse_config(r#"{"version": 2}"#).expect("parses");
+        assert!(
+            old.submenu_trail,
+            "a file that does not say gets the default"
+        );
+        let classic = parse_config(r#"{"version": 2, "submenu_trail": false}"#).expect("parses");
+        assert!(!classic.submenu_trail, "the classic mode stays a choice");
+        let json = serde_json::to_string(&classic).expect("serializes");
+        assert!(json.contains(r#""submenu_trail":false"#));
+        let on = parse_config(&json.replace(r#""submenu_trail":false"#, r#""submenu_trail":true"#))
+            .expect("parses");
+        assert!(on.submenu_trail);
+    }
+
+    #[test]
+    fn the_trail_shape_has_defaults_is_stored_and_is_kept_in_range() {
+        let d = Config::default();
+        assert_eq!(
+            (d.trail_reach, d.trail_node, d.trail_shrink, d.trail_fan),
+            (180, 28, 78, 38)
+        );
+        assert!(d.trail_thread && d.trail_glide == 100);
+        assert_eq!(d.trail_shape(), crate::geometry::TrailShape::default());
+        let old = parse_config(r#"{"version": 2}"#).expect("parses");
+        assert_eq!(old.trail_reach, 180, "an old file gets the defaults");
+        let own = parse_config(
+            r#"{"version": 2, "trail_reach": 220, "trail_node": 36, "trail_thread": false}"#,
+        )
+        .expect("parses");
+        assert_eq!((own.trail_reach, own.trail_node), (220, 36));
+        assert!(!own.trail_thread);
+        let json = serde_json::to_string(&own).expect("serializes");
+        assert!(json.contains(r#""trail_reach":220"#));
+        let wild = parse_config(
+            r#"{"version": 2, "trail_reach": 5000, "trail_node": 0, "trail_shrink": 1, "trail_fan": 999, "trail_glide": 0}"#,
+        )
+        .expect("parses");
+        assert_eq!(
+            (
+                wild.trail_reach,
+                wild.trail_node,
+                wild.trail_shrink,
+                wild.trail_fan,
+                wild.trail_glide
+            ),
+            (240, 14, 55, 60, 40)
+        );
+    }
+
+    #[test]
     fn the_desktop_mode_is_stored_by_variant_name() {
         let c = parse_config(r#"{"version": 2, "desktop_mode": "DoNothing"}"#).unwrap();
         assert_eq!(c.desktop_mode, DesktopMode::DoNothing);

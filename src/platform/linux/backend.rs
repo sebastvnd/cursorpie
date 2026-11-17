@@ -233,6 +233,9 @@ pub fn pointer_hot(on: bool) {
     }
 }
 
+/// Only macOS has apps that hide the pointer until the mouse moves.
+pub fn reveal_cursor() {}
+
 /// Hides the window `window` (the X id of the pie window) from the compositor, or shows it again
 /// (see `x11::Conn::set_veil`). Only in a Wayland session, where every map of a transparent
 /// XWayland window shows a black square for a moment; returns whether the request was made.
@@ -606,6 +609,127 @@ pub fn reveal_app(app: &str, _mode: DesktopMode) {
 pub fn open_app_new_window(app: &str) -> Asked {
     open_app(app);
     Asked::Sent(None)
+}
+
+/// Makes the windows that `app` is about to open appear on the display the pointer is on right now,
+/// which is the display the pie was opened on. Call it just before the app is started.
+///
+/// The window manager decides where the window of a program that was just started goes, and it
+/// often is not the display of the pie (the one that has the focus, the first one), so with two
+/// displays "Open app" opened the app next to the pie, not on it. The windows that exist now are
+/// noted; a new main window of the app that appears within a few seconds and whose center is on
+/// another display is moved to the middle of the pie's display: through the window manager
+/// (`_NET_MOVERESIZE_WINDOW`) on X11, and through the KWin script or the GNOME Shell extension on
+/// Wayland. Sway and Hyprland tile their windows and put them where the focus is, so nothing is
+/// done there. Does nothing with one display. Returns at once: the looking is done on a thread of
+/// its own that ends within seconds.
+pub fn place_new_windows_on_pointer_display(app: &str) {
+    use crate::windowing::pointer_display;
+    let a = app.trim();
+    if a.is_empty() {
+        return;
+    }
+    let Some((px, py)) = cursor_pos() else {
+        return;
+    };
+    let Some(screen) = pointer_display(&display_rects(), px, py) else {
+        return;
+    };
+    let a = a.to_string();
+    if wayland::active() {
+        if !matches!(
+            wayland::adapter::current(),
+            wayland::adapter::Adapter::Kwin | wayland::adapter::Adapter::Gnome
+        ) {
+            return;
+        }
+        let Some(snap) = wayland::kwin::snapshot() else {
+            return;
+        };
+        let known = snap.window_id_set();
+        std::thread::spawn(move || place_wayland_windows(&a, screen, &known));
+    } else if let Some(conn) = x11::conn() {
+        let known = conn.window_set();
+        std::thread::spawn(move || place_x11_windows(conn, &a, screen, &known));
+    }
+}
+
+/// The app `a` names as the window lists know it: a role (`@browser`) is the app that fills it.
+fn app_for_windows(a: &str) -> Option<String> {
+    let index = x11::index().unwrap_or_else(|| std::sync::Arc::new(Index::default()));
+    match Role::parse(a) {
+        Some(role) => role_app(role, &index),
+        None => Some(a.to_string()),
+    }
+}
+
+/// The thread of [`place_new_windows_on_pointer_display`] in an X11 session. `screen` is in logical
+/// points, the windows are in pixels.
+fn place_x11_windows(
+    conn: &'static x11::Conn,
+    a: &str,
+    screen: ScreenRect,
+    known: &std::collections::HashSet<u64>,
+) {
+    use crate::windowing::{PLACE_EVERY, Placer, center_on, centered_origin};
+    let Some(app) = app_for_windows(a) else {
+        return;
+    };
+    let px = |r: ScreenRect| ScreenRect {
+        x: r.x * conn.scale,
+        y: r.y * conn.scale,
+        w: r.w * conn.scale,
+        h: r.h * conn.scale,
+    };
+    let screen = px(screen);
+    let mut placer: Placer<u64> = Placer::new();
+    while !placer.finished() {
+        std::thread::sleep(PLACE_EVERY);
+        for (w, (x, y, width, height)) in conn.new_main_windows(&app, known) {
+            if !placer.ready(&w) {
+                continue;
+            }
+            let frame = ScreenRect {
+                x,
+                y,
+                w: width,
+                h: height,
+            };
+            if !center_on(frame, screen) {
+                let (nx, ny) = centered_origin(frame, screen);
+                conn.move_window(w, nx.round() as i32, ny.round() as i32);
+                diag::log!("act", "window_placed", session = "x11");
+            }
+        }
+    }
+}
+
+/// The thread of [`place_new_windows_on_pointer_display`] in a KDE or GNOME Wayland session.
+fn place_wayland_windows(a: &str, screen: ScreenRect, known: &std::collections::HashSet<String>) {
+    use crate::windowing::{PLACE_EVERY, Placer, center_on, centered_origin};
+    let Some(app) = app_for_windows(a) else {
+        return;
+    };
+    let mut placer: Placer<String> = Placer::new();
+    while !placer.finished() {
+        std::thread::sleep(PLACE_EVERY);
+        // a new window is reported by the compositor when it is created; ask once more anyway
+        wayland::kwin::request_sync();
+        let Some(snap) = wayland::kwin::snapshot() else {
+            continue;
+        };
+        let index = x11::index();
+        for w in snap.new_main_windows(&app, known, index.as_deref()) {
+            if !placer.ready(&w.id) {
+                continue;
+            }
+            if !center_on(w.rect, screen) {
+                let (nx, ny) = centered_origin(w.rect, screen);
+                wayland::kwin::move_window(&w.id, nx, ny);
+                diag::log!("act", "window_placed", session = "wayland");
+            }
+        }
+    }
 }
 
 /// Whether the desktop entry of `app` says it has a single main window (`SingleMainWindow=true`),

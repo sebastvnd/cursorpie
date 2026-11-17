@@ -21,6 +21,7 @@ the flow in the editor and re-record each shortcut (Ctrl instead of Cmd), or cha
 | `ask-and-loop` | Asks how many, then notifies that many times | all | `notify-send` on Linux; `zenity` or `kdialog` for the question |
 | `copy-newest-file-and-paste` | Puts the newest exported image or PDF on the clipboard as a file, then pastes | macOS only (`stat -f`, AppleScript) | Files and Folders permission for Downloads |
 | `panel-form` | Asks with a panel (text, slider, switch) and says the answer | all | [Panels](../PANELS.md) on |
+| `panel-settings-form` | A menu, then a form with sections, a switch that reveals two fields, and three buttons | all | [Panels](../PANELS.md) on |
 | `progress-panel` | Five rounds of work with a progress panel | all | Panels on |
 | `browser-go-to-tab` | Asks for a word and goes to the tab that has it | all | [browser extension](../BROWSER_EXTENSION.md) |
 | `browser-pause-if-playing` | Pauses the music only if it plays | all | browser extension |

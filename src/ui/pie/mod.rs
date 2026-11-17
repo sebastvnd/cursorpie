@@ -1,6 +1,7 @@
 //! Drawing of the pie menu (one ring at a time; submenus re-center the same window).
 
 pub mod glass;
+mod trail;
 mod view;
 
 use crate::config::{MAX_ITEMS, cfg};
@@ -10,7 +11,7 @@ use crate::ui::app::App;
 use crate::ui::draw::*;
 use eframe::egui::{self, Align2, Color32, FontId, Shape, Stroke, Vec2};
 use std::f32::consts::{PI, TAU};
-use view::PieView;
+use view::{CenterArt, PieView};
 
 /// Seconds the pie takes to bloom open. One easing curve is applied on top of this linear clock
 /// (see [`step_linear`]).
@@ -35,6 +36,9 @@ const OPEN_APP_GOLD_INK: Color32 = Color32::from_rgb(58, 50, 24);
 /// Points the ring may grow past [`pie_outer`] while it overshoots, so it is never cut off by the
 /// edge of the window (the window leaves 10 points of margin).
 const OVERSHOOT_ROOM: f32 = 8.0;
+/// Points beyond half a window that a window manager may push the pie window from where it was
+/// asked to be and still count as keeping it on the screen (the menu bar of macOS is 24 to 38).
+const PIE_SHIFT_SLACK: f32 = 64.0;
 
 impl App {
     /// Draws the pie (one ring) and advances its animations. Hides the window once the close animation ended.
@@ -47,9 +51,25 @@ impl App {
             ctx.input(|i| i.stable_dt).min(0.05)
         };
 
-        let view = {
+        let trail_open = self.trail_shown();
+        let (view, arts, shape, thread, glide) = {
             let c = cfg();
-            PieView::new(&c, self.profile, &self.path)
+            let view = PieView::new(&c, self.profile, &self.path);
+            // trail mode: each node shows what the center of its ring showed
+            let arts: Vec<CenterArt> = if trail_open && c.submenu_trail {
+                (0..self.path.len())
+                    .map(|k| CenterArt::of(&c, self.profile, &self.path[..k]))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            (
+                view,
+                arts,
+                c.trail_shape(),
+                c.trail_thread,
+                f32::from(c.trail_glide) / 100.0,
+            )
         };
         let total = view.items.len().max(1);
         let glass = glass::Glass::of(&cfg());
@@ -122,6 +142,9 @@ impl App {
             ctx.set_cursor_icon(egui::CursorIcon::Default);
         }
         if !self.pie_open && self.anim <= 0.0 {
+            // the web of a gesture that is over is not kept (the close animation has ended, so
+            // nothing draws it any more)
+            self.forget_trail();
             if self.visible {
                 self.visible = false;
                 self.hide_root(&ctx);
@@ -142,9 +165,50 @@ impl App {
             }
             ctx.request_repaint();
         }
+        // trail mode: every node glides to its place in the web (see `trail::paint`)
+        if !arts.is_empty() && self.trail.len() == arts.len() {
+            if self.trail_disp.len() != self.trail.len() {
+                self.trail_disp = self.trail.clone(); // out of step: start from the rings
+            }
+            let scale =
+                crate::platform::window_scale(f64::from(self.pie_pos.x), f64::from(self.pie_pos.y))
+                    as f32;
+            let offs: Vec<(f32, f32)> = self
+                .trail
+                .iter()
+                .map(|q| {
+                    (
+                        (q.x - self.pie_pos.x) * scale,
+                        (q.y - self.pie_pos.y) * scale,
+                    )
+                })
+                .collect();
+            let k = 1.0 - (-dt * 16.0 * glide).exp();
+            for n in trail_layout(&offs, self.win, shape) {
+                let target = self.pie_pos + Vec2::new(n.x, n.y) / scale;
+                let d = target - self.trail_disp[n.level];
+                if d.length() * scale > 0.4 {
+                    self.trail_disp[n.level] += d * k;
+                    moving = true;
+                } else {
+                    self.trail_disp[n.level] = target;
+                }
+            }
+        }
         let top_level = self.path.is_empty();
         let previewing = self.preview_until.is_some();
-        if moving || (self.pie_open && self.hover.is_none() && top_level) {
+        // The "hold for Settings" ring grows while the pointer rests in the middle of the top ring,
+        // so only then the pie has to repaint on its own. It used to repaint without end whenever
+        // nothing was hovered at the top ring, long after the ring had closed: every frame rebuilt
+        // the whole ring (glass is a mesh per slice) for nothing, and that load landed exactly when
+        // the pointer came back from a submenu, so the change of level stuttered.
+        let settle_running = self.pie_open
+            && !previewing
+            && self.hover.is_none()
+            && top_level
+            && view.settle_ms > 0.0
+            && (self.opened_at.elapsed().as_millis() as f32) < view.settle_ms;
+        if moving || settle_running {
             ctx.request_repaint();
         }
 
@@ -153,6 +217,15 @@ impl App {
             .items
             .iter()
             .map(|(ic, _, _)| self.ed.icon_for(&ctx, ic))
+            .collect();
+        let art_tex: Vec<_> = arts
+            .iter()
+            .map(|a| {
+                (
+                    a.app_icon.as_ref().and_then(|s| self.ed.icon_for(&ctx, s)),
+                    self.ed.icon_for(&ctx, &a.icon),
+                )
+            })
             .collect();
         let center_tex = self.ed.icon_for(&ctx, &view.center_icon);
         // None while not available (not installed, unreadable): the mode icon is shown instead
@@ -166,7 +239,21 @@ impl App {
             .show(ui, |ui| {
                 let (rect, _) = ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
                 let painter = ui.painter_at(rect);
-                let c = rect.center();
+                // The center of the ring is the point the pointer was on, which is the center of
+                // the window unless the window manager kept the window on the screen and moved
+                // it (near an edge or a corner): then the ring is drawn where the tap measures
+                // from, not off it. The nodes of the trail are placed from this point too.
+                let outer_min = ctx.input(|i| i.viewport().outer_rect).map(|r| r.min);
+                // (`pie_off`: a submenu does not move the window while its ring fits in it, see
+                // `App::show_pie`, so the ring is drawn that far from the center of the window)
+                let c = rect.center()
+                    + crate::ui::screen::pie_center_shift(
+                        self.pie_origin,
+                        outer_min,
+                        rect.width(),
+                        PIE_SHIFT_SLACK,
+                    )
+                    + self.pie_off;
 
                 let fade = ease_out_cubic(self.anim);
                 let pop = ease_out_back(self.anim);
@@ -177,6 +264,57 @@ impl App {
                 // false = the side buttons follow the other pie: tint this one with the inactive color
                 let live = !view.side.shown || view.side.owner;
                 let a = |v: f32, f: f32| (v * f).clamp(0.0, 255.0) as u8;
+
+                // trail mode: the rings that were left are nodes around this one, each on a thread
+                // to its center, behind it
+                if !arts.is_empty() && self.trail.len() == arts.len() {
+                    let scale = crate::platform::window_scale(
+                        f64::from(self.pie_pos.x),
+                        f64::from(self.pie_pos.y),
+                    ) as f32;
+                    let offs: Vec<(f32, f32)> = self
+                        .trail
+                        .iter()
+                        .map(|q| {
+                            (
+                                (q.x - self.pie_pos.x) * scale,
+                                (q.y - self.pie_pos.y) * scale,
+                            )
+                        })
+                        .collect();
+                    let outer = pie_outer(self.win);
+                    let nodes: Vec<trail::Node> = trail_layout(&offs, self.win, shape)
+                        .into_iter()
+                        .map(|n| {
+                            let at = self.trail_disp[n.level];
+                            // how far it still has to glide: it grows as it arrives
+                            let target = self.pie_pos + Vec2::new(n.x, n.y) / scale;
+                            let left =
+                                ((at - target).length() * scale / (1.2 * outer)).clamp(0.0, 1.0);
+                            let (app_tex, icon_tex) = &art_tex[n.level];
+                            trail::Node {
+                                at: c + (at - self.pie_pos) * scale,
+                                r: n.r * (0.55 + 0.45 * (1.0 - left)),
+                                near: n.level + 1 == arts.len(),
+                                app_tex: app_tex.as_ref(),
+                                app_icon_color: arts[n.level].app_icon_color,
+                                icon: &arts[n.level].icon,
+                                icon_tex: icon_tex.as_ref(),
+                            }
+                        })
+                        .collect();
+                    trail::paint(
+                        &painter,
+                        c,
+                        &nodes,
+                        &trail::Look {
+                            accent,
+                            colors,
+                            fade,
+                            thread,
+                        },
+                    );
+                }
 
                 // soft shadow behind the ring: one blurred shape, so it falls off smoothly (a stack
                 // of discs leaves a visible step at the edge of each). A white ring needs it to

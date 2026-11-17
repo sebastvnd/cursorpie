@@ -7,8 +7,14 @@ The examples in [`examples/flows/`](examples/flows) are parsed by the unit tests
 and [`flow.schema.json`](flow.schema.json) is a JSON Schema of the file for tools that can validate against one.
 
 The app can hand this page to an agent for the person: **New flow, Build it with AI** in the Flow tab puts a zip with this
-page, `flow.schema.json`, the examples and the person's request (`REQUEST.md`) on the clipboard (the code is
-`config::flow_kit`, and `flow-kit/START_HERE.md` is what the agent reads first).
+page, `PANEL_DESIGN_FOR_AI.md` and `PANELS.md` (how to build a panel), `flow.schema.json`, the examples and the person's
+request (`REQUEST.md`) on the clipboard (the code is `config::flow_kit`, and `flow-kit/START_HERE.md` is what the agent
+reads first).
+
+**If the flow shows a panel** (an `Ask` in `Panel` mode, or `PanelUpdate`), also read
+[`PANEL_DESIGN_FOR_AI.md`](PANEL_DESIGN_FOR_AI.md) completely before you write it: this page only says that panels exist.
+That page has the design rules, the sizes, four models, the way to wire a flow around a panel and the mistakes to avoid;
+[`PANELS.md`](PANELS.md) is the reference of every field.
 
 If you only read one section, read [The recipe](#the-recipe) and [The rules that make a flow wrong](#the-rules-that-make-a-flow-wrong).
 
@@ -570,6 +576,23 @@ name, or `{{ok}}` / `{{code}}` in a text) counts as handling the **last** failur
 - `Command`, `OpenApp` and `OpenUrl` have no result the flow can see, so their failures cannot be reported: use
   `Run` when it matters.
 
+## Panels in a flow
+
+A flow that needs more than a yes or a no from the person (several answers at once, a menu, a remote control, a progress
+bar) shows a **panel**. In short:
+
+- The panel is JSON kept as a **string** in the `message` of an `Ask` block with `"mode": "Panel"` (escape every `"`, at
+  most 16 384 characters). `out` gets the id of the pressed button; every field sets the variable named by its `id`;
+  `ok` is `1` only when a confirming button was pressed. **Test `ok` first.** The file needs `"cursorpie_flow": 2`.
+- Shapes: a **form** (fields, Cancel and one primary button), a **menu** (a `choice` with `submit: true`), a **tool panel**
+  (`keep_open`, `no_buttons`, a `buttons` grid and a loop that returns to the same `Ask`) and a **progress panel**
+  (`PanelUpdate`, no `Ask`).
+- Design in short: one purpose per panel, a title of a few words, at most 7 fields, a label and a default on each, one
+  `primary` button with a verb, no `height`, `padding`, `accent` or text styling unless needed, widgets that depend on a
+  switch (`show_if`) last.
+- Everything else (every widget, sizes, wiring, the mistakes, a checklist and a script that checks a panel) is in
+  [`PANEL_DESIGN_FOR_AI.md`](PANEL_DESIGN_FOR_AI.md). In the kit it sits next to this file.
+
 ## Attaching a flow to a slice
 
 A flow does nothing until a slice runs it. In the app the person picks **Flow** as the action of a slice. In
@@ -665,6 +688,22 @@ empty means the open chat), an `Ask` `YesNo` confirms, and a `Branch` on `target
 `chat.template {{key}} :: {{target}}`. A `Branch` on `ok` ends in a `Notify` of the result. Sending still needs *Allow
 sending messages*; without it the reply is only typed and `ok` is `0`.
 
+**11. A form** (any OS): `panel-form.cursorpie-flow.json`. An `Ask` in `Panel` mode with an input, chips and a switch, a
+`Branch` on `ok`, and a `Notify` with the values. The smallest panel flow.
+
+**12. A menu, then a form with sections** (any OS): `panel-settings-form.cursorpie-flow.json`. A menu (`choice` with
+`submit`) picks a profile, a second panel edits it (a slider, chips, a switch whose `show_if` reveals a number and a
+color at the end, three buttons), then `Branch` blocks on `ok` and on the button end in a `Notify`. Cancelling either panel
+ends the flow.
+
+**13. A progress panel**: `progress-panel.cursorpie-flow.json`. `PanelUpdate` `Open`, a `Repeat` with a `Calc` for the
+fraction and an `Update`, then `Close`.
+
+**14. A remote control that stays open** (needs the browser extension): `browser-remote-panel.cursorpie-flow.json`. A
+`keep_open` panel of button grids; every button runs a `Browser` command and the flow returns to the same `Ask`.
+`browser-remote-panel-state.cursorpie-flow.json` is the same with `toggle` buttons that remember their look in `keep_`
+variables (`bind`).
+
 ## The checklist before you answer
 
 - [ ] The JSON parses (no comments, no trailing commas, double quotes, escaped backslashes and quotes).
@@ -687,6 +726,8 @@ sending messages*; without it the reply is only typed and `ok` is `0`.
 - [ ] A flow that reads `~/Downloads`, `~/Desktop` or `~/Documents`, or presses a key, says which macOS permission it needs.
 - [ ] Opening a web page is followed by a `Wait` and by an `Ask` for what the flow cannot see.
 - [ ] Extra endings use `Stop`, not a second `End`.
+- [ ] A flow with a panel followed [`PANEL_DESIGN_FOR_AI.md`](PANEL_DESIGN_FOR_AI.md): `message` is an escaped string, `ok`
+      is tested first, one `primary` button, valid unique ids, and a tool panel loops back to its `Ask`.
 - [ ] The answer tells the person the file name and the import steps.
 
 When you can run code, this check is short (Python):

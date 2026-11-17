@@ -94,12 +94,17 @@ const ZOOM_MAX: f32 = 3.0;
 const STATUS_H: f32 = 30.0;
 /// Width of the slice editor at the right of the pie editor.
 const INSP_W: f32 = 400.0;
+/// Space between the edge of the slice editor and what is in it, as in the Flow tab.
+const INSP_PAD: f32 = 14.0;
 /// Width of the divider between the two halves of the import tray.
 const DIVIDER_W: f32 = 16.0;
 /// The round buttons of the bar, the **+** included: the same size as in the Flow tab.
 const BAR_CELL: f32 = CONTROL_H - 6.0;
 /// How long the groups of slices take to unfold in the bar, in seconds.
 const UNFOLD_SECS: f32 = 0.24;
+/// How long the circle under the chosen group takes to travel to the next one, in seconds (the same
+/// as in the Flow tab).
+const THUMB_SECS: f64 = 0.28;
 /// The groups of the list of slices (the order of `AddCatalog::groups`): the icon in the bar and
 /// what it says.
 const GROUPS: [(char, &str); 3] = [
@@ -1164,8 +1169,11 @@ fn add_fab(ui: &mut Ui, enabled: bool, accent: Color32, tip: &str) -> Response {
 
 /// The groups of slices in the capsule, right after the **+**: one round cell per group on a row that
 /// unfolds from the **+** while the list is open and folds back when it closes (the same way as
-/// the categories of the Flow canvas). The chosen group narrows the list to it; a second click on
-/// it shows everything again.
+/// the categories of the Flow canvas). The chosen group has a circle in the accent color under it
+/// that travels to the next one, stretching on the way, exactly as the circle of the categories in
+/// the Flow bar does (and the switch of the Behavior tab, see [`icon_switch`]): the cells take
+/// turns instead of the fill jumping from one to the other. The chosen group narrows the list to
+/// it; a second click on it shows everything again.
 fn group_strip(ui: &mut Ui, open: bool, sel: &mut Option<usize>, accent: Color32) {
     let ctx = ui.ctx().clone();
     let key = egui::Id::new("pie_group_strip");
@@ -1181,17 +1189,18 @@ fn group_strip(ui: &mut Ui, open: bool, sel: &mut Option<usize>, accent: Color32
     if t <= 0.0 {
         return;
     }
-    let painter = ui.painter().with_clip_rect(rect);
-    for (i, (icon, tip)) in GROUPS.iter().enumerate() {
-        let at = Rect::from_min_size(
+    let cell_at = |i: usize| {
+        Rect::from_min_size(
             pos2(rect.min.x + i as f32 * (BAR_CELL + BAR_GAP), rect.min.y),
             Vec2::splat(BAR_CELL),
-        );
-        // the cells answer only once the row is (nearly) out
-        let mut hot = 0.0;
-        if t > 0.6 {
+        )
+    };
+    // the cells answer only once the row is (nearly) out
+    let mut hot = [0.0f32; GROUPS.len()];
+    if t > 0.6 {
+        for (i, (_, tip)) in GROUPS.iter().enumerate() {
             let id = key.with(("cell", i));
-            let resp = ui.interact(at.intersect(rect), id, Sense::click());
+            let resp = ui.interact(cell_at(i).intersect(rect), id, Sense::click());
             resp.widget_info(|| {
                 egui::WidgetInfo::selected(
                     egui::WidgetType::RadioButton,
@@ -1200,7 +1209,7 @@ fn group_strip(ui: &mut Ui, open: bool, sel: &mut Option<usize>, accent: Color32
                     *tip,
                 )
             });
-            hot = ctx.animate_bool_with_time(id.with("hot"), resp.hovered(), 0.12);
+            hot[i] = ctx.animate_bool_with_time(id.with("hot"), resp.hovered(), 0.12);
             if resp
                 .on_hover_text(*tip)
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -1209,24 +1218,71 @@ fn group_strip(ui: &mut Ui, open: bool, sel: &mut Option<usize>, accent: Color32
                 *sel = if *sel == Some(i) { None } else { Some(i) };
             }
         }
-        let on = *sel == Some(i);
-        let (fill, ink) = if on {
-            (accent, on_accent(accent))
+    }
+    let chosen = *sel;
+    // the move of the circle: from which cell, to which, since when (a circle that comes in from
+    // nothing appears where it is chosen instead of travelling there)
+    let now = ui.input(|i| i.time);
+    let (move_key, last_key) = (key.with("thumb_move"), key.with("thumb_last"));
+    let last = ctx
+        .data(|d| d.get_temp::<Option<usize>>(last_key))
+        .flatten();
+    let (mut from, mut to, mut since) = ctx
+        .data(|d| d.get_temp::<(usize, usize, f64)>(move_key))
+        .unwrap_or((0, 0, -1.0e9));
+    if let Some(c) = chosen {
+        if last.is_none() {
+            (from, to, since) = (c, c, -1.0e9);
+        } else if c != to {
+            (from, to, since) = (to, c, now);
+        }
+    }
+    ctx.data_mut(|d| {
+        d.insert_temp(move_key, (from, to, since));
+        d.insert_temp(last_key, chosen);
+    });
+    let u = (((now - since) / THUMB_SECS) as f32).clamp(0.0, 1.0);
+    if u < 1.0 {
+        ctx.request_repaint();
+    }
+    let lead = egui::emath::easing::cubic_out(u);
+    let lag = egui::emath::easing::cubic_in(u);
+    let (a, b) = (cell_at(from), cell_at(to));
+    let right = b.min.x >= a.min.x;
+    let left_edge = a.min.x + (b.min.x - a.min.x) * if right { lag } else { lead };
+    let right_edge = a.max.x + (b.max.x - a.max.x) * if right { lead } else { lag };
+    let thumb = Rect::from_min_max(pos2(left_edge, a.min.y), pos2(right_edge, a.max.y));
+    let shown = ctx.animate_bool_with_time(key.with("thumb_shown"), chosen.is_some(), 0.15);
+    let painter = ui.painter().with_clip_rect(rect.expand2(vec2(0.0, 4.0)));
+    for (i, h) in hot.iter().enumerate() {
+        // the wash under the pointer, on a cell that is not chosen
+        if *h > 0.0 && chosen != Some(i) {
+            painter.rect_filled(cell_at(i), PILL, pal().hot.gamma_multiply(*h * t));
+        }
+    }
+    if shown > 0.0 {
+        painter.rect_filled(thumb, PILL, accent.gamma_multiply(shown * t));
+    }
+    for (i, (icon, _)) in GROUPS.iter().enumerate() {
+        // how much of the ink of the chosen cell this one has: it passes from one to the other
+        // with the circle
+        let near = if chosen.is_none() {
+            0.0
+        } else if from == to {
+            f32::from(i == to)
+        } else if i == to {
+            lead
+        } else if i == from {
+            1.0 - lead
         } else {
-            (
-                pal().hot.gamma_multiply(hot),
-                pal().muted.lerp_to_gamma(pal().text, hot),
-            )
-        };
-        painter.rect_filled(at, PILL, fill.gamma_multiply(t));
-        fonts::paint_icon(
-            &painter,
-            at.center(),
-            *icon,
-            17.0,
-            ink.gamma_multiply(t),
-            false,
-        );
+            0.0
+        } * shown;
+        let ink = pal()
+            .muted
+            .lerp_to_gamma(pal().text, hot[i])
+            .lerp_to_gamma(on_accent(accent), near)
+            .gamma_multiply(t);
+        fonts::paint_icon(&painter, cell_at(i).center(), *icon, 17.0, ink, false);
     }
 }
 
@@ -2195,26 +2251,39 @@ impl App {
                 .map(|f| (f.id.clone(), f.name.clone()))
                 .collect();
             let mouse = crate::mouse::active_buttons();
+            // the panel is drawn the way the inspector of the Flow tab is: as tall as the canvas, on
+            // paper, with its content a little inside it (see `flow_inspect::panel`)
+            let painter = ui.painter_at(right);
+            painter.rect_filled(right, PANEL_R, pal().card);
+            painter.rect_stroke(
+                right,
+                PANEL_R,
+                Stroke::new(1.0, pal().border),
+                StrokeKind::Inside,
+            );
+            let inner = right.shrink(INSP_PAD);
             let env = Env {
                 ctx,
                 tx: tx_ref,
                 accent,
                 profile: pi,
-                width: right.width(),
+                width: inner.width(),
+                flat: true,
+                height: inner.height(),
                 trigger: edit.trigger_button,
                 mouse: &mouse,
                 bounds: ed.card,
                 flows: &flow_list,
             };
-            ui.scope_builder(UiBuilder::new().max_rect(right), |ui| {
+            ui.scope_builder(UiBuilder::new().max_rect(inner), |ui| {
                 ui.set_clip_rect(ui.clip_rect().intersect(right));
                 ui.spacing_mut().scroll = egui::style::ScrollStyle::floating();
                 egui::ScrollArea::vertical()
                     .id_salt("pie_editor_inspector")
-                    .max_height(right.height())
+                    .max_height(inner.height())
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        ui.set_max_width(right.width());
+                        ui.set_max_width(inner.width());
                         if let Some(prof) = edit.profiles.get_mut(pi)
                             && let Some(ring) = ring_mut(&mut prof.items, &nav)
                         {

@@ -6,6 +6,10 @@ use crate::ui::settings::widgets::*;
 use crate::ui::symbols;
 use eframe::egui::{self, Color32};
 
+/// The width the editor needs to show the kind and what it needs on one line: the drop-down, a
+/// field and the "Pick" button of an app. Narrower, they take a line each.
+const WIDE_EDITOR: f32 = 480.0;
+
 /// The kinds in the drop-down. Order = index in `action_index`. Sequence (7, which also stands for a
 /// bare wait) is only shown while it is active.
 const KINDS: [(char, &str); 7] = [
@@ -78,15 +82,32 @@ pub(super) fn action_editor(
         };
         items.push((Some(symbols::STACK), label));
     }
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-        if let Some(i) = select_icons(ui, 156.0, &items, now)
+    if ui.available_width() >= WIDE_EDITOR {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            if let Some(i) = select_icons(ui, 156.0, &items, now)
+                && i != now
+            {
+                *a = make_action(i);
+            }
+            fields(ui, a, recording, accent, flows, &mut out);
+        });
+    } else {
+        // a narrow panel (the slice editor beside the canvas): the kind has a line of its own and
+        // what it needs the line under it, each as wide as the panel, so no field or button is cut
+        // off at its edge
+        let full = ui.available_width();
+        if let Some(i) = select_icons(ui, full, &items, now)
             && i != now
         {
             *a = make_action(i);
         }
-        fields(ui, a, recording, accent, flows, &mut out);
-    });
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            fields(ui, a, recording, accent, flows, &mut out);
+        });
+    }
     out
 }
 
@@ -106,7 +127,7 @@ fn fields(
             }
         }
         Action::OpenApp(s) => {
-            let w = (ui.available_width() - 110.0).max(120.0);
+            let w = (ui.available_width() - 124.0).max(120.0);
             ui.add(
                 text_field(s)
                     .desired_width(w)

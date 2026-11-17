@@ -1,0 +1,118 @@
+{
+  "cursorpie_flow": 2,
+  "flow": {
+    "id": "panel-settings-form",
+    "name": "A menu, then a form with sections and show_if",
+    "nodes": [
+      {
+        "id": 1,
+        "x": 40.0,
+        "y": 60.0,
+        "kind": "Start",
+        "next": 2
+      },
+      {
+        "id": 2,
+        "x": 240.0,
+        "y": 60.0,
+        "kind": {
+          "Ask": {
+            "mode": "Panel",
+            "message": "{\n  \"id\": \"pick-profile\",\n  \"title\": \"Sound profile\",\n  \"subtitle\": \"Pick one to adjust\",\n  \"place\": \"center\",\n  \"width\": 340,\n  \"widgets\": [\n    {\n      \"type\": \"choice\",\n      \"id\": \"profile\",\n      \"submit\": true,\n      \"options\": [\n        {\n          \"value\": \"Work\",\n          \"label\": \"Work\",\n          \"hint\": \"Quiet, notices only\"\n        },\n        {\n          \"value\": \"Home\",\n          \"label\": \"Home\",\n          \"hint\": \"Everything on\"\n        },\n        {\n          \"value\": \"Night\",\n          \"label\": \"Night\",\n          \"hint\": \"Nothing makes a sound\"\n        }\n      ]\n    }\n  ]\n}",
+            "preset": "",
+            "out": "pressed"
+          }
+        },
+        "next": 3
+      },
+      {
+        "id": 3,
+        "x": 540.0,
+        "y": 60.0,
+        "kind": {
+          "Branch": {
+            "a": "ok",
+            "op": "IsTrue",
+            "b": ""
+          }
+        },
+        "next": 4,
+        "alt": 9
+      },
+      {
+        "id": 4,
+        "x": 840.0,
+        "y": 60.0,
+        "kind": {
+          "Ask": {
+            "mode": "Panel",
+            "message": "{\n  \"id\": \"edit-profile\",\n  \"title\": \"Adjust {{profile}}\",\n  \"subtitle\": \"Changes apply when you save\",\n  \"place\": \"center\",\n  \"widgets\": [\n    {\n      \"type\": \"input\",\n      \"id\": \"label\",\n      \"label\": \"Name shown\",\n      \"hint\": \"What the profile is called\",\n      \"value\": \"{{profile}}\",\n      \"required\": true\n    },\n    {\n      \"type\": \"slider\",\n      \"id\": \"volume\",\n      \"label\": \"Volume\",\n      \"min\": 0,\n      \"max\": 100,\n      \"step\": 5,\n      \"value\": 40,\n      \"unit\": \"%\"\n    },\n    {\n      \"type\": \"choice\",\n      \"id\": \"theme\",\n      \"label\": \"Notices\",\n      \"layout\": \"chips\",\n      \"options\": [\n        \"Quiet\",\n        \"Normal\",\n        \"Loud\"\n      ],\n      \"value\": \"Normal\"\n    },\n    {\n      \"type\": \"separator\"\n    },\n    {\n      \"type\": \"toggle\",\n      \"id\": \"advanced\",\n      \"label\": \"Show advanced options\"\n    },\n    {\n      \"type\": \"number\",\n      \"id\": \"delay\",\n      \"label\": \"Delay before a notice\",\n      \"min\": 0,\n      \"max\": 60,\n      \"step\": 1,\n      \"value\": 0,\n      \"unit\": \"s\",\n      \"show_if\": {\n        \"id\": \"advanced\"\n      }\n    },\n    {\n      \"type\": \"color\",\n      \"id\": \"tint\",\n      \"label\": \"Color of the badge\",\n      \"value\": \"#3b82f6\",\n      \"show_if\": {\n        \"id\": \"advanced\"\n      }\n    }\n  ],\n  \"buttons\": [\n    {\n      \"id\": \"cancel\",\n      \"label\": \"Cancel\",\n      \"cancel\": true,\n      \"side\": \"start\"\n    },\n    {\n      \"id\": \"reset\",\n      \"label\": \"Reset\",\n      \"tone\": \"danger\"\n    },\n    {\n      \"id\": \"save\",\n      \"label\": \"Save profile\",\n      \"tone\": \"primary\"\n    }\n  ]\n}",
+            "preset": "",
+            "out": "button"
+          }
+        },
+        "next": 5
+      },
+      {
+        "id": 5,
+        "x": 40.0,
+        "y": 260.0,
+        "kind": {
+          "Branch": {
+            "a": "ok",
+            "op": "IsTrue",
+            "b": ""
+          }
+        },
+        "next": 6,
+        "alt": 9
+      },
+      {
+        "id": 6,
+        "x": 240.0,
+        "y": 260.0,
+        "kind": {
+          "Branch": {
+            "a": "button",
+            "op": "Eq",
+            "b": "reset"
+          }
+        },
+        "next": 7,
+        "alt": 8
+      },
+      {
+        "id": 7,
+        "x": 540.0,
+        "y": 260.0,
+        "kind": {
+          "Native": {
+            "op": "Notify",
+            "a": "{{profile}} reset",
+            "b": "Back to the defaults"
+          }
+        },
+        "next": 9
+      },
+      {
+        "id": 8,
+        "x": 240.0,
+        "y": 460.0,
+        "kind": {
+          "Native": {
+            "op": "Notify",
+            "a": "{{label}} saved",
+            "b": "volume {{volume}}%, notices {{theme}}, delay {{delay}} s"
+          }
+        },
+        "next": 9
+      },
+      {
+        "id": 9,
+        "x": 540.0,
+        "y": 460.0,
+        "kind": "End"
+      }
+    ]
+  }
+}

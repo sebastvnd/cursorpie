@@ -10,6 +10,7 @@
 //! | [`open_choice_demo`] | "Choose between a new window and the open app" | the two badges coming out of a slice, one of them picked, and what it does to the app |
 //! | [`desktop_demo`] | [`DesktopMode`] | what "Open app" does to an app on another desktop |
 //! | [`look_demo`] | pie size, names, app icon, accent, material | the pie as it will look, the pointer passing over its slices |
+//! | [`trail_demo`] | the submenu trail (web mode): distance, node size, spacing, thread, glide speed | a pie opening a submenu, the pie it left shrinking to a node, the nodes lining up on an arc, the pointer returning to one |
 //! | [`app_icon_demo`] | [`AppIconStyle`], "Show the app's icon in the center" | the app's icon flying into the middle of the pie, staying in color or turning into a one-color silhouette |
 //! | [`side_demo`] | side buttons: which pie they follow, ring color, right-click | the side button firing the pie it follows, and right-click switching it |
 //! | [`memory_demo`] | "Free memory while idle" | the idle timer running out, the memory dropped, the trigger loading it again |
@@ -23,6 +24,7 @@
 
 use super::theme::*;
 use crate::config::{AppGesture, AppIconStyle, DesktopMode, SideTarget, TargetApp};
+use crate::geometry::{TrailNode, TrailShape, trail_layout};
 use crate::ui::draw::{
     ease_out_back, ease_out_cubic, glass_colors, mix, on_accent, pie_colors, rgb, ring_slice,
 };
@@ -836,6 +838,270 @@ pub(in crate::ui::settings) fn look_demo(
     ui.add_space(GAP);
 }
 
+// --------------------------------------------------------------- the submenu trail
+
+/// Seconds the trail loop lasts.
+const TRAIL_LOOP: f32 = 8.0;
+/// Outer radius of the ring in the trail demo, in points.
+const TRAIL_R: f32 = 28.0;
+/// Seconds the ring takes to bloom (the real one blooms in 0.22).
+const TRAIL_BLOOM: f32 = 0.22;
+/// Seconds a node takes to glide to its place at the usual speed.
+const TRAIL_GLIDE_SECS: f32 = 0.4;
+/// When the pointer leaves the first ring, the second one, and starts for a node of the trail.
+const TRAIL_T_OUT_1: f32 = 1.0;
+const TRAIL_T_OUT_2: f32 = 2.7;
+const TRAIL_T_BACK: f32 = 4.2;
+/// When the levels change: the first submenu opens, the second one, and the way back.
+const TRAIL_AT_1: f32 = 1.5;
+const TRAIL_AT_2: f32 = 3.2;
+const TRAIL_AT_3: f32 = 4.7;
+/// When the demo starts to fade away.
+const TRAIL_T_FADE: f32 = 7.2;
+/// Seconds the pointer takes to cross from one place to the next.
+const TRAIL_MOVE: f32 = 0.5;
+
+/// One node of the trail in the demo.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct TrailDemoNode {
+    /// Where it is now, from the center of the ring on screen.
+    pub at: Vec2,
+    /// Its radius now (it grows as it arrives).
+    pub r: f32,
+    /// 0 for the ring just left, 1 for the one before it, ...
+    pub slot: usize,
+}
+
+/// One moment of the trail demo.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub(super) struct TrailFrame {
+    /// How visible all of it is (it fades away at the end of the loop).
+    pub fade: f32,
+    /// How far the ring on screen has bloomed (every level blooms).
+    pub bloom: f32,
+    /// The pointer, from the center of the ring on screen.
+    pub pointer: Vec2,
+    /// The nodes, the nearest first.
+    pub nodes: Vec<TrailDemoNode>,
+    /// Which part of the story it is (0 to 3, see [`trail_caption`]).
+    pub step: usize,
+    /// The pointer is on the node it is going back to.
+    pub on_node: bool,
+}
+
+/// Where the nodes of the rings at `centers` go, seen from the ring on screen at `cur`: the real
+/// layout of the pie, for a ring of the size of the demo's.
+fn trail_nodes(centers: &[Vec2], cur: Vec2, shape: TrailShape) -> Vec<TrailNode> {
+    let offsets: Vec<(f32, f32)> = centers.iter().map(|c| (c.x - cur.x, c.y - cur.y)).collect();
+    // a pie of this window has an outer radius of TRAIL_R
+    trail_layout(&offsets, 2.0 * (TRAIL_R + 10.0), shape)
+}
+
+/// Where the node of ring `level` is in `nodes`.
+fn node_pos(nodes: &[TrailNode], level: usize) -> Option<Vec2> {
+    nodes
+        .iter()
+        .find(|n| n.level == level)
+        .map(|n| Vec2::new(n.x, n.y))
+}
+
+/// The nodes `secs` after they were asked to go to `targets`: each starts at the place `from` gives
+/// for its level and glides to its target, and grows as it arrives, as in the real pie.
+fn glide_nodes(
+    targets: &[TrailNode],
+    from: &dyn Fn(usize) -> Vec2,
+    secs: f32,
+    duration: f32,
+) -> Vec<TrailDemoNode> {
+    let k = ease_out_cubic(ramp(secs, 0.0, duration));
+    targets
+        .iter()
+        .enumerate()
+        .map(|(slot, n)| {
+            let to = Vec2::new(n.x, n.y);
+            let start = from(n.level);
+            let at = start + (to - start) * k;
+            let left = ((at - to).length() / (1.2 * TRAIL_R)).clamp(0.0, 1.0);
+            TrailDemoNode {
+                at,
+                r: n.r * (0.55 + 0.45 * (1.0 - left)),
+                slot,
+            }
+        })
+        .collect()
+}
+
+/// The trail demo at `t` seconds, for a trail of `shape` whose nodes glide at `glide` times the
+/// usual speed: a pie opens, the pointer crosses a slice with a dot and a submenu opens where the
+/// pointer is, while the pie it left shrinks to a node; again, and the nodes line up on an arc;
+/// then the pointer goes onto a node and that pie is back, and the loop fades out.
+///
+/// The positions are the real layout (`geometry::trail_layout`), so the distance, the size, the
+/// shrinking and the spacing of the settings change the demo exactly as they change the pie.
+pub(super) fn trail_frame(t: f32, shape: TrailShape, glide: f32) -> TrailFrame {
+    let t = t.rem_euclid(TRAIL_LOOP);
+    let duration = TRAIL_GLIDE_SECS / glide.clamp(0.1, 4.0);
+    // the centers of the rings, in one frame of reference: the pointer crosses the rim of each
+    // ring a little beyond it, and the next ring is centered there
+    let g0 = Vec2::ZERO;
+    let g1 = g0 + Vec2::new(1.1 * TRAIL_R, 0.0);
+    let g2 = g1 + Vec2::new(0.0, 1.1 * TRAIL_R);
+    let n1 = trail_nodes(&[g0], g1, shape);
+    let n2 = trail_nodes(&[g0, g1], g2, shape);
+    // going back: the ring of the nearest node is centered where the pointer is, on that node, and
+    // the rings behind it move with it
+    let g3 = g2 + node_pos(&n2, 1).unwrap_or(Vec2::ZERO);
+    let g0b = g0 + (g3 - g1);
+    let n3 = trail_nodes(&[g0b], g3, shape);
+    let go = |secs: f32, from: f32| ease_out_cubic(ramp(secs, from, TRAIL_MOVE));
+    let bloom = |secs: f32| ease_out_cubic(ramp(secs, 0.0, TRAIL_BLOOM));
+    let fade = 1.0 - ramp(t, TRAIL_T_FADE, 0.5);
+    let pos = |nodes: &[TrailNode], level: usize| node_pos(nodes, level).unwrap_or(Vec2::ZERO);
+
+    let mut f = if t < TRAIL_AT_1 {
+        TrailFrame {
+            bloom: bloom(t),
+            pointer: (g1 - g0) * go(t, TRAIL_T_OUT_1),
+            step: 0,
+            ..TrailFrame::default()
+        }
+    } else if t < TRAIL_AT_2 {
+        let se = t - TRAIL_AT_1;
+        TrailFrame {
+            bloom: bloom(se),
+            pointer: (g2 - g1) * go(t, TRAIL_T_OUT_2),
+            // the ring that was left starts where it was
+            nodes: glide_nodes(&n1, &|_| g0 - g1, se, duration),
+            step: 1,
+            ..TrailFrame::default()
+        }
+    } else if t < TRAIL_AT_3 {
+        let se = t - TRAIL_AT_2;
+        let moved = go(t, TRAIL_T_BACK);
+        TrailFrame {
+            bloom: bloom(se),
+            pointer: (g3 - g2) * moved,
+            // the nodes of the level before keep their places in the world and glide to the new ones
+            nodes: glide_nodes(
+                &n2,
+                &|level| {
+                    if level == 1 {
+                        g1 - g2
+                    } else {
+                        pos(&n1, level) + (g1 - g2)
+                    }
+                },
+                se,
+                duration,
+            ),
+            step: 2,
+            on_node: moved > 0.95,
+            ..TrailFrame::default()
+        }
+    } else {
+        let se = t - TRAIL_AT_3;
+        TrailFrame {
+            bloom: bloom(se),
+            nodes: glide_nodes(&n3, &|level| pos(&n2, level) + (g2 - g3), se, duration),
+            step: 3,
+            ..TrailFrame::default()
+        }
+    };
+    f.fade = fade;
+    f
+}
+
+/// What the trail demo says about each part of its story.
+fn trail_caption(step: usize) -> &'static str {
+    match step {
+        0 => "The pie opens; the pointer crosses a slice with a dot",
+        1 => "The submenu opens where the pointer is; the pie you left shrinks to a node",
+        2 => "Every level you left stays as a node on an arc, nearest first",
+        _ => "Move the pointer onto a node: that pie is back",
+    }
+}
+
+/// A small arrowhead at `at`, pointing along `dir` (a unit vector), as on the threads of the pie.
+fn trail_chevron(p: &egui::Painter, at: Pos2, dir: Vec2, stroke: Stroke) {
+    let side = Vec2::new(-dir.y, dir.x);
+    let tip = at + dir * 3.6;
+    let back = at - dir * 2.4;
+    p.add(egui::Shape::line(
+        vec![back + side * 4.2, tip, back - side * 4.2],
+        stroke,
+    ));
+}
+
+/// The submenu trail as the settings make it: how far the nodes sit (`shape`), whether the thread
+/// is drawn, how fast the nodes glide. `enabled` is the web mode itself: while it is off the demo
+/// is dimmed, because the settings do nothing.
+pub(in crate::ui::settings) fn trail_demo(
+    ui: &mut egui::Ui,
+    accent: Color32,
+    shape: TrailShape,
+    thread: bool,
+    glide: f32,
+    enabled: bool,
+) {
+    let (p, rect, t) = stage(ui);
+    let f = trail_frame(t, shape, glide);
+    let dim = if enabled { 1.0 } else { 0.4 };
+    let fade = f.fade * dim;
+    let colors = pie_colors();
+    let c = Pos2::new(rect.center().x, rect.min.y + PIE_Y - 4.0);
+
+    if thread && fade > 0.01 {
+        let line = |from: Pos2, to: Pos2, w: f32, a: f32| {
+            p.line_segment(
+                [from, to],
+                Stroke::new(w + 2.0, colors.core.gamma_multiply(0.55 * fade)),
+            );
+            let stroke = Stroke::new(w, colors.ink.gamma_multiply(a * fade));
+            p.line_segment([from, to], stroke);
+            let d = to - from;
+            if d.length() > 24.0 {
+                trail_chevron(&p, from + d * 0.5, d.normalized(), stroke);
+            }
+        };
+        if let Some(first) = f.nodes.first() {
+            line(c + first.at, c, 3.0, 0.9);
+        }
+        for w in f.nodes.windows(2) {
+            let age = (1.0 - 0.13 * w[1].slot as f32).max(0.45);
+            line(c + w[1].at, c + w[0].at, 2.0, 0.65 * age);
+        }
+    }
+    // the nodes, the oldest first, so the nearest is in front
+    for n in f.nodes.iter().rev() {
+        let age = (1.0 - 0.13 * n.slot as f32).max(0.45);
+        let at = c + n.at;
+        p.circle_filled(
+            at,
+            n.r,
+            colors.core.gamma_multiply((0.6 + 0.37 * age) * fade),
+        );
+        let edge = if n.slot == 0 {
+            accent.gamma_multiply(fade)
+        } else {
+            colors.ink.gamma_multiply(0.6 * age * fade)
+        };
+        let lit = if f.on_node && n.slot == 0 { 3.0 } else { 2.0 };
+        p.circle_stroke(at, n.r, Stroke::new(lit, edge));
+        p.circle_filled(at, n.r * 0.3, colors.ink.gamma_multiply(0.6 * age * fade));
+    }
+    mini_pie(&p, c, TRAIL_R, f.bloom * fade, accent, false, 0.0);
+    if fade > 0.05 {
+        cursor(&p, c + f.pointer);
+    }
+    let text = if enabled {
+        trail_caption(f.step)
+    } else {
+        "Off: a submenu replaces the pie"
+    };
+    caption(&p, rect, text);
+    ui.add_space(GAP);
+}
+
 // ------------------------------------------------------------ the app's icon
 
 /// Seconds the app-icon loop lasts.
@@ -1499,6 +1765,97 @@ fn mini_pie(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_trail_demo_opens_a_submenu_leaves_a_node_and_comes_back() {
+        let shape = TrailShape::default();
+        let at = |t: f32| trail_frame(t, shape, 1.0);
+        let start = at(0.0);
+        assert!(start.nodes.is_empty() && start.bloom == 0.0 && start.step == 0);
+        assert!(at(0.9).nodes.is_empty(), "the first pie has no trail");
+        // one level in: one node, then two, then the way back leaves one again
+        assert_eq!(at(TRAIL_AT_1 + 1.0).nodes.len(), 1);
+        assert_eq!(at(TRAIL_AT_2 + 1.0).nodes.len(), 2);
+        assert_eq!(at(TRAIL_AT_3 + 1.0).nodes.len(), 1);
+        assert_eq!(
+            [0.5, 2.0, 4.0, 6.0].map(|t| at(t).step),
+            [0, 1, 2, 3],
+            "the parts of the story, in order"
+        );
+        // every level blooms again, at the moment it opens
+        for t in [TRAIL_AT_1, TRAIL_AT_2, TRAIL_AT_3] {
+            assert!(
+                at(t + 0.01).bloom < 0.3,
+                "a new ring starts to bloom at {t}"
+            );
+            assert!(at(t + TRAIL_BLOOM + 0.05).bloom > 0.99);
+        }
+        // it ends faded out, so the loop restarts from nothing
+        let end = at(TRAIL_LOOP - 0.01);
+        assert!(end.fade < 0.01, "{}", end.fade);
+    }
+
+    #[test]
+    fn the_trail_demo_follows_the_shape_of_the_settings() {
+        let near = TrailShape::from_percent(150, 20, 78, 38);
+        let far = TrailShape::from_percent(240, 40, 78, 38);
+        let t = TRAIL_AT_2 + 1.0; // settled (the glide is over), two nodes, before the way back opens
+        let (a, b) = (trail_frame(t, near, 1.0), trail_frame(t, far, 1.0));
+        assert!(b.nodes[0].at.length() > a.nodes[0].at.length(), "farther");
+        assert!(b.nodes[0].r > a.nodes[0].r, "bigger");
+        // settled nodes are at the real distance: reach outer radii from the center
+        assert!((a.nodes[0].at.length() - near.reach * TRAIL_R).abs() < 0.5);
+        // and each older one is smaller
+        assert!(a.nodes[1].r < a.nodes[0].r);
+    }
+
+    #[test]
+    fn the_nodes_of_the_demo_glide_and_a_faster_glide_arrives_sooner() {
+        let shape = TrailShape::default();
+        let t = TRAIL_AT_1 + 0.1;
+        let slow = trail_frame(t, shape, 0.4);
+        let fast = trail_frame(t, shape, 3.0);
+        let reach = shape.reach * TRAIL_R;
+        let (s, f) = (slow.nodes[0].at.length(), fast.nodes[0].at.length());
+        assert!(
+            (f - reach).abs() < (s - reach).abs(),
+            "the fast one is nearer its place: {f} {s}"
+        );
+        let settled = trail_frame(TRAIL_AT_1 + 1.0, shape, 0.4);
+        assert!((settled.nodes[0].at.length() - reach).abs() < 0.5);
+    }
+
+    #[test]
+    fn the_trail_demo_loops_without_a_jump_and_every_frame_is_finite() {
+        let shape = TrailShape::default();
+        for i in 0..=800 {
+            let t = i as f32 * 0.01;
+            let f = trail_frame(t, shape, 1.0);
+            assert!(f.pointer.x.is_finite() && f.pointer.y.is_finite());
+            assert!(f.nodes.iter().all(|n| n.at.x.is_finite() && n.r > 0.0));
+        }
+        let (a, b) = (
+            trail_frame(2.0, shape, 1.0),
+            trail_frame(2.0 + TRAIL_LOOP, shape, 1.0),
+        );
+        assert_eq!(a, b);
+        // the pointer is where the next ring opens when the level changes (no jump)
+        let before = trail_frame(TRAIL_AT_1 - 0.001, shape, 1.0).pointer;
+        assert!((before.x - 1.1 * TRAIL_R).abs() < 0.5 && before.y.abs() < 0.5);
+        let after = trail_frame(TRAIL_AT_1 + 0.001, shape, 1.0).pointer;
+        assert!(after.length() < 0.5, "centered on the new ring: {after:?}");
+    }
+
+    #[test]
+    fn the_trail_captions_tell_the_four_parts_apart() {
+        let all: Vec<&str> = (0..4).map(trail_caption).collect();
+        for (i, a) in all.iter().enumerate() {
+            assert!(!a.is_empty());
+            for b in &all[i + 1..] {
+                assert_ne!(a, b);
+            }
+        }
+    }
 
     #[test]
     fn the_icon_flies_into_the_pie_and_a_silhouette_loses_its_colors() {

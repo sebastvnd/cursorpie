@@ -5,6 +5,10 @@ interactive sibling: a small window of CursorPie with a title, **widgets** (text
 lists, a progress bar) and up to four **buttons**. It is drawn in the look of Settings, it takes the keyboard, and it
 hands back what the person entered.
 
+> **Writing a panel for a flow, as an AI agent or by hand?** This page is the reference of the format. How to *design* a
+> good panel (which widget, how big, how the flow is wired around it, the usual mistakes) is in
+> [PANEL_DESIGN_FOR_AI.md](PANEL_DESIGN_FOR_AI.md). Read that one first.
+
 A panel is plain data (JSON). That is the point: it is the **base** that flows, the browser extension and anything you
 add later build on, instead of each one needing its own window code.
 

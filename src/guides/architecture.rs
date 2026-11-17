@@ -251,7 +251,10 @@
 //!
 //! egui never evicts a glyph from its atlas, so **never lay text out at a size taken from user input**
 //! (a zoom, a slider) without snapping it to a short ladder: the Flow canvas uses `crisp_scale`, 4 sizes per
-//! doubling. A size that comes from a continuous value cuts a whole new set of glyphs per value.
+//! doubling. A size that comes from a continuous value cuts a whole new set of glyphs per value. The pie
+//! follows the same rule: the icon of a node of the trail (web mode) grows while it glides, so it is laid out
+//! at `trail::glyph_ladder` of its size (8 per doubling) and `settings::note_glyph_sizes` makes the next sleep
+//! rebuild the atlas.
 //!
 //! **A hidden window frees nothing by itself.** eframe runs no egui pass and paints nothing while
 //! the window is hidden, only `App::logic`. Dropped textures, the font atlas that `reset_atlas` replaced

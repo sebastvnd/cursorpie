@@ -126,6 +126,11 @@ and scaling.
   start of the drag. A quick click is passed on reliably.
 - The click of the extra finger of a trackpad hold is swallowed by grabbing the left and right buttons while the hold runs;
   a click that is not the extra one reaches the app a moment late, like a side-button click.
+- While the pie of a **mouse hold** is open, the grab of the held button takes the pointer motion, so the app under the
+  pie hears no move. An app that hid its pointer (a terminal while typing, a video player when idle) and shows it again
+  only when it hears the mouse move may keep it hidden until the button is released. This has the same shape as the
+  macOS problem that is fixed there (see the changelog), but nothing here plays the motion back yet. If you see it, run
+  with `CURSORPIE_DEBUG=1`, say which app hid the pointer and open an issue.
 - The checklist of [Linux support](../developer/LINUX_MIGRATION.md#manual-verification-checklist) is still being completed
   on real desktops.
 

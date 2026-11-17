@@ -8,6 +8,9 @@ use crate::config::{
     AppGesture, AppIconStyle, Appearance, Config, DesktopMode, HudPosition, IconShadow, PieStyle,
     SideTarget, TargetApp, TouchClickAction,
 };
+use crate::geometry::{
+    TRAIL_FAN_RANGE, TRAIL_GLIDE_RANGE, TRAIL_NODE_RANGE, TRAIL_REACH_RANGE, TRAIL_SHRINK_RANGE,
+};
 use crate::platform::Os;
 use crate::ui::app::App;
 use crate::ui::draw::rgb;
@@ -376,6 +379,104 @@ impl App {
                 "In an app's own pie.",
                 accent,
             );
+            toggle_row(
+                ui,
+                &mut cfg.submenu_trail,
+                "Submenus keep a trail (web mode)",
+                "The pie you came from shrinks to a small node showing its center icon (the CursorPie mark when it has none), on a thread to the submenu. Every level you left stays as a node on an arc around it, in the order you opened them (the nearest is the last one, the arrows point toward where you are): move the pointer onto one to return straight to that pie. Off: the classic mode, a submenu replaces the pie.",
+                accent,
+            );
+        });
+        panel(ui, "Submenu trail (web mode)", |ui| {
+            demo::trail_demo(
+                ui,
+                accent,
+                cfg.trail_shape(),
+                cfg.trail_thread,
+                f32::from(cfg.trail_glide) / 100.0,
+                cfg.submenu_trail,
+            );
+            // these only act while the web mode is on
+            ui.add_enabled_ui(cfg.submenu_trail, |ui| {
+                let (reach, node, shrink, fan, glide) = (
+                    TRAIL_REACH_RANGE,
+                    TRAIL_NODE_RANGE,
+                    TRAIL_SHRINK_RANGE,
+                    TRAIL_FAN_RANGE,
+                    TRAIL_GLIDE_RANGE,
+                );
+                slider_row(
+                    ui,
+                    "Distance",
+                    &mut cfg.trail_reach,
+                    reach.0..=reach.1,
+                    " %",
+                    accent,
+                );
+                slider_row(
+                    ui,
+                    "Node size",
+                    &mut cfg.trail_node,
+                    node.0..=node.1,
+                    " %",
+                    accent,
+                );
+                slider_row(
+                    ui,
+                    "Older nodes keep",
+                    &mut cfg.trail_shrink,
+                    shrink.0..=shrink.1,
+                    " %",
+                    accent,
+                );
+                slider_row(
+                    ui,
+                    "Spacing",
+                    &mut cfg.trail_fan,
+                    fan.0..=fan.1,
+                    "°",
+                    accent,
+                );
+                slider_row(
+                    ui,
+                    "Glide speed",
+                    &mut cfg.trail_glide,
+                    glide.0..=glide.1,
+                    " %",
+                    accent,
+                );
+                toggle_row(
+                    ui,
+                    &mut cfg.trail_thread,
+                    "Show the thread",
+                    "The line, with small arrows, that joins the nodes to the pie. Off: only the nodes.",
+                    accent,
+                );
+                let mut reset = false;
+                row(
+                    ui,
+                    "Defaults",
+                    "Distance, size, spacing, thread and speed as CursorPie ships them.",
+                    |ui| {
+                        reset = button(
+                            ui,
+                            Look::Soft,
+                            Some(symbols::ARROW_COUNTER_CLOCKWISE),
+                            "Reset",
+                        )
+                        .clicked();
+                    },
+                );
+                if reset {
+                    let d = crate::config::Config::default();
+                    cfg.trail_reach = d.trail_reach;
+                    cfg.trail_node = d.trail_node;
+                    cfg.trail_shrink = d.trail_shrink;
+                    cfg.trail_fan = d.trail_fan;
+                    cfg.trail_thread = d.trail_thread;
+                    cfg.trail_glide = d.trail_glide;
+                }
+            });
         });
         panel(ui, "Pie material", |ui| {
             row_wide(

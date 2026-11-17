@@ -96,6 +96,12 @@ pub struct App {
     pub hover: Option<usize>,
     pub profile: usize,
     pub path: Vec<usize>,
+    /// Trail ("web") mode: where the rings that were left to open the current submenu were
+    /// centered (screen points), outermost first. One per level of `path`, or empty.
+    pub trail: Vec<Pos2>,
+    /// Where the node of each ring in `trail` is drawn now (screen points). It glides from where
+    /// the ring was to its place in the web, so a level change is not a jump.
+    pub trail_disp: Vec<Pos2>,
     pub pie_open: bool,
     pub visible: bool,
     pub fresh: bool,
@@ -113,6 +119,17 @@ pub struct App {
     pub active_anim: [f32; MAX_ITEMS],
     pub win: f32,
     pub pie_pos: Pos2,
+    /// The top-left corner the pie window was last asked to be at (window points), so the ring
+    /// can be drawn on the pointer when a window manager put the window somewhere else, as it
+    /// does near the edge of the screen (see `ui::screen::pie_center_shift`).
+    pub pie_origin: Pos2,
+    /// Where the pointer was (pointer space, like `pie_pos`) when the pie window was last put
+    /// somewhere: the center of the window. A submenu does not move the window while its ring
+    /// still fits in it; the ring is drawn `pie_off` away from the center instead.
+    pub pie_anchor: Pos2,
+    /// How far the center of the ring on screen is from the center of the pie window (window
+    /// points). Zero while the window is centered on the ring.
+    pub pie_off: Vec2,
     pub opened_at: Instant,
     /// Where the pie window was last asked to be, and since when. `logic` keeps re-sending that
     /// position for a moment, because some window managers (KWin on X11) place a window that is
@@ -209,6 +226,8 @@ impl App {
             hover: None,
             profile: 0,
             path: Vec::new(),
+            trail: Vec::new(),
+            trail_disp: Vec::new(),
             pie_open: false,
             visible: false,
             fresh: false,
@@ -221,6 +240,9 @@ impl App {
             active_anim: [0.0; MAX_ITEMS],
             win,
             pie_pos: egui::pos2(200.0, 200.0),
+            pie_origin: egui::pos2(0.0, 0.0),
+            pie_anchor: egui::pos2(0.0, 0.0),
+            pie_off: Vec2::ZERO,
             opened_at: Instant::now(),
             want_pos: None,
             last_tick: Instant::now(),

@@ -6,13 +6,14 @@
 //! prompt such as "make this", and import the file the agent returns.
 //!
 //! The kit holds `START_HERE.md` (what the agent must do), `REQUEST.md` (the person's words),
-//! `FLOWS_FOR_AI.md`, `flow.schema.json` and `examples/flows/*`. All of it is compiled into the app
+//! `FLOWS_FOR_AI.md`, `PANEL_DESIGN_FOR_AI.md` and `PANELS.md` (how to build a good panel, and the
+//! reference of its format), `flow.schema.json` and `examples/flows/*`. All of it is compiled into the app
 //! with `include_str!`, so the kit can never drift from the version of the app that reads the flow.
 //!
 //! No part of this module touches the OS or egui: [`kit_files`] and [`zip_stored`] are pure and
 //! unit tested, [`write_kit`] takes the directory as a parameter. There is no zip dependency: the
 //! archive is written with the *stored* method (no compression), which every unzip tool reads and
-//! which is enough for about 100 KB of text.
+//! which is enough for a few hundred KB of text.
 
 use std::fs;
 use std::io;
@@ -30,13 +31,23 @@ pub const KIT_FILE: &str = "CursorPie-flow-kit.zip";
 
 const START_HERE: &str = include_str!("../../docs/flow-kit/START_HERE.md");
 const GUIDE: &str = include_str!("../../docs/FLOWS_FOR_AI.md");
+const PANEL_GUIDE: &str = include_str!("../../docs/PANEL_DESIGN_FOR_AI.md");
+const PANEL_REFERENCE: &str = include_str!("../../docs/PANELS.md");
 const SCHEMA: &str = include_str!("../../docs/flow.schema.json");
 
 /// The examples, under the same relative path the guide links to (`examples/flows/`).
-const EXAMPLES: [(&str, &str); 10] = [
+const EXAMPLES: [(&str, &str); 15] = [
     (
         "examples/flows/ask-and-loop.cursorpie-flow.json",
         include_str!("../../docs/examples/flows/ask-and-loop.cursorpie-flow.json"),
+    ),
+    (
+        "examples/flows/browser-remote-panel.cursorpie-flow.json",
+        include_str!("../../docs/examples/flows/browser-remote-panel.cursorpie-flow.json"),
+    ),
+    (
+        "examples/flows/browser-remote-panel-state.cursorpie-flow.json",
+        include_str!("../../docs/examples/flows/browser-remote-panel-state.cursorpie-flow.json"),
     ),
     (
         "examples/flows/config-with-flow.json",
@@ -57,6 +68,18 @@ const EXAMPLES: [(&str, &str); 10] = [
     (
         "examples/flows/open-app-and-new-note.cursorpie-flow.json",
         include_str!("../../docs/examples/flows/open-app-and-new-note.cursorpie-flow.json"),
+    ),
+    (
+        "examples/flows/panel-form.cursorpie-flow.json",
+        include_str!("../../docs/examples/flows/panel-form.cursorpie-flow.json"),
+    ),
+    (
+        "examples/flows/panel-settings-form.cursorpie-flow.json",
+        include_str!("../../docs/examples/flows/panel-settings-form.cursorpie-flow.json"),
+    ),
+    (
+        "examples/flows/progress-panel.cursorpie-flow.json",
+        include_str!("../../docs/examples/flows/progress-panel.cursorpie-flow.json"),
     ),
     (
         "examples/flows/quick-reply-unread-chats.cursorpie-flow.json",
@@ -97,6 +120,11 @@ pub fn kit_files(request: &str, system: &str) -> Vec<(String, Vec<u8>)> {
             request_file(request, system).into_bytes(),
         ),
         ("FLOWS_FOR_AI.md".to_string(), GUIDE.as_bytes().to_vec()),
+        (
+            "PANEL_DESIGN_FOR_AI.md".to_string(),
+            PANEL_GUIDE.as_bytes().to_vec(),
+        ),
+        ("PANELS.md".to_string(), PANEL_REFERENCE.as_bytes().to_vec()),
         ("flow.schema.json".to_string(), SCHEMA.as_bytes().to_vec()),
     ];
     files.extend(
@@ -339,6 +367,8 @@ mod tests {
             "START_HERE.md",
             "REQUEST.md",
             "FLOWS_FOR_AI.md",
+            "PANEL_DESIGN_FOR_AI.md",
+            "PANELS.md",
             "flow.schema.json",
         ] {
             assert!(names.contains(&want), "{want}");
@@ -384,11 +414,81 @@ mod tests {
         }
     }
 
+    /// Every panel in the kit (in the examples, and in the design guide) must be one the app
+    /// accepts: what an agent is shown as good must load and pass the checks of `PanelSpec`.
+    #[test]
+    fn every_panel_the_kit_shows_is_accepted_by_the_app() {
+        use crate::panel::PanelSpec;
+        // the panels of the example flows
+        let mut seen = 0;
+        for (path, text) in EXAMPLES {
+            if !path.ends_with(".cursorpie-flow.json") {
+                continue;
+            }
+            let value: serde_json::Value = serde_json::from_str(text).unwrap();
+            let nodes = value["flow"]["nodes"].as_array().unwrap();
+            for node in nodes {
+                let ask = &node["kind"]["Ask"];
+                if ask["mode"] == "Panel" {
+                    let panel = ask["message"].as_str().unwrap();
+                    PanelSpec::parse(panel)
+                        .unwrap_or_else(|e| panic!("{path}, block {}: {e}", node["id"]));
+                    seen += 1;
+                }
+            }
+        }
+        assert!(seen >= 4, "the examples carry panels ({seen})");
+        // the panels written out in the design guide: a fenced json block with `"widgets"` and no
+        // `"kind"` (the one that shows a panel inside a block is a flow fragment)
+        let mut shown = 0;
+        for block in PANEL_GUIDE.split("```json\n").skip(1) {
+            let json = block.split("```").next().unwrap_or("");
+            if !json.contains("\"widgets\"") || json.contains("\"kind\"") {
+                continue;
+            }
+            PanelSpec::parse(json)
+                .unwrap_or_else(|e| panic!("a panel of PANEL_DESIGN_FOR_AI.md: {e}\n{json}"));
+            shown += 1;
+        }
+        assert!(shown >= 3, "the guide shows its panels ({shown})");
+    }
+
+    #[test]
+    fn every_flow_example_of_the_kit_loads() {
+        for (path, text) in EXAMPLES {
+            if path.ends_with(".cursorpie-flow.json") {
+                assert!(
+                    crate::config::flow::parse_flow(text).is_ok(),
+                    "{path} does not load"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_panel_guide_names_every_panel_example() {
+        for file in [
+            "panel-form.cursorpie-flow.json",
+            "panel-settings-form.cursorpie-flow.json",
+            "progress-panel.cursorpie-flow.json",
+            "browser-remote-panel.cursorpie-flow.json",
+            "browser-remote-panel-state.cursorpie-flow.json",
+        ] {
+            assert!(PANEL_GUIDE.contains(file), "{file}");
+            assert!(
+                EXAMPLES.iter().any(|(p, _)| p.ends_with(file)),
+                "{file} is not in the kit"
+            );
+        }
+    }
+
     #[test]
     fn the_start_page_names_every_file_it_sends_the_agent_to() {
         for name in [
             "REQUEST.md",
             "FLOWS_FOR_AI.md",
+            "PANEL_DESIGN_FOR_AI.md",
+            "PANELS.md",
             "flow.schema.json",
             "examples/flows/",
         ] {

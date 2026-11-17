@@ -1012,6 +1012,138 @@ fn show_on_pointer_display(pid: i32) -> bool {
     }
 }
 
+/// Most moves [`watch_first_windows`] makes: a window that the app puts back where it wants it is
+/// not fought for ever.
+const PLACE_MOVES: u32 = 4;
+
+/// Makes the first window of an app that is about to be started appear on the display the pointer
+/// is on right now, which is the display the pie was opened on. Call it just before the app is
+/// started.
+///
+/// macOS opens the window of an app that was not running on the display it picks itself (the one it
+/// was on last, or the one with the menu bar), so with two displays "Open app" opened the app on the
+/// first display even when the pie was on the second. (An app that already runs and has a window is
+/// dealt with by [`reveal_app`]: `show_on_pointer_display`.) A window that appears within a few
+/// seconds and whose center is on another display is moved to the middle of this one through
+/// Accessibility, which CursorPie has to have anyway; without that permission nothing is moved.
+/// Does nothing with one display. Returns at once: the looking is done on a thread of its own that
+/// ends within seconds.
+pub fn place_new_windows_on_pointer_display(app: &str) {
+    let Some(screen) = pointer_screen() else {
+        return;
+    };
+    let app = app.trim().to_string();
+    if app.is_empty() {
+        return;
+    }
+    std::thread::spawn(move || watch_first_windows(&app, screen));
+}
+
+/// The thread of [`place_new_windows_on_pointer_display`].
+fn watch_first_windows(app: &str, screen: ScreenRect) {
+    use crate::windowing::{PLACE_EVERY, PLACE_GRACE, PLACE_WATCH, center_on};
+
+    // an app that has a window already is left alone: the windows it has stay where they are
+    if let Some(pid) = running_pid(app)
+        && !standard_windows(pid).is_empty()
+    {
+        return;
+    }
+    let start = Instant::now();
+    let mut first_seen: Option<Instant> = None;
+    let mut moves = 0u32;
+    while start.elapsed() < PLACE_WATCH && first_seen.is_none_or(|t| t.elapsed() < PLACE_GRACE) {
+        std::thread::sleep(PLACE_EVERY);
+        let Some(pid) = running_pid(app) else {
+            continue;
+        };
+        for (window, frame) in standard_windows(pid) {
+            first_seen.get_or_insert_with(Instant::now);
+            if center_on(frame, screen) || moves >= PLACE_MOVES {
+                continue;
+            }
+            if move_window_to(&window, frame, screen) {
+                moves += 1;
+                trace(|| format!("a new window of {app:?} moved to the pointer's display"));
+            }
+        }
+    }
+}
+
+/// The standard windows of the app `pid` that are shown and not in full screen, with their frames
+/// (the same windows [`show_on_pointer_display`] works with). Empty without the Accessibility
+/// permission, or when the app has none.
+fn standard_windows(pid: i32) -> Vec<(CFType, ScreenRect)> {
+    let mut out = Vec::new();
+    // SAFETY: every element that is created or copied is wrapped at once, so it is released on
+    // every path; names are CFStrings that outlive the calls; AXValue pointers are to live locals
+    // of the type the AXValue type asks for.
+    unsafe {
+        let app_ref = AXUIElementCreateApplication(pid);
+        if app_ref.is_null() {
+            return out;
+        }
+        let app = CFType::wrap_under_create_rule(app_ref);
+        let Some(list) = copy_attribute(&app, "AXWindows").and_then(|v| v.downcast::<CFArray>())
+        else {
+            return out;
+        };
+        for item in list.iter() {
+            let window = CFType::wrap_under_get_rule(*item);
+            let subrole = copy_attribute(&window, "AXSubrole")
+                .and_then(|v| v.downcast::<CFString>())
+                .map(|s| s.to_string());
+            let flag = |name: &str| {
+                copy_attribute(&window, name)
+                    .and_then(|v| v.downcast::<CFBoolean>())
+                    .is_some_and(bool::from)
+            };
+            let (Some(at), Some(by)) =
+                (ax_point(&window, "AXPosition"), ax_size(&window, "AXSize"))
+            else {
+                continue;
+            };
+            if subrole.as_deref() != Some("AXStandardWindow")
+                || flag("AXMinimized")
+                || flag("AXFullScreen")
+                || by.width < 50.0
+                || by.height < 50.0
+            {
+                continue;
+            }
+            out.push((
+                window,
+                ScreenRect {
+                    x: at.x,
+                    y: at.y,
+                    w: by.width,
+                    h: by.height,
+                },
+            ));
+        }
+    }
+    out
+}
+
+/// Moves `window` to the middle of `screen` (made smaller first if it does not fit). `true` when
+/// the system accepted the new position.
+fn move_window_to(window: &CFType, frame: ScreenRect, screen: ScreenRect) -> bool {
+    let (origin, size) = place_on(screen, frame.w, frame.h);
+    // SAFETY: `window` is a live accessibility element; the pointers are to live locals of a
+    // `CGSize` (kind 2) and a `CGPoint` (kind 1).
+    unsafe {
+        if size.width < frame.w || size.height < frame.h {
+            ax_set_value(window, "AXSize", 2, &size as *const CGSize as *const c_void);
+        }
+        ax_set_value(
+            window,
+            "AXPosition",
+            1,
+            &origin as *const CGPoint as *const c_void,
+        ) == 0
+    }
+}
+
 /// Sets an Accessibility attribute to a point (`kind` 1) or a size (`kind` 2) and gives the AX
 /// error, 0 when it worked.
 ///

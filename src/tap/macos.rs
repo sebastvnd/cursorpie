@@ -274,8 +274,29 @@ fn handle(
         drag.set_integer_value_field(EventField::EVENT_SOURCE_USER_DATA, SYNTH_TAG);
         drag.post(CGEventTapLocation::HID);
     };
+    // A drag that the open pie swallows is also motion that nobody else hears. An app that hid the
+    // pointer shows it again only when it hears the mouse move, so a plain move is played back for
+    // it now and then (see `platform::relay_motion`); the drag itself stays swallowed.
+    let drag = matches!(
+        ev,
+        Ev::Mouse {
+            kind: Kind::Drag,
+            ..
+        }
+    );
     match dispatch(state, notifier, ev, &replay_drag) {
         Verdict::Keep => CallbackResult::Keep,
-        Verdict::Drop => CallbackResult::Drop,
+        Verdict::Drop => {
+            if drag && super::pie_clicks::pie_open(state) {
+                let at = event.location();
+                crate::platform::relay_motion(
+                    at.x,
+                    at.y,
+                    event.get_integer_value_field(EventField::MOUSE_EVENT_DELTA_X),
+                    event.get_integer_value_field(EventField::MOUSE_EVENT_DELTA_Y),
+                );
+            }
+            CallbackResult::Drop
+        }
     }
 }

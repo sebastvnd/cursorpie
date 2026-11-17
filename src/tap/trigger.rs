@@ -10,7 +10,7 @@ use super::touch::haptic::{self, Tick};
 use super::{DRAG_TOLERANCE, FLICK_DISTANCE, Kind, NEXT_ID, PAUSED, Verdict, settings_open};
 use crate::actions::post_mouse;
 use crate::config::{cfg, lock};
-use crate::geometry::Point;
+use crate::geometry::{Point, trail_layout, trail_node_at};
 use crate::msg::{Msg, Notifier};
 use crate::running;
 use std::sync::atomic::Ordering;
@@ -529,8 +529,17 @@ fn on_drag_pending(
     Verdict::Drop
 }
 
+/// Trail ("web") mode: the centers of the rings that were left to open a submenu, outermost first.
+/// It always has one entry per level of the open path, or is stale (see [`trail`]) and is not used.
+static TRAIL: Mutex<Vec<Point>> = Mutex::new(Vec::new());
+
+fn trail() -> MutexGuard<'static, Vec<Point>> {
+    TRAIL.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// Moved while the pie is open: update the hovered slice, or enter a submenu when the cursor
-/// crosses the rim over one. Over an "Open app" slice whose app runs, the UI also learns which of
+/// crosses the rim over one. In the trail mode (`submenu_trail`) the ring it came from stays, and
+/// moving the pointer back onto its center returns to it. Over an "Open app" slice whose app runs, the UI also learns which of
 /// the two badges the cursor is on (see [`running`]).
 fn on_drag_in_pie(notifier: &Notifier, mut g: MutexGuard<'_, Gesture>, p: Point) -> Verdict {
     let Gesture::ActivePie {
@@ -545,10 +554,78 @@ fn on_drag_in_pie(notifier: &Notifier, mut g: MutexGuard<'_, Gesture>, p: Point)
         return Verdict::Drop;
     };
     let touch = *source == Source::Touch;
+    let (trail_on, win, shape) = {
+        let c = cfg();
+        (c.submenu_trail, c.pie_size, c.trail_shape())
+    };
     let hit = eval(*profile, path, *center, p);
+    if trail_on && !hit.enter && !path.is_empty() {
+        // onto the node of a ring that was left: go straight back to that ring
+        let scale = crate::platform::window_scale(center.x, center.y);
+        let level = {
+            let t = trail();
+            (t.len() == path.len())
+                .then(|| {
+                    let offs: Vec<(f32, f32)> = t
+                        .iter()
+                        .map(|q| {
+                            (
+                                ((q.x - center.x) * scale) as f32,
+                                ((q.y - center.y) * scale) as f32,
+                            )
+                        })
+                        .collect();
+                    trail_node_at(
+                        &trail_layout(&offs, win, shape),
+                        ((p.x - center.x) * scale) as f32,
+                        ((p.y - center.y) * scale) as f32,
+                    )
+                })
+                .flatten()
+        };
+        if let Some(level) = level {
+            {
+                // The ring comes back where the pointer is, so the pointer is in its middle and
+                // nothing is hovered at once; the rings still behind it move with it, so the
+                // whole web keeps its shape.
+                let mut t = trail();
+                let (dx, dy) = (p.x - t[level].x, p.y - t[level].y);
+                t.truncate(level);
+                for q in t.iter_mut() {
+                    q.x += dx;
+                    q.y += dy;
+                }
+            }
+            path.truncate(level);
+            *center = p;
+            *hover = None;
+            running::set_shown(None);
+            let (pr, pa) = (*profile, path.clone());
+            drop(g);
+            notifier.send(Msg::ShowPie {
+                x: p.x,
+                y: p.y,
+                profile: pr,
+                path: pa,
+            });
+            if touch {
+                haptic::emit(notifier, Tick::Hover(None));
+            }
+            return Verdict::Drop;
+        }
+    }
     if hit.enter {
         if let Some(h) = hit.hover {
-            // crossed the rim over a submenu: open it, re-centered on the cursor
+            // crossed the rim over a submenu: open it, re-centered on the cursor. In the trail mode
+            // the ring that is left is remembered, and the UI shrinks it to a node.
+            if trail_on {
+                let mut t = trail();
+                if path.is_empty() {
+                    t.clear(); // whatever an earlier gesture left
+                }
+                t.truncate(path.len());
+                t.push(*center);
+            }
             path.push(h);
             *center = p;
             *hover = None;

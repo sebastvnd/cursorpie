@@ -1529,6 +1529,10 @@ mod tests {
                 "telegram-saved-reply",
                 include_str!("../../docs/examples/flows/telegram-saved-reply.cursorpie-flow.json"),
             ),
+            (
+                "panel-settings-form",
+                include_str!("../../docs/examples/flows/panel-settings-form.cursorpie-flow.json"),
+            ),
         ] {
             let flow = crate::config::flow::parse_flow(text).expect("a valid flow file");
             let issues = check_flow(&flow, &[flow.id.as_str()]);

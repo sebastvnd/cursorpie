@@ -6,11 +6,13 @@
 //  * it reports the pointer and the window list (ids, app names, positions: never titles) to
 //    CursorPie's D-Bus name org.cursorpie.Wayland, when something changes and when CursorPie asks;
 //  * it answers one call, org.cursorpie.GnomeBridge.Sync, which makes it report now;
-//  * it brings a window forward when CursorPie's reply says so ("activate:<id>"), and reads the
-//    pointer at full rate while CursorPie says a hold is running ("arm" ... "disarm").
+//  * it brings a window forward when CursorPie's reply says so ("activate:<id>"), moves a window to
+//    a place when it says so ("move:<id>:<x>:<y>", the new window of an app that goes to the display
+//    of the pie), and reads the pointer at full rate while CursorPie says a hold is running
+//    ("arm" ... "disarm").
 //
 // It reads no file, runs no program and listens on no port. The reply of CursorPie is split on ";"
-// and only "arm", "disarm" and "activate:<digits>" are understood.
+// and only "arm", "disarm", "activate:<digits>" and "move:<digits>:<integer>:<integer>" are understood.
 //
 // Written from the GNOME Shell extension guide (gjs.guide) and not yet run on a GNOME session.
 
@@ -305,6 +307,10 @@ export default class CursorPieAdapter extends Extension {
                 const id = c.substring('activate:'.length);
                 if (/^[0-9]{1,20}$/.test(id))
                     this._activate(id);
+            } else if (c.startsWith('move:')) {
+                const m = /^move:([0-9]{1,20}):(-?[0-9]{1,7}):(-?[0-9]{1,7})$/.exec(c);
+                if (m)
+                    this._move(m[1], parseInt(m[2], 10), parseInt(m[3], 10));
             }
         }
     }
@@ -314,6 +320,22 @@ export default class CursorPieAdapter extends Extension {
             if (String(w.get_id()) === id) {
                 // un-minimizes, goes to the window's workspace and raises it
                 Main.activateWindow(w, global.get_current_time());
+                return;
+            }
+        }
+    }
+
+    _move(id, x, y) {
+        for (const w of this._windows()) {
+            if (String(w.get_id()) === id) {
+                try {
+                    // a window that is maximized or full screen is left where it is
+                    if (w.allows_move() && !w.is_fullscreen() &&
+                        !w.maximized_horizontally && !w.maximized_vertically)
+                        w.move_frame(true, x, y);
+                } catch (e) {
+                    // the window is gone, or this version of GNOME Shell does not have the call
+                }
                 return;
             }
         }

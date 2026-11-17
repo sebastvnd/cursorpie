@@ -67,3 +67,9 @@ pub use welcome::Welcome;
 pub(crate) fn take_crisp_used() -> bool {
     tabs::flow::take_crisp_used()
 }
+
+/// Says that glyphs were cut at sizes the pie chose (the nodes of the trail), so that the font
+/// atlas is rebuilt when the UI sleeps; see [`take_crisp_used`].
+pub(crate) fn note_glyph_sizes() {
+    tabs::flow::note_crisp_used();
+}

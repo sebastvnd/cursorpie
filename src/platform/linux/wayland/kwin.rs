@@ -5,8 +5,10 @@
 //!
 //! This file is the pure part and the state, built and tested on every OS:
 //!
-//! * [`script_source`]: the text of the script. It does four things and nothing else: report the
-//!   pointer, report the window list, activate a window by id when told to, and report the outputs.
+//! * [`script_source`]: the text of the script. It does five things and nothing else: report the
+//!   pointer, report the window list, activate a window by id when told to, move one to a place it
+//!   is given (`move:`, for the new window of an app that goes to the display of the pie), and
+//!   report the outputs.
 //!   It is generated text with no user-supplied string in it (decision D4, risk R5).
 //! * [`parse_snapshot`] / [`parse_pointer`]: what the script reports, **range checked**: any program
 //!   of the same user can call CursorPie's D-Bus name, so every number is bounded, every string is
@@ -150,6 +152,23 @@ function apply(commands) {
                 if (String(list[k].internalId) === id) {
                     workspace.activeWindow = list[k];
                     break;
+                }
+            }
+        } else if (c.indexOf("move:") === 0) {
+            // move:<id>:<x>:<y>, a new window that goes to the display of the pie
+            var f = c.substring(5).split(":");
+            var mx = Number(f[1]);
+            var my = Number(f[2]);
+            if (f.length === 3 && isFinite(mx) && isFinite(my)) {
+                var wins = workspace.stackingOrder;
+                for (var m = 0; m < wins.length; m++) {
+                    if (String(wins[m].internalId) === f[0]) {
+                        try {
+                            var fg = wins[m].frameGeometry;
+                            wins[m].frameGeometry = Qt.rect(mx, my, fg.width, fg.height);
+                        } catch (e) {}
+                        break;
+                    }
                 }
             }
         }
@@ -655,6 +674,45 @@ pub(crate) fn activate(id: &str) {
     }
 }
 
+/// Moves the window `id` so that its top-left corner is at `(x, y)` (logical points, as the
+/// compositor counts them), for the new window of an app that goes to the display of the pie.
+pub(crate) fn move_window(id: &str, x: f64, y: f64) {
+    if valid_id(id) && finite_in_range(x) && finite_in_range(y) {
+        queue(&format!(
+            "move:{id}:{}:{}",
+            x.round() as i64,
+            y.round() as i64
+        ));
+        request_sync();
+    }
+}
+
+impl Snapshot {
+    /// The ids of every window.
+    pub(crate) fn window_id_set(&self) -> std::collections::HashSet<String> {
+        self.windows.iter().map(|w| w.id.clone()).collect()
+    }
+
+    /// The main windows of `app` that are shown and whose id is not in `known`: the windows an app
+    /// that was just started has opened.
+    pub(crate) fn new_main_windows(
+        &self,
+        app: &str,
+        known: &std::collections::HashSet<String>,
+        index: Option<&Index>,
+    ) -> Vec<&WinInfo> {
+        let aliases = match index {
+            Some(idx) => idx.aliases(app),
+            None => vec![desktop_entry::name_key(app)],
+        };
+        self.windows
+            .iter()
+            .filter(|w| !w.skip && !w.secondary && !w.hidden && !known.contains(&w.id))
+            .filter(|w| toplevels::belongs_to(&names_of(w, index), &aliases))
+            .collect()
+    }
+}
+
 // ------------------------------------------------------------------------------------- the facade
 
 /// What `backend.rs` asks in a Wayland session. Each answers `None` / `false` / empty when KWin has
@@ -1112,5 +1170,43 @@ mod tests {
         let (_, p) = sample_pointer().unwrap();
         assert_eq!(p, Point::new(5.0, 6.0), "the latest answer, as it is");
         assert!(at.elapsed() < SAMPLE_WAIT, "no adapter, so no waiting");
+    }
+
+    #[test]
+    fn a_move_is_queued_with_whole_numbers_and_only_for_a_real_id() {
+        let _g = TEST_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        take_commands();
+        move_window(ID_A, 2160.4, -12.6);
+        move_window("not an id; rm", 1.0, 2.0); // refused
+        move_window(ID_B, f64::NAN, 2.0); // refused
+        assert_eq!(on_report(&report(&[])), format!("move:{ID_A}:2160:-13"));
+    }
+
+    #[test]
+    fn the_new_windows_of_an_app_are_the_shown_main_ones_that_were_not_there_before() {
+        let idx = index();
+        let snap = parse_snapshot(&report(&[
+            win(ID_A, "org.mozilla.firefox", "firefox", 0.0, 800.0),
+            win(ID_B, "org.mozilla.firefox", "firefox", 100.0, 800.0),
+            win(
+                "{cccccccc-1111-2222-3333-444444444444}",
+                "other",
+                "other",
+                0.0,
+                800.0,
+            ),
+        ]))
+        .unwrap();
+        let known: std::collections::HashSet<String> = [ID_A.to_string()].into();
+        let new = snap.new_main_windows("firefox", &known, Some(&idx));
+        assert_eq!(
+            new.iter().map(|w| w.id.as_str()).collect::<Vec<_>>(),
+            [ID_B]
+        );
+        // nothing is new when every window is known
+        assert!(
+            snap.new_main_windows("firefox", &snap.window_id_set(), Some(&idx))
+                .is_empty()
+        );
     }
 }

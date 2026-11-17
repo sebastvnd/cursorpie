@@ -43,6 +43,10 @@ pub struct ShowWait {
 /// Transparent frames drawn after the window was mapped (see [`App::settle_frames`]).
 const SETTLE_FRAMES: u8 = 2;
 
+/// How far the ring may drift from the center of the pie window while the window stands still, in
+/// outer radii of the ring (see [`App::show_pie`]). The window has this much room on every side.
+const DRIFT_ROOM: f32 = 2.5;
+
 /// How long the window is repainted on a timer after a file chooser closed.
 const REPAINT_BURST: Duration = Duration::from_millis(800);
 
@@ -588,6 +592,14 @@ impl App {
         self.drop_panel(ctx, false);
         self.win = cfg().pie_size;
         self.profile = profile;
+        let trail_on = cfg().submenu_trail;
+        // A ring that is already (mostly) on screen: entering a submenu or coming back to the ring
+        // above it is a change of level, not a new pie. 0.2 and not 0.5: a quick pointer can ask
+        // for the next level while the last one is still blooming, and that must not restart the
+        // whole bloom from zero.
+        let was_open = self.pie_open && self.visible && self.anim > 0.2;
+        let level_changed = self.follow_trail(trail_on, path.len(), x as f32, y as f32);
+        let relevel = was_open && (level_changed || self.path != path);
         self.path = path;
         self.hover = None;
         self.hover_anim = [0.0; MAX_ITEMS];
@@ -596,14 +608,84 @@ impl App {
         self.badge_step = [[0.0; 2]; MAX_ITEMS];
         self.pie_open = true;
         self.fresh = true;
-        self.pie_frames = 0;
-        self.anim = 0.0; // submenus "bloom" again, re-centered on the cursor
+        if !relevel {
+            // a pie that opens on a pointer an app had hidden (macOS: typing hides it until the
+            // mouse moves) must not leave the person with a pie and no pointer
+            platform::reveal_cursor();
+        }
+        // A change of level is not the pie appearing: the window is already mapped and drawn, so
+        // it does not count the frames for the tap again.
+        if !relevel {
+            self.pie_frames = 0;
+        }
+        // Every ring blooms: the pie that opens the gesture, a submenu, and the ring that comes back
+        // when a submenu is left, at any level and with or without the trail mode. The bloom is
+        // what CursorPie looks like, so a change of level starts the clock again like the first
+        // pie. It is smooth because nothing else happens in that frame: the window is not moved or
+        // resized (see below) and the pie is not repainted without end.
+        self.anim = 0.0;
         self.opened_at = Instant::now();
         self.pie_pos = egui::pos2(x as f32, y as f32);
 
-        let w = crate::geometry::window_size(self.win);
-        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize([w, w].into()));
-        ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
+        // THE ROOT OF THE STUTTER: a submenu used to be shown by moving the pie window to be
+        // centered on the pointer. A window move is a request to the window manager (or the
+        // compositor) that is carried out a few frames later, never in the frame that asked for
+        // it, so for those frames the new ring was drawn for one window position while the window
+        // was still at the other one: the pie was pulled aside, cut off by the edge of the window,
+        // or gone, and then jumped. No amount of drawing can make that smooth.
+        //
+        // So the window does not move at all while the ring still fits in it. It is made large
+        // enough (the pie, the room of the trail, and `DRIFT_ROOM` radii on every side) for the
+        // ring of the next level to be drawn where the pointer is, `pie_off` away from the center
+        // of the window; the window is the same at every level, so it is never resized or moved
+        // while a gesture runs, and a change of level is one ordinary frame. Only a ring that
+        // would leave the window (several levels in one direction) moves it, as before.
+        let scale = crate::platform::window_scale(x, y) as f32;
+        // the room of the trail the person asked for, or, with the trail off, of the default one
+        // (the ring of a submenu drifts the same way)
+        let shape = if trail_on {
+            cfg().trail_shape()
+        } else {
+            crate::geometry::TrailShape::default()
+        };
+        let room = crate::geometry::trail_room(self.win, shape);
+        let base = crate::geometry::window_size(self.win) + 2.0 * room;
+        let mut drift = DRIFT_ROOM * crate::geometry::pie_outer(self.win);
+        if let Some(r) = screen_rect_at(self.pie_pos) {
+            // never larger than the screen: a window manager would shrink or push it
+            let screen = r.width().min(r.height()) * scale;
+            drift = drift.min(((screen - base) / 2.0).max(0.0));
+        }
+        let w = base + 2.0 * drift;
+        // The window of the level that was left is already the right size, undecorated, on top and
+        // click-through (or not) for this gesture. Saying it all again made the window manager
+        // reconfigure a mapped window (and the drawing surface with it) at every change of level,
+        // which is what stalled a frame. Only a window that has to change gets the commands.
+        let same_size = ctx
+            .input(|i| i.viewport().inner_rect)
+            .is_some_and(|r| (r.width() - w).abs() <= 1.0 && (r.height() - w).abs() <= 1.0);
+        let reuse = relevel && same_size && self.show_wait.is_none();
+        // where the ring would be in the window that stands, on whole pixels (a ring on a half
+        // pixel is resampled and softens)
+        let ppp = ctx.pixels_per_point();
+        let off = {
+            let d = (self.pie_pos - self.pie_anchor) * scale;
+            Vec2::new((d.x * ppp).round() / ppp, (d.y * ppp).round() / ppp)
+        };
+        let reach =
+            crate::geometry::window_size(self.win) / 2.0 + if trail_on { room } else { 0.0 };
+        let spare = w / 2.0 - reach - 2.0;
+        let fixed = reuse && off.x.abs() <= spare && off.y.abs() <= spare;
+        if fixed {
+            self.pie_off = off;
+        } else {
+            self.pie_anchor = self.pie_pos;
+            self.pie_off = Vec2::ZERO;
+        }
+        if !reuse {
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize([w, w].into()));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
+        }
         // A mouse hold has a button down, so the apps under the pie hear no pointer motion. A
         // trackpad hold has none: the finger moves the real pointer, and a click-through pie lets
         // every move reach the page below (a video player shows its controls, links highlight).
@@ -611,14 +693,20 @@ impl App {
         // pointer stays inside it. Clicks are swallowed by the taps as before.
         let takes_pointer = crate::tap::touch_pie_active() || mouse_pie_takes_pointer();
         diag::log!("ui", "pie_input", takes_pointer = takes_pointer);
-        ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(!takes_pointer));
-        ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
-            egui::WindowLevel::AlwaysOnTop,
-        ));
+        if !reuse {
+            ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(!takes_pointer));
+            ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
+                egui::WindowLevel::AlwaysOnTop,
+            ));
+        }
         // whole points: a window on a half-point offset is resampled by the compositor on
         // standard-density screens, which softens everything drawn in it
         let (wx, wy) = platform::window_point(x, y);
-        let top_left = egui::pos2((wx as f32 - w / 2.0).round(), (wy as f32 - w / 2.0).round());
+        let top_left = if fixed {
+            self.pie_origin // the window stays where it is
+        } else {
+            egui::pos2((wx as f32 - w / 2.0).round(), (wy as f32 - w / 2.0).round())
+        };
         diag::log!(
             "ui",
             "show_pie",
@@ -639,7 +727,10 @@ impl App {
             })
         );
         crate::debug::expect_window(top_left.x, top_left.y);
-        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(top_left));
+        self.pie_origin = top_left;
+        if !fixed {
+            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(top_left));
+        }
         if !self.visible {
             self.visible = true;
             self.show_window(ctx, Vec2::splat(w));
@@ -651,14 +742,71 @@ impl App {
         // could be "open" for as long as nothing else woke the window (the first press after a long
         // idle time), and the hold timer then opened Settings instead.
         ctx.request_repaint();
-        if platform::window_manager_may_recenter() && self.show_wait.is_none() {
+        if platform::window_manager_may_recenter() && self.show_wait.is_none() && !fixed {
             // Once mapped, a move is a request from the client and the window manager honors
             // it; the position given while the window was hidden is not always kept. (A window
             // that is still waiting to be mapped is moved by `step_show_wait` when it is.)
-            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(top_left));
+            // A window that was already on screen got its move above: once is enough, a second
+            // identical move in the same frame is one more round trip to the window manager.
+            if !reuse {
+                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(top_left));
+            }
             self.want_pos = Some((top_left, Instant::now()));
             ctx.request_repaint();
         }
+    }
+
+    /// Trail mode: keeps `self.trail` (and the nodes gliding to their places) in step with the path
+    /// the pie is about to show, at `(x, y)`. Call it before `self.path` and `self.pie_pos` are
+    /// replaced. `len` is the depth of the new path. Returns whether the level changed (a submenu
+    /// was entered, or a ring came back).
+    fn follow_trail(&mut self, on: bool, len: usize, x: f32, y: f32) -> bool {
+        let before = self.path.len();
+        if !on || len == 0 {
+            self.trail.clear();
+            self.trail_disp.clear();
+            return false;
+        }
+        if len == before + 1 && self.trail.len() == before {
+            // one level deeper: the ring that was on screen shrinks to a node, which starts where
+            // that ring was
+            self.trail.push(self.pie_pos);
+            self.trail_disp.push(self.pie_pos);
+            true
+        } else if len < self.trail.len() {
+            // back to an earlier ring, now centered at the pointer: the rings still behind it move
+            // with it (as the tap does), so the web keeps its shape; the nodes drawn stay where
+            // they are on screen and glide to their new places
+            let d = egui::pos2(x, y) - self.trail[len];
+            self.trail.truncate(len);
+            self.trail_disp.truncate(len);
+            for q in self.trail.iter_mut() {
+                *q += d;
+            }
+            true
+        } else if len == self.trail.len() {
+            false // the same level again (the pie was asked for twice)
+        } else {
+            // out of step (never expected): no trail is better than a wrong one
+            self.trail.clear();
+            self.trail_disp.clear();
+            false
+        }
+    }
+
+    /// Lets go of the trail (and gives the room of its two lists back). Called when the pie is gone
+    /// and when the UI sleeps, so a gesture leaves nothing behind in trail mode; the next gesture
+    /// starts a new one.
+    pub(crate) fn forget_trail(&mut self) {
+        if self.trail.capacity() != 0 || self.trail_disp.capacity() != 0 {
+            self.trail = Vec::new();
+            self.trail_disp = Vec::new();
+        }
+    }
+
+    /// Whether the ring that was left is drawn now (trail mode, inside a submenu).
+    pub(crate) fn trail_shown(&self) -> bool {
+        !self.path.is_empty() && self.trail.len() == self.path.len()
     }
 
     /// Starts repainting on a timer for [`REPAINT_BURST`] (see `Msg::Refocus`).

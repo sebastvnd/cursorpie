@@ -4,12 +4,20 @@ This is a root-level, Markdown-driven website for the CursorPie repository.
 
 ## Files
 
-- `index.html` — the landing page and documentation viewer in one file.
-- `assets/site.css` — shared styling and responsive layout.
-- `assets/site.js` — interactions, OS detection, download links, and the Markdown documentation engine.
+- `index.html` — the one-page landing site and the documentation viewer in one file. The landing page is a single scroll (hero, marquee, stats, how it works, features, privacy, download, FAQ). Opening `?doc=...` swaps it for the documentation view without reloading the page.
+- `assets/site.css` — design tokens (light and dark), the Gen Z look (neon palette, thick outlines, hard shadows), animations, documentation layout and responsive rules. Motion is switched off for `prefers-reduced-motion`.
+- `assets/site.js` — theme, scroll animations, the interactive pie demo, OS detection and download links, the in-page router and the Markdown documentation engine.
 - `assets/js/marked.js` — the local Markdown parser used to render project `.md` files.
 - `assets/fonts/` — the project's Inter and Phosphor icon fonts, with their license files.
 - `assets/cursorpie-logo.png` and `assets/cursorpie-mark.png` — CursorPie logo assets.
+
+## Documentation viewer features
+
+- Sidebar built from the `docGroups` list at the top of the documentation section of `assets/site.js` (grouped, collapsible, filterable). Press `/` or `Ctrl/Cmd+K` to search page titles.
+- "On this page" table of contents with scroll tracking, breadcrumbs, reading time, an *Edit on GitHub* link, and previous/next page links.
+- Code blocks get a language label and a Copy button; wide tables scroll inside their own frame; blockquotes starting with **Note**, **Tip** or **Warning** become callouts.
+- Internal links never reload the page, and the browser back button works. On phones the sidebar becomes a drawer.
+- To add a documentation page, add it to `docGroups` (it is then listed in the sidebar and the pager) and keep the file path inside `docs/`, `docs/user/`, `docs/developer/`, `docs/examples/` or `diag/`.
 
 ## How the documentation engine works
 
@@ -31,6 +39,7 @@ The site does not contain converted copies of the documentation. It reads the Ma
 - `docs/FLOWS_FOR_AI.md`
 - `docs/examples/README.md`
 - `docs/PANELS.md`
+- `docs/PANEL_DESIGN_FOR_AI.md`
 - `docs/BROWSER_EXTENSION.md`
 - `docs/DEBUGGING.md`
 - `docs/developer/README.md`

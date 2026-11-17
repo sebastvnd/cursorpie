@@ -5,7 +5,8 @@
 
 use super::dpi::{last_scale, scale_at_physical};
 use super::util::{
-    app_id_for_open, exe_id_from_path, from_wide, logical_to_px, px_to_logical, wide,
+    app_id_for_open, centered_on_work, exe_id_from_path, from_wide, logical_to_px, px_to_logical,
+    wide,
 };
 use crate::geometry::Point;
 use crate::platform::{NativeIcon, ScreenRect};
@@ -15,8 +16,8 @@ use std::time::Duration;
 use windows_sys::Win32::Foundation::{CloseHandle, HWND, LPARAM, POINT, RECT, S_FALSE, S_OK};
 use windows_sys::Win32::Graphics::Gdi::{
     BI_RGB, BITMAP, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, DeleteObject,
-    EnumDisplayMonitors, GetDC, GetDIBits, GetMonitorInfoW, GetObjectW, HDC, HMONITOR, MONITORINFO,
-    ReleaseDC,
+    EnumDisplayMonitors, GetDC, GetDIBits, GetMonitorInfoW, GetObjectW, HDC, HMONITOR,
+    MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint, MonitorFromWindow, ReleaseDC,
 };
 use windows_sys::Win32::Storage::FileSystem::SearchPathW;
 use windows_sys::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
@@ -32,9 +33,10 @@ use windows_sys::Win32::UI::Shell::{SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON, SH
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     BringWindowToTop, DestroyIcon, EnumWindows, GA_ROOT, GW_OWNER, GWL_EXSTYLE, GetAncestor,
     GetClassNameW, GetCursorPos, GetForegroundWindow, GetIconInfo, GetWindow, GetWindowLongW,
-    GetWindowTextLengthW, GetWindowThreadProcessId, HICON, ICONINFO, IsIconic, IsWindowVisible,
-    PrivateExtractIconsW, SW_RESTORE, SetForegroundWindow, ShowWindow, WS_EX_DLGMODALFRAME,
-    WS_EX_TOOLWINDOW, WindowFromPoint,
+    GetWindowRect, GetWindowTextLengthW, GetWindowThreadProcessId, HICON, ICONINFO, IsIconic,
+    IsWindowVisible, IsZoomed, PrivateExtractIconsW, SW_MAXIMIZE, SW_RESTORE, SWP_NOACTIVATE,
+    SWP_NOOWNERZORDER, SWP_NOZORDER, SetForegroundWindow, SetWindowPos, ShowWindow,
+    WS_EX_DLGMODALFRAME, WS_EX_TOOLWINDOW, WindowFromPoint,
 };
 
 /// Process id of the window `hwnd`.
@@ -150,6 +152,9 @@ pub fn cursor_pos_fresh() -> Option<(f64, f64)> {
 
 /// The system needs no asking for the pointer.
 pub fn pointer_hot(_on: bool) {}
+
+/// Only macOS has apps that hide the pointer until the mouse moves.
+pub fn reveal_cursor() {}
 
 /// Only a Wayland session shows a black square when a transparent window is first mapped.
 pub fn set_window_veil(_window: std::os::raw::c_ulong, _on: bool) -> bool {
@@ -379,6 +384,128 @@ pub fn window_ids(app: &str) -> Option<Windows> {
         known: numbers(enumerate_windows(&exe, false, true)),
         main: numbers(enumerate_windows(&exe, true, false)),
     })
+}
+
+/// How long after an app was started its new windows are looked for.
+const PLACE_WATCH: Duration = Duration::from_secs(10);
+/// How often they are looked for.
+const PLACE_EVERY: Duration = Duration::from_millis(120);
+/// How long the watch goes on after the last window was placed (a splash screen that is followed by
+/// the real window, an app that shows a second window).
+const PLACE_GRACE: Duration = Duration::from_secs(2);
+
+/// Makes the windows that `app` is about to open appear on the monitor the pointer is on right now,
+/// which is the monitor the pie was opened on and a slice was clicked on. Call it just before the
+/// app is started.
+///
+/// Windows decides by itself where the window of a program that was just started goes, and for most
+/// programs that is the main monitor, so with two monitors "Open app" opened the app on the first one
+/// even when the pie was on the second. The windows the app already has are left where they are (an
+/// app that was only brought forward opens nothing), and so is a window that is already on the right
+/// monitor. Returns at once: the looking is done on a thread of its own that ends within seconds.
+pub fn place_new_windows_on_pointer_display(app: &str) {
+    let Some(exe) = app_id_for_open(app) else {
+        return;
+    };
+    let mut p = POINT { x: 0, y: 0 };
+    // SAFETY: `p` is a valid out-pointer.
+    if unsafe { GetCursorPos(&mut p) } == 0 {
+        return;
+    }
+    // SAFETY: plain query. The monitor is kept as a number: a handle cannot cross threads.
+    let target = unsafe { MonitorFromPoint(p, MONITOR_DEFAULTTONEAREST) } as isize;
+    let known: HashSet<isize> = enumerate_windows(&exe, false, true)
+        .into_iter()
+        .map(|h| h as isize)
+        .collect();
+    std::thread::spawn(move || watch_new_windows(&exe, target, &known));
+}
+
+/// The thread of [`place_new_windows_on_pointer_display`]: looks for main windows of `exe` that were
+/// not in `known`, and moves each one that is not on the monitor `target` to it. A window has to be
+/// seen twice in a row first, so that the app has put it where it wants it before it is moved (and a
+/// splash screen that goes away within a look is not moved at all).
+fn watch_new_windows(exe: &str, target: isize, known: &HashSet<isize>) {
+    let start = std::time::Instant::now();
+    let mut seen: std::collections::HashMap<isize, u32> = std::collections::HashMap::new();
+    let mut done: HashSet<isize> = HashSet::new();
+    let mut last_placed: Option<std::time::Instant> = None;
+    while start.elapsed() < PLACE_WATCH && last_placed.is_none_or(|t| t.elapsed() < PLACE_GRACE) {
+        std::thread::sleep(PLACE_EVERY);
+        for hwnd in find_windows(exe, true) {
+            let id = hwnd as isize;
+            if known.contains(&id) || done.contains(&id) {
+                continue;
+            }
+            let looks = seen.entry(id).or_insert(0);
+            *looks += 1;
+            if *looks < 2 {
+                continue;
+            }
+            done.insert(id);
+            last_placed = Some(std::time::Instant::now());
+            move_to_monitor(hwnd, target);
+        }
+    }
+}
+
+/// The DPI of a monitor (96 when it cannot be read).
+fn monitor_dpi(mon: HMONITOR) -> u32 {
+    let (mut dx, mut dy) = (0u32, 0u32);
+    // SAFETY: the out-pointers are valid for the call.
+    if unsafe { GetDpiForMonitor(mon, MDT_EFFECTIVE_DPI, &mut dx, &mut dy) } == 0 && dx != 0 {
+        dx
+    } else {
+        96
+    }
+}
+
+/// Moves `hwnd` to the middle of the work area of the monitor `target`, unless it is on that monitor
+/// already or minimized. A maximized window is restored, moved and maximized again, which is how it
+/// ends up maximized on the other monitor.
+fn move_to_monitor(hwnd: HWND, target: isize) {
+    let dst = target as HMONITOR;
+    // SAFETY: plain queries and moves of a window handle that may have gone away (the calls then fail
+    // and nothing happens); every struct is zeroed with its size set as the API requires.
+    unsafe {
+        let from = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        if from == dst || IsIconic(hwnd) != 0 {
+            return;
+        }
+        let mut info: MONITORINFO = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        if GetMonitorInfoW(dst, &mut info) == 0 {
+            return;
+        }
+        let maximized = IsZoomed(hwnd) != 0;
+        if maximized {
+            ShowWindow(hwnd, SW_RESTORE);
+        }
+        let mut r: RECT = std::mem::zeroed();
+        if GetWindowRect(hwnd, &mut r) == 0 {
+            return;
+        }
+        let w = info.rcWork;
+        let (left, top, right, bottom) = centered_on_work(
+            (r.left, r.top, r.right, r.bottom),
+            monitor_dpi(from),
+            (w.left, w.top, w.right, w.bottom),
+            monitor_dpi(dst),
+        );
+        let ok = SetWindowPos(
+            hwnd,
+            std::ptr::null_mut(),
+            left,
+            top,
+            right - left,
+            bottom - top,
+            SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+        );
+        if maximized {
+            ShowWindow(hwnd, SW_MAXIMIZE);
+        }
+        diag::log!("act", "window_placed", ok = ok != 0, maximized = maximized);
+    }
 }
 
 /// Brings the top-most window of the app `exe` to the front and waits (briefly) until Windows

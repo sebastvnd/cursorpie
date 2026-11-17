@@ -435,6 +435,10 @@ fn report_run(flow: &Flow, outcome: &flowrun::Outcome) {
 
 /// Opens `app` the way `choice` says (see [`execute`]).
 fn open_app(app: &str, choice: Option<Choice>) {
+    // a window the app opens now goes to the display the pie is on (the system would choose, and
+    // for most programs that is the main display); asked before the app is started, so that the
+    // windows it already has are known and left alone
+    platform::place_new_windows_on_pointer_display(app);
     if choice == Some(Choice::NewWindow) {
         // counted before and watched after: whether a window appeared teaches the pie which apps
         // cannot open another one (see `windowing`)

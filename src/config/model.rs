@@ -505,6 +505,29 @@ pub struct Config {
     /// green + (a new window) and a yellow square (the app that is open). Off: the slice always
     /// does what it did before this setting existed (see [`running`](crate::running)).
     pub open_app_choice: bool,
+    /// How a submenu opens. `true` (default): the "web" (trail) mode: the pie
+    /// you came from shrinks to a small node (showing the center of that pie) on a thread to the
+    /// submenu, every level left stays as a node on an arc around it in the order they were opened
+    /// (nearest first, each smaller than the one before, joined by a thread with arrows), and
+    /// moving the pointer onto a node returns straight to that pie. `false`: the classic mode, the
+    /// submenu replaces the pie, re-centered on the pointer, and there is no way back inside the
+    /// gesture.
+    pub submenu_trail: bool,
+    /// Trail mode: how far from the center of the ring on screen the nodes sit, in percent of the
+    /// outer radius of the ring (see [`TrailShape`](crate::geometry::TrailShape)).
+    pub trail_reach: u16,
+    /// Trail mode: the radius of the node of the ring just left, in percent of the outer radius.
+    pub trail_node: u16,
+    /// Trail mode: how big each older node is next to the one before it, in percent (100 = all the
+    /// same size).
+    pub trail_shrink: u16,
+    /// Trail mode: the angle between one node and the next around the ring, in degrees.
+    pub trail_fan: u16,
+    /// Trail mode: draw the thread (with its small arrows) that joins the nodes to the ring on
+    /// screen. Off: only the nodes.
+    pub trail_thread: bool,
+    /// Trail mode: how fast the nodes glide to their places, in percent of the usual speed.
+    pub trail_glide: u16,
     /// Use the CursorPie browser extension (it ships inside the program) to know which web pages
     /// are open, go to one, and open a link in a new window, for the choice of an "Open URL" slice
     /// (see [`bridge`](crate::bridge)). Off by default: the person installs the extension and
@@ -606,5 +629,17 @@ impl Config {
     pub fn profile_for(&self, bundle: Option<&str>) -> usize {
         self.app_profile_for(bundle)
             .unwrap_or_else(|| self.global_profile())
+    }
+}
+
+impl Config {
+    /// The shape of the trail the settings ask for (see [`TrailShape`](crate::geometry::TrailShape)).
+    pub fn trail_shape(&self) -> crate::geometry::TrailShape {
+        crate::geometry::TrailShape::from_percent(
+            self.trail_reach,
+            self.trail_node,
+            self.trail_shrink,
+            self.trail_fan,
+        )
     }
 }

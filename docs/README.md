@@ -29,6 +29,7 @@ embeds the first three; the extension tests read the browser manual).
 | [FLOWS_FOR_AI.md](FLOWS_FOR_AI.md) | The flow file format, the rules that make a flow wrong, a recipe, shell and clipboard pitfalls, checked examples. Written for AI agents |
 | [flow.schema.json](flow.schema.json) | JSON Schema of a flow file |
 | [examples/](examples/README.md) | Importable example flows, with the system each one is written for |
+| [PANEL_DESIGN_FOR_AI.md](PANEL_DESIGN_FOR_AI.md) | How to design a good panel: rules, sizes, models, wiring, mistakes (for AI agents; in the flow kit) |
 | [PANELS.md](PANELS.md) | Panels: small interactive windows that flows and the browser extension can show |
 | [BROWSER_EXTENSION.md](BROWSER_EXTENSION.md) | The commands the browser extension runs (media, tabs, chats) |
 | [DEBUGGING.md](DEBUGGING.md) | The diagnostic log, and how to add a log line |

@@ -34,6 +34,30 @@ pub fn app_id_for_open(app: &str) -> Option<String> {
     })
 }
 
+/// A rectangle in pixels: `(left, top, right, bottom)`.
+pub type PxRect = (i32, i32, i32, i32);
+
+/// Where a window goes when it is moved to another monitor: the same size, scaled by the ratio of
+/// the two monitors' DPI (`src_dpi` of the monitor it is on, `dst_dpi` of the one it moves to; a
+/// zero DPI counts as no scaling) and cut down to the work area `work` of the target if it would not
+/// fit, centered in that work area. Used for the new window of an app, which Windows opens on the
+/// monitor of its own choice (usually the main one), so it can follow the pie to the monitor the pie
+/// was opened on.
+pub fn centered_on_work(win: PxRect, src_dpi: u32, work: PxRect, dst_dpi: u32) -> PxRect {
+    let ratio = if src_dpi == 0 || dst_dpi == 0 {
+        1.0
+    } else {
+        f64::from(dst_dpi) / f64::from(src_dpi)
+    };
+    let (work_w, work_h) = ((work.2 - work.0).max(1), (work.3 - work.1).max(1));
+    let w = (f64::from(win.2 - win.0) * ratio).round() as i32;
+    let h = (f64::from(win.3 - win.1) * ratio).round() as i32;
+    let (w, h) = (w.clamp(1, work_w), h.clamp(1, work_h));
+    let left = work.0 + (work_w - w) / 2;
+    let top = work.1 + (work_h - h) / 2;
+    (left, top, left + w, top + h)
+}
+
 /// A GUID as one number, so two of them can be compared and sorted (`GUID` has no `PartialEq`).
 pub fn guid_to_u128(g: &windows_sys::core::GUID) -> u128 {
     (g.data1 as u128) << 96
@@ -329,6 +353,26 @@ pub fn shell_bgra_to_rgba(px: &mut [u8]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_window_moved_to_another_monitor_is_centered_there() {
+        // 800x600 window, second monitor with a work area at 1920..3840 x 0..1040, same DPI
+        let r = centered_on_work((100, 100, 900, 700), 96, (1920, 0, 3840, 1040), 96);
+        assert_eq!(r, (2480, 220, 3280, 820));
+    }
+
+    #[test]
+    fn a_window_is_scaled_by_the_dpi_of_the_monitors_and_cut_to_fit() {
+        // from 100% to 200%: twice the pixels
+        let r = centered_on_work((0, 0, 400, 300), 96, (0, 0, 3000, 2000), 192);
+        assert_eq!((r.2 - r.0, r.3 - r.1), (800, 600));
+        // bigger than the work area: cut down to it
+        let r = centered_on_work((0, 0, 2000, 1500), 96, (-1280, 0, 0, 984), 96);
+        assert_eq!(r, (-1280, 0, 0, 984));
+        // an unknown DPI means no scaling
+        let r = centered_on_work((0, 0, 400, 300), 0, (0, 0, 1000, 1000), 144);
+        assert_eq!((r.2 - r.0, r.3 - r.1), (400, 300));
+    }
 
     #[test]
     fn open_app_text_becomes_the_app_id_of_the_running_program() {

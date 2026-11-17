@@ -1555,6 +1555,12 @@ pub(crate) fn take_crisp_used() -> bool {
     CRISP_USED.swap(false, Ordering::Relaxed)
 }
 
+/// Says that glyphs were cut at sizes the pie chose (the icons of the nodes of the trail, which
+/// grow as they glide), so the font atlas is rebuilt when the UI sleeps, as after zoomed text.
+pub(crate) fn note_crisp_used() {
+    CRISP_USED.store(true, Ordering::Relaxed);
+}
+
 /// The size factor the text of a zoomed layer is cut at: `zoom` snapped to a ladder of
 /// [`CRISP_STEPS_PER_OCTAVE`] steps per doubling (1.0, 1.19, 1.41, ...).
 ///

@@ -285,6 +285,103 @@ pub fn watch_new_window(app: &str, before: Option<Baseline>) {
         });
 }
 
+// ------------------------------------------------------------------ a new window on the pie's display
+
+/// How long after an app was started its new windows are looked for.
+pub const PLACE_WATCH: Duration = Duration::from_secs(10);
+/// How often they are looked for.
+pub const PLACE_EVERY: Duration = Duration::from_millis(120);
+/// How long the looking goes on after the last window was seen (a splash screen that is followed by
+/// the real window, an app that shows a second window).
+pub const PLACE_GRACE: Duration = Duration::from_secs(2);
+
+/// The display the point `(x, y)` is on, when there is more than one display (with one there is
+/// nowhere else to put a window). Same space as the pointer. `None` for one display, or a point
+/// that is on none of them.
+pub fn pointer_display(
+    displays: &[platform::ScreenRect],
+    x: f64,
+    y: f64,
+) -> Option<platform::ScreenRect> {
+    if displays.len() < 2 {
+        return None;
+    }
+    displays
+        .iter()
+        .find(|d| x >= d.x && x < d.x + d.w && y >= d.y && y < d.y + d.h)
+        .copied()
+}
+
+/// Whether the center of `frame` is on `screen`: a window counts as being on the display its center
+/// is on.
+pub fn center_on(frame: platform::ScreenRect, screen: platform::ScreenRect) -> bool {
+    let (cx, cy) = (frame.x + frame.w / 2.0, frame.y + frame.h / 2.0);
+    cx >= screen.x && cx < screen.x + screen.w && cy >= screen.y && cy < screen.y + screen.h
+}
+
+/// The top-left corner that puts a window of the size of `frame` in the middle of `screen`. A window
+/// larger than the display is put at its top-left corner.
+pub fn centered_origin(frame: platform::ScreenRect, screen: platform::ScreenRect) -> (f64, f64) {
+    (
+        screen.x + ((screen.w - frame.w) / 2.0).max(0.0),
+        screen.y + ((screen.h - frame.h) / 2.0).max(0.0),
+    )
+}
+
+/// Keeps the books of a look at the windows an app opens right after it was started, for the
+/// backends that move them to the display of the pie (see `platform::place_new_windows_on_pointer_display`).
+/// `K` is whatever tells one window from another.
+///
+/// A window is handed out ([`Placer::ready`]) once, and only when it was seen on two looks in a row,
+/// so that the app has put the window where it wants it before it is moved, and a splash screen that
+/// goes away within a look is not moved at all.
+pub struct Placer<K> {
+    start: Instant,
+    looks: std::collections::HashMap<K, u32>,
+    done: HashSet<K>,
+    last: Option<Instant>,
+}
+
+impl<K: std::hash::Hash + Eq + Clone> Placer<K> {
+    /// Starts the watch now.
+    pub fn new() -> Self {
+        Placer {
+            start: Instant::now(),
+            looks: std::collections::HashMap::new(),
+            done: HashSet::new(),
+            last: None,
+        }
+    }
+
+    /// Whether the looking is over: [`PLACE_WATCH`] has passed, or [`PLACE_GRACE`] since a window
+    /// was last handed out.
+    pub fn finished(&self) -> bool {
+        self.start.elapsed() >= PLACE_WATCH || self.last.is_some_and(|t| t.elapsed() >= PLACE_GRACE)
+    }
+
+    /// Reports that a new window was seen on this look. `true` the one time that it should be
+    /// dealt with.
+    pub fn ready(&mut self, id: &K) -> bool {
+        if self.done.contains(id) {
+            return false;
+        }
+        let looks = self.looks.entry(id.clone()).or_insert(0);
+        *looks += 1;
+        if *looks < 2 {
+            return false;
+        }
+        self.done.insert(id.clone());
+        self.last = Some(Instant::now());
+        true
+    }
+}
+
+impl<K: std::hash::Hash + Eq + Clone> Default for Placer<K> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -430,5 +527,51 @@ mod tests {
         ] {
             assert!(!listed_single_window(name), "{name}");
         }
+    }
+
+    fn r(x: f64, y: f64, w: f64, h: f64) -> platform::ScreenRect {
+        platform::ScreenRect { x, y, w, h }
+    }
+
+    #[test]
+    fn the_display_of_the_pointer_needs_more_than_one_display() {
+        let one = [r(0.0, 0.0, 1920.0, 1080.0)];
+        assert_eq!(pointer_display(&one, 10.0, 10.0), None);
+        let two = [r(0.0, 0.0, 1920.0, 1080.0), r(1920.0, 0.0, 1280.0, 1024.0)];
+        assert_eq!(pointer_display(&two, 2000.0, 500.0), Some(two[1]));
+        assert_eq!(pointer_display(&two, 1919.0, 500.0), Some(two[0]));
+        assert_eq!(pointer_display(&two, -5.0, 500.0), None);
+    }
+
+    #[test]
+    fn a_window_is_on_the_display_of_its_center() {
+        let screen = r(1920.0, 0.0, 1280.0, 1024.0);
+        assert!(center_on(r(2000.0, 100.0, 400.0, 300.0), screen));
+        assert!(!center_on(r(100.0, 100.0, 400.0, 300.0), screen));
+        // half on each: the center decides
+        assert!(!center_on(r(1600.0, 100.0, 600.0, 300.0), screen));
+    }
+
+    #[test]
+    fn a_window_is_centered_on_a_display() {
+        let screen = r(1920.0, 0.0, 1280.0, 1024.0);
+        assert_eq!(
+            centered_origin(r(0.0, 0.0, 800.0, 600.0), screen),
+            (2160.0, 212.0)
+        );
+        assert_eq!(
+            centered_origin(r(0.0, 0.0, 2000.0, 2000.0), screen),
+            (1920.0, 0.0)
+        );
+    }
+
+    #[test]
+    fn a_window_is_handed_out_once_and_only_after_two_looks() {
+        let mut p: Placer<u32> = Placer::new();
+        assert!(!p.ready(&7), "the first look only notes the window");
+        assert!(p.ready(&7), "the second look hands it out");
+        assert!(!p.ready(&7), "and never again");
+        assert!(!p.ready(&8));
+        assert!(!p.finished());
     }
 }

@@ -32,6 +32,42 @@ pub(super) struct PieView {
     pub(super) app_icon_shadow: IconShadow,
 }
 
+/// What the center of one ring shows: the icon of the active mode (or of the slice the ring was
+/// opened from), and at the top ring the icon of the app. Cheap to take, so the nodes of the trail
+/// (see [`trail`](super::trail)) can ask for it every frame without copying a whole ring.
+pub(super) struct CenterArt {
+    pub(super) icon: String,
+    pub(super) app_icon: Option<String>,
+    pub(super) app_icon_color: bool,
+}
+
+impl CenterArt {
+    /// The center of ring `path` of `profile`.
+    pub(super) fn of(c: &Config, profile: usize, path: &[usize]) -> Self {
+        let prof = c.profiles.get(profile);
+        let icon = if path.is_empty() {
+            prof.and_then(|p| p.active_item()).map(|i| i.icon.clone())
+        } else {
+            prof.and_then(|p| item_at(&p.items, path))
+                .map(|i| i.icon.clone())
+        }
+        .unwrap_or_default();
+        // the center of an app's own pie shows that app's icon (top level only)
+        let target = side::target();
+        let app_icon = (path.is_empty() && c.center_app_icon)
+            .then(|| {
+                prof.and_then(|p| appicon::bundle_for(&p.apps, target.as_deref()))
+                    .map(|b| appicon::icon_string(c.app_icon_style, b))
+            })
+            .flatten();
+        Self {
+            icon,
+            app_icon,
+            app_icon_color: c.app_icon_style == AppIconStyle::Color,
+        }
+    }
+}
+
 impl PieView {
     /// Copies what is needed to draw ring `path` of `profile`. Call it with the config locked, then release the lock.
     pub(super) fn new(c: &Config, profile: usize, path: &[usize]) -> Self {
@@ -58,21 +94,11 @@ impl PieView {
             (p.active.len() == path.len() + 1 && p.active[..path.len()] == *path)
                 .then(|| p.active[path.len()])
         });
-        let center_icon = if path.is_empty() {
-            prof.and_then(|p| p.active_item()).map(|i| i.icon.clone())
-        } else {
-            prof.and_then(|p| item_at(&p.items, path))
-                .map(|i| i.icon.clone())
-        }
-        .unwrap_or_default();
-        // the center of an app's own pie shows that app's icon (top level only)
-        let target = side::target();
-        let app_icon = (path.is_empty() && c.center_app_icon)
-            .then(|| {
-                prof.and_then(|p| appicon::bundle_for(&p.apps, target.as_deref()))
-                    .map(|b| appicon::icon_string(c.app_icon_style, b))
-            })
-            .flatten();
+        let CenterArt {
+            icon: center_icon,
+            app_icon,
+            app_icon_color,
+        } = CenterArt::of(c, profile, path);
         Self {
             items,
             open_apps,
@@ -85,7 +111,7 @@ impl PieView {
             side: side::view_of(c, profile),
             inactive: c.inactive_color,
             app_icon,
-            app_icon_color: c.app_icon_style == AppIconStyle::Color,
+            app_icon_color,
             app_icon_shadow: c.app_icon_shadow,
         }
     }

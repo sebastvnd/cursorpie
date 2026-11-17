@@ -30,8 +30,15 @@ pub(super) struct Env<'a> {
     pub tx: &'a Sender<Msg>,
     pub accent: Color32,
     pub profile: usize,
-    /// width of the right-hand panel (computed explicitly by the Menu tab)
+    /// width of the right-hand panel (computed explicitly by the Menu tab). With `flat`, the width
+    /// of what is inside the panel the host drew.
     pub width: f32,
+    /// The host already drew the panel (a full-height one, like the inspector of the Flow tab): the
+    /// editor draws no card of its own, and keeps its footer at the bottom of `height`.
+    pub flat: bool,
+    /// With `flat`, how tall the room for the editor is, so that a short editor does not leave the
+    /// panel looking empty; unused otherwise.
+    pub height: f32,
     /// the window's rectangle, which sheets dim and center over
     pub bounds: Rect,
     /// the flows a slice can run, as `(id, name)`
@@ -41,6 +48,17 @@ pub(super) struct Env<'a> {
 /// Width of the content of a card that is `outer` wide: its padding and hairline come off.
 fn inner_width(outer: f32) -> f32 {
     outer - 2.0 * f32::from(PANEL_PAD) - 2.0
+}
+
+/// A few points of room left under the footer of a panel of its own, so that rounding never makes
+/// the panel scroll for a pixel.
+const FOOTER_SLACK: f32 = 4.0;
+
+/// A pale line across the editor, above its footer (the line between rows of a panel).
+fn hairline(ui: &mut egui::Ui) {
+    let (rect, _) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 1.0), egui::Sense::hover());
+    ui.painter().rect_filled(rect, 0.0, pal().divider);
 }
 
 /// A small title above one action of a side-button slice.
@@ -205,9 +223,8 @@ pub(super) fn item_inspector(
     let Some(i) = ed.sel.filter(|&i| i < ring.len()) else {
         // nothing selected: an empty tile that says what to do
         let mut add = false;
-        card().show(ui, |ui| {
-            ui.set_width(inner_width(env.width));
-            ui.add_space(GAP * 4.0);
+        let mut tile_of = |ui: &mut egui::Ui, pad: f32| {
+            ui.add_space(pad);
             ui.vertical_centered(|ui| {
                 ui.label(fonts::icon(symbols::CURSOR_CLICK, 40.0, pal().muted));
                 ui.add_space(GAP / 2.0);
@@ -223,8 +240,18 @@ pub(super) fn item_inspector(
                     }
                 }
             });
-            ui.add_space(GAP * 4.0);
-        });
+            ui.add_space(pad);
+        };
+        if env.flat {
+            // the middle of the panel, not the top of it
+            ui.set_width(env.width);
+            tile_of(ui, ((env.height - 170.0) / 2.0).max(GAP * 4.0));
+        } else {
+            card().show(ui, |ui| {
+                ui.set_width(inner_width(env.width));
+                tile_of(ui, GAP * 4.0);
+            });
+        }
         if add {
             ed.adding = true;
         }
@@ -299,8 +326,7 @@ pub(super) fn item_inspector(
     // "use the icon of the app this slice opens", in this tone (with the app as the action has it)
     let mut use_app_icon: Option<(SliceTone, String)> = None;
 
-    card().show(ui, |ui| {
-        ui.set_width(inner_width(env.width));
+    let mut body = |ui: &mut egui::Ui| {
         let item = &mut ring[i];
 
         // icon (click to change) + name + slice kind
@@ -356,9 +382,10 @@ pub(super) fn item_inspector(
             });
         });
 
-        ui.add_space(4.0);
+        ui.add_space(GAP / 2.0);
         match &mut item.kind {
             ItemKind::Run(a) => {
+                section_label(ui, "Action");
                 let r = action_editor(ui, &format!("{uid}_r"), a, rr, env.accent, env.flows);
                 if r.shortcut {
                     start = Some(Slot::Run);
@@ -438,6 +465,7 @@ pub(super) fn item_inspector(
                 }
             }
             ItemKind::Submenu(ch) => {
+                section_label(ui, "Submenu");
                 muted(ui, &format!("{} slices inside", ch.len()));
                 if button(ui, Look::Soft, Some(symbols::CARET_RIGHT), "Edit submenu").clicked() {
                     enter = true;
@@ -445,25 +473,56 @@ pub(super) fn item_inspector(
             }
         }
 
+        // the footer: where the slice stands in its ring, and the two ways to move it. In a panel
+        // of its own it stays at the bottom, so the panel is never half empty.
+        if env.flat {
+            // Everything the footer takes, the space egui puts between two things included: the
+            // room before it, the gap, the line, the gap and the row. Counted short, the panel
+            // would scroll by the difference.
+            let sp = ui.spacing().item_spacing.y;
+            let footer = 4.0 * sp + GAP + 1.0 + GAP / 2.0 + CONTROL_H;
+            let used = ui.min_rect().height();
+            let room = env.height - used - footer - FOOTER_SLACK;
+            if room > 0.0 {
+                ui.add_space(room);
+            }
+        }
+        ui.add_space(GAP);
+        hairline(ui);
         ui.add_space(GAP / 2.0);
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 6.0;
-            if icon_button_look(ui, Look::Soft, symbols::CARET_LEFT, "Move left", i > 0).clicked() {
-                shift = -1;
-            }
-            if icon_button_look(
-                ui,
-                Look::Soft,
-                symbols::CARET_RIGHT,
-                "Move right",
-                i + 1 < n,
-            )
-            .clicked()
-            {
-                shift = 1;
-            }
+            ui.label(egui::RichText::new(format!("Slice {} of {}", i + 1, n)).color(pal().muted));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                // right to left: the one added first is the one on the right
+                if icon_button_look(
+                    ui,
+                    Look::Soft,
+                    symbols::CARET_RIGHT,
+                    "Move right",
+                    i + 1 < n,
+                )
+                .clicked()
+                {
+                    shift = 1;
+                }
+                if icon_button_look(ui, Look::Soft, symbols::CARET_LEFT, "Move left", i > 0)
+                    .clicked()
+                {
+                    shift = -1;
+                }
+            });
         });
-    });
+    };
+    if env.flat {
+        ui.set_width(env.width);
+        body(ui);
+    } else {
+        card().show(ui, |ui| {
+            ui.set_width(inner_width(env.width));
+            body(ui);
+        });
+    }
 
     if let Some(slot) = start {
         start_rec(ed, env.profile, &path, slot);

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#f5f3ec">
+  <meta name="theme-color" content="#fff8ec">
   <meta name="description" content="CursorPie is a free, open-source pie menu for Windows, macOS and Linux. Hold a mouse button or touch and hold a trackpad, flick toward an action, release. Shortcuts, apps and commands right under your cursor.">
   <title>CursorPie — Free open-source pie menu for Windows, macOS and Linux</title>
   <meta name="robots" content="index, follow, max-image-preview:large">
@@ -60,14 +60,17 @@
   </script>
   <link rel="icon" href="./assets/cursorpie-mark.png">
   <script>
-    /* Apply the saved theme before first paint so the page never flashes the wrong colours. */
+    /* Set the saved theme and the "js" flag before first paint: no wrong-colour flash, and
+       reveal animations only hide content when scripting is really available. */
     (function () {
+      var d = document.documentElement;
+      d.classList.add('js');
       try {
         var t = localStorage.getItem('cursorpie-theme');
         if (t !== 'light' && t !== 'dark') t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-        document.documentElement.dataset.theme = t;
+        d.dataset.theme = t;
         var m = document.querySelector('meta[name="theme-color"]');
-        if (m) m.setAttribute('content', t === 'dark' ? '#202922' : '#f5f3ec');
+        if (m) m.setAttribute('content', t === 'dark' ? '#100f14' : '#fff8ec');
       } catch (e) {}
     })();
   </script>
@@ -75,185 +78,304 @@
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to content</a>
-<div class="header-shell">
-  <div class="wrap">
-    <header class="site-header">
-      <a class="brand" href="./index.html" aria-label="CursorPie home">
-        <img src="./assets/cursorpie-logo.png" alt="CursorPie">
-      </a>
-      <nav class="nav" aria-label="Main navigation">
-        <a href="./index.html" data-home-link aria-current="page" aria-label="Home" data-tip="Home"><span class="icon" aria-hidden="true">&#xe2c2;</span></a>
-        <a href="./index.html#features" aria-label="Features" data-tip="Features"><span class="icon" aria-hidden="true">&#xe6a2;</span></a>
-        <a href="./index.html?doc=docs/README.md" data-doc-link aria-label="Documentation" data-tip="Documentation"><span class="icon" aria-hidden="true">&#xe0e6;</span></a>
-        <a href="./index.html#download" class="nav-download" aria-label="Download" data-tip="Download"><span class="icon" aria-hidden="true">&#xe20c;</span></a>
-        <a href="https://github.com/sebastvnd/cursorpie" target="_blank" rel="noopener" aria-label="GitHub" data-tip="GitHub"><span class="icon" aria-hidden="true">&#xe576;</span></a>
-      </nav>
-      <div class="header-tools">
-        <button class="themebtn" type="button" data-theme-toggle aria-label="Switch to dark theme" data-tip="Dark theme">
-          <span class="icon" aria-hidden="true">&#xe330;</span>
-        </button>
-      </div>
-    </header>
+<div class="progress" id="progress" aria-hidden="true"></div>
+<div class="cursor-glow" id="cursor-glow" aria-hidden="true"></div>
+
+<header class="topbar" id="topbar">
+  <div class="topbar-pill">
+    <a class="brand" href="./index.html" aria-label="CursorPie home"><img src="./assets/cursorpie-logo.png" alt="CursorPie"></a>
+    <nav class="nav" id="nav" aria-label="Main navigation">
+      <a href="./index.html#how-it-works" data-spy="how-it-works">How it works</a>
+      <a href="./index.html#features" data-spy="features">Features</a>
+      <a href="./index.html#download" data-spy="download">Download</a>
+      <a href="./index.html#faq" data-spy="faq">FAQ</a>
+      <a href="./index.html?doc=docs/README.md" data-doc-link>Docs</a>
+    </nav>
+    <div class="topbar-tools">
+      <a class="icon-btn gh" href="https://github.com/sebastvnd/cursorpie" target="_blank" rel="noopener" aria-label="GitHub" data-tip="GitHub"><span class="icon" aria-hidden="true">&#xe576;</span></a>
+      <button class="icon-btn" type="button" data-theme-toggle aria-label="Switch to dark theme" data-tip="Dark theme"><span class="icon" aria-hidden="true">&#xe330;</span></button>
+      <a class="btn btn-sm btn-lime topbar-cta" href="./index.html#download" data-magnetic>Get it <span class="icon" aria-hidden="true">&#xe20c;</span></a>
+      <button class="icon-btn menu-btn" type="button" id="menu-btn" aria-label="Open menu" aria-expanded="false" aria-controls="nav"><span class="burger"><i></i><i></i></span></button>
+    </div>
   </div>
-</div>
+</header>
 
 <noscript>
-  <div class="wrap" style="padding:16px 0">
+  <div class="wrap" style="padding:96px 0 16px">
     <p><strong>CursorPie</strong> is a free, open-source pie menu for Windows, macOS and Linux. JavaScript is needed for the interactive demo and the documentation viewer. You can also read the sources on <a href="https://github.com/sebastvnd/cursorpie">GitHub</a> or download a build from the <a href="https://github.com/sebastvnd/cursorpie/releases/latest">latest release</a>.</p>
   </div>
 </noscript>
 
 <main id="main">
   <div id="landing-view">
-    <section class="hero">
+
+    <!-- ============ HERO ============ -->
+    <section class="hero" id="top">
+      <span class="blob b1" data-parallax="0.12"></span>
+      <span class="blob b2" data-parallax="-0.08"></span>
+      <span class="blob b3" data-parallax="0.18"></span>
       <div class="wrap hero-grid">
         <div class="hero-copy">
-          <span class="eyebrow">One gesture. More room to work.</span>
-          <h1>Your actions,<br><em>right under</em><br>your cursor.</h1>
-          <p class="lead">CursorPie brings your favorite shortcuts and actions right to the pointer. Hold a mouse button or touch and hold your trackpad, flick toward what you need, and release. No menus to search. No shortcuts to memorize.</p>
-          <div class="cta-row">
-            <a class="btn" id="hero-download" href="#download">Download CursorPie <span class="icon" aria-hidden="true">&#xe5de;</span></a>
-            <a class="btn btn-secondary" href="./index.html?doc=docs/user/README.md">See how it works <span class="icon" aria-hidden="true">&#xe13a;</span></a>
+          <span class="pill rv"><i class="live"></i> Free · Open source · MIT</span>
+          <h1 aria-label="Your actions, right under your cursor.">
+            <span class="h-line"><span style="--i:0">Your actions,</span></span>
+            <span class="h-line"><span style="--i:1"><em class="mark">right under</em></span></span>
+            <span class="h-line"><span style="--i:2">your cursor.</span></span>
+          </h1>
+          <p class="lead rv" style="--d:.35s">CursorPie is a pie menu that pops up right under your pointer. Hold a mouse button (or touch and hold your trackpad), flick toward an action, let go. Shortcuts, apps, links and commands, zero hunting through menus.</p>
+          <div class="cta-row rv" style="--d:.45s">
+            <a class="btn btn-lime btn-lg" id="hero-download" href="#download" data-magnetic>Download CursorPie <span class="icon" aria-hidden="true">&#xe5de;</span></a>
+            <a class="btn btn-ghost btn-lg" href="./index.html?doc=docs/user/getting-started.md" data-magnetic>Quick start <span class="icon" aria-hidden="true">&#xe13a;</span></a>
           </div>
-          <div class="hero-meta">
-            <span><i class="icon" aria-hidden="true">&#xe184;</i> Free and open source</span>
-            <span><i class="icon" aria-hidden="true">&#xe40c;</i> No account or telemetry</span>
-            <span><i class="icon" aria-hidden="true">&#xe586;</i> Windows, macOS, Linux</span>
-          </div>
+          <ul class="chips rv" style="--d:.55s">
+            <li><i class="icon" aria-hidden="true">&#xe586;</i> Windows · macOS · Linux</li>
+            <li><i class="icon" aria-hidden="true">&#xe40c;</i> No account, no telemetry</li>
+            <li><i class="icon" aria-hidden="true">&#xe184;</i> MIT licensed</li>
+          </ul>
         </div>
-        <div class="visual-wrap">
-          <div class="visual-card">
-            <div class="visual-tag"><i class="icon" aria-hidden="true">&#xe15a;</i> Try the pie menu</div>
+
+        <div class="demo rv" style="--d:.25s">
+          <span class="sticker s-a" style="--r:-8deg">1 · hold</span>
+          <span class="sticker s-b" style="--r:6deg">2 · flick</span>
+          <span class="sticker s-c" style="--r:-4deg">3 · release</span>
+          <div class="demo-card" data-tilt>
+            <div class="demo-tag"><i class="icon" aria-hidden="true">&#xe15a;</i> Try it. Press, hold, flick.</div>
             <div class="stage" id="pie-stage" aria-label="Interactive CursorPie menu demo">
               <svg id="pie-demo" viewBox="-160 -160 320 320" role="img" aria-label="The default four-slice menu: History, Clipboard, Brackets and Launch"></svg>
               <p class="stage-hint" id="pie-hint">Press and hold, move toward a slice, then <strong>release</strong>.</p>
             </div>
           </div>
-          <div class="visual-foot"><span><strong>Default pie</strong> · four slices</span><span>Move to explore</span></div>
         </div>
       </div>
     </section>
 
-    <section class="section section-paper" id="how-it-works">
+    <!-- ============ MARQUEE ============ -->
+    <div class="marquee-wrap"><section class="marquee" aria-label="Things you can put on a slice">
+      <div class="marquee-row">
+        <div class="marquee-track">
+          <span>Copy</span><span>Paste</span><span>Undo</span><span>Redo</span><span>Next tab</span><span>Zoom</span><span>Screenshot</span><span>Launch app</span><span>Open link</span><span>Run command</span><span>Mute</span><span>New note</span>
+          <span aria-hidden="true">Copy</span><span aria-hidden="true">Paste</span><span aria-hidden="true">Undo</span><span aria-hidden="true">Redo</span><span aria-hidden="true">Next tab</span><span aria-hidden="true">Zoom</span><span aria-hidden="true">Screenshot</span><span aria-hidden="true">Launch app</span><span aria-hidden="true">Open link</span><span aria-hidden="true">Run command</span><span aria-hidden="true">Mute</span><span aria-hidden="true">New note</span>
+        </div>
+      </div>
+    </section></div>
+
+    <!-- ============ STATS ============ -->
+    <section class="stats">
+      <div class="wrap stats-grid">
+        <div class="stat rv"><b data-count="150" data-suffix=" ms">150 ms</b><span>default hold time</span></div>
+        <div class="stat rv" style="--d:.07s"><b data-count="8">8</b><span>slices per ring</span></div>
+        <div class="stat rv" style="--d:.14s"><b data-count="5">5</b><span>submenu levels deep</span></div>
+        <div class="stat rv" style="--d:.21s"><b data-count="3">3</b><span>operating systems</span></div>
+        <div class="stat rv" style="--d:.28s"><b data-count="0">0</b><span>accounts or telemetry</span></div>
+      </div>
+    </section>
+
+    <!-- ============ HOW IT WORKS ============ -->
+    <section class="section" id="how-it-works">
       <div class="wrap">
-        <div class="section-heading">
+        <div class="section-heading rv">
           <span class="eyebrow">How it works</span>
-          <h2>Three movements.<br>Nothing to memorize.</h2>
-          <p class="lead">The actions you use most should not be buried in menus or take up space in your memory. Just move your mouse or your finger.</p>
+          <h2>Hold. Flick. <em class="mark mark-pink">Release.</em></h2>
+          <p class="lead">The actions you use most should not live in menus or in your memory. Just move your mouse or your finger.</p>
         </div>
-        <div class="steps-grid">
-          <article class="step-card"><span class="step-index">01</span><h3>Hold the trigger</h3><p>Hold the middle mouse button, or touch and hold your trackpad, for a split second (150 ms by default). The pie appears right under your cursor.</p><span class="step-ghost">01</span></article>
-          <article class="step-card"><span class="step-index">02</span><h3>Flick toward a slice</h3><p>Move toward the action you need. The slice highlights as your pointer passes over it.</p><span class="step-ghost">02</span></article>
-          <article class="step-card"><span class="step-index">03</span><h3>Release to act</h3><p>Release the button or lift your finger and the action runs. Hold in the center to open Settings.</p><span class="step-ghost">03</span></article>
+        <div class="how-grid">
+          <div class="how-stage" id="how-stage" data-step="1" aria-hidden="true">
+            <div class="hs-bar"><i></i><i></i><i></i><em id="hs-label">Hold the trigger</em></div>
+            <div class="hs-canvas">
+              <span class="hs-ring"></span>
+              <svg id="how-pie" viewBox="-160 -160 320 320"></svg>
+              <svg class="hs-cursor" viewBox="0 0 24 24"><path d="M4 2.5l15 8.2-6.6 1.9-2.6 6.9z" /></svg>
+              <span class="hs-toast" id="hs-toast">Clipboard ✓</span>
+            </div>
+          </div>
+          <ol class="how-steps">
+            <li class="how-step rv" data-step="1"><span class="num">01</span><div><h3>Hold the trigger</h3><p>Hold the middle mouse button, or touch and hold your trackpad, for a split second (150 ms by default). The pie appears right under your cursor.</p></div></li>
+            <li class="how-step rv" data-step="2"><span class="num">02</span><div><h3>Flick toward a slice</h3><p>Move toward the action you need. The slice lights up as your pointer passes over it. Muscle memory takes over fast.</p></div></li>
+            <li class="how-step rv" data-step="3"><span class="num">03</span><div><h3>Release to act</h3><p>Let go and the action runs. Release in the center to cancel. Keep holding in the center and Settings opens after 1.2 seconds.</p></div></li>
+          </ol>
         </div>
-        <div class="mouse-note"><span class="icon mouse-icon" aria-hidden="true">&#xe644;</span> A clickable scroll wheel or a trackpad is all you need. Trackpad hold works on macOS, Windows and Linux and is turned on in Settings.</div>
+        <p class="note-line rv"><span class="icon" aria-hidden="true">&#xe644;</span><span>A clickable scroll wheel or a trackpad is all you need. Trackpad hold works on macOS, Windows and Linux; turn it on in <b>Settings &gt; Behavior &gt; Trackpad</b>.</span></p>
       </div>
     </section>
 
-    <section class="section" id="features">
+    <!-- ============ FEATURES ============ -->
+    <section class="section section-tint" id="features">
       <div class="wrap">
-        <div class="section-heading">
-          <span class="eyebrow">Made to fit your habits</span>
-          <h2>A little space for<br>the things you do often.</h2>
-          <p class="lead">From simple shortcuts to app-specific workflows, CursorPie adapts to the way you work.</p>
+        <div class="section-heading rv">
+          <span class="eyebrow">Features</span>
+          <h2>Built around <em class="mark">your habits.</em></h2>
+          <p class="lead">From one-key shortcuts to app-specific workflows, CursorPie bends to the way you work.</p>
         </div>
-        <div class="feature-grid">
-          <article class="feature-card wide tone-sage"><div class="feature-icon"><i class="icon" aria-hidden="true">&#xe2c2;</i></div><h3>A different pie for every app</h3><p>Keep a general menu, then create dedicated pies for your browser, code editor, or favorite apps.</p><div class="feature-art"><span class="art-ring"></span></div></article>
-          <article class="feature-card tall tone-peach"><div class="feature-icon"><i class="icon" aria-hidden="true">&#xe2d8;</i></div><h3>Actions that work your way</h3><p>Send keyboard shortcuts, open apps, links or files, run commands, and even combine multiple actions.</p></article>
-          <article class="feature-card tone-lilac"><div class="feature-icon"><i class="icon" aria-hidden="true">&#xe466;</i></div><h3>Nested submenus</h3><p>Up to 8 slices per ring and 5 levels deep.</p></article>
-          <article class="feature-card tone-sage"><div class="feature-icon"><i class="icon" aria-hidden="true">&#xe644;</i></div><h3>Mouse buttons and trackpads</h3><p>Set your back and forward buttons to Undo/Redo, switch tabs, zoom, and more. No middle button? Touch and hold a trackpad on macOS, Windows or Linux.</p></article>
-          <article class="feature-card tone-peach"><div class="feature-icon"><i class="icon" aria-hidden="true">&#xe1a0;</i></div><h3>Room to experiment</h3><p>Settings includes undo, redo, and automatic backups of previous saves.</p></article>
-          <article class="feature-card tone-lilac"><div class="feature-icon"><i class="icon" aria-hidden="true">&#xe4c0;</i></div><h3>Easy to share</h3><p>Export a complete profile with its icons as one JSON file and share it with others.</p></article>
+        <div class="bento">
+          <article class="bcard c-violet span7 rv" data-tilt>
+            <div class="bicon"><i class="icon" aria-hidden="true">&#xe2c2;</i></div>
+            <h3>A different pie for every app</h3>
+            <p>Keep one general menu, then give your browser, code editor or favorite apps their own.</p>
+            <div class="appdemo" id="appdemo" aria-hidden="true">
+              <div class="app-tabs"><span class="on">Browser</span><span>Code editor</span><span>Design tool</span><span>Terminal</span></div>
+              <div class="app-slices"><b>Back</b><b>Reload</b><b>New tab</b><b>Close tab</b></div>
+            </div>
+          </article>
+          <article class="bcard c-lime span5 rv" style="--d:.08s" data-tilt>
+            <div class="bicon"><i class="icon" aria-hidden="true">&#xe2d8;</i></div>
+            <h3>Actions that work your way</h3>
+            <p>Send keyboard shortcuts, open apps, links or files, run commands, or chain several into one.</p>
+            <div class="tags"><span>Shortcut</span><span>App</span><span>Link</span><span>File</span><span>Command</span><span>Flow</span></div>
+          </article>
+          <article class="bcard c-pink span4 rv" data-tilt>
+            <div class="bicon"><i class="icon" aria-hidden="true">&#xe466;</i></div>
+            <h3>Nested submenus</h3>
+            <p>Up to 8 slices per ring and 5 levels deep.</p>
+            <div class="rings" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+          </article>
+          <article class="bcard c-sky span4 rv" style="--d:.08s" data-tilt>
+            <div class="bicon"><i class="icon" aria-hidden="true">&#xe644;</i></div>
+            <h3>Mouse buttons and trackpads</h3>
+            <p>Map back and forward buttons to Undo/Redo, tabs or zoom. No middle button? Use a trackpad hold.</p>
+          </article>
+          <article class="bcard c-orange span4 rv" style="--d:.16s" data-tilt>
+            <div class="bicon"><i class="icon" aria-hidden="true">&#xe1a0;</i></div>
+            <h3>Room to experiment</h3>
+            <p>Settings has undo, redo and automatic backups of earlier saves.</p>
+            <div class="timeline" aria-hidden="true"><i></i><i></i><i class="now"></i><i class="ghost"></i></div>
+          </article>
+          <article class="bcard c-paper span6 rv" data-tilt>
+            <div class="bicon"><i class="icon" aria-hidden="true">&#xe4c0;</i></div>
+            <h3>Easy to share</h3>
+            <p>Export a full profile, icons included, as one JSON file and hand it to a friend.</p>
+            <pre class="mini-code" aria-hidden="true"><code>my-profile.json  <u>· 4 slices · 12 icons</u></code></pre>
+          </article>
+          <article class="bcard c-ink span6 rv" style="--d:.08s" data-tilt>
+            <div class="bicon"><i class="icon" aria-hidden="true">&#xe0e6;</i></div>
+            <h3>Flows, panels and a browser extension</h3>
+            <p>Draw multi-step flows in a node editor, show small panels, and control media, tabs and chats in your browser.</p>
+            <div class="flowdemo" aria-hidden="true"><span>Copy</span><i></i><span>Switch app</span><i></i><span>Paste</span></div>
+            <a class="inline-link" href="./index.html?doc=docs/user/flows.md">Learn about flows <span class="icon" aria-hidden="true">&#xe13a;</span></a>
+          </article>
         </div>
       </div>
     </section>
 
-    <section class="section section-paper">
+    <!-- ============ PRIVACY ============ -->
+    <section class="privacy">
       <div class="wrap">
-        <div class="privacy-panel">
-          <div><span class="eyebrow">Yours to keep</span><h2>Lightweight, private, and out of the way.</h2><p>CursorPie runs on your computer. It needs no account, sends no data to a server, and collects no telemetry. The menu stays out of sight when you are not using it.</p></div>
-          <div class="privacy-mark"><i class="icon" aria-hidden="true">&#xe40c;</i></div>
+        <div class="privacy-card rv">
+          <div class="privacy-copy">
+            <span class="eyebrow">Yours to keep</span>
+            <h2>No account.<br>No telemetry.<br>Just a tiny app.</h2>
+            <p>CursorPie runs on your computer and stays out of sight until you hold the trigger. The only network request it ever makes is an optional once-a-day update check to <code>api.github.com</code>, which you can switch off in <b>About &gt; Updates</b>.</p>
+          </div>
+          <div class="privacy-art" aria-hidden="true"><i class="icon">&#xe40c;</i><span class="orbit o1"></span><span class="orbit o2"></span></div>
         </div>
       </div>
     </section>
 
+    <!-- ============ DOWNLOAD ============ -->
     <section class="section" id="download">
       <div class="wrap">
         <div class="platform-intro">
-          <div class="section-heading"><span class="eyebrow">Get started</span><h2>Find the right build<br>for your computer.</h2></div>
-          <p class="lead" data-device-copy>Choose the package that matches your system.</p>
+          <div class="section-heading rv">
+            <span class="eyebrow">Get started</span>
+            <h2>Grab the build<br>for <em class="mark mark-sky">your computer.</em></h2>
+          </div>
+          <p class="lead rv" data-device-copy>Choose the package that matches your system.</p>
         </div>
         <div class="os-grid">
-          <article class="os-card" data-os-card="win"><div class="os-top"><span class="os-symbol"><i class="icon" aria-hidden="true">&#xe32e;</i></span><span class="badge">Stable</span></div><h3>Windows</h3><p>Windows 10 (1809) or 11. Per-user installer; no special permissions required. Trackpad hold needs a precision touchpad.</p><div class="os-links"><a data-release="CursorPie-windows-setup.exe" href="#">Installer <i class="icon" aria-hidden="true">&#xe5de;</i></a><a data-release="CursorPie-windows.zip" href="#">ZIP</a></div></article>
-          <article class="os-card" data-os-card="mac"><div class="os-top"><span class="os-symbol"><i class="icon" aria-hidden="true">&#xe586;</i></span><span class="badge">Supported</span></div><h3>macOS</h3><p>macOS 11+, for Intel and Apple silicon. Accessibility permission is required. Any trackpad works for trackpad hold.</p><div class="os-links"><a data-release="CursorPie-macos-universal.dmg" href="#">Universal DMG <i class="icon" aria-hidden="true">&#xe5de;</i></a></div></article>
-          <article class="os-card" data-os-card="linux"><div class="os-top"><span class="os-symbol"><i class="icon" aria-hidden="true">&#xe1aa;</i></span><span class="badge">X11 pre-stable · Wayland experimental</span></div><h3>Linux (X11 and Wayland)</h3><p>x86_64 builds for Ubuntu 24.04+ and Fedora 44. X11 sessions are pre-stable and need nothing set up. Wayland sessions are experimental and need a udev rule. Trackpad hold needs your user in the <code>input</code> group (or the udev rule on Wayland).</p><div class="os-links"><a data-release="CursorPie-ubuntu-24.04-x86_64.tar.gz" href="#">Ubuntu 24.04+</a><a data-release="CursorPie-fedora-44-x86_64.tar.gz" href="#">Fedora 44</a></div></article>
+          <article class="os-card rv" data-os-card="win">
+            <div class="os-top"><span class="os-symbol"><i class="icon" aria-hidden="true">&#xe32e;</i></span><span class="badge b-green">Stable</span></div>
+            <h3>Windows</h3>
+            <p>Windows 10 (1809) or 11. Per-user installer, no special permissions. Trackpad hold needs a precision touchpad.</p>
+            <div class="os-links"><a data-release="CursorPie-windows-setup.exe" href="#">Installer <i class="icon" aria-hidden="true">&#xe5de;</i></a><a data-release="CursorPie-windows.zip" href="#">ZIP</a></div>
+          </article>
+          <article class="os-card rv" style="--d:.08s" data-os-card="mac">
+            <div class="os-top"><span class="os-symbol"><i class="icon" aria-hidden="true">&#xe586;</i></span><span class="badge b-blue">Supported</span></div>
+            <h3>macOS</h3>
+            <p>macOS 11+, Intel and Apple silicon. Accessibility permission is required. Any trackpad works for trackpad hold.</p>
+            <div class="os-links"><a data-release="CursorPie-macos-universal.dmg" href="#">Universal DMG <i class="icon" aria-hidden="true">&#xe5de;</i></a></div>
+          </article>
+          <article class="os-card rv" style="--d:.16s" data-os-card="linux">
+            <div class="os-top"><span class="os-symbol"><i class="icon" aria-hidden="true">&#xe1aa;</i></span><span class="badge b-orange">X11 pre-stable · Wayland experimental</span></div>
+            <h3>Linux</h3>
+            <p>x86_64 builds for Ubuntu 24.04+ and Fedora 44. X11 needs nothing set up. Wayland needs a udev rule. Trackpad hold needs your user in the <code>input</code> group (or the udev rule on Wayland).</p>
+            <div class="os-links"><a data-release="CursorPie-ubuntu-24.04-x86_64.tar.gz" href="#">Ubuntu 24.04+ <i class="icon" aria-hidden="true">&#xe5de;</i></a><a data-release="CursorPie-fedora-44-x86_64.tar.gz" href="#">Fedora 44</a></div>
+          </article>
         </div>
-        <div class="download-notes">
-          <div class="download-note"><h4>Seeing a Windows warning?</h4><p>This build is not signed yet. Select <strong>More info</strong>, then <strong>Run anyway</strong> if you choose to continue.</p></div>
-          <div class="download-note"><h4>macOS will not open?</h4><p>On first launch, right-click the app and choose <strong>Open</strong>, then grant Accessibility permission.</p></div>
-          <div class="download-note"><h4>Linux</h4><p>Extract the package and run <code>install.sh</code>. On Wayland also install the udev rule (see the <a href="./index.html?doc=docs/user/linux.md">Linux guide</a>). A tray icon is not available yet.</p></div>
+        <div class="notes">
+          <div class="note rv"><h4>Windows shows a warning?</h4><p>This build is not signed yet. Select <b>More info</b>, then <b>Run anyway</b> if you choose to continue.</p></div>
+          <div class="note rv" style="--d:.07s"><h4>macOS will not open it?</h4><p>On first launch, right-click the app and choose <b>Open</b>, then grant Accessibility permission.</p></div>
+          <div class="note rv" style="--d:.14s"><h4>Linux install</h4><p>Extract the package and run <code>install.sh</code>. On Wayland also install the udev rule (see the <a href="./index.html?doc=docs/user/linux.md">Linux guide</a>). A tray icon is not available yet.</p></div>
         </div>
-        <div class="doc-cta"><div><h3>Need help getting set up?</h3><p>The installation guide covers Windows, macOS, and Linux.</p></div><a class="btn btn-secondary" href="./index.html?doc=docs/user/install.md">Read the installation guide <span class="icon" aria-hidden="true">&#xe13a;</span></a></div>
+        <div class="help-card rv">
+          <div><h3>Need a hand getting set up?</h3><p>The installation guide covers Windows, macOS and Linux step by step.</p></div>
+          <a class="btn btn-dark" href="./index.html?doc=docs/user/install.md" data-magnetic>Read the install guide <span class="icon" aria-hidden="true">&#xe13a;</span></a>
+        </div>
       </div>
     </section>
 
-    <section class="section section-paper" id="faq">
-      <div class="wrap">
-        <div class="section-heading"><span class="eyebrow">Common questions</span><h2>A few things you<br>might be wondering.</h2></div>
+    <!-- ============ FAQ ============ -->
+    <section class="section section-tint" id="faq">
+      <div class="wrap faq-grid">
+        <div class="section-heading rv">
+          <span class="eyebrow">FAQ</span>
+          <h2>Questions you<br>might have.</h2>
+          <p class="lead">Still stuck? The <a href="./index.html?doc=docs/user/known-issues.md">known issues</a> page lists what does not work yet, per system.</p>
+        </div>
         <div class="faq-list">
-          <details><summary>Is CursorPie free?</summary><p>Yes. CursorPie is open source under the MIT license, with no account and no ads.</p></details>
-          <details><summary>Does my data go online?</summary><p>No. CursorPie does not make network connections or collect telemetry. Keyboard events are read while you record a shortcut in Settings; otherwise, events are passed through and are not stored or logged.</p></details>
-          <details><summary>Can I use it without a middle mouse button?</summary><p>Yes, with a trackpad. Turn on <em>Open the pie with a trackpad hold</em> in Settings &gt; Behavior &gt; Trackpad, then touch and hold. It works on macOS, Windows (precision touchpads) and Linux, X11 or Wayland (your user must be in the <code>input</code> group, or on Wayland the udev rule must be installed). With a mouse, a clickable scroll wheel is enough. On macOS, some additional mouse buttons can also be used as triggers.</p></details>
-          <details><summary>Does the trackpad feature work on my system?</summary><p>It is off by default and new, so it has not been tried on every device. macOS reads any trackpad, Windows needs a precision touchpad, and Linux reads the touchpad from <code>/dev/input</code>. Haptic ticks exist on macOS only. See the <a href="./index.html?doc=docs/user/known-issues.md">known issues</a>.</p></details>
-          <details><summary>How do I change the slices?</summary><p>Hold in the center of the pie to open Settings. From there, add actions, change icons, and configure pies for specific apps.</p></details>
-          <details><summary>Is Linux Wayland supported?</summary><p>Yes, but it is experimental; X11 is pre-stable. CursorPie works in X11 and in Wayland sessions. On Wayland it grabs the mouse through <code>/dev/input</code>, so it needs the udev rule <code>70-cursorpie.rules</code> that ships in the package; per-app profiles work on KDE Plasma, Hyprland, GNOME (with the extension) and, mostly, Sway. Wayland support has not yet been run on real hardware, and a tray icon is not available yet. See the <a href="./index.html?doc=docs/user/linux.md">Linux guide</a>.</p></details>
+          <details class="rv"><summary>Is CursorPie free?</summary><p>Yes. CursorPie is open source under the MIT license, with no account and no ads.</p></details>
+          <details class="rv"><summary>Does my data go online?</summary><p>No account, no telemetry. Keyboard events are read only while you record a shortcut in Settings; otherwise events are passed through and are not stored or logged. The one network request is the optional update check: when Settings opens, at most once a day, CursorPie asks <code>api.github.com</code> for the newest stable release. Turn it off in <b>About &gt; Updates</b>. See <a href="./index.html?doc=docs/user/updates.md">Updates</a>.</p></details>
+          <details class="rv"><summary>Can I use it without a middle mouse button?</summary><p>Yes, with a trackpad. Turn on <em>Open the pie with a trackpad hold</em> in Settings &gt; Behavior &gt; Trackpad, then touch and hold. It works on macOS, Windows (precision touchpads) and Linux, X11 or Wayland (your user must be in the <code>input</code> group, or on Wayland the udev rule must be installed). With a mouse, a clickable scroll wheel is enough. On macOS, some additional mouse buttons can also be triggers.</p></details>
+          <details class="rv"><summary>Does the trackpad feature work on my system?</summary><p>It is off by default and new, so it has not been tried on every device. macOS reads any trackpad, Windows needs a precision touchpad, and Linux reads the touchpad from <code>/dev/input</code>. Haptic ticks exist on macOS only. See the <a href="./index.html?doc=docs/user/trackpad.md">trackpad guide</a>.</p></details>
+          <details class="rv"><summary>How do I change the slices?</summary><p>Hold in the center of the pie to open Settings. From there, add actions, change icons, and set up pies for specific apps.</p></details>
+          <details class="rv"><summary>Is Linux Wayland supported?</summary><p>Yes, but it is experimental; X11 is pre-stable. On Wayland CursorPie grabs the mouse through <code>/dev/input</code>, so it needs the udev rule <code>70-cursorpie.rules</code> that ships in the package. Per-app profiles work on KDE Plasma, Hyprland, GNOME (with the extension) and, mostly, Sway. Wayland support has not yet been run on real hardware, and a tray icon is not available yet. See the <a href="./index.html?doc=docs/user/linux.md">Linux guide</a>.</p></details>
         </div>
       </div>
     </section>
 
-    <section class="section section-cta"><div class="wrap"><div class="doc-cta"><div><span class="eyebrow">Keep exploring</span><h3 style="margin-top:12px">Guides, documentation, and release notes.</h3><p>Everything you need to get started and understand how CursorPie works.</p></div><a class="btn" href="./index.html?doc=docs/README.md">Explore the documentation <span class="icon" aria-hidden="true">&#xe13a;</span></a></div></div></section>
+    <!-- ============ FINAL CTA ============ -->
+    <section class="final">
+      <div class="wrap">
+        <div class="final-card rv">
+          <span class="sticker s-final" style="--r:-6deg">free forever</span>
+          <h2>Ready to flick?</h2>
+          <p>Install it in a minute, hold, flick, release. The docs are here when you want to go deeper.</p>
+          <div class="cta-row center">
+            <a class="btn btn-lime btn-lg" href="#download" data-magnetic>Download <span class="icon" aria-hidden="true">&#xe5de;</span></a>
+            <a class="btn btn-ghost-light btn-lg" href="./index.html?doc=docs/README.md" data-magnetic>Explore the docs <span class="icon" aria-hidden="true">&#xe13a;</span></a>
+          </div>
+        </div>
+      </div>
+    </section>
   </div>
 
-  <section id="documentation-view" hidden>
-    <div class="docs-hero"><div class="wrap"><span class="eyebrow">CursorPie documentation</span><h1 id="doc-page-heading">Documentation.</h1><p class="lead" id="doc-page-subtitle">Guides and technical notes, loaded directly from the Markdown files in this repository.</p></div></div>
-    <div class="wrap docs-layout">
-      <aside class="docs-sidebar" aria-label="Documentation pages">
-        <h3>Documentation</h3>
-        <a href="?doc=docs/README.md" data-doc-file="docs/README.md"><span class="icon" aria-hidden="true">&#xe23a;</span> Overview</a>
-        <h3 style="margin-top:18px">Using CursorPie</h3>
-        <a href="?doc=docs/user/getting-started.md" data-doc-file="docs/user/getting-started.md"><span class="icon" aria-hidden="true">&#xe13a;</span> Getting started</a>
-        <a href="?doc=docs/user/install.md" data-doc-file="docs/user/install.md"><span class="icon" aria-hidden="true">&#xe20c;</span> Installation</a>
-        <a href="?doc=docs/user/README.md" data-doc-file="docs/user/README.md"><span class="icon" aria-hidden="true">&#xe0e6;</span> User guide</a>
-        <a href="?doc=docs/user/using-the-pie.md" data-doc-file="docs/user/using-the-pie.md"><span class="icon" aria-hidden="true">&#xe0e6;</span> Using the pie</a>
-        <a href="?doc=docs/user/profiles-and-buttons.md" data-doc-file="docs/user/profiles-and-buttons.md"><span class="icon" aria-hidden="true">&#xe0e6;</span> Profiles and mouse buttons</a>
-        <a href="?doc=docs/user/trackpad.md" data-doc-file="docs/user/trackpad.md"><span class="icon" aria-hidden="true">&#xe586;</span> Trackpad hold</a>
-        <a href="?doc=docs/user/flows.md" data-doc-file="docs/user/flows.md"><span class="icon" aria-hidden="true">&#xe0e6;</span> Flows</a>
-        <a href="?doc=docs/user/settings.md" data-doc-file="docs/user/settings.md"><span class="icon" aria-hidden="true">&#xe434;</span> Settings and backups</a>
-        <a href="?doc=docs/user/linux.md" data-doc-file="docs/user/linux.md"><span class="icon" aria-hidden="true">&#xe4e0;</span> Linux</a>
-        <a href="?doc=docs/user/updates.md" data-doc-file="docs/user/updates.md"><span class="icon" aria-hidden="true">&#xe0e6;</span> Updates</a>
-        <a href="?doc=docs/user/configuration.md" data-doc-file="docs/user/configuration.md"><span class="icon" aria-hidden="true">&#xe434;</span> Configuration</a>
-        <a href="?doc=docs/user/known-issues.md" data-doc-file="docs/user/known-issues.md"><span class="icon" aria-hidden="true">&#xe4e0;</span> Known issues</a>
-        <h3 style="margin-top:18px">Flows &amp; extension authors</h3>
-        <a href="?doc=docs/FLOWS_FOR_AI.md" data-doc-file="docs/FLOWS_FOR_AI.md"><span class="icon" aria-hidden="true">&#xe0e6;</span> Flows for AI agents</a>
-        <a href="?doc=docs/examples/README.md" data-doc-file="docs/examples/README.md"><span class="icon" aria-hidden="true">&#xe0e6;</span> Example flows</a>
-        <a href="?doc=docs/PANELS.md" data-doc-file="docs/PANELS.md"><span class="icon" aria-hidden="true">&#xe0e6;</span> Panels</a>
-        <a href="?doc=docs/BROWSER_EXTENSION.md" data-doc-file="docs/BROWSER_EXTENSION.md"><span class="icon" aria-hidden="true">&#xe0e6;</span> Browser extension</a>
-        <a href="?doc=docs/DEBUGGING.md" data-doc-file="docs/DEBUGGING.md"><span class="icon" aria-hidden="true">&#xeae8;</span> Debugging</a>
-        <h3 style="margin-top:18px">Project &amp; engineering</h3>
-        <a href="?doc=CONTRIBUTING.md" data-doc-file="CONTRIBUTING.md"><span class="icon" aria-hidden="true">&#xe576;</span> Contributing</a>
-        <a href="?doc=CHANGELOG.md" data-doc-file="CHANGELOG.md"><span class="icon" aria-hidden="true">&#xe1a0;</span> Changelog</a>
-        <a href="?doc=docs/developer/README.md" data-doc-file="docs/developer/README.md"><span class="icon" aria-hidden="true">&#xe6a2;</span> Developer guide</a>
-        <a href="?doc=docs/developer/LINUX_MIGRATION.md" data-doc-file="docs/developer/LINUX_MIGRATION.md"><span class="icon" aria-hidden="true">&#xe6a2;</span> Linux migration</a>
-        <a href="?doc=docs/developer/WAYLAND_SUPPORT.md" data-doc-file="docs/developer/WAYLAND_SUPPORT.md"><span class="icon" aria-hidden="true">&#xe6a2;</span> Wayland support plan</a>
-        <a href="?doc=docs/developer/WINDOWS_MIGRATION.md" data-doc-file="docs/developer/WINDOWS_MIGRATION.md"><span class="icon" aria-hidden="true">&#xe32e;</span> Windows migration</a>
-        <a href="?doc=docs/developer/OTHER_DESKTOPS.md" data-doc-file="docs/developer/OTHER_DESKTOPS.md"><span class="icon" aria-hidden="true">&#xe586;</span> Other desktops</a>
-        <a href="?doc=docs/developer/UI_DESIGN.md" data-doc-file="docs/developer/UI_DESIGN.md"><span class="icon" aria-hidden="true">&#xe150;</span> UI design</a>
-        <a href="?doc=docs/developer/TRACKPAD_HAPTICS_PLAN.md" data-doc-file="docs/developer/TRACKPAD_HAPTICS_PLAN.md"><span class="icon" aria-hidden="true">&#xe586;</span> Trackpad and haptics plan</a>
-        <div class="sidebar-note"><span class="icon" aria-hidden="true">&#xe23a;</span><p>Pages are rendered from the original <code>.md</code> files. Edit the Markdown in the repository to update this site.</p></div>
-      </aside>
-      <article class="markdown" id="markdown-content" aria-live="polite">
-        <div class="markdown-loading"><span class="loading-dot"></span> Loading documentation…</div>
-      </article>
+  <!-- ============ DOCUMENTATION VIEW (rendered by assets/site.js) ============ -->
+  <section id="documentation-view" class="docs" hidden>
+    <div class="wrap">
+      <div class="docs-top">
+        <nav class="crumbs" id="doc-crumbs" aria-label="Breadcrumb"></nav>
+        <div class="docs-top-tools">
+          <button class="btn btn-sm btn-ghost docs-menu-btn" type="button" id="docs-menu-btn" aria-expanded="false" aria-controls="docs-sidebar"><span class="burger"><i></i><i></i></span> Pages</button>
+        </div>
+      </div>
+      <div class="docs-layout">
+        <aside class="docs-sidebar" id="docs-sidebar" aria-label="Documentation pages">
+          <label class="doc-search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><input id="doc-filter" type="search" placeholder="Search pages…" autocomplete="off" aria-label="Filter documentation pages"><kbd>/</kbd></label>
+          <div id="doc-nav"></div>
+          <p class="doc-empty" id="doc-empty" hidden>No page matches.</p>
+          <div class="sidebar-note"><span class="icon" aria-hidden="true">&#xe23a;</span><p>Pages are rendered from the original <code>.md</code> files. Edit the Markdown in the repository to update this site.</p></div>
+        </aside>
+        <div class="docs-backdrop" id="docs-backdrop" hidden></div>
+        <div class="docs-main">
+          <article class="markdown" id="markdown-content" aria-live="polite">
+            <div class="markdown-loading"><span class="loading-dot"></span> Loading documentation…</div>
+          </article>
+          <nav class="pager" id="doc-pager" aria-label="Previous and next page"></nav>
+        </div>
+        <aside class="toc" id="doc-toc" aria-label="On this page" hidden>
+          <h4>On this page</h4>
+          <ul id="doc-toc-list"></ul>
+          <a class="toc-top" href="#" id="toc-top">Back to top ↑</a>
+        </aside>
+      </div>
     </div>
   </section>
 </main>
@@ -265,9 +387,9 @@
         <a href="./index.html" aria-label="CursorPie home"><img src="./assets/cursorpie-logo.png" alt="CursorPie"></a>
         <p>A simple pie menu that stays close to your cursor and feels natural to use every day.</p>
         <div class="footer-social">
-          <a class="footer-icon" href="https://github.com/sebastvnd/cursorpie" target="_blank" rel="noopener" aria-label="GitHub" data-tip="GitHub"><span class="icon" aria-hidden="true">&#xe576;</span></a>
-          <a class="footer-icon" href="https://github.com/sebastvnd/cursorpie/issues" target="_blank" rel="noopener" aria-label="Report an issue" data-tip="Report an issue"><span class="icon" aria-hidden="true">&#xe5f4;</span></a>
-          <a class="footer-icon" href="./index.html#download" aria-label="Download" data-tip="Download"><span class="icon" aria-hidden="true">&#xe20c;</span></a>
+          <a class="icon-btn" href="https://github.com/sebastvnd/cursorpie" target="_blank" rel="noopener" aria-label="GitHub" data-tip="GitHub"><span class="icon" aria-hidden="true">&#xe576;</span></a>
+          <a class="icon-btn" href="https://github.com/sebastvnd/cursorpie/issues" target="_blank" rel="noopener" aria-label="Report an issue" data-tip="Report an issue"><span class="icon" aria-hidden="true">&#xe5f4;</span></a>
+          <a class="icon-btn" href="./index.html#download" aria-label="Download" data-tip="Download"><span class="icon" aria-hidden="true">&#xe20c;</span></a>
         </div>
       </div>
       <nav class="footer-col" aria-label="Learn">

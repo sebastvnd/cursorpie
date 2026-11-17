@@ -66,6 +66,8 @@ impl App {
         let keep = icons_to_keep_asleep(&cfg());
         self.ed.icons.keep_only(&keep);
         self.release_editor();
+        // the web of the last gesture in trail mode, and the glyphs its nodes cut
+        self.forget_trail();
         self.release_font_atlas(ctx);
         self.toast = None;
         platform::release_unused_memory();
