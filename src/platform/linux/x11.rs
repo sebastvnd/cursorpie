@@ -620,7 +620,7 @@ impl Conn {
     /// Every window of the window manager's list, as numbers. The windows that exist before an app
     /// is started, to tell the ones it opens from them (see [`Conn::new_main_windows`]).
     pub fn window_set(&self) -> std::collections::HashSet<u64> {
-        self.stacking().into_iter().map(|w| w as u64).collect()
+        self.stacking().into_iter().collect()
     }
 
     /// The main windows of `app` that are shown and were not in `known` (see [`Conn::window_set`]),
@@ -634,10 +634,10 @@ impl Conn {
         let aliases = index().unwrap_or_default().aliases(app);
         self.stacking()
             .into_iter()
-            .filter(|w| !known.contains(&(*w as u64)))
+            .filter(|w| !known.contains(w))
             .filter(|w| toplevels::belongs_to(&self.window_names(*w), &aliases))
             .filter(|w| self.is_main_window(*w) && !self.is_hidden(*w))
-            .filter_map(|w| Some((w as u64, self.geometry_of(w)?)))
+            .filter_map(|w| Some((w, self.geometry_of(w)?)))
             .collect()
     }
 

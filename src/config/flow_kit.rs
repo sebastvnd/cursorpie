@@ -441,7 +441,9 @@ mod tests {
         // the panels written out in the design guide: a fenced json block with `"widgets"` and no
         // `"kind"` (the one that shows a panel inside a block is a flow fragment)
         let mut shown = 0;
-        for block in PANEL_GUIDE.split("```json\n").skip(1) {
+        // a Windows checkout may have turned the line endings of the guide into CRLF
+        let guide = PANEL_GUIDE.replace("\r\n", "\n");
+        for block in guide.split("```json\n").skip(1) {
             let json = block.split("```").next().unwrap_or("");
             if !json.contains("\"widgets\"") || json.contains("\"kind\"") {
                 continue;
