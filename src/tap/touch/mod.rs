@@ -459,6 +459,10 @@ mod tests {
             let serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
             let mut c = cfg();
             let saved = c.clone();
+            // Start from the factory config, not from the live one: that is the config of the person
+            // who runs the test (their own pies, their own shape), and these tests count on the
+            // factory pie (which slice is a submenu, how big the pie is).
+            *c = Config::default();
             edit(&mut c);
             crate::tap::PAUSED.store(false, Ordering::SeqCst);
             crate::tap::SETTINGS_OPEN.store(false, Ordering::SeqCst);
