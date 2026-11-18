@@ -448,6 +448,9 @@ mod tests {
         assert_eq!(describe_io_error(&other), "boom");
     }
 
+    // Needs a real folder whose path starts with `/` (a Linux `$HOME` must be absolute), so not on
+    // Windows, where the temp folder is `C:\...`.
+    #[cfg(unix)]
     #[test]
     fn exports_go_to_the_localized_download_folder_on_linux() {
         let base = std::env::temp_dir().join(format!("cursorpie-dl-{}", std::process::id()));

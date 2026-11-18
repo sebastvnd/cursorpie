@@ -120,7 +120,14 @@ pub fn run() -> eframe::Result<()> {
         } else {
             ""
         };
-        println!("{} {}{build}", about::APP_NAME, about::VERSION);
+        use std::io::Write as _;
+        // not `println!`: it panics when nobody reads stdout (a closed pipe), and this is only a probe
+        let _ = writeln!(
+            std::io::stdout(),
+            "{} {}{build}",
+            about::APP_NAME,
+            about::VERSION
+        );
         return Ok(());
     }
     if bridge::host::wants_host(&args) {

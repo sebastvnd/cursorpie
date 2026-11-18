@@ -294,8 +294,12 @@ jobs:
           if ($setup.ExitCode -ne 0) { throw "Setup ended with $($setup.ExitCode)" }
           $exe = Join-Path $env:LOCALAPPDATA "Programs\CursorPie\cursorpie.exe"
           if (-not (Test-Path $exe)) { throw "Setup did not install $exe" }
-          $out = & $exe --selftest
-          if ($LASTEXITCODE -ne 0) { throw "The installed program does not start" }
+          # The program has no console (windows subsystem): `& $exe` would not wait for it and would
+          # close the pipe under its stdout, so its output goes to a file and Start-Process waits.
+          $outFile = Join-Path $env:RUNNER_TEMP "selftest.txt"
+          $run = Start-Process -FilePath $exe -ArgumentList "--selftest" -RedirectStandardOutput $outFile -Wait -PassThru
+          if ($run.ExitCode -ne 0) { throw "The installed program does not start" }
+          $out = Get-Content -Raw $outFile
           if ("$out" -notmatch "\(log build\)") { throw "The program has no log: $out" }
       - uses: actions/upload-artifact@v4
         with:
