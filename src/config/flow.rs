@@ -1763,9 +1763,9 @@ pub fn export_flow_file_name(flow_name: &str) -> String {
 pub fn export_flow_to_downloads(flow: &Flow) -> Result<PathBuf, String> {
     let text = export_flow(flow)?;
     let mut p = super::downloads_dir();
-    fs::create_dir_all(&p).map_err(|e| e.to_string())?;
+    fs::create_dir_all(&p).map_err(|e| super::describe_io_error(&e))?;
     p.push(export_flow_file_name(&flow.name));
-    fs::write(&p, text).map_err(|e| e.to_string())?;
+    super::backup::write_atomic(&p, &text).map_err(|e| super::describe_io_error(&e))?;
     Ok(p)
 }
 

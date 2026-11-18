@@ -125,7 +125,7 @@ impl App {
                 {
                     match export_config(&self.edit) {
                         Ok(p) => self.say(format!("Exported to {}", p.display())),
-                        Err(e) => self.say(format!("Export failed: {e}")),
+                        Err(e) => self.export_failed("Your setup", describe_io_error(&e)),
                     }
                 }
                 if button(

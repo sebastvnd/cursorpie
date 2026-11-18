@@ -21,6 +21,13 @@ impl App {
         let today = update::day_number(SystemTime::now());
         let state = update::load_state();
         let plan = install::install_plan();
+        // developer mode is device state: read it again each time Settings opens, and forget the
+        // log that was read before
+        self.ed.dev_on = crate::devmode::is_on();
+        self.ed.dev_snapshot = None;
+        self.ed.dev_read_at = None;
+        self.ed.dev_note = None;
+        self.ed.dev_spec = crate::devmode::log_spec().unwrap_or_default();
         self.ed.update_can_install = plan.is_some();
         self.ed.update_needs_password = plan.is_some_and(|p| p.needs_password);
         // a check or an install that is still running keeps its say: its answer comes by message
@@ -122,6 +129,49 @@ impl App {
         install::spawn_prepare(notifier);
     }
 
+    /// Replaces this copy with the same release in the other build (the one that keeps the
+    /// diagnostic log, or the ordinary one): the swap of an update, with the same download, checks and
+    /// restart. Asking for the log build also asks for the log, so the copy that starts is already
+    /// writing it.
+    pub(crate) fn start_build_swap(
+        &mut self,
+        ctx: &egui::Context,
+        build: install::Build,
+        leaving: bool,
+    ) {
+        if Self::update_busy(self.ed.update) {
+            return;
+        }
+        let Some(current) = Version::current() else {
+            return;
+        };
+        diag::log!("ui", "build_swap", build = build.word(), leaving = leaving);
+        // developer mode and the log go off once the swap has started, not before: a download that
+        // fails leaves everything as it was
+        self.ed.dev_leaving = leaving;
+        if build == install::Build::Log && crate::devmode::log_spec().is_none() {
+            let _ = crate::devmode::set_log_spec(Some(crate::devmode::DEFAULT_SPEC));
+        }
+        self.ed.update_offer = None;
+        self.ed.dev_offer = None;
+        self.ed.update = Status::Downloading(current);
+        self.say(match build {
+            install::Build::Log => format!("Downloading CursorPie {current} with the log..."),
+            install::Build::Standard => format!("Downloading CursorPie {current}..."),
+        });
+        let notifier = Notifier {
+            tx: self.tx.clone(),
+            ctx: ctx.clone(),
+        };
+        install::spawn_prepare_with(
+            notifier,
+            install::Want {
+                build,
+                same_version: true,
+            },
+        );
+    }
+
     /// Applies the answer of the download: the update is ready (and is swapped in at once unless
     /// Settings holds changes that were not saved), or it could not be installed.
     pub(super) fn update_staged(
@@ -136,6 +186,7 @@ impl App {
                 self.apply_staged_update(ctx);
             }
             (Err(why), Status::Downloading(version)) => {
+                self.ed.dev_leaving = false;
                 self.ed.update = Status::InstallFailed(version, why);
                 self.say("Could not install the update.");
             }
@@ -157,9 +208,15 @@ impl App {
         match install::apply(&staged) {
             Ok(()) => {
                 diag::log!("ui", "update_apply");
+                if std::mem::take(&mut self.ed.dev_leaving) {
+                    // the standard build starts next: with developer mode and the log off
+                    let _ = crate::devmode::set_on(false);
+                    let _ = crate::devmode::set_log_spec(None);
+                }
                 self.quit(ctx);
             }
             Err(why) => {
+                self.ed.dev_leaving = false;
                 self.ed.update_staged = None;
                 self.ed.update = Status::InstallFailed(staged.version, why);
                 self.say("Could not start the update.");
@@ -257,6 +314,7 @@ mod tests {
         let v = v("999.0.0");
         let staged = install::Staged {
             version: v,
+            build: install::Build::Standard,
             os: crate::platform::OS,
             package: "/nonexistent/pkg".into(),
             staged: "/nonexistent/new".into(),

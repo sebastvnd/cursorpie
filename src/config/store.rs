@@ -233,8 +233,29 @@ pub fn export_config(config: &Config) -> std::io::Result<PathBuf> {
     fs::create_dir_all(&p)?;
     p.push("cursorpie-config.json");
     let data = serde_json::to_string_pretty(config).map_err(std::io::Error::other)?;
-    fs::write(&p, data)?;
+    backup::write_atomic(&p, &data)?;
     Ok(p)
+}
+
+/// Why a file could not be written, in words a person can act on. A full disk or an exceeded
+/// quota says so (and what to do), a refused write says that, anything else is the system's own
+/// message.
+pub fn describe_io_error(e: &std::io::Error) -> String {
+    use std::io::ErrorKind as K;
+    match e.kind() {
+        K::StorageFull | K::QuotaExceeded => "There is no free space left on the disk, so the \
+             file could not be saved. Free some space (empty the trash, delete files you no \
+             longer need) and try again."
+            .into(),
+        K::PermissionDenied => "CursorPie is not allowed to write to the folder it exports to \
+             (the Downloads folder). Check the permissions of that folder and try again."
+            .into(),
+        K::ReadOnlyFilesystem => {
+            "The folder it exports to is on a read-only disk, so nothing can be written there."
+                .into()
+        }
+        _ => e.to_string(),
+    }
 }
 
 // -------------------------------------------------------------------- globals
@@ -417,6 +438,16 @@ mod tests {
     }
 
     #[cfg(unix)]
+    #[test]
+    fn a_full_disk_is_explained_in_plain_words() {
+        let full = std::io::Error::from(std::io::ErrorKind::StorageFull);
+        assert!(describe_io_error(&full).contains("no free space"));
+        let quota = std::io::Error::from(std::io::ErrorKind::QuotaExceeded);
+        assert!(describe_io_error(&quota).contains("no free space"));
+        let other = std::io::Error::other("boom");
+        assert_eq!(describe_io_error(&other), "boom");
+    }
+
     #[test]
     fn exports_go_to_the_localized_download_folder_on_linux() {
         let base = std::env::temp_dir().join(format!("cursorpie-dl-{}", std::process::id()));

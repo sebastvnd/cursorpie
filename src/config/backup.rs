@@ -40,14 +40,34 @@ pub fn backup_path(dir: &Path, n: usize) -> PathBuf {
     dir.join(format!("config.backup.{n}.json"))
 }
 
+/// Writes `data` to `path` and forces it to the disk before returning. `fs::write` alone can
+/// report success for a file whose data the system could not store (a full disk or a quota is
+/// sometimes only noticed when the data is flushed), so the flush is part of the write and its
+/// error is returned.
+fn write_synced(path: &Path, data: &[u8]) -> io::Result<()> {
+    use std::io::Write;
+    let mut file = fs::File::create(path)?;
+    file.write_all(data)?;
+    file.sync_all()
+}
+
+/// `path` with `.tmp` added to the whole file name (`config.json` becomes `config.json.tmp`).
+fn temp_path(path: &Path) -> PathBuf {
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(".tmp");
+    path.with_file_name(name)
+}
+
 /// Writes `data` to `path` through a temporary file in the same directory, so a crash or a full
-/// disk never leaves half a file behind.
+/// disk never leaves half a file behind (and a file that was there stays as it was). Any error,
+/// including "no space left on the device", is returned and the temporary file is removed.
 pub fn write_atomic(path: &Path, data: &str) -> io::Result<()> {
-    let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, data)?;
-    fs::rename(&tmp, path).inspect_err(|_| {
+    let tmp = temp_path(path);
+    let result = write_synced(&tmp, data.as_bytes()).and_then(|()| fs::rename(&tmp, path));
+    if result.is_err() {
         let _ = fs::remove_file(&tmp);
-    })
+    }
+    result
 }
 
 /// Stores `previous` as backup 1 and shifts the older ones (the oldest falls off after `keep`).
@@ -144,5 +164,26 @@ mod tests {
         write_atomic(&f, "two").unwrap();
         assert_eq!(fs::read_to_string(&f).unwrap(), "two");
         assert!(!f.with_extension("json.tmp").exists());
+    }
+
+    #[test]
+    fn a_failed_atomic_write_returns_the_error_and_keeps_the_old_file() {
+        let d = scratch("backup-atomic-fail");
+        let f = d.join("config.json");
+        write_atomic(&f, "old").unwrap();
+        // the target is a directory, so the final rename cannot succeed
+        let blocked = d.join("blocked.json");
+        fs::create_dir_all(blocked.join("inner")).unwrap();
+        assert!(write_atomic(&blocked, "new").is_err());
+        assert!(!temp_path(&blocked).exists(), "no temp file is left behind");
+        assert_eq!(fs::read_to_string(&f).unwrap(), "old");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_full_disk_is_an_error_not_a_silent_success() {
+        // /dev/full accepts the open and refuses every write with ENOSPC
+        let e = write_synced(Path::new("/dev/full"), b"data").unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::StorageFull);
     }
 }

@@ -67,6 +67,7 @@ pub mod bridge;
 pub mod cache;
 pub mod config;
 pub mod debug;
+pub mod devmode;
 pub mod flowrun;
 pub mod flowstate;
 pub mod geometry;
@@ -113,7 +114,13 @@ pub fn run() -> eframe::Result<()> {
     }
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == about::SELFTEST_ARG) {
-        println!("{} {}", about::APP_NAME, about::VERSION);
+        // the build is named, so the release workflow can check that the log build has the log
+        let build = if devmode::LOG_BUILD {
+            " (log build)"
+        } else {
+            ""
+        };
+        println!("{} {}{build}", about::APP_NAME, about::VERSION);
         return Ok(());
     }
     if bridge::host::wants_host(&args) {
@@ -212,9 +219,9 @@ pub fn run() -> eframe::Result<()> {
             // executable are written again, before the extension connects and finds them old
             refresh::run();
             bridge::apply(config::cfg().browser_bridge); // the optional browser extension link
-            // the very first start: decided before anything can write config.json, and before the
-            // tap starts, so a trackpad that is there works from the first hold (the switch is
-            // turned on for a new user who has one, see tap::touch::probe)
+            // decided before anything can write config.json (on the very first start), and before
+            // the tap starts, so a trackpad that is there works from the first hold (the switch is
+            // turned on once when one is found, see tap::touch::probe)
             let first_start = config::welcome_due();
             tap::enable_trackpad_on_first_start(first_start);
             tap::spawn(notifier.clone());

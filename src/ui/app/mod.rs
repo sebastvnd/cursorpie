@@ -150,6 +150,9 @@ pub struct App {
     pub confirm_discard: bool,
     /// What the last import of a file found: shown in a sheet until it is closed.
     pub import_report: Option<ImportSheet>,
+    /// An export that could not be written: shown in a sheet until it is closed (see
+    /// `ui::settings::export_error`).
+    pub export_error: Option<ExportError>,
     /// What a run of a flow that did not go well found: shown in a sheet until it is closed (see
     /// `ui::settings::run_report`). Only set while Settings is open; the desktop notification
     /// of the run is sent by [`actions`](crate::actions).
@@ -252,6 +255,7 @@ impl App {
             confirm_quit: false,
             confirm_discard: false,
             import_report: None,
+            export_error: None,
             run_report: None,
             opened: None,
             history: History::new(&edit, HISTORY_LIMIT),
@@ -282,6 +286,25 @@ impl App {
     pub fn say(&mut self, text: impl Into<String>) {
         self.toast = Some((text.into(), Instant::now()));
     }
+
+    /// An export failed: says so in the status bar and opens the sheet that stays until it is
+    /// closed. Nothing may fail silently, whatever the status bar shows at that moment.
+    pub fn export_failed(&mut self, what: &str, reason: String) {
+        self.say(format!("Export failed: {reason}"));
+        self.export_error = Some(ExportError {
+            what: what.to_string(),
+            reason,
+        });
+    }
+}
+
+/// The words of the sheet that follows an export that failed (see `ui::settings::export_error`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExportError {
+    /// What was being exported ("Flow", "Profile", "Your setup", "Browser extension files").
+    pub what: String,
+    /// Why it failed, in plain words.
+    pub reason: String,
 }
 
 /// The words of the sheet that follows an import (see `ui::settings::import_report`).

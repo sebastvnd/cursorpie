@@ -80,6 +80,10 @@ pub enum Msg {
     FlowImportPicked(String),
     /// Show a short message in the Settings status bar (sent by helpers that cannot reach `App`).
     Notice(String),
+    /// An export could not be written (a full disk, no permission...): Settings shows a sheet that
+    /// says what was not exported and why, since the status bar line goes away after a few
+    /// seconds. `what` names the thing (a flow, a profile...), `reason` is in plain words.
+    ExportFailed { what: String, reason: String },
     /// A flow was run (by the actions worker). `report` is `Some` when blocks of it could not do
     /// their work and the flow did not deal with that: the Settings window shows the details, and
     /// the Flow tab marks those blocks. `None` clears the marks of an earlier run of the flow.

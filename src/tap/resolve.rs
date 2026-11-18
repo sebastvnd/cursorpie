@@ -51,12 +51,14 @@ pub(super) fn eval(profile: usize, path: &[usize], center: Point, p: Point) -> H
         };
     };
     let hover = slice_at(center, p, items.len(), pie_inner(win));
-    let dist = ((p.x - center.x) as f32).hypot((p.y - center.y) as f32);
+    let (dx, dy) = ((p.x - center.x) as f32, (p.y - center.y) as f32);
+    // the rim is where the outline of the pie is in that direction, not always a circle
+    let rim = pie_outer(win) * c.outline().radius(dy.atan2(dx));
     let enter = match hover.and_then(|h| items.get(h)) {
         Some(Item {
             kind: ItemKind::Submenu(ch),
             ..
-        }) => !ch.is_empty() && dist > pie_outer(win) && path.len() + 1 < MAX_DEPTH,
+        }) => !ch.is_empty() && dx.hypot(dy) > rim && path.len() + 1 < MAX_DEPTH,
         _ => false,
     };
     // the cache is asked with the config locked: lock order is config, then running

@@ -1,10 +1,11 @@
 //! Drawing of the pie menu (one ring at a time; submenus re-center the same window).
 
+pub mod genz;
 pub mod glass;
 mod trail;
 mod view;
 
-use crate::config::{MAX_ITEMS, cfg};
+use crate::config::{Config, MAX_ITEMS, PieStyle, cfg};
 use crate::geometry::*;
 use crate::running::{self, Choice};
 use crate::ui::app::App;
@@ -40,6 +41,41 @@ const OVERSHOOT_ROOM: f32 = 8.0;
 /// asked to be and still count as keeping it on the screen (the menu bar of macOS is 24 to 38).
 const PIE_SHIFT_SLACK: f32 = 64.0;
 
+/// What the slices of the pie are made of: opaque and following the appearance, frosted glass, or
+/// the thick-outlined Gen Z look.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Material {
+    Solid,
+    Glass(glass::Glass),
+    GenZ,
+}
+
+impl Material {
+    /// The material the settings ask for.
+    pub fn of(cfg: &Config) -> Self {
+        Self::styled(cfg.pie_style, cfg)
+    }
+
+    /// The material of `style`, with the glass numbers of `cfg`: to show a style that is not the
+    /// one chosen.
+    pub fn styled(style: PieStyle, cfg: &Config) -> Self {
+        match style {
+            PieStyle::Solid => Self::Solid,
+            PieStyle::Glass => Self::Glass(glass::Glass::from_percent(cfg)),
+            PieStyle::GenZ => Self::GenZ,
+        }
+    }
+
+    /// The colors of a pie of this material: glass and Gen Z look the same in either appearance.
+    pub fn colors(self) -> PieColors {
+        match self {
+            Self::Solid => pie_colors(),
+            Self::Glass(_) => glass_colors(),
+            Self::GenZ => genz_colors(),
+        }
+    }
+}
+
 impl App {
     /// Draws the pie (one ring) and advances its animations. Hides the window once the close animation ended.
     pub fn pie_ui(&mut self, ui: &mut egui::Ui) {
@@ -73,10 +109,16 @@ impl App {
         };
         let total = view.items.len().max(1);
         let glass = glass::Glass::of(&cfg());
+        let genz = genz::of(&cfg());
+        let outline = cfg().outline();
         // Glass is always smoked graphite, even in the light appearance: pale glass on a light page
-        // looks washed out. Solid follows the appearance.
-        let smoked = glass.is_some() || dark();
-        let colors = pie_colors_for(smoked);
+        // looks washed out. Gen Z is always white with dark ink. Solid follows the appearance.
+        let smoked = glass.is_some() || (dark() && !genz);
+        let colors = if genz {
+            genz_colors()
+        } else {
+            pie_colors_for(smoked)
+        };
 
         let (anim, mut moving) = step_linear(
             self.anim,
@@ -260,6 +302,8 @@ impl App {
                 let r = pie_outer(self.win) * (0.80 + 0.20 * pop);
                 let inner = pie_inner(self.win) * (0.75 + 0.25 * pop);
                 let room = pie_outer(self.win) + OVERSHOOT_ROOM;
+                // the ring is made round and bent to the outline of the pie (a circle by default)
+                let bend = Bend::new(outline, inner, r);
                 let accent = rgb(view.accent);
                 // false = the side buttons follow the other pie: tint this one with the inactive color
                 let live = !view.side.shown || view.side.owner;
@@ -318,22 +362,12 @@ impl App {
 
                 // soft shadow behind the ring: one blurred shape, so it falls off smoothly (a stack
                 // of discs leaves a visible step at the edge of each). A white ring needs it to
-                // stand off a white page; glass needs less, it is see-through.
-                painter.add(
-                    egui::Shadow {
-                        offset: [0, 3],
-                        blur: 8,
-                        spread: 0,
-                        color: Color32::from_black_alpha(a(
-                            if glass.is_some() { 26.0 } else { 40.0 },
-                            fade,
-                        )),
-                    }
-                    .as_shape(
-                        egui::Rect::from_center_size(c, Vec2::splat(r * 2.0)),
-                        egui::CornerRadius::same(u8::MAX),
-                    ),
-                );
+                // stand off a white page; glass needs less, it is see-through. Gen Z has a hard
+                // shadow under each piece instead.
+                if !genz {
+                    let shade = a(if glass.is_some() { 26.0 } else { 40.0 }, fade);
+                    ring_shadow(&painter, c, r, bend, shade);
+                }
 
                 let sl = TAU / total as f32;
                 let gap = if total > 1 { 0.05 } else { 0.0 };
@@ -370,6 +404,7 @@ impl App {
                         glass::slice(
                             &painter,
                             c,
+                            bend,
                             (inner, rr),
                             (s0, s1),
                             col,
@@ -378,10 +413,22 @@ impl App {
                             g,
                             total == 1,
                         );
+                    } else if genz {
+                        genz::slice(
+                            &painter,
+                            c,
+                            bend,
+                            (inner, rr),
+                            (s0, s1),
+                            col,
+                            h,
+                            lf,
+                            total == 1,
+                        );
                     } else {
                         let fill =
                             Color32::from_rgba_unmultiplied(col[0], col[1], col[2], a(242.0, lf));
-                        painter.add(ring_slice(&painter, c, inner, rr, s0, s1, fill));
+                        painter.add(ring_slice(&painter, c, inner, rr, s0, s1, fill, bend));
                         // A hairline around the slice keeps its shape readable on any background.
                         // A lone slice is a full ring: its outline would draw the seam as a line.
                         if total > 1 {
@@ -391,13 +438,13 @@ impl App {
                                 Color32::from_black_alpha(a(16.0 + 20.0 * h, lf))
                             };
                             painter.add(Shape::closed_line(
-                                ring_slice_outline(c, inner, rr, s0, s1),
+                                bend.points(c, ring_slice_outline(c, inner, rr, s0, s1)),
                                 Stroke::new(1.0, edge),
                             ));
                         }
                     }
                     // a bright bar grows along the rim of the hovered slice
-                    if h > 0.02 && sl > 0.2 {
+                    if h > 0.02 && sl > 0.2 && !genz {
                         painter.add(ring_slice(
                             &painter,
                             c,
@@ -406,12 +453,13 @@ impl App {
                             s0 + 0.05,
                             s1 - 0.05,
                             on_accent(accent).gamma_multiply(0.55 * h * lf),
+                            bend,
                         ));
                     }
 
                     let am = start + sl / 2.0;
                     let dir = Vec2::new(am.cos(), am.sin());
-                    let tp = c + dir * ((inner + rr) / 2.0);
+                    let tp = c + dir * bend.radius(am, (inner + rr) / 2.0);
                     // with a name the icon sits a little high; alone it is centered and larger
                     let (icon_dy, icon_size) = if view.labels {
                         (-r * 0.04, r * 0.30)
@@ -469,6 +517,7 @@ impl App {
                                     accent,
                                     colors,
                                     glass,
+                                    genz,
                                     smoked,
                                 },
                             );
@@ -477,7 +526,7 @@ impl App {
                     if *is_sub {
                         // dot on the rim: drag outward across it to open the submenu
                         painter.circle_filled(
-                            c + dir * (rr - 7.0),
+                            c + dir * bend.radius(am, rr - 7.0),
                             2.5,
                             ink.gamma_multiply(lf * 0.8),
                         );
@@ -494,10 +543,12 @@ impl App {
                     (col.gamma_multiply(fade), 3.0)
                 } else if view.is_app {
                     (accent, 2.5)
+                } else if genz {
+                    genz::ring(fade, total == 1)
                 } else {
                     (Color32::from_black_alpha(a(14.0, fade)), 1.0)
                 };
-                painter.circle_stroke(c, r, Stroke::new(ring_w, ring_col));
+                painter.add(bend.rim(c, r, Stroke::new(ring_w, ring_col)));
 
                 // center disc: active mode (or the parent submenu icon) + "hold for settings" progress
                 let core = inner * 0.86;
@@ -510,6 +561,8 @@ impl App {
                 };
                 if let Some(g) = glass {
                     glass::core(&painter, c, core, fade, Some(disc), g);
+                } else if genz {
+                    genz::core(&painter, c, core, fade, disc);
                 } else {
                     painter.circle_filled(c, core, disc.gamma_multiply(fade));
                     let edge = if dark() {
@@ -530,8 +583,7 @@ impl App {
                             .gamma_multiply(fade * if live { 0.85 } else { 0.45 })
                     };
                     // a soft shadow under the icon, so it stands out from a plain white disc
-                    let weight =
-                        icon_shadow_weight(view.app_icon_shadow, !dark() && glass.is_none());
+                    let weight = icon_shadow_weight(view.app_icon_shadow, !smoked);
                     if weight > 0.0 {
                         let dim = fade * if live { 1.0 } else { 0.55 } * weight;
                         // stacked, slightly larger and lower copies of the icon in black: the
@@ -621,6 +673,8 @@ struct BadgeStyle {
     colors: PieColors,
     /// The glass settings while the pie is glass, `None` while it is solid.
     glass: Option<glass::Glass>,
+    /// Whether the pie is Gen Z (white, thick outlines, hard shadows).
+    genz: bool,
     /// Whether the pie is smoked graphite (dark appearance, or glass).
     smoked: bool,
 }
@@ -642,7 +696,8 @@ fn badge_tint(choice: Choice, style: &BadgeStyle) -> Color32 {
 /// Draws one round badge of an "Open app" slice centered on `at`, `size` points wide: sage with a +
 /// for a new window, sage-gold with a small square for the app that is open. It is drawn in the
 /// material of the pie: an opaque disc with a hairline edge on a solid pie, a lit glass disc (the
-/// same as the center of the pie) on a glass one. `motion` says how it is coming out or being picked.
+/// same as the center of the pie) on a glass one, an outlined disc with a hard shadow on a Gen Z
+/// one. `motion` says how it is coming out or being picked.
 fn draw_open_badge(
     painter: &egui::Painter,
     at: egui::Pos2,
@@ -656,14 +711,18 @@ fn draw_open_badge(
     let radius = size * scale / 2.0;
     let tint = badge_tint(choice, style);
 
-    // the same soft shadow the pie has, a little smaller
-    let shadow = Color32::from_black_alpha(
-        ((if style.glass.is_some() { 30.0 } else { 46.0 }) * alpha) as u8,
-    );
-    painter.circle_filled(at + Vec2::new(0.0, 1.5), radius + 1.0, shadow);
+    if !style.genz {
+        // the same soft shadow the pie has, a little smaller
+        let shadow = Color32::from_black_alpha(
+            ((if style.glass.is_some() { 30.0 } else { 46.0 }) * alpha) as u8,
+        );
+        painter.circle_filled(at + Vec2::new(0.0, 1.5), radius + 1.0, shadow);
+    }
 
     if let Some(g) = style.glass {
         glass::core(painter, at, radius, alpha, Some(tint), g);
+    } else if style.genz {
+        genz::core(painter, at, radius, alpha, tint);
     } else {
         painter.circle_filled(at, radius, tint.gamma_multiply(alpha));
         // the hairline the slices have, so the edge reads on any background

@@ -61,6 +61,7 @@
 //! | `active` | points at a `Mode` slice, otherwise the first `Mode` found (or empty) |
 //! | `pie_hold_ms` | 50 to 2000 |
 //! | `settings_hold_ms` | at least `pie_hold_ms + 300` |
+//! | `settings_space_presses` | 1 to 2 |
 //! | `double_click_ms` | 150 to 500 |
 //! | `pie_size` | 140 to 360 |
 //! | `preview_ms` | at most 3000 |

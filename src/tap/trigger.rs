@@ -300,6 +300,10 @@ fn hold_open_pie(st: &Arc<Mutex<Gesture>>, n: &Notifier, id: u64, pie_ms: u64, s
     if source == Source::Touch {
         haptic::emit(n, Tick::Open);
     }
+    // "Hold to open settings" is off: the pie stays what it is until the button is released
+    if !cfg().settings_by_hold {
+        return;
+    }
     let (st, n) = (Arc::clone(st), n.clone());
     // How long the pie must have been on screen, untouched, before Settings takes its place.
     let dwell = Duration::from_millis(settings_ms.saturating_sub(pie_ms));
@@ -432,6 +436,36 @@ fn hold_open_settings(st: &Arc<Mutex<Gesture>>, n: &Notifier, mut hold: Settings
             about: false,
         });
     }
+}
+
+/// Opens Settings in place of the pie that is open (Space does this, see [`super::space`]). The
+/// gesture becomes `InSettings`, so the rest of it (the release of the trigger) is swallowed, the
+/// same as when the hold opens Settings. `false` = no pie was open.
+pub(super) fn open_settings_from_pie(st: &Arc<Mutex<Gesture>>, n: &Notifier) -> bool {
+    let opened = {
+        let mut gg = lock(st);
+        let found = match &*gg {
+            Gesture::ActivePie { center, source, .. } => Some((*center, *source)),
+            _ => None,
+        };
+        if let Some((_, source)) = found {
+            *gg = Gesture::InSettings(source);
+        }
+        found
+    };
+    let Some((pos, source)) = opened else {
+        return false;
+    };
+    diag::log!("tap", "space_settings", x = pos.x, y = pos.y);
+    if source == Source::Touch {
+        haptic::emit(n, Tick::Open);
+    }
+    n.send(Msg::OpenSettings {
+        x: pos.x,
+        y: pos.y,
+        about: false,
+    });
+    true
 }
 
 /// After a quick click on an app with its own pie: if no second press arrives within `ms`, the

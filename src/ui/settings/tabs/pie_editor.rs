@@ -45,8 +45,16 @@
 //! double click, or the arrow of the bar, copies the selected slice at once). Only the images and
 //! flows that a copied slice uses are brought along, and a slice that runs a shell command is marked
 //! before it is copied. The divider between the halves moves, and the tray can use the whole
-//! display too. *Add all as a pie* keeps the old behavior of importing: the whole file becomes a new
-//! pie.
+//! display too.
+//!
+//! Dragging one slice at a time is not the only way in. **Select mode** (or Shift / Ctrl/Cmd + click)
+//! picks several slices of the imported pie and *Add selected* brings them together; the middle of a
+//! pie picks its whole ring and Ctrl/Cmd + A the top ring. The bar can also bring the file in with one
+//! press: *Add every slice* (end of the lit ring), *As a submenu* (one slice that holds the file) or
+//! *Use as this pie* (the file's slices replace the ones of the pie you edit; Undo brings them back),
+//! see [`bring_items`] and [`replace_pie_with_file`]. *Add all as a pie* keeps the old behavior of
+//! importing: the whole file becomes a new pie. A profile file dropped on the window, or copied as
+//! text and pasted with Ctrl/Cmd + V, opens in the tray too ([`pasted_profile`]).
 //!
 //! The rules for what may be moved or dropped where (8 slices a ring, 5 rings deep, a submenu never
 //! inside itself) are in [`pie_edit`] and unit tested there.
@@ -69,7 +77,9 @@ use crate::ui::fonts;
 use crate::ui::settings::clip::{self, Clip};
 use crate::ui::settings::inspector::{Env, item_inspector};
 use crate::ui::settings::picker::spawn_file_picker;
-use crate::ui::settings::state::{AddCatalog, Ed, MenuView, PieDrag, PieImport, PieMenu, PieView};
+use crate::ui::settings::state::{
+    AddCatalog, Ed, IMPORT_SPLIT, MenuView, PieDrag, PieImport, PieMenu, PieView,
+};
 use crate::ui::settings::theme::*;
 use crate::ui::settings::widgets::{choice_sheet_open, icon_switch, select_item, text_field};
 use crate::ui::symbols;
@@ -292,6 +302,10 @@ struct Pane<'a> {
     /// The ring a new slice goes to (yours only).
     active: Vec<usize>,
     sel: Option<(Vec<usize>, usize)>,
+    /// The slices picked together in the imported pie (paths); empty on your own pie.
+    picked: BTreeSet<Vec<usize>>,
+    /// The imported pie is in select mode: a click picks a slice and nothing is dragged.
+    select_mode: bool,
     /// What the view is fitted to: when it changes the view is fitted again.
     fit_key: usize,
     show_labels: bool,
@@ -563,6 +577,8 @@ fn pane(ui: &mut Ui, ctx: &egui::Context, ed: &mut Ed, p: Pane) -> PaneOut {
         mut icons,
         active,
         sel,
+        picked: multi_picked,
+        select_mode,
         fit_key,
         show_labels,
         accent,
@@ -612,7 +628,8 @@ fn pane(ui: &mut Ui, ctx: &egui::Context, ed: &mut Ed, p: Pane) -> PaneOut {
         let geoms = geoms_for(view);
         let additive = ui.input(|i| i.modifiers.shift || i.modifiers.command);
         match hit_at(&geoms, origin) {
-            Hit::Slice(g, i) => {
+            // in select mode a press on the imported pie only picks: nothing is carried
+            Hit::Slice(g, i) if !(is_source && select_mode) => {
                 let ring = geoms[g].path.clone();
                 ed.pie_drag = Some(PieDrag {
                     from_import: is_source,
@@ -826,7 +843,12 @@ fn pane(ui: &mut Ui, ctx: &egui::Context, ed: &mut Ed, p: Pane) -> PaneOut {
         for (i, it) in ring.iter().enumerate() {
             let selected = sel
                 .as_ref()
-                .is_some_and(|(r, s)| *r == geom.path && *s == i);
+                .is_some_and(|(r, s)| *r == geom.path && *s == i)
+                || (is_source && !multi_picked.is_empty() && {
+                    let mut at = geom.path.clone();
+                    at.push(i);
+                    multi_picked.contains(&at)
+                });
             let lifted = dragging
                 .as_ref()
                 .is_some_and(|d| d.ring == geom.path && d.idx == i);
@@ -865,6 +887,7 @@ fn pane(ui: &mut Ui, ctx: &egui::Context, ed: &mut Ed, p: Pane) -> PaneOut {
                 a0 + 0.03,
                 a0 + sl - 0.03,
                 rgb(mix(rgb3(pal().idle), accent_rgb, t)),
+                Bend::NONE,
             ));
             let am = a0 + sl / 2.0;
             let tp = geom.c + vec2(am.cos(), am.sin()) * ((geom.inner + geom.outer) / 2.0);
@@ -1101,6 +1124,16 @@ enum BarDo {
     Delete,
     Full,
     CopySelected,
+    /// Select mode of the imported pie on or off.
+    SelectMode,
+    /// Pick every slice of the imported pie, or none when all are picked.
+    SelectAll,
+    /// Add every slice of the file to the end of the lit ring.
+    AddRing,
+    /// Add the whole file to the lit ring as one submenu.
+    AddGroup,
+    /// Make the file the slices of this pie.
+    ReplacePie,
     AddAll,
     Done,
 }
@@ -1117,6 +1150,10 @@ struct BarState {
     can_add: bool,
     can_delete: bool,
     can_copy: bool,
+    /// Import tray: select mode is on.
+    select_mode: bool,
+    /// Import tray: how many slices are picked together.
+    picked: usize,
     /// Some pie was moved from its place, so there is something to tidy.
     can_tidy: bool,
     /// The list of slices is open over the bar: the groups unfold in the capsule.
@@ -1297,6 +1334,8 @@ fn bar(ctx: &egui::Context, view: Rect, st: &BarState, group: &mut Option<usize>
         can_add,
         can_delete,
         can_copy,
+        select_mode,
+        picked,
         can_tidy,
         menu_over_bar,
         accent,
@@ -1322,22 +1361,80 @@ fn bar(ctx: &egui::Context, view: Rect, st: &BarState, group: &mut Option<usize>
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = BAR_GAP;
                         if tray {
+                            let copy_tip = if picked > 0 {
+                                format!("Add the {picked} picked slices to your pie")
+                            } else {
+                                "Add the selected slice to your pie (or double click it)".to_string()
+                            };
                             let copy = ui.add_enabled_ui(can_copy, |ui| {
-                                bar_button(
-                                    ui,
-                                    symbols::ARROW_RIGHT,
-                                    "Copy the selected slice into your pie (or double click it)",
-                                    Tone::Accent(accent),
-                                )
+                                bar_button(ui, symbols::ARROW_RIGHT, &copy_tip, Tone::Accent(accent))
                             });
                             if copy.inner.clicked() && can_copy {
                                 todo = Some(BarDo::CopySelected);
                             }
+                            if bar_button(
+                                ui,
+                                symbols::CURSOR_CLICK,
+                                if select_mode {
+                                    "Select mode is on: click slices to pick them, nothing is dragged. Click to turn it off"
+                                } else {
+                                    "Select mode: click slices to pick several, then add them together (Shift or Ctrl/Cmd + click does the same)"
+                                },
+                                if select_mode {
+                                    Tone::Accent(accent)
+                                } else {
+                                    Tone::Plain
+                                },
+                            )
+                            .clicked()
+                            {
+                                todo = Some(BarDo::SelectMode);
+                            }
+                            if bar_button(
+                                ui,
+                                symbols::CHECK_CIRCLE,
+                                "Pick every slice of the imported pie, or none (Ctrl/Cmd + A)",
+                                Tone::Plain,
+                            )
+                            .clicked()
+                            {
+                                todo = Some(BarDo::SelectAll);
+                            }
                             bar_divider(ui);
                             if bar_button(
                                 ui,
+                                symbols::STACK,
+                                "Add every slice of the file to the end of the lit ring of your pie",
+                                Tone::Plain,
+                            )
+                            .clicked()
+                            {
+                                todo = Some(BarDo::AddRing);
+                            }
+                            if bar_button(
+                                ui,
+                                symbols::FOLDER_SIMPLE,
+                                "Add the whole file as one submenu of the lit ring (always fits when the ring has a free place)",
+                                Tone::Plain,
+                            )
+                            .clicked()
+                            {
+                                todo = Some(BarDo::AddGroup);
+                            }
+                            if bar_button(
+                                ui,
+                                symbols::SWAP,
+                                "Use the file as this pie: its slices replace the ones of your pie (Undo brings them back)",
+                                Tone::Plain,
+                            )
+                            .clicked()
+                            {
+                                todo = Some(BarDo::ReplacePie);
+                            }
+                            if bar_button(
+                                ui,
                                 symbols::COPY,
-                                "Add all of it as a new pie instead",
+                                "Add all of it as a new pie (needs the apps it lists)",
                                 Tone::Plain,
                             )
                             .clicked()
@@ -1662,6 +1759,154 @@ fn copy_from_import(
     }
 }
 
+/// How much of the imported file is brought into your pie at once.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Bulk {
+    /// The slices that are picked (or the selected one), to the end of the lit ring.
+    Picked,
+    /// Every slice of the file, to the end of the lit ring.
+    Ring,
+    /// The whole file as one submenu in the lit ring.
+    Group,
+    /// The file becomes the slices of this pie.
+    Replace,
+}
+
+/// The slices of the imported pie that *Add selected* takes: the ones that are picked, or else the
+/// selected one. Each comes with everything in it, and none twice.
+fn chosen_sources(imp: &PieImport) -> Vec<Item> {
+    let paths: BTreeSet<Vec<usize>> = if imp.picked.is_empty() {
+        imp.sel
+            .iter()
+            .map(|(ring, i)| {
+                let mut p = ring.clone();
+                p.push(*i);
+                p
+            })
+            .collect()
+    } else {
+        imp.picked.clone()
+    };
+    pie_edit::slices_at(&imp.bundle.profile.items, &paths)
+}
+
+/// The name of the submenu that holds a whole imported pie: the name of the pie in the file.
+fn group_name(imp: &PieImport) -> String {
+    let n = imp.bundle.profile.name.trim();
+    if n.is_empty() {
+        "Imported".to_string()
+    } else {
+        n.to_string()
+    }
+}
+
+/// Copies `sources` (slices of the imported pie, with everything in them) to the end of the ring
+/// `to` of your pie, all together: when one does not fit, nothing is added and no image is written.
+/// Their images are written to the icons folder and the flows they run are brought along, as
+/// [`copy_from_import`] does for one slice. Returns the place of the first slice, how many were
+/// added and whether one of them can run commands.
+fn bring_items(
+    edit: &mut Config,
+    profile: usize,
+    imp: &PieImport,
+    sources: Vec<Item>,
+    to: &[usize],
+) -> Result<(usize, usize, bool), String> {
+    let items = &edit
+        .profiles
+        .get(profile)
+        .ok_or("There is no pie to add to.")?
+        .items;
+    // the rules first, on a trial copy
+    pie_edit::insert_many(&mut items.clone(), to, sources.clone())?;
+    let mut copies: Vec<Item> = sources
+        .iter()
+        .map(|s| imp.bundle.install_item(s, &icons_dir(), &tilde))
+        .collect();
+    let used = flow_ids_used(&copies);
+    let incoming: Vec<Flow> = imp
+        .bundle
+        .flows()
+        .iter()
+        .filter(|f| used.contains(&f.id))
+        .cloned()
+        .collect();
+    let runs = copies.iter().any(item_runs_commands) || incoming.iter().any(Flow::has_commands);
+    let flows_before = edit.flows.clone();
+    if let Err(e) = merge_flows(&mut edit.flows, incoming, &mut copies) {
+        edit.flows = flows_before;
+        return Err(e);
+    }
+    match pie_edit::insert_many(&mut edit.profiles[profile].items, to, copies) {
+        Ok((first, count)) => Ok((first, count, runs)),
+        Err(e) => {
+            edit.flows = flows_before;
+            Err(e)
+        }
+    }
+}
+
+/// Makes the slices of the imported file the slices of the pie `profile` (its name and its apps
+/// stay). The images and flows of the file come along. Returns whether anything can run commands.
+/// Nothing is changed on an error; Undo brings the old slices back.
+fn replace_pie_with_file(
+    edit: &mut Config,
+    profile: usize,
+    imp: &PieImport,
+) -> Result<bool, String> {
+    let mut bundle = (*imp.bundle).clone();
+    let flows = bundle.take_flows();
+    let flows_before = edit.flows.clone();
+    let mut p = share::install_icons(bundle, &icons_dir(), &tilde);
+    let runs = profile_has_commands(&p) || flows.iter().any(Flow::has_commands);
+    let merged = merge_flows(&mut edit.flows, flows, &mut p.items);
+    let result = merged.and_then(|()| {
+        let prof = edit
+            .profiles
+            .get_mut(profile)
+            .ok_or_else(|| "There is no pie to replace.".to_string())?;
+        pie_edit::replace_items(&mut prof.items, p.items)?;
+        prof.active = pie_edit::first_mode_path(&prof.items);
+        Ok(())
+    });
+    match result {
+        Ok(()) => Ok(runs),
+        Err(e) => {
+            edit.flows = flows_before;
+            Err(e)
+        }
+    }
+}
+
+/// The notice after slices were brought in.
+fn brought_notice(count: usize, runs: bool) -> String {
+    let what = if count == 1 {
+        "1 slice".to_string()
+    } else {
+        format!("{count} slices")
+    };
+    if runs {
+        format!(
+            "{what} added. Some can run a shell command, write files or send messages - review them before you Save."
+        )
+    } else {
+        format!("{what} added to your pie. Press Save to apply.")
+    }
+}
+
+/// A profile file that was copied as text (what the clipboard holds), if that is what `text` is.
+/// Anything else, a big text included, is not read.
+fn pasted_profile(text: &str) -> Option<Bundle> {
+    let t = text.trim_start();
+    if !t.starts_with('{') || t.len() as u64 > share::MAX_FILE_BYTES {
+        return None;
+    }
+    if !t.contains("cursorpie_profile") {
+        return None;
+    }
+    share::parse_bundle(t).ok()
+}
+
 // ------------------------------------------------------------------------------ the page
 
 impl App {
@@ -1698,6 +1943,25 @@ impl App {
         let whole = Rect::from_min_size(area.min, vec2(area.width(), area.height().max(260.0)));
         let insp_on = !tray && (ed.pie_insp || ed.sel.is_some());
         let insp_w = INSP_W.min(whole.width() * 0.45);
+        // a profile file dropped on the window opens in the import tray, no file chooser needed
+        // (with the slice editor open a dropped file is an icon, see `inspector::icon_drop`)
+        if !insp_on {
+            let dropped: Option<std::path::PathBuf> = ctx.input(|i| {
+                i.raw
+                    .dropped_files
+                    .iter()
+                    .map(|f| f.path().to_path_buf())
+                    .find(|p| {
+                        p.extension()
+                            .is_some_and(|e| e.eq_ignore_ascii_case("json"))
+                    })
+            });
+            if let Some(path) = dropped {
+                let _ = tx_ref.send(Msg::ProfileImportPicked(
+                    path.to_string_lossy().into_owned(),
+                ));
+            }
+        }
 
         // ---- where the canvases go
         let (src_rect, div_rect, mine_rect) = if tray {
@@ -1757,6 +2021,8 @@ impl App {
                 label,
                 bundle,
                 sel,
+                picked,
+                select_mode,
                 view,
                 textures,
                 ..
@@ -1781,11 +2047,13 @@ impl App {
                     icons: Icons::Staged { bundle, textures },
                     active: Vec::new(),
                     sel: sel.clone(),
+                    picked: picked.clone(),
+                    select_mode: *select_mode,
                     fit_key: 0,
                     show_labels,
                     accent,
                     pinch,
-                    hint: "Drag a slice across, or double click it. \u{26a0} marks a command.",
+                    hint: "Drag a slice across, double click it, or use select mode to pick several. \u{26a0} marks a command.",
                 },
             ));
         }
@@ -1809,6 +2077,8 @@ impl App {
                     icons: Icons::Mine,
                     active: nav.clone(),
                     sel: mine_sel,
+                    picked: BTreeSet::new(),
+                    select_mode: false,
                     fit_key: pi + 1,
                     show_labels,
                     accent,
@@ -1837,7 +2107,12 @@ impl App {
                 .is_some_and(|r| i < r.len() && (r.len() > 1 || !nav.is_empty()))
         });
         let can_add = items_at(&edit.profiles[pi].items, &nav).is_some_and(|r| r.len() < MAX_ITEMS);
-        let can_copy = imp.as_ref().is_some_and(|i| i.sel.is_some());
+        let can_copy = imp
+            .as_ref()
+            .is_some_and(|i| i.sel.is_some() || !i.picked.is_empty());
+        let (select_mode, picked_n) = imp
+            .as_ref()
+            .map_or((false, 0), |i| (i.select_mode, i.picked.len()));
         let mut group = ed.pie_menu.as_ref().and_then(|m| m.group);
         let bar_out = bar(
             ctx,
@@ -1849,6 +2124,8 @@ impl App {
                 can_add,
                 can_delete,
                 can_copy,
+                select_mode,
+                picked: picked_n,
                 can_tidy: pie_edit::has_layout(&edit.profiles[pi].items),
                 menu_over_bar: ed.pie_menu.as_ref().is_some_and(|m| m.at.is_none()),
                 accent,
@@ -1939,11 +2216,42 @@ impl App {
             });
         }
         // what the pointer did on the imported canvas
+        // (select mode, or Shift / Ctrl/Cmd, picks several slices; a plain click selects one)
         if let (Some(imp), Some(o)) = (imp.as_mut(), src_out.as_ref()) {
+            let multi = imp.select_mode || additive;
             match &o.click {
-                Some(Click::Slice(ring, i)) => imp.sel = Some((ring.clone(), *i)),
-                Some(Click::Ring(_)) | Some(Click::Empty) => imp.sel = None,
-                None => {}
+                Some(Click::Slice(ring, i)) => {
+                    if multi {
+                        let mut path = ring.clone();
+                        path.push(*i);
+                        if !imp.picked.remove(&path) {
+                            imp.picked.insert(path);
+                        }
+                        imp.sel = None;
+                    } else {
+                        imp.picked.clear();
+                        imp.sel = Some((ring.clone(), *i));
+                    }
+                }
+                // the middle of a pie picks (or lets go of) every slice of that ring
+                Some(Click::Ring(ring)) if multi => {
+                    let all = pie_edit::ring_paths(&imp.bundle.profile.items, ring);
+                    if !all.is_empty() {
+                        if all.iter().all(|p| imp.picked.contains(p)) {
+                            for p in &all {
+                                imp.picked.remove(p);
+                            }
+                        } else {
+                            imp.picked.extend(all);
+                        }
+                    }
+                    imp.sel = None;
+                }
+                Some(Click::Ring(_)) | Some(Click::Empty) if !multi => {
+                    imp.sel = None;
+                    imp.picked.clear();
+                }
+                Some(Click::Ring(_)) | Some(Click::Empty) | None => {}
             }
         }
 
@@ -2034,6 +2342,7 @@ impl App {
         }
         let mut close_tray = false;
         let mut add_all = false;
+        let mut bulk: Option<Bulk> = None;
         // any button of the bar but the + puts the list of slices away
         if bar_do.is_some() && !matches!(bar_do, Some(BarDo::Add)) {
             ed.close_pie_menu();
@@ -2084,9 +2393,26 @@ impl App {
                 }
             }
             Some(BarDo::Full) => ed.flow_full_req = true,
-            Some(BarDo::CopySelected) => {
-                copy_now = imp.as_ref().and_then(|i| i.sel.clone());
+            Some(BarDo::CopySelected) => bulk = Some(Bulk::Picked),
+            Some(BarDo::SelectMode) => {
+                if let Some(imp) = imp.as_mut() {
+                    imp.select_mode = !imp.select_mode;
+                }
             }
+            Some(BarDo::SelectAll) => {
+                if let Some(imp) = imp.as_mut() {
+                    let all = pie_edit::top_paths(&imp.bundle.profile.items);
+                    if imp.picked == all {
+                        imp.picked.clear();
+                    } else {
+                        imp.picked = all;
+                    }
+                    imp.sel = None;
+                }
+            }
+            Some(BarDo::AddRing) => bulk = Some(Bulk::Ring),
+            Some(BarDo::AddGroup) => bulk = Some(Bulk::Group),
+            Some(BarDo::ReplacePie) => bulk = Some(Bulk::Replace),
             Some(BarDo::AddAll) => add_all = true,
             Some(BarDo::Done) => close_tray = true,
             None => {}
@@ -2107,6 +2433,60 @@ impl App {
                             "Slice copied into your pie. Press Save to apply."
                         },
                     );
+                }
+                Err(e) => notice(tx_ref, ctx, e),
+            }
+        }
+        if let Some(kind) = bulk
+            && let Some(imp) = imp.as_ref()
+        {
+            let result: Result<(usize, usize, bool), String> = match kind {
+                Bulk::Picked => {
+                    let sources = chosen_sources(imp);
+                    if sources.is_empty() {
+                        Err("Pick a slice of the imported pie first.".to_string())
+                    } else {
+                        bring_items(edit, pi, imp, sources, &nav)
+                    }
+                }
+                Bulk::Ring => bring_items(edit, pi, imp, imp.bundle.profile.items.clone(), &nav),
+                Bulk::Group => {
+                    let group = pie_edit::group_item(
+                        &group_name(imp),
+                        "ico:folder-simple",
+                        imp.bundle.profile.items.clone(),
+                        nav.len(),
+                    );
+                    bring_items(edit, pi, imp, vec![group], &nav)
+                }
+                Bulk::Replace => replace_pie_with_file(edit, pi, imp).map(|runs| (0, 0, runs)),
+            };
+            match result {
+                Ok((_, _, runs)) if kind == Bulk::Replace => {
+                    ed.reset_nav();
+                    ed.sel = None;
+                    ed.pie_picked.clear();
+                    ed.stop_recording();
+                    ed.icons.revalidate();
+                    view.fitted_for = None;
+                    close_tray = true;
+                    notice(
+                        tx_ref,
+                        ctx,
+                        if runs {
+                            "Pie replaced. It can run shell commands, write files or send messages - review them before you Save. Undo brings your old pie back."
+                        } else {
+                            "Pie replaced. Press Save to apply, or Undo to bring your old pie back."
+                        },
+                    );
+                }
+                Ok((first, count, runs)) => {
+                    select_mine(ed, nav.clone(), first + count - 1);
+                    ed.pie_picked.clear();
+                    ed.stop_recording();
+                    ed.icons.revalidate();
+                    view.fitted_for = None;
+                    notice(tx_ref, ctx, brought_notice(count, runs));
                 }
                 Err(e) => notice(tx_ref, ctx, e),
             }
@@ -2149,6 +2529,15 @@ impl App {
                 .into_iter()
                 .map(|b| b.path)
                 .collect();
+        }
+        // Ctrl/Cmd + A in the import tray picks every slice of the imported pie
+        if keys_free
+            && tray
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::A))
+            && let Some(imp) = imp.as_mut()
+        {
+            imp.picked = pie_edit::top_paths(&imp.bundle.profile.items);
+            imp.sel = None;
         }
         // Ctrl/Cmd + C copies the selected slice (or the selected pies), X cuts and V pastes at the end
         // of the lit pie. They go through the system clipboard as text, like the blocks of a flow
@@ -2216,7 +2605,30 @@ impl App {
                                 "Submenus nest {MAX_DEPTH} rings deep at most, and that copy would go deeper."
                             ),
                         ),
-                        PasteSlices::NotSlices => {}
+                        // not slices: a whole profile file copied as text opens in the import tray
+                        PasteSlices::NotSlices => {
+                            if let Some(bundle) = pasted_profile(&text) {
+                                let runs = profile_has_commands(&bundle.profile)
+                                    || bundle.flows().iter().any(Flow::has_commands);
+                                imp = Some(PieImport::new(
+                                    bundle,
+                                    "Pasted from the clipboard".to_string(),
+                                    runs,
+                                ));
+                                ed.pie_drag = None;
+                                ed.pie_split = IMPORT_SPLIT;
+                                ed.sel = None;
+                                ed.adding = false;
+                                ed.picking_icon = false;
+                                ed.close_pie_menu();
+                                notice(
+                                    tx_ref,
+                                    ctx,
+                                    "Pie pasted beside yours. Pick the slices you need, or use the buttons to add it all.",
+                                );
+                                ctx.request_repaint();
+                            }
+                        }
                     }
                 }
             }
@@ -2332,7 +2744,7 @@ fn add_file_as_pie(edit: &mut Config, imp: &PieImport) -> Result<(usize, bool), 
         Err(e) => {
             edit.flows = flows_before;
             Err(format!(
-                "{e} Drag the slices you want into your pie instead."
+                "{e} Use \"Add every slice\", \"As a submenu\" or \"Use as this pie\" instead, or pick slices and add them."
             ))
         }
     }

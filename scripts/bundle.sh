@@ -3,25 +3,29 @@
 # Usage:  scripts/bundle.sh                 (ad-hoc signature, this machine's architecture)
 #         SIGN_ID="Developer ID Application: Name (TEAMID)" scripts/bundle.sh
 #         UNIVERSAL=1 scripts/bundle.sh     (one app for Apple silicon and Intel)
+#         CURSORPIE_CARGO_ARGS="--features debug-log" scripts/bundle.sh   (the build with the log)
 # To get a .dmg to hand out, run scripts/make-dmg.sh (it calls this script first).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 APP="CursorPie"
 BUNDLE_ID="io.github.cursorpie"   # keep in sync with src/about.rs
+# More arguments for cargo, such as "--features debug-log" for the build that keeps the diagnostic log
+# (docs/DEBUGGING.md, "Developer mode"). Left unquoted on purpose: it is a list.
+CARGO_ARGS="${CURSORPIE_CARGO_ARGS:-}"
 VERSION=$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')
 
 if [ "${UNIVERSAL:-0}" = "1" ]; then
     # one binary that runs natively on Apple silicon and on Intel
     rustup target add aarch64-apple-darwin x86_64-apple-darwin
-    cargo build --release --target aarch64-apple-darwin
-    cargo build --release --target x86_64-apple-darwin
+    cargo build --release $CARGO_ARGS --target aarch64-apple-darwin
+    cargo build --release $CARGO_ARGS --target x86_64-apple-darwin
     BIN="target/CursorPie-universal"
     lipo -create -output "$BIN" \
         target/aarch64-apple-darwin/release/cursorpie \
         target/x86_64-apple-darwin/release/cursorpie
 else
-    cargo build --release
+    cargo build --release $CARGO_ARGS
     BIN="target/release/cursorpie"
 fi
 OUT="target/bundle/$APP.app"

@@ -1,6 +1,6 @@
 # Trackpad hold (macOS, Windows and Linux)
 
-On a Mac a trackpad, on Windows a **precision touchpad** and on Linux a touchpad can do what the middle button does. It is **off by default**: turn on *Open the pie with a
+On a Mac a trackpad, on Windows a **precision touchpad** and on Linux a touchpad can do what the middle button does. It is **switched on by itself, once, when CursorPie finds a trackpad** (at any start, not only the first one; a hold you turn off afterwards stays off). Without a trackpad it is off: turn on *Open the pie with a
 trackpad hold* in **Settings > Behavior > Trackpad** (and press Save). A mouse keeps working exactly as before, and
 a mouse and a trackpad can be used in any order, with the same pie, hold time, double-click speed and profiles.
 

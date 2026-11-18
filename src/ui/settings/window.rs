@@ -200,12 +200,27 @@ impl App {
             ctx.request_repaint();
         }
 
+        // a dialog of the app is over the window: the canvases and the pages under it must not
+        // take the wheel, the trackpad or the keys (the dialogs are drawn at the end of the frame,
+        // after the tabs, so the tabs read this)
+        self.ed.dialog_open = self.import_report.is_some()
+            || self.export_error.is_some()
+            || self.run_report.is_some()
+            || self.confirm_quit
+            || self.confirm_discard;
+
         // Esc closes what is on top: a sheet, then a popup (egui closes it itself), then the window
         // (when not recording) = cancel
         if self.closing.is_none() && self.ed.recording.is_none() && !super::picker::choosing() {
             let esc = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
             if esc {
-                if self.confirm_quit {
+                if self.export_error.is_some() {
+                    self.export_error = None;
+                } else if self.import_report.is_some() {
+                    self.import_report = None;
+                } else if self.run_report.is_some() {
+                    self.run_report = None;
+                } else if self.confirm_quit {
                     self.confirm_quit = false; // "keep editing"
                 } else if self.confirm_discard {
                     self.confirm_discard = false; // "keep editing"
@@ -565,10 +580,14 @@ impl App {
         self.discard_dialog(&ctx);
         // the sheet that says why an imported file was refused or what was repaired in it
         self.import_report_dialog(&ctx);
+        // the sheet that says an export could not be written (a full disk, no permission...)
+        self.export_error_dialog(&ctx);
         // the sheet that says what went wrong in a run of a flow
         self.run_report_dialog(&ctx);
         // the sheet that offers a newer release, once a day
         self.update_dialog(&ctx, accent);
+        // the sheet of developer mode: install the build with the log, or go back
+        self.developer_dialog(&ctx, accent);
         // the sheet that tells what the update that was handed to the swap came to
         self.update_done_dialog(&ctx, accent);
         // the sheet that stays while the update downloads, and says what follows (CursorPie quits)

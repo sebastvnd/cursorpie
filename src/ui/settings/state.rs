@@ -186,6 +186,14 @@ pub struct PieImport {
     pub bundle: Box<crate::config::share::Bundle>,
     /// The slice that is selected in the imported pie: its ring and its place.
     pub sel: Option<(Vec<usize>, usize)>,
+    /// The slices picked together (select mode, Shift or Ctrl/Cmd + click, select all), as paths: the
+    /// ring and the place, like [`pie_edit::slices_at`](crate::config::pie_edit::slices_at) wants
+    /// them. A picked submenu goes with everything in it. When it is not empty, *Add selected*
+    /// takes these and not `sel`.
+    pub picked: std::collections::BTreeSet<Vec<usize>>,
+    /// Select mode: a plain click picks or unpicks a slice and nothing is dragged, so a click can
+    /// never move a slice by accident.
+    pub select_mode: bool,
     /// Where the imported pie is on its half of the window.
     pub view: PieView,
     /// The images of the file as textures, by icon string; `None` for an icon that is not an image
@@ -193,6 +201,22 @@ pub struct PieImport {
     pub textures: std::collections::HashMap<String, Option<egui::TextureHandle>>,
     /// Whether anything in the file runs shell commands, writes files or sends messages.
     pub runs_commands: bool,
+}
+
+impl PieImport {
+    /// A pie file that waits in the tray: nothing selected, nothing picked.
+    pub fn new(bundle: crate::config::share::Bundle, label: String, runs_commands: bool) -> Self {
+        Self {
+            label,
+            bundle: Box::new(bundle),
+            sel: None,
+            picked: std::collections::BTreeSet::new(),
+            select_mode: false,
+            view: PieView::default(),
+            textures: std::collections::HashMap::new(),
+            runs_commands,
+        }
+    }
 }
 
 /// The sheet that opens over the Flow tab when **New flow** is pressed.
@@ -518,6 +542,30 @@ pub struct Ed {
     /// How the update that the last run handed to the swap ended, while the sheet that tells it is
     /// open (see `update_dialog`)
     pub update_done: Option<Outcome>,
+    /// A dialog that lives in `App` rather than here is open over the window (the import, export
+    /// and flow-run sheets, the quit and discard questions). `App::settings_ui` sets it at the start
+    /// of every frame, so the canvases under the dialog leave the wheel, the trackpad and the keys
+    /// to it (see [`Ed::sheet_open`]).
+    pub dialog_open: bool,
+    /// Developer mode is on (the `developer` file, read when Settings opens)
+    pub dev_on: bool,
+    /// The sheet of developer mode that is open (install the log build, or go back)
+    pub dev_offer: Option<super::developer::Offer>,
+    /// What the newest log says, for the panels of developer mode
+    pub dev_snapshot: Option<crate::devmode::Snapshot>,
+    /// Why the log could not be read
+    pub dev_error: Option<String>,
+    /// When the log was read last
+    pub dev_read_at: Option<std::time::Instant>,
+    /// The category the list of recent events is cut to
+    pub dev_category: Option<String>,
+    /// The switch of the log being edited (what to record)
+    pub dev_spec: String,
+    /// What the last button of the Developer panels did
+    pub dev_note: Option<String>,
+    /// The standard build that is being installed also turns developer mode off (set when it was
+    /// asked for from "Turn off developer mode", done once the swap has started)
+    pub dev_leaving: bool,
 }
 
 impl Default for Ed {
@@ -610,6 +658,16 @@ impl Ed {
             update_needs_password: false,
             update_staged: None,
             update_done: None,
+            dialog_open: false,
+            dev_on: false,
+            dev_offer: None,
+            dev_snapshot: None,
+            dev_error: None,
+            dev_read_at: None,
+            dev_category: None,
+            dev_spec: String::new(),
+            dev_note: None,
+            dev_leaving: false,
         }
     }
 
@@ -621,8 +679,14 @@ impl Ed {
     }
 
     /// Whether a sheet (the "Add a slice" panel, the icon picker, a profile dialog or the update
-    /// offer) is open over the window.
+    /// offer) or a dialog of the app (see [`Ed::dialog_open`]) is open over the window. What is
+    /// under it must not react to the wheel, the trackpad or shortcuts.
     pub fn sheet_open(&self) -> bool {
+        self.dialog_open || self.own_sheet_open()
+    }
+
+    /// The sheets that `Ed` itself holds and [`Ed::close_sheet`] can close.
+    fn own_sheet_open(&self) -> bool {
         self.adding
             || self.picking_icon
             || self.profile_sheet.is_some()
@@ -630,12 +694,13 @@ impl Ed {
             || self.panel_design.is_some()
             || self.update_offer.is_some()
             || self.update_done.is_some()
+            || self.dev_offer.is_some()
             || matches!(self.update, Status::Downloading(_))
     }
 
     /// Closes the open sheet. Returns whether there was one.
     pub fn close_sheet(&mut self) -> bool {
-        let was = self.sheet_open();
+        let was = self.own_sheet_open();
         self.profile_sheet = None;
         self.action_target = None;
         self.flow_target = None;
@@ -646,6 +711,7 @@ impl Ed {
         self.panel_design = None;
         self.update_offer = None;
         self.update_done = None;
+        self.dev_offer = None;
         was
     }
 
@@ -733,14 +799,7 @@ impl Ed {
         label: String,
         runs_commands: bool,
     ) {
-        self.pie_import = Some(PieImport {
-            label,
-            bundle: Box::new(bundle),
-            sel: None,
-            view: PieView::default(),
-            textures: std::collections::HashMap::new(),
-            runs_commands,
-        });
+        self.pie_import = Some(PieImport::new(bundle, label, runs_commands));
         self.pie_drag = None;
         self.pie_split = IMPORT_SPLIT;
         self.tab = Tab::Menu;
@@ -860,6 +919,16 @@ mod tests {
         ed.picking_icon = true;
         assert!(ed.sheet_open());
         assert!(ed.close_sheet() && !ed.sheet_open());
+    }
+
+    #[test]
+    fn a_dialog_of_the_app_blocks_what_is_under_it_but_is_not_closed_here() {
+        let mut ed = Ed::new();
+        ed.dialog_open = true;
+        assert!(ed.sheet_open());
+        assert!(!ed.close_sheet(), "the app closes its own dialogs");
+        ed.dialog_open = false;
+        assert!(!ed.sheet_open());
     }
 
     #[test]

@@ -354,10 +354,14 @@ pub enum HudPosition {
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq, Default)]
 pub enum PieStyle {
     /// Opaque slices.
-    #[default]
     Solid,
     /// Translucent, frosted slices with a bright rim, like frosted glass.
     Glass,
+    /// The pie of the website: white slices with thick dark outlines and hard shadows, the accent
+    /// on the slice under the pointer. The same in the light and the dark appearance. The style of
+    /// a fresh install.
+    #[default]
+    GenZ,
 }
 
 /// A pie: its slices, and the apps it applies to.
@@ -473,6 +477,13 @@ pub struct Config {
     pub profiles: Vec<Profile>,
     pub pie_hold_ms: u64,
     pub settings_hold_ms: u64,
+    /// Holding the trigger in the center of the pie opens Settings after `settings_hold_ms`.
+    /// Off: the pie never turns into Settings by itself (Space can, see `settings_by_space`).
+    pub settings_by_hold: bool,
+    /// Pressing Space while the pie is open opens Settings.
+    pub settings_by_space: bool,
+    /// How many presses of Space open Settings: 1 or 2 (two must come within half a second).
+    pub settings_space_presses: u8,
     pub pie_size: f32,
     pub accent: [u8; 3],
     /// The colors that replace the ones of the light and of the dark appearance.
@@ -577,7 +588,7 @@ pub struct Config {
     pub sleep_after_s: u64,
     /// Light, dark or follow the system.
     pub appearance: Appearance,
-    /// Whether the slices are opaque or frosted glass.
+    /// Whether the slices are opaque, frosted glass or Gen Z (thick outlines, hard shadows).
     pub pie_style: PieStyle,
     /// Glass only: how see-through the slices are, in percent (100 = clear, 0 = opaque).
     pub glass_clear: u8,
@@ -586,10 +597,24 @@ pub struct Config {
     pub glass_frost: u8,
     /// Glass only: how bright the rim and the sheen are, in percent.
     pub glass_shine: u8,
+    /// The pie is not a circle but a regular polygon with rounded corners (see
+    /// [`Outline`](crate::geometry::Outline)); the three numbers below shape it. Off (the
+    /// default): a circle, as before.
+    pub pie_custom_shape: bool,
+    /// Custom shape: how many sides the polygon has (3 to 12).
+    pub pie_sides: u8,
+    /// Custom shape: how round the corners are, in percent (0 = sharp, 100 = a circle).
+    pub pie_round: u8,
+    /// Custom shape: how far the polygon is turned, in degrees (0 = a flat side faces left).
+    pub pie_turn: u16,
     /// Trackpad (macOS) or precision touchpad (Windows): touching and holding opens the pie. Off:
     /// the touch source never starts (on macOS the private touch framework is never loaded, on
     /// Windows nothing is registered with Raw Input).
     pub touch_trigger: bool,
+    /// The automatic switching on of [`Config::touch_trigger`] for a found trackpad is over: it
+    /// switched the hold on once, or the person decided (the switch or the scan in Settings).
+    /// While this is false, every start that finds a trackpad switches the hold on.
+    pub touch_auto_done: bool,
     /// Trackpad: how little the holding finger may move, in millimeters on the surface, before the
     /// hold stops counting.
     pub touch_still_mm: f32,
@@ -633,6 +658,16 @@ impl Config {
 }
 
 impl Config {
+    /// The outline of the pie the settings ask for (see [`Outline`](crate::geometry::Outline)).
+    pub fn outline(&self) -> crate::geometry::Outline {
+        crate::geometry::Outline::from_settings(
+            self.pie_custom_shape,
+            self.pie_sides,
+            self.pie_round,
+            self.pie_turn,
+        )
+    }
+
     /// The shape of the trail the settings ask for (see [`TrailShape`](crate::geometry::TrailShape)).
     pub fn trail_shape(&self) -> crate::geometry::TrailShape {
         crate::geometry::TrailShape::from_percent(

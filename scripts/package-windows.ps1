@@ -18,7 +18,10 @@ function Sign-File([string]$path) {
     if ($LASTEXITCODE -ne 0) { throw "signtool failed for $path" }
 }
 
-cargo build --release
+# CURSORPIE_CARGO_ARGS: more arguments for cargo, e.g. "--features debug-log" (the build with the log)
+$cargoArgs = @()
+if ($env:CURSORPIE_CARGO_ARGS) { $cargoArgs = $env:CURSORPIE_CARGO_ARGS -split "\s+" | Where-Object { $_ } }
+cargo build --release @cargoArgs
 if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
 Sign-File "target\release\cursorpie.exe"
 

@@ -7,6 +7,7 @@ use crate::keys::*;
 use crate::platform::keymap;
 use crate::tap::Kind;
 use std::time::Duration;
+use windows_sys::Win32::System::Shutdown::LockWorkStation;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
     KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, MAPVK_VK_TO_VSC, MOUSEEVENTF_MIDDLEDOWN,
@@ -106,8 +107,27 @@ fn native_event(key: Native, up: bool) {
     }
 }
 
+/// `true` for exactly Win+L. Windows handles that combination itself (in Winlogon, before any
+/// application sees it) and ignores it when it comes from `SendInput`, so pressing it never locks the
+/// PC. It has to be done with `LockWorkStation`, which is what the default "Lock" slice and any
+/// saved or recorded Win+L shortcut rely on.
+pub(super) fn is_lock_shortcut(sc: Shortcut) -> bool {
+    let all = MOD_SHIFT | MOD_CTRL | MOD_ALT | MOD_CMD;
+    sc.key == Shortcut::ch('l', 0).key && sc.mods & all == MOD_CMD
+}
+
+/// Locks the workstation, the same as Win+L typed on the keyboard.
+fn lock_workstation() {
+    // SAFETY: takes no arguments; it only asks the session to lock.
+    unsafe { LockWorkStation() };
+}
+
 /// Presses the modifiers, the key, then releases everything in reverse order.
 pub fn press_shortcut(sc: Shortcut) {
+    if is_lock_shortcut(sc) {
+        lock_workstation();
+        return;
+    }
     let Some(key) = native_key(sc.key) else {
         return;
     };
@@ -238,6 +258,19 @@ mod tests {
             [(0xA2, false), (0xA0, false)]
         );
         assert!(modifier_sequence(0).is_empty());
+    }
+
+    #[test]
+    fn win_l_is_a_lock_and_nothing_else_is() {
+        // Windows ignores an injected Win+L, so exactly this combination locks through the API
+        assert!(is_lock_shortcut(Shortcut::ch('l', MOD_CMD)));
+        assert!(!is_lock_shortcut(Shortcut::ch('l', 0)), "L alone");
+        assert!(!is_lock_shortcut(Shortcut::ch('l', MOD_CTRL)), "Ctrl+L");
+        assert!(
+            !is_lock_shortcut(Shortcut::ch('l', MOD_CMD | MOD_SHIFT)),
+            "Win+Shift+L is another shortcut"
+        );
+        assert!(!is_lock_shortcut(Shortcut::ch('k', MOD_CMD)), "Win+K");
     }
 
     #[test]

@@ -80,16 +80,18 @@ fn with_version(manifest: &str) -> String {
 /// Writes the extension under `dir`: `chromium/` and `firefox/`, each with `manifest.json`,
 /// `background.js` and [`SUPPORT_FILES`]. Files that are there are replaced, so the folder always matches this build.
 pub fn export(dir: &Path) -> io::Result<()> {
+    use crate::config::backup::write_atomic;
     for (sub, manifest) in [
         ("chromium", CHROMIUM_MANIFEST),
         ("firefox", FIREFOX_MANIFEST),
     ] {
         let target = dir.join(sub);
         std::fs::create_dir_all(&target)?;
-        std::fs::write(target.join("manifest.json"), with_version(manifest))?;
-        std::fs::write(target.join("background.js"), BACKGROUND_JS)?;
+        // written and flushed one by one: a full disk is an error here, not a missing file
+        write_atomic(&target.join("manifest.json"), &with_version(manifest))?;
+        write_atomic(&target.join("background.js"), BACKGROUND_JS)?;
         for (name, text) in SUPPORT_FILES {
-            std::fs::write(target.join(name), text)?;
+            write_atomic(&target.join(name), text)?;
         }
     }
     Ok(())

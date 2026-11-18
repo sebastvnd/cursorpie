@@ -13,7 +13,8 @@ The log is part of **debug builds** (`cargo run`). A **release build has none of
 removed when the program is compiled, so the shipped app writes no log, reads no `CURSORPIE_DEBUG`, and installs
 no panic hook. `CURSORPIE_DEBUG=1` does nothing in it.
 
-To collect a log from a user's machine, give them a release build that keeps it:
+To collect a log from a user's machine, point them at the log build of the release (see "Developer mode and `cpd`"
+below), or build one yourself:
 
 ```
 cargo build --release --features debug-log
@@ -22,6 +23,69 @@ cargo build --release --features debug-log
 (the `debug-log` feature of the app switches on the `force` feature of the `diag` crate). To check that an
 ordinary release build is clean, build it without the feature and search the binary for a log event name, for
 example `strings target/release/cursorpie | grep -c show_pie`: it should print `0`.
+
+## Developer mode and `cpd` (for people who are asked for a log)
+
+A person who is asked "please send a log" does not need a compiler. Every release has, next to the ordinary
+packages, the **log build**: the same version built with `--features debug-log`, named `CursorPie-devlog-*`
+(`CursorPie-devlog-windows-setup.exe`, `CursorPie-devlog-macos-universal.dmg`, `CursorPie-devlog-ubuntu-24.04-x86_64.tar.gz`,
+`CursorPie-devlog-fedora-44-x86_64.tar.gz`). The release workflow builds them for a version tag (and on demand,
+*Run workflow*) with `CURSORPIE_CARGO_ARGS="--features debug-log"`, which the packaging scripts pass to cargo, and
+checks that `--selftest` of the package prints `(log build)`.
+
+**In the app** (About, at the bottom):
+
+1. Turn on **Developer mode**. In a copy without the log a sheet offers **Install log build**: it downloads
+   the log package of the same release, checks it against the release's checksum, replaces this copy and starts
+   CursorPie again with the log on. It is the update's own install (same checks, same swap, same administrator
+   prompt on Linux), only with the other package; the version may be the same as the running one.
+2. In the log build the same place shows, from top to bottom:
+
+| Panel | What it does |
+|---|---|
+| Build | which build runs; **Write the log** (takes effect at the next start); **What to record** (`all`, `tap,ui`, `all,trace`, `mem`); **Back to the standard build** |
+| Problems | what the newest log says went wrong: errors first, a repeated problem once with its count and its first time; **Refresh** (it also reads again every few seconds), **Copy report** (the text to paste into the issue), **Open logs folder**, **Report an issue** |
+| Recent events | the last lines of the log; chips cut the list to a category |
+| Terminal | the `cpd` command |
+
+**Turning Developer mode off** in the log build opens a sheet, because the way back to the ordinary build lives in
+the panels that the switch hides:
+
+- **Install standard build** (recommended): downloads the ordinary package of the same release and swaps it in, as
+  above. Developer mode and the log are switched off only once the swap has started, so a download or checksum that
+  fails leaves the mode, the log and this copy as they were.
+- **Keep log build**: hides the tools and removes the `debug` file (the log stops at the next start); the copy stays
+  the log build until the standard one is installed. Turn Developer mode on again to get the button back.
+- **Cancel**: nothing changes, the switch stays on.
+
+In the ordinary build the switch turns off at once, without a sheet.
+
+Developer mode itself is an empty file `developer` in the support folder (device state, not part of the config:
+Save, Undo and backups never touch it). The log switch is the `debug` file described below.
+
+**What counts as a problem** (`diag/src/problems.rs`, shared by the panel and `cpd`, so both say the same): a line
+of category `panic`; `ok=false`; `state` of `refused`, `failed` or `denied`; an event name with `failed`, `refused`,
+`denied` or `no_space` (errors); an event name with `blocked`, `unavailable`, `unreachable`, `giveup` or `no_pie`
+(warnings, `hold_settings_no_pie` is a pie that was asked for and never drawn); a timed step of 250 ms or more
+(warning).
+
+**In a terminal** `cpd` is the reading half of `cargo tools diag`, `log` and `clean-logs` without the repository. It
+is attached to every release as `cpd-macos-universal`, `cpd-windows-x86_64.exe` and `cpd-linux-x86_64` (static), and
+built from `tools/src/cpd.rs` (`cargo build -p cursorpie-tools --bin cpd`).
+
+```
+cpd                 what went wrong in the newest log (exit code 1 when an error was found)
+cpd d               the analysis of the pie (the chain above)
+cpd s | t | g | sl | df | f | r     summary, timeline, grep, slow [MS], diff, follow, report
+cpd on [SPEC]       log from the next start (writes the debug file); cpd off
+cpd path            the logs folder and the newest log
+cpd clean           delete old logs (--keep N, --older-than DAYS, --all, --dry-run)
+cpd info            a block for the issue
+```
+
+`cpd g ui:show_pie`, `cpd g tap`, `cpd g --field x=800` keep the lines of an event, a category or a field. The
+long names (`summary`, `timeline`, `grep`, `slow`, `diff`, `follow`, `report`) work too, and a log file is always
+the last argument.
 
 ## Turn it on
 

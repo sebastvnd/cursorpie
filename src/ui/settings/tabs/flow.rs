@@ -664,7 +664,13 @@ pub(super) fn run(todo: Do, ctx: &egui::Context, edit: &mut Config, ed: &mut Ed,
                         platform::reveal_in_file_manager(&path);
                         notice(tx, ctx, format!("Exported to {}", path.display()));
                     }
-                    Err(e) => notice(tx, ctx, format!("Export failed: {e}")),
+                    Err(reason) => {
+                        let _ = tx.send(Msg::ExportFailed {
+                            what: "Flow".into(),
+                            reason,
+                        });
+                        ctx.request_repaint();
+                    }
                 }
             }
         }

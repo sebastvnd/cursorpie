@@ -96,6 +96,9 @@ Every field with its default value, and a small menu. A field you leave out take
   "version": 2,
   "pie_hold_ms": 150,
   "settings_hold_ms": 1200,
+  "settings_by_hold": true,
+  "settings_by_space": false,
+  "settings_space_presses": 1,
   "pie_size": 200.0,
   "accent": [90, 120, 94],
   "trigger_button": 2,
@@ -130,11 +133,16 @@ Every field with its default value, and a small menu. A field you leave out take
   "show_labels": false,
   "sleep_after_s": 60,
   "appearance": "System",
-  "pie_style": "Solid",
+  "pie_style": "GenZ",
   "glass_clear": 60,
   "glass_frost": 45,
   "glass_shine": 60,
+  "pie_custom_shape": false,
+  "pie_sides": 4,
+  "pie_round": 45,
+  "pie_turn": 0,
   "touch_trigger": false,
+  "touch_auto_done": false,
   "touch_still_mm": 2.0,
   "touch_click_action": "SwitchPie",
   "touch_typing_guard_ms": 400,
@@ -192,6 +200,9 @@ Every field with its default value, and a small menu. A field you leave out take
 | `accent` | Accent color as `[r, g, b]`. The default is `[90, 120, 94]`; the old default blue `[64, 156, 255]` is replaced by the new default when a file is loaded |
 | `pie_hold_ms` | Hold time before the pie opens (50 to 2000 in the file; the Settings slider goes from 50 to 1500; default 150) |
 | `settings_hold_ms` | Hold time before Settings opens (always at least `pie_hold_ms` + 300; the Settings slider goes from 500 to 4000) |
+| `settings_by_hold` | `true` (default) or `false`: whether holding the trigger in the center of the pie opens Settings after `settings_hold_ms`. `false` also hides the progress arc |
+| `settings_by_space` | `false` (default) or `true`: pressing Space while the pie is open opens Settings. The key is swallowed. Not available on Wayland |
+| `settings_space_presses` | `1` (default) or `2` (other values are clamped to that range): how many presses of Space open Settings; two must come within 500 ms |
 | `pie_size` | Pie window size in px (140 to 360) |
 | `app_gesture` | `"DoubleClick"` (hold = general pie, double-click = app pie) or `"Merged"` (classic) |
 | `double_click_ms` | Window for the second click (150 to 500) |
@@ -217,9 +228,14 @@ Every field with its default value, and a small menu. A field you leave out take
 | `app_icon_shadow` | `"Auto"` (default), `"Soft"`, `"Strong"` or `"Off"`: the shadow under the app's icon in the center of the pie. `Auto` adds it only on a plain light center |
 | `show_labels` | Show each slice's name under its icon (default `false` = icons only; a file that lacks the field keeps the names) |
 | `appearance` | `"System"` (default), `"Light"` or `"Dark"`: the look of Settings and the pie |
-| `pie_style` | `"Solid"` (default) or `"Glass"`: opaque slices, or see-through frosted ones (always smoked dark) |
+| `pie_custom_shape` | `false` (default): the pie is a circle. `true`: it is a regular polygon with rounded corners, shaped by the three settings below |
+| `pie_sides` | Custom shape: sides of the polygon, 3 to 12 (default 4) |
+| `pie_round` | Custom shape: how round the corners are, 0 (sharp) to 100 (a circle), in percent (default 45) |
+| `pie_turn` | Custom shape: how far the polygon is turned, 0 to 359 degrees (0 = a flat side faces left) |
+| `pie_style` | `"GenZ"` (default for a fresh install), `"Solid"` or `"Glass"`: the bold look of the website (white slices, thick dark outlines, hard shadows; the same in both appearances), opaque slices, or see-through frosted ones (always smoked dark). A saved choice is kept |
 | `glass_clear`, `glass_frost`, `glass_shine` | Glass style only, in percent (0 to 100, larger values are clamped): how see-through the slices are (default 60), how frosted (default 45) and how bright the rim and sheen are (default 60) |
-| `touch_trigger` | macOS trackpad, Windows precision touchpad and Linux touchpad (X11 pre-stable, Wayland experimental): a hold opens the pie (default `false`; while it is off the system's touch library is never loaded on macOS, nothing is registered with Windows and `/dev/input` is never opened on Linux). See [Trackpad hold](trackpad.md) |
+| `touch_trigger` | macOS trackpad, Windows precision touchpad and Linux touchpad (X11 pre-stable, Wayland experimental): a hold opens the pie (default `false`, but see `touch_auto_done`; while it is off the system's touch library is never loaded on macOS, nothing is registered with Windows and `/dev/input` is never opened on Linux). See [Trackpad hold](trackpad.md) |
+| `touch_auto_done` | `false` (default) or `true`: CursorPie switches `touch_trigger` on by itself, once, at the first start that finds a trackpad, and then sets this to `true`. Turning the switch off or on yourself in Settings, or pressing *Scan for trackpad*, sets it too, so a hold you turned off stays off. While it is `false` and no trackpad is found nothing is decided, and a trackpad that shows up later is picked up at the next start |
 | `touch_still_mm` | 0.5 to 6.0 (default `2.0`): how far, in millimeters on the trackpad, the holding finger may move before the hold counts |
 | `touch_click_action` | `"SwitchPie"` (default, like the right-click), `"PickHovered"` (the hovered Mode slice becomes the active mode) or `"Nothing"`: what the extra click does |
 | `touch_typing_guard_ms` | 0 to 2000 (default `400`, `0` = off): no hold is armed this soon after a key press |

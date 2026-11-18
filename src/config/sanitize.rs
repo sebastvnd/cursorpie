@@ -112,6 +112,7 @@ impl Config {
         }
         self.pie_hold_ms = self.pie_hold_ms.clamp(50, 2000);
         self.settings_hold_ms = self.settings_hold_ms.max(self.pie_hold_ms + 300);
+        self.settings_space_presses = self.settings_space_presses.clamp(1, 2);
         self.pie_size = self.pie_size.clamp(140.0, 360.0);
         self.preview_ms = self.preview_ms.min(3000);
         self.hud_ms = self.hud_ms.clamp(HUD_MS_MIN, HUD_MS_MAX);
@@ -141,6 +142,12 @@ impl Config {
         self.glass_clear = self.glass_clear.min(100);
         self.glass_frost = self.glass_frost.min(100);
         self.glass_shine = self.glass_shine.min(100);
+        {
+            use crate::geometry::{PIE_SIDES_RANGE, PIE_TURN_MAX};
+            self.pie_sides = self.pie_sides.clamp(PIE_SIDES_RANGE.0, PIE_SIDES_RANGE.1);
+            self.pie_round = self.pie_round.min(100);
+            self.pie_turn = self.pie_turn.min(PIE_TURN_MAX);
+        }
         // the blue of earlier versions was the old default; it is the one that hurt the eyes
         if self.accent == OLD_DEFAULT_ACCENT {
             self.accent = Config::default().accent;
@@ -182,7 +189,7 @@ mod tests {
     fn the_look_settings_default_and_are_clamped() {
         let old = parse(r#"{"version":2}"#);
         assert_eq!(old.appearance, crate::config::Appearance::System);
-        assert_eq!(old.pie_style, crate::config::PieStyle::Solid);
+        assert_eq!(old.pie_style, crate::config::PieStyle::GenZ);
         let wild = parse(
             r#"{"version":2,"appearance":"Dark","pie_style":"Glass","glass_clear":200,"glass_frost":101,"glass_shine":255}"#,
         );
@@ -191,6 +198,36 @@ mod tests {
         assert_eq!(
             (wild.glass_clear, wild.glass_frost, wild.glass_shine),
             (100, 100, 100)
+        );
+    }
+
+    #[test]
+    fn settings_by_hold_and_by_space_default_and_are_clamped() {
+        let old = parse(r#"{"version":2}"#);
+        assert!(old.settings_by_hold, "holding opens Settings as before");
+        assert!(!old.settings_by_space);
+        assert_eq!(old.settings_space_presses, 1);
+        let wild = parse(
+            r#"{"version":2,"settings_by_hold":false,"settings_by_space":true,"settings_space_presses":9}"#,
+        );
+        assert!(!wild.settings_by_hold && wild.settings_by_space);
+        assert_eq!(wild.settings_space_presses, 2);
+        let zero = parse(r#"{"version":2,"settings_space_presses":0}"#);
+        assert_eq!(zero.settings_space_presses, 1);
+    }
+
+    #[test]
+    fn the_pie_is_a_circle_by_default_and_the_shape_is_clamped() {
+        let old = parse(r#"{"version":2}"#);
+        assert!(!old.pie_custom_shape);
+        assert!(old.outline().is_circle());
+        let wild = parse(
+            r#"{"version":2,"pie_custom_shape":true,"pie_sides":1,"pie_round":250,"pie_turn":9000}"#,
+        );
+        assert!(!wild.outline().is_circle());
+        assert_eq!(
+            (wild.pie_sides, wild.pie_round, wild.pie_turn),
+            (3, 100, 359)
         );
     }
 

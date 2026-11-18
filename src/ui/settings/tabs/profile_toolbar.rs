@@ -413,7 +413,13 @@ pub(super) fn profile_toolbar(
                                 platform::reveal_in_file_manager(&path);
                                 notice(tx, ctx, format!("Exported to {}", path.display()));
                             }
-                            Err(e) => notice(tx, ctx, format!("Export failed: {e}")),
+                            Err(reason) => {
+                                let _ = tx.send(Msg::ExportFailed {
+                                    what: "Profile".into(),
+                                    reason,
+                                });
+                                ctx.request_repaint();
+                            }
                         }
                         open = false;
                     }

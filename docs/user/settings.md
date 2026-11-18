@@ -68,8 +68,11 @@ The quick actions depend on the system:
 The knobs, grouped:
 
 - **Trigger and timing:** trigger button, hold times for the pie and for Settings, pie size, accent color.
-- **Look:** **Appearance** (System, Light or Dark, for Settings and the pie) and **Pie material** (*Solid* or *Glass*;
-  Glass has sliders for Clearness, Frost and Shine).
+- **Look:** **Appearance** (System, Light or Dark, for Settings and the pie) and **Pie material** (*Solid*, *Glass* or *Gen Z*;
+  Glass has sliders for Clearness, Frost and Shine; Gen Z is the look of the website: thick outlines and hard shadows).
+  The materials are shown as three small pies that open and are passed over by the pointer, and a click on one
+  chooses it. **Pie shape** turns the circle into a polygon with rounded corners (*Custom*): Sides, Corner
+  roundness and Rotation, with a live pie to see it on.
 - **Profiles:** whether holding opens the general pie or the app's own, and the double-click speed.
 - **App detection:** the app under the pointer or in front, and whether to bring it forward before sending shortcuts.
 - **Other desktops / Other Spaces:** what an Open app slice does when the app's window is elsewhere. Switch to it
@@ -140,12 +143,27 @@ temporary one, so a crash or a full disk cannot leave half a file. Where the fil
 - **Export this profile...** writes `<name>.cursorpie-profile.json` to your Downloads folder and reveals it.
   Every image icon the profile uses, including those in submenus, is embedded, up to 2 MB each. Icons of apps,
   text and emoji need nothing embedded. Missing or oversized images show up as `?` for the receiver.
-- **Import a profile...** adds the file as a **new** profile (nothing is overwritten) and selects it. The
-  embedded images are copied into the `icons` folder next to `config.json`: an identical file is reused, a
-  different one with the same name gets a number. Press **Save** to apply it, or **Undo** (Cmd+Z) to take it back.
+- **Import a profile...** opens the file in the **import tray**, beside your pie. Nothing is added until you
+  choose. Choose fast, or one by one:
+  - **One press:** *Add every slice* puts all of the file at the end of the pie that is lit; *As a submenu* puts
+    it in as a single slice (it fits whenever the ring has one free place, even if the file has 8 slices);
+    *Use as this pie* makes the file the slices of the pie you are editing (its name and apps stay);
+    *Add all as a new pie* adds it as a **new** profile and selects it.
+  - **Several slices:** turn on **Select mode** (or hold Shift / Ctrl/Cmd while you click). A click picks or
+    unpicks a slice and nothing is dragged; the middle of a pie picks its whole ring; **Pick all** (Ctrl/Cmd + A)
+    picks the top ring; a picked submenu goes with everything in it. Then press **Add selected**.
+  - **One slice:** drag it across, or double click it.
+
+  A group is added whole or not at all: if it does not fit (8 slices a ring, 5 rings deep) nothing changes and
+  the notice says how many still fit. The embedded images are copied into the `icons` folder next to
+  `config.json`: an identical file is reused, a different one with the same name gets a number. Press **Save**
+  to apply it, or **Undo** (Cmd+Z) to take it back.
+- You can also **drop** a profile file on the window while the pie editor is open (with no slice selected), or
+  copy the text of a profile file and paste it with Ctrl/Cmd + V in the pie editor: both open the tray.
 - The flows the profile's slices use are embedded too. On import they are added as new flows (an identical one
   you already have is reused) and the slices are pointed at them.
-- A profile must list at least one app. A name already taken gets ` (2)`, ` (3)`...
+- *Add all as a new pie* needs the profile to list at least one app (there is only one general pie); the
+  other ways of importing do not. A name already taken gets ` (2)`, ` (3)`...
 - Only PNG, JPEG and WebP data is written, whatever the file claims, and nothing outside the icons folder.
 
 **Only import profiles you trust.** Actions can run shell commands. CursorPie warns you when an imported

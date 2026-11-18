@@ -65,6 +65,8 @@ impl App {
         hero_card(ui, accent);
         self.updates_panel(ui, accent);
         details_panels(ui);
+        self.developer_panels(ui, accent);
+        credits_panel(ui);
     }
 
     /// The "Updates" panel: what the last look for a newer release found, the switch for the daily
@@ -225,7 +227,7 @@ fn hero_card(ui: &mut egui::Ui, accent: Color32) {
     ui.add_space(SECTION_GAP);
 }
 
-/// The panels below the updates: author, project, privacy and credits.
+/// The panels below the updates: author, project and privacy.
 fn details_panels(ui: &mut egui::Ui) {
     panel(ui, "Created by", |ui| {
         info_row(ui, AUTHOR_NAME, |_| {});
@@ -246,6 +248,10 @@ fn details_panels(ui: &mut egui::Ui) {
     panel(ui, "Privacy", |ui| {
         note(ui, PRIVACY);
     });
+}
+
+/// The "Built with" credits. Drawn last, below the Developer panels, so it is always the bottom of the tab.
+fn credits_panel(ui: &mut egui::Ui) {
     panel(ui, "Built with", |ui| {
         for (name, url, license) in CREDITS {
             row(ui, name, license, |ui| {

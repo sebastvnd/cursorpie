@@ -106,7 +106,12 @@ impl PieView {
             center_icon,
             labels: c.show_labels,
             accent: c.accent,
-            settle_ms: c.settings_hold_ms.saturating_sub(c.pie_hold_ms) as f32,
+            // no settling ring when the hold does not open Settings
+            settle_ms: if c.settings_by_hold {
+                c.settings_hold_ms.saturating_sub(c.pie_hold_ms) as f32
+            } else {
+                0.0
+            },
             is_app: prof.is_some_and(|p| !p.apps.is_empty()),
             side: side::view_of(c, profile),
             inactive: c.inactive_color,

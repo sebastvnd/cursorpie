@@ -1,7 +1,8 @@
 //! Drawing helpers shared by the pie and the settings window: icons, shapes, easing, colors.
 
+use crate::geometry::Outline;
 use crate::ui::{fonts, symbols};
-use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Shape, Vec2};
+use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Shape, Stroke, Vec2};
 use std::f32::consts::TAU;
 use std::path::PathBuf;
 
@@ -367,6 +368,17 @@ pub fn glass_colors() -> PieColors {
     pie_colors_for(true)
 }
 
+/// The colors of the Gen Z pie: white slices and near-black ink, as on the website. They are the
+/// same in either appearance, since the thick outlines are what set the pie off the page.
+pub fn genz_colors() -> PieColors {
+    PieColors {
+        slice: [255, 255, 255],
+        ghost: [255, 248, 236],
+        ink: Color32::from_rgb(20, 17, 15),
+        core: Color32::WHITE,
+    }
+}
+
 /// `[r, g, b]` as an egui color.
 pub fn rgb(c: [u8; 3]) -> Color32 {
     Color32::from_rgb(c[0], c[1], c[2])
@@ -495,8 +507,10 @@ pub fn ring_slice_mesh(
     mesh
 }
 
-/// Donut slice with anti-aliased edges, see [`ring_slice_mesh`]. The feather is one physical
-/// pixel of `painter`'s display, so it is crisp on both standard and Retina screens.
+/// Donut slice with anti-aliased edges, see [`ring_slice_mesh`], bent to the outline of the pie by
+/// `bend` ([`Bend::NONE`] for a plain donut). The feather is one physical pixel of `painter`'s
+/// display, so it is crisp on both standard and Retina screens.
+#[allow(clippy::too_many_arguments)]
 pub fn ring_slice(
     painter: &egui::Painter,
     c: Pos2,
@@ -505,13 +519,138 @@ pub fn ring_slice(
     a0: f32,
     a1: f32,
     color: Color32,
+    bend: Bend,
 ) -> Shape {
     let feather = 1.0 / painter.ctx().pixels_per_point().max(1.0);
     let mesh = ring_slice_mesh(c, r0, r1, a0, a1, color, feather);
     if mesh.is_empty() {
         Shape::Noop
     } else {
-        Shape::mesh(mesh)
+        Shape::mesh(bend.mesh(c, mesh))
+    }
+}
+
+// ------------------------------------------------------------------------- the outline of the pie
+/// How a ring is bent to the outline of the pie (see [`Outline`]). The rings are made as plain
+/// donuts and their points are then moved along their radius, so every shape the pie draws (the
+/// slices of any material, their outlines, the shadow) takes the outline the same way and nothing
+/// is drawn twice. The inner edge stays a circle (it is the dead zone of the tap and the disc in
+/// the middle); the outer edge follows the outline, and radii in between are stretched from one to
+/// the other.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub struct Bend {
+    outline: Outline,
+    /// The inner and the outer radius the ring was laid out for.
+    inner: f32,
+    outer: f32,
+}
+
+impl Bend {
+    /// No bending: a circle.
+    pub const NONE: Self = Self {
+        outline: Outline::CIRCLE,
+        inner: 0.0,
+        outer: 0.0,
+    };
+
+    /// The bend of a pie whose inner edge is at `inner` and whose rim is at `outer` (a circle of
+    /// that radius where the outline is a circle).
+    pub fn new(outline: Outline, inner: f32, outer: f32) -> Self {
+        Self {
+            outline,
+            inner,
+            outer,
+        }
+    }
+
+    fn is_none(self) -> bool {
+        self.outline.is_circle() || self.outer <= self.inner
+    }
+
+    /// The distance from the center of a point that was `r` from it toward `angle`.
+    pub fn radius(self, angle: f32, r: f32) -> f32 {
+        if self.is_none() {
+            return r;
+        }
+        let rim = self.outline.radius(angle) * self.outer;
+        self.inner + (r - self.inner) * (rim - self.inner) / (self.outer - self.inner)
+    }
+
+    /// `p`, which is around `c`, bent.
+    fn point(self, c: Pos2, p: Pos2) -> Pos2 {
+        let d = p - c;
+        let len = d.length();
+        if len < 1e-3 {
+            return p;
+        }
+        c + d * (self.radius(d.y.atan2(d.x), len) / len)
+    }
+
+    /// `points` around `c`, bent.
+    pub fn points(self, c: Pos2, mut points: Vec<Pos2>) -> Vec<Pos2> {
+        if !self.is_none() {
+            points.iter_mut().for_each(|p| *p = self.point(c, *p));
+        }
+        points
+    }
+
+    /// `mesh` around `c`, bent.
+    pub fn mesh(self, c: Pos2, mut mesh: egui::Mesh) -> egui::Mesh {
+        if !self.is_none() {
+            mesh.vertices
+                .iter_mut()
+                .for_each(|v| v.pos = self.point(c, v.pos));
+        }
+        mesh
+    }
+
+    /// The edge of a pie whose rim is `r` out, as a shape to stroke: a circle, or the outline.
+    pub fn rim(self, c: Pos2, r: f32, stroke: Stroke) -> Shape {
+        if self.is_none() {
+            Shape::circle_stroke(c, r, stroke)
+        } else {
+            Shape::closed_line(self.rim_points(c, r), stroke)
+        }
+    }
+
+    /// The points of the rim, once round.
+    fn rim_points(self, c: Pos2, r: f32) -> Vec<Pos2> {
+        let mut round = arc_points(c, r, 0.0, TAU);
+        round.pop();
+        self.points(c, round)
+    }
+}
+
+/// The soft shadow behind a ring of outer radius `r` (it grows with `r`), `alpha` dark at its
+/// densest: one blurred shape on a circle, so it falls off smoothly (a stack of discs leaves a
+/// visible step at the edge of each). Bent to another outline it is a few outlines one above the
+/// other, each a point farther out and a fifth as dark, which falls off as smoothly.
+pub fn ring_shadow(painter: &egui::Painter, c: Pos2, r: f32, bend: Bend, alpha: u8) {
+    if bend.is_none() {
+        painter.add(
+            egui::Shadow {
+                offset: [0, 3],
+                blur: 8,
+                spread: 0,
+                color: Color32::from_black_alpha(alpha),
+            }
+            .as_shape(
+                Rect::from_center_size(c, Vec2::splat(r * 2.0)),
+                egui::CornerRadius::same(u8::MAX),
+            ),
+        );
+        return;
+    }
+    const LAYERS: u8 = 5;
+    let layer = Color32::from_black_alpha(alpha / LAYERS);
+    let at = c + Vec2::new(0.0, 3.0);
+    for k in 0..LAYERS {
+        let grow = f32::from(LAYERS - 1 - k);
+        painter.add(Shape::convex_polygon(
+            bend.rim_points(at, r + grow),
+            layer,
+            Stroke::NONE,
+        ));
     }
 }
 

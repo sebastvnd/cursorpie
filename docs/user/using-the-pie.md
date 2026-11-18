@@ -28,10 +28,29 @@ What else the trigger does:
 | **Press and drag** before the pie opens | Hands the drag back to the app, so middle-drag panning still works |
 | **Release** over a slice | Runs that slice |
 | **Drag outward** across the rim of a submenu slice | Opens the submenu, re-centered on the cursor |
-| **Keep holding** in the center | After 1200 ms in total, opens Settings. A progress arc fills around the center disc |
+| **Keep holding** in the center | After 1200 ms in total, opens Settings. A progress arc fills around the center disc. Can be switched off, see [Opening Settings from the pie](#opening-settings-from-the-pie) |
+| **Press Space** while the pie is open | Opens Settings, if *Open settings with Space* is on (off by default) |
 
 In *classic* mode (see [Profiles](profiles-and-buttons.md#profiles)) there is no double-click: holding opens the app's own pie if it has
 one, otherwise the general pie. Every timing can be changed in **Settings > Behavior**.
+
+### Opening Settings from the pie
+
+Two ways open Settings while the pie is on screen. Both are in **Settings > Behavior > Trigger** and they are
+independent, so either, both or neither can be on:
+
+| Setting | What it does | Default |
+|---|---|---|
+| *Open settings by holding* | Keep the trigger held in the center of the pie until *Hold to open settings* (1200 ms in total) has passed. Off: the pie never turns into Settings by itself and the progress arc is not drawn | On |
+| *Open settings with Space* | Press Space while the pie is open. Space is taken by CursorPie, so it does not reach the app under the pie | Off |
+| *Presses of Space* | One press, or two in quick succession (the second within half a second). Two is the most | One press |
+
+With both on, whichever comes first opens Settings; the other then does nothing. Turning the hold off is for people
+who sometimes keep the pie open for a long time and get Settings they did not ask for; Space is the deliberate way in.
+With both off, Settings is still in the tray or menu bar icon.
+
+Space works on macOS and Windows. On Linux with X11 it works, but the key also reaches the app under the pie (the keyboard
+is only watched there, not taken). On Wayland CursorPie does not see keys, so the setting has no effect.
 
 **Instant flick** is an option: drag right after pressing to open the pie with no hold delay. It disables
 middle-drag pass-through in other apps. The trigger is the middle button on every system. Only on macOS can it also be one of three extra mouse buttons.

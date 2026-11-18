@@ -162,7 +162,7 @@ Skip), a page in the middle and a footer (page dots, Back, Next or Get started).
 ## The pie
 
 The pie is a ring of slices with a one-pixel hairline each, light or smoked graphite like Settings.
-Behavior, Pie material chooses between two styles: **Solid** (below) and **Glass**. The hovered
+Behavior, Pie material chooses between three styles: **Solid** (below), **Glass** and **Gen Z**. The hovered
 slice blends to the accent, its icon and name turn to the readable color for that accent
 (`on_accent`), and a bright bar grows along its rim. A soft shadow sits behind the ring, one blurred shape (no
 stack of discs, which left a visible step at each edge). The white center disc shows the active mode or the app icon, and the "hold for
@@ -182,6 +182,22 @@ on Windows, the compositor on Linux) and is a follow-up.
 Glass is **always smoked graphite**, in the light appearance as well (`draw::glass_colors`): pale glass on a
 light page has nothing to catch the light against, so it looked washed out. Only the Solid style follows the
 appearance.
+
+**Gen Z** (`ui/pie/genz.rs`) is the pie of the website: opaque white slices, a 2.2-point near-black outline on
+every slice, the center disc and the badges, and a *hard* shadow (the same shape in ink, offset 3 right and 4
+down, farther under the hovered slice) instead of the blurred one. The slice under the pointer fills with the
+accent as on Solid; the bright rim bar is left out, the outline already marks the edge. Like Glass it is the same
+in both appearances (`draw::genz_colors`). Its functions (`slice`, `core`) mirror those of `glass.rs`, so the pie,
+the badges and the preview in Settings choose a material the same way (`pie::Material` is the choice, with its
+colors, for the demos).
+
+**Shape.** The pie is a circle unless `pie_custom_shape` is on, and then a regular polygon with rounded corners
+(`geometry::Outline`: sides, roundness, turn; it never leaves the circle of the window). Every ring is still made
+as a plain donut and then moved along its radius by one `draw::Bend` (inner edge a circle, outer edge the outline,
+radii between stretched), so the slices of all three materials, their outlines, the rim and the shadow take the
+shape the same way, and the icons are put at `Bend::radius`. Selection is by angle only, so it does not change; the
+one place that cares about the rim, a drag crossing it over a submenu slice, asks the same `Outline` (`tap/resolve.rs`).
+The center disc and the dead zone stay round, and so do the Menu tab editor and the badges of an "Open app" slice.
 
 Timing: 0.22 s to open (slices appear one after another, with a small overshoot), 0.12 s to close.
 

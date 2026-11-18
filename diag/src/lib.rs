@@ -171,6 +171,9 @@ mod runtime;
 mod runtime;
 #[cfg(any(debug_assertions, feature = "force"))]
 mod watch;
+// Reading a log back (the Developer panel of the app, `cpd`): only where there is a log to read.
+#[cfg(any(debug_assertions, feature = "force"))]
+pub mod problems;
 
 #[cfg(not(any(debug_assertions, feature = "force")))]
 pub use runtime::Watch;

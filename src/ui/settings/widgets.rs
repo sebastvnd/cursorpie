@@ -23,7 +23,7 @@
 use super::brand;
 use super::theme::*;
 use crate::keys::Shortcut;
-use crate::ui::draw::ring_slice;
+use crate::ui::draw::{Bend, ring_slice};
 use crate::ui::fonts;
 use crate::ui::symbols;
 use eframe::egui::{self, Color32, FontId, Pos2, Rect, RichText, Stroke, Vec2};
@@ -2084,6 +2084,7 @@ fn draw_logo_shape(painter: &egui::Painter, center: Pos2, radius: f32, color: Co
             a0,
             a1,
             color,
+            Bend::NONE,
         ));
     }
     let d = radius * 0.24;

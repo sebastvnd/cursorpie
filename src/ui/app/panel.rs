@@ -54,6 +54,12 @@ const OPEN_TIME: Duration = Duration::from_millis(170);
 /// How far below its place the card starts, in points.
 const OPEN_RISE: f32 = 14.0;
 
+/// The window goes back to what it is between uses: click-through. Sent while the window is still
+/// mapped (the frame after it is empty), as `App::close_settings` does for Settings.
+fn release_pointer(ctx: &egui::Context) {
+    ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(true));
+}
+
 /// How far a panel that appeared `elapsed` ago has come in: 0 (not there yet) to 1 (in place), on a
 /// curve that starts fast and settles softly.
 pub(super) fn open_progress(elapsed: Duration) -> f32 {
@@ -377,6 +383,9 @@ impl App {
         }
         if let Some(p) = self.panel.take() {
             platform::set_window_passive(true);
+            // the panel took the pointer: give it back while the window is still mapped, so the
+            // next owner (the pie of a mouse hold) does not flip it on a hidden window
+            release_pointer(ctx);
             let id = p.form.panel_id().to_string();
             let _ = p
                 .reply
@@ -532,6 +541,13 @@ impl App {
         );
         if let Some(p) = self.panel.take() {
             platform::set_window_passive(true);
+            // A panel is not click-through (`show_overlay`). Settings gives that back when it
+            // closes (`close_settings`) and the notice never took it away, but the panel did not:
+            // the window was hidden still taking the pointer, and the pie of a mouse hold (which
+            // is click-through) then flipped it on a hidden window. On Windows that pie never
+            // showed, and the held button opened Settings instead. A trackpad pie takes the
+            // pointer itself, so it never flipped anything and was not affected.
+            release_pointer(ctx);
             let _ = p.reply.send(result);
         }
         // The window is not hidden here: it still holds the last frame of the panel, and a hidden

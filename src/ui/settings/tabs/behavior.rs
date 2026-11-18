@@ -9,12 +9,13 @@ use crate::config::{
     SideTarget, TargetApp, TouchClickAction,
 };
 use crate::geometry::{
-    TRAIL_FAN_RANGE, TRAIL_GLIDE_RANGE, TRAIL_NODE_RANGE, TRAIL_REACH_RANGE, TRAIL_SHRINK_RANGE,
+    PIE_SIDES_RANGE, PIE_TURN_MAX, TRAIL_FAN_RANGE, TRAIL_GLIDE_RANGE, TRAIL_NODE_RANGE,
+    TRAIL_REACH_RANGE, TRAIL_SHRINK_RANGE,
 };
 use crate::platform::Os;
 use crate::ui::app::App;
 use crate::ui::draw::rgb;
-use crate::ui::pie::glass::Glass;
+use crate::ui::pie::Material;
 use crate::ui::settings::demo;
 use crate::ui::settings::state::BehaviorPage;
 use crate::ui::settings::theme::*;
@@ -195,14 +196,44 @@ impl App {
                 " ms",
                 accent,
             );
-            slider_row(
+            toggle_row(
                 ui,
-                "Hold to open settings",
-                &mut cfg.settings_hold_ms,
-                500..=4000,
-                " ms",
+                &mut cfg.settings_by_hold,
+                "Open settings by holding",
+                "Keep the trigger held in the center of the pie to open Settings. Off: the pie never turns into Settings by itself.",
                 accent,
             );
+            ui.add_enabled_ui(cfg.settings_by_hold, |ui| {
+                slider_row(
+                    ui,
+                    "Hold to open settings",
+                    &mut cfg.settings_hold_ms,
+                    500..=4000,
+                    " ms",
+                    accent,
+                );
+            });
+            toggle_row(
+                ui,
+                &mut cfg.settings_by_space,
+                "Open settings with Space",
+                "Press Space while the pie is open. The key is not sent to the app under the pie. Handy when holding to open settings is off.",
+                accent,
+            );
+            ui.add_enabled_ui(cfg.settings_by_space, |ui| {
+                row(
+                    ui,
+                    "Presses of Space",
+                    "One press, or two in quick succession (within half a second).",
+                    |ui| {
+                        let labels = ["One press", "Two presses"];
+                        let at = usize::from(cfg.settings_space_presses.clamp(1, 2)) - 1;
+                        if let Some(i) = select(ui, 190.0, labels[at], &labels, at) {
+                            cfg.settings_space_presses = i as u8 + 1;
+                        }
+                    },
+                );
+            });
             toggle_row(
                 ui,
                 &mut cfg.flick,
@@ -292,15 +323,15 @@ impl App {
     fn behavior_look(&mut self, ui: &mut egui::Ui, accent: Color32) {
         let cfg = &mut self.edit;
         panel(ui, "Look & feel", |ui| {
-            demo::look_demo(
-                ui,
+            let look = demo::LookPie {
                 accent,
-                cfg.pie_size,
-                cfg.show_labels,
-                cfg.center_app_icon,
-                cfg.app_icon_style,
-                Glass::of(cfg),
-            );
+                labels: cfg.show_labels,
+                center_icon: cfg.center_app_icon,
+                app_icon: cfg.app_icon_style,
+                material: Material::of(cfg),
+                outline: cfg.outline(),
+            };
+            demo::look_demo(ui, look, cfg.pie_size);
             row_wide(ui, "Appearance", "Settings and the pie.", 300.0, |ui| {
                 let modes = [
                     (Appearance::System, symbols::MONITOR, "System"),
@@ -479,35 +510,87 @@ impl App {
             });
         });
         panel(ui, "Pie material", |ui| {
-            row_wide(
-                ui,
-                "Style",
-                "Glass is see-through and frosted, always smoked dark.",
-                230.0,
-                |ui| {
-                    let styles = [
-                        (PieStyle::Solid, symbols::CHART_PIE_SLICE, "Solid"),
-                        (PieStyle::Glass, symbols::SPARKLE, "Glass"),
-                    ];
-                    let items: Vec<(Option<char>, &str)> = styles
-                        .iter()
-                        .map(|&(_, icon, label)| (Some(icon), label))
-                        .collect();
-                    let at = styles
-                        .iter()
-                        .position(|m| m.0 == cfg.pie_style)
-                        .unwrap_or(0);
-                    if let Some(i) = segmented(ui, &items, at) {
-                        cfg.pie_style = styles[i].0;
-                    }
-                },
-            );
+            // the pies are the choice: click the one you like
+            let styles = [
+                (
+                    PieStyle::Solid,
+                    "Solid",
+                    "Opaque slices that follow the light or dark appearance.",
+                ),
+                (
+                    PieStyle::Glass,
+                    "Glass",
+                    "See-through and frosted, always smoked dark.",
+                ),
+                (
+                    PieStyle::GenZ,
+                    "Gen Z",
+                    "Thick outlines and hard shadows, like the website.",
+                ),
+            ];
+            let tiles = styles.map(|(style, name, hint)| demo::Tile {
+                name,
+                hint,
+                material: Material::styled(style, cfg),
+                chosen: style == cfg.pie_style,
+            });
+            if let Some(i) = demo::tiles_demo(ui, "material", accent, cfg.outline(), &tiles) {
+                cfg.pie_style = styles[i].0;
+            }
             if cfg.pie_style == PieStyle::Glass {
-                glass_preview(ui, cfg);
                 slider_row(ui, "Clearness", &mut cfg.glass_clear, 0..=100, " %", accent);
                 slider_row(ui, "Frost", &mut cfg.glass_frost, 0..=100, " %", accent);
                 slider_row(ui, "Shine", &mut cfg.glass_shine, 0..=100, " %", accent);
             }
+        });
+        panel(ui, "Pie shape", |ui| {
+            let name = if cfg.pie_custom_shape {
+                format!("{} sides, {} % round", cfg.pie_sides, cfg.pie_round)
+            } else {
+                "Circle".to_owned()
+            };
+            let tile = demo::Tile {
+                name: &name,
+                hint: "The shape of your pie.",
+                material: Material::of(cfg),
+                chosen: false,
+            };
+            demo::tiles_demo(ui, "shape", accent, cfg.outline(), &[tile]);
+            row_wide(
+                ui,
+                "Shape",
+                "A circle, or a polygon with rounded corners: set its sides, how round its corners are and how it is turned.",
+                230.0,
+                |ui| {
+                    let items = [
+                        (Some(symbols::CIRCLE_DASHED), "Circle"),
+                        (Some(symbols::DIAMOND), "Custom"),
+                    ];
+                    if let Some(i) = segmented(ui, &items, usize::from(cfg.pie_custom_shape)) {
+                        cfg.pie_custom_shape = i == 1;
+                    }
+                },
+            );
+            ui.add_enabled_ui(cfg.pie_custom_shape, |ui| {
+                let sides = PIE_SIDES_RANGE.0..=PIE_SIDES_RANGE.1;
+                slider_row(ui, "Sides", &mut cfg.pie_sides, sides, "", accent);
+                slider_row(
+                    ui,
+                    "Corner roundness",
+                    &mut cfg.pie_round,
+                    0..=100,
+                    " %",
+                    accent,
+                );
+                slider_row(
+                    ui,
+                    "Rotation",
+                    &mut cfg.pie_turn,
+                    0..=PIE_TURN_MAX,
+                    "°",
+                    accent,
+                );
+            });
         });
         panel(ui, "App icon in the pie", |ui| {
             demo::app_icon_demo(ui, accent, cfg.app_icon_style, cfg.center_app_icon);
@@ -628,6 +711,7 @@ impl App {
 
     /// The "Apps" page of the Behavior tab: which pie opens for which app, how apps are found and the desktops.
     fn behavior_apps(&mut self, ui: &mut egui::Ui, accent: Color32) {
+        let tx = self.tx.clone();
         let cfg = &mut self.edit;
         panel(ui, "Pie of the app in front", |ui| {
             demo::gesture_demo(ui, accent, cfg.app_gesture, cfg.double_click_ms);
@@ -728,6 +812,11 @@ impl App {
                         && let Err(e) = crate::bridge::extension::export_and_show()
                     {
                         eprintln!("CursorPie: could not write the browser extension: {e}");
+                        let _ = tx.send(crate::msg::Msg::ExportFailed {
+                            what: "Browser extension files".into(),
+                            reason: crate::config::describe_io_error(&e),
+                        });
+                        ui.ctx().request_repaint();
                     }
                 });
                 note(ui, BRIDGE_INSTALL_HELP);
@@ -951,22 +1040,27 @@ fn trackpad_panel(
                  This uses an undocumented system interface (loaded only while this is on)."
             },
         );
-        toggle_row(
+        let hold = toggle_row(
             ui,
             &mut cfg.touch_trigger,
             "Open the pie with a trackpad hold",
-            "Uses the hold time above. Switched on at the first start when a trackpad is found; a finger resting on a trackpad is common, so turn it off here if it gets in the way.",
+            "Uses the hold time above. Switched on by itself, once, when CursorPie finds a trackpad; a finger resting on a trackpad is common, so turn it off here if it gets in the way and it stays off.",
             accent,
         );
+        if hold.changed() {
+            // the person decided: CursorPie never switches the hold on for them again
+            cfg.touch_auto_done = true;
+        }
         note(ui, &trackpad_status_text(cfg.touch_trigger, status));
         // A scan looks at the system without starting the touch source, so it works while the
-        // switch is off. A trackpad that was not there at the first start (a Bluetooth one, a
+        // switch is off. A trackpad that was not there at the last start (a Bluetooth one, a
         // laptop that was docked) is switched on by it: that is the point of pressing it.
         actions(ui, |ui| {
             if button(ui, Look::Soft, Some(symbols::SCAN), "Scan for trackpad").clicked()
                 && crate::tap::touch_scan() > 0
             {
                 cfg.touch_trigger = true;
+                cfg.touch_auto_done = true;
             }
         });
         if let Some(text) = scan_text(os, crate::tap::touch_last_scan(), cfg.touch_trigger) {
@@ -1067,60 +1161,6 @@ fn hud_preview(ui: &mut egui::Ui, cfg: &Config) {
     painter.rect_filled(rect, CONTROL_R, pal().bg);
     let note = HudNote::new(HudKind::App, "Open app", "Safari");
     hud::paint_pill(&painter, rect.center(), &note, &hud::PillLook::at_rest(cfg));
-}
-
-/// A strip of colors with four slices of the configured glass over it, so a change of the
-/// sliders shows at once: how much of the colors comes through and how thick the frost is.
-fn glass_preview(ui: &mut egui::Ui, cfg: &Config) {
-    use crate::ui::draw::{glass_colors, rgb};
-    use crate::ui::pie::glass;
-    let Some(g) = glass::Glass::of(cfg) else {
-        return;
-    };
-    ui.add_space(GAP);
-    let (rect, _) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), 120.0), egui::Sense::hover());
-    let painter = ui.painter().with_clip_rect(rect);
-    painter.rect_filled(rect, CONTROL_R, rgb([64, 120, 214]));
-    // what the glass sits on: a few blobs of color and a sharp diagonal, so blur and clarity show
-    for (dx, dy, r, c) in [
-        (0.12, 0.2, 52.0, [255, 149, 0]),
-        (0.35, 0.9, 44.0, [255, 45, 85]),
-        (0.62, 0.15, 56.0, [52, 199, 89]),
-        (0.88, 0.8, 50.0, [175, 82, 222]),
-    ] {
-        painter.circle_filled(
-            egui::pos2(
-                rect.min.x + rect.width() * dx,
-                rect.min.y + rect.height() * dy,
-            ),
-            r,
-            rgb(c),
-        );
-    }
-    painter.line_segment(
-        [rect.left_bottom(), rect.right_top()],
-        egui::Stroke::new(3.0, Color32::WHITE),
-    );
-    let center = rect.center();
-    let (inner, outer) = (22.0, 54.0);
-    let step = std::f32::consts::TAU / 4.0;
-    for i in 0..4 {
-        let a0 = i as f32 * step + 0.04 - std::f32::consts::FRAC_PI_4 * 2.0;
-        glass::slice(
-            &painter,
-            center,
-            (inner, outer),
-            (a0, a0 + step - 0.08),
-            glass_colors().slice,
-            if i == 1 { 1.0 } else { 0.0 },
-            1.0,
-            g,
-            false,
-        );
-    }
-    glass::core(&painter, center, inner * 0.86, 1.0, None, g);
-    ui.add_space(GAP);
 }
 
 #[cfg(test)]

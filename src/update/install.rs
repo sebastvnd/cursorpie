@@ -3,7 +3,7 @@
 //!
 //! | Step | What happens |
 //! |---|---|
-//! | choose | the release's package for this system: [`asset_name`] |
+//! | choose | the release's package for this system: [`asset_name`] (and [`build_asset`] for the build that keeps the diagnostic log) |
 //! | download | with the system's `curl`, from the release's own address, never from an address in the answer |
 //! | check | the size and the SHA-256 that GitHub publishes for the file ([`verify`]); with no checksum nothing is installed |
 //! | stage | macOS: the app is copied out of the disk image next to the installed one; Linux: the program is unpacked from the archive next to the installed one; both are started once with `--selftest`; Windows: the Setup program is kept as it is |
@@ -258,6 +258,52 @@ pub fn asset_name(os: Os, arch: &str, os_release: &str) -> Option<&'static str> 
     }
 }
 
+/// Which build of a release is wanted: the ordinary one, or the one that keeps the diagnostic log
+/// (`--features debug-log`, see `docs/DEBUGGING.md`, "Developer mode").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Build {
+    Standard,
+    Log,
+}
+
+impl Build {
+    /// The build this program is.
+    pub fn running() -> Build {
+        if crate::devmode::LOG_BUILD {
+            Build::Log
+        } else {
+            Build::Standard
+        }
+    }
+
+    /// A word for the file that remembers a swap (`standard`, `log`).
+    pub fn word(self) -> &'static str {
+        match self {
+            Build::Standard => "standard",
+            Build::Log => "log",
+        }
+    }
+}
+
+/// What a run of [`prepare_with`] looks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Want {
+    pub build: Build,
+    /// Whether the release of the version that runs now is good enough: the same version in another
+    /// build is not an update, but it is what *Install the log build* asks for.
+    pub same_version: bool,
+}
+
+/// The name of the package of `build`, from the name of the ordinary one: the log build has the same
+/// names with `devlog-` after `CursorPie-` (`CursorPie-devlog-windows-setup.exe`). The release
+/// workflow builds both (`.github/workflows/ci.yml`).
+pub fn build_asset(standard: &str, build: Build) -> String {
+    match build {
+        Build::Standard => standard.to_string(),
+        Build::Log => standard.replacen("CursorPie-", "CursorPie-devlog-", 1),
+    }
+}
+
 /// Where an update of the running copy goes: the app bundle on macOS, the installed `.exe` on
 /// Windows, the program on Linux. `None` when this copy is not an ordinary install: a copy run from
 /// a build folder (`target/release`), from an unzipped Windows download, or a program that was
@@ -371,6 +417,8 @@ pub fn verify(package: &Path, size: u64, expected_hex: &str) -> Result<(), Insta
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Staged {
     pub version: Version,
+    /// The build the package is.
+    pub build: Build,
     pub os: Os,
     /// The downloaded file (the Setup program on Windows).
     pub package: PathBuf,
@@ -545,6 +593,7 @@ fn stage_linux(
 /// Makes the package ready to be swapped in (see the table at the top).
 fn stage(
     version: Version,
+    build: Build,
     os: Os,
     package: PathBuf,
     target: PathBuf,
@@ -565,6 +614,7 @@ fn stage(
     };
     Ok(Staged {
         version,
+        build,
         os,
         package,
         staged,
@@ -700,20 +750,48 @@ pub fn install_plan() -> Option<InstallPlan> {
 /// See [`InstallError`]. Nothing outside the updates folder and the folder of the installed copy is
 /// touched, and what was made there is removed again on failure.
 pub fn prepare() -> Result<Staged, InstallError> {
+    prepare_with(Want {
+        build: Build::running(),
+        same_version: false,
+    })
+}
+
+/// [`prepare`] for a given build. An update keeps the build that runs (a copy that keeps the log
+/// stays one), and falls back to the ordinary package when the release has no log build; a person who
+/// asked for one build gets that build or an error, never the other one.
+///
+/// # Errors
+///
+/// See [`prepare`].
+pub fn prepare_with(want: Want) -> Result<Staged, InstallError> {
     let os = platform::OS;
     let InstallPlan {
         target,
         needs_password,
     } = install_plan().ok_or(InstallError::NotInstalled)?;
     let os_release = fs::read_to_string("/etc/os-release").unwrap_or_default();
-    let name =
+    let standard =
         asset_name(os, std::env::consts::ARCH, &os_release).ok_or(InstallError::NoPackage)?;
 
     let json = http::get_text(LATEST_RELEASE_API_URL, CHECK_TIMEOUT_S, MAX_ANSWER_BYTES)?;
     let release = parse_release(&json).ok_or(InstallError::Network(Failure::BadAnswer))?;
-    if !Version::current().is_some_and(|current| release.version > current) {
+    let newer = Version::current().is_some_and(|current| {
+        release.version > current || (want.same_version && release.version == current)
+    });
+    if !newer {
         return Err(InstallError::NoPackage);
     }
+    let has = |n: &str| release.assets.iter().any(|a| a.name == n);
+    let (build, name) = match want.build {
+        Build::Log if has(&build_asset(standard, Build::Log)) => {
+            (Build::Log, build_asset(standard, Build::Log))
+        }
+        // an update of a log build without a log package: the ordinary one is better than none
+        Build::Log if !want.same_version => (Build::Standard, standard.to_string()),
+        Build::Log => return Err(InstallError::NoPackage),
+        Build::Standard => (Build::Standard, standard.to_string()),
+    };
+    let name = name.as_str();
     let asset = release
         .assets
         .iter()
@@ -754,6 +832,7 @@ pub fn prepare() -> Result<Staged, InstallError> {
         .and_then(|()| {
             stage(
                 release.version,
+                build,
                 os,
                 package,
                 target.clone(),
@@ -771,8 +850,19 @@ fn target_folder(target: &Path) -> &Path {
 
 /// Runs [`prepare`] on a worker thread; the result arrives as [`Msg::UpdateStaged`].
 pub fn spawn_prepare(notifier: Notifier) {
+    spawn_prepare_with(
+        notifier,
+        Want {
+            build: Build::running(),
+            same_version: false,
+        },
+    );
+}
+
+/// Runs [`prepare_with`] on a worker thread; the result arrives as [`Msg::UpdateStaged`].
+pub fn spawn_prepare_with(notifier: Notifier, want: Want) {
     std::thread::spawn(move || {
-        let result = prepare();
+        let result = prepare_with(want);
         let ok = result.is_ok();
         diag::log!("ui", "update_staged", ok = ok);
         notifier.send(Msg::UpdateStaged(result));
@@ -790,7 +880,7 @@ pub fn spawn_prepare(notifier: Notifier) {
 /// changed then.
 pub fn apply(staged: &Staged) -> Result<(), InstallError> {
     // the program that starts afterwards tells the person how the swap ended (see `update::take_outcome`)
-    crate::update::mark_applied(staged.version);
+    crate::update::mark_applied(staged.version, staged.build);
     let started = match staged.os {
         Os::Windows => apply_windows(staged),
         Os::Mac | Os::Linux => apply_unix(staged),
@@ -1212,6 +1302,40 @@ mod tests {
             assert!(workflow.contains(name), "ci.yml no longer builds {name}");
         }
         assert!(workflow.contains("CursorPie-macos-universal.dmg.sha256"));
+    }
+
+    #[test]
+    fn every_log_build_package_is_built_by_the_release_workflow() {
+        let workflow = include_str!("../../.github/workflows/ci.yml");
+        let fedora = "ID=fedora\n";
+        let wanted = [
+            asset_name(Os::Mac, "aarch64", ""),
+            asset_name(Os::Windows, "x86_64", ""),
+            asset_name(Os::Linux, "x86_64", ""),
+            asset_name(Os::Linux, "x86_64", fedora),
+        ];
+        for name in wanted.into_iter().flatten() {
+            let log = build_asset(name, Build::Log);
+            assert!(workflow.contains(&log), "ci.yml no longer builds {log}");
+            assert!(plain_name(&log), "{log} is a safe name");
+        }
+        assert!(workflow.contains("CursorPie-devlog-macos-universal.dmg.sha256"));
+    }
+
+    #[test]
+    fn the_log_build_has_its_own_names() {
+        assert_eq!(
+            build_asset("CursorPie-windows-setup.exe", Build::Standard),
+            "CursorPie-windows-setup.exe"
+        );
+        assert_eq!(
+            build_asset("CursorPie-windows-setup.exe", Build::Log),
+            "CursorPie-devlog-windows-setup.exe"
+        );
+        assert_eq!(
+            build_asset("CursorPie-ubuntu-24.04-x86_64.tar.gz", Build::Log),
+            "CursorPie-devlog-ubuntu-24.04-x86_64.tar.gz"
+        );
     }
 
     #[test]

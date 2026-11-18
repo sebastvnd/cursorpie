@@ -820,7 +820,7 @@ checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 
 [[package]]
 name = "cursorpie"
-version = "0.8.20"
+version = "0.8.21"
 dependencies = [
  "core-foundation 0.10.1",
  "core-graphics 0.25.0",
@@ -848,6 +848,9 @@ version = "0.1.0"
 [[package]]
 name = "cursorpie-tools"
 version = "0.0.0"
+dependencies = [
+ "cursorpie-diag",
+]
 
 [[package]]
 name = "dirs"

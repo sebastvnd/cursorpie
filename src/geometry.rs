@@ -202,6 +202,88 @@ pub fn trail_node_at(nodes: &[TrailNode], dx: f32, dy: f32) -> Option<usize> {
         .map(|n| n.level)
 }
 
+/// The outline of the pie, as the settings give it: a circle, or a regular polygon whose corners
+/// are rounded. Sides of a polygon, the roundness of its corners in percent (100 = a circle) and
+/// the turn of the whole outline in degrees (0 = a flat side faces left, where slice 0 is).
+pub const PIE_SIDES_RANGE: (u8, u8) = (3, 12);
+pub const PIE_SIDES_DEFAULT: u8 = 4;
+pub const PIE_ROUND_DEFAULT: u8 = 45;
+pub const PIE_TURN_MAX: u16 = 359;
+
+/// How far from the center the rim of the pie is in each direction, in outer radii (at most 1, so
+/// the pie always fits the window that was made for a circle). The tap (which decides when a drag
+/// has crossed the rim) and the UI (which draws it) are given the same outline, so they always
+/// agree on where the rim is.
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub struct Outline {
+    /// Sides of the polygon; 0 is a circle.
+    sides: u8,
+    /// Roundness of the corners, 0 (sharp) to 1 (a circle).
+    round: f32,
+    /// Turn of the outline, in radians.
+    turn: f32,
+}
+
+impl Outline {
+    /// The circle: the pie of every version before the outline could be chosen.
+    pub const CIRCLE: Self = Self {
+        sides: 0,
+        round: 0.0,
+        turn: 0.0,
+    };
+
+    /// The outline of the settings' numbers (see the `PIE_*` constants for their units). `custom`
+    /// off gives the circle. Every number is kept within its range.
+    pub fn from_settings(custom: bool, sides: u8, round_pct: u8, turn_deg: u16) -> Self {
+        if !custom {
+            return Self::CIRCLE;
+        }
+        Self {
+            sides: sides.clamp(PIE_SIDES_RANGE.0, PIE_SIDES_RANGE.1),
+            round: f32::from(round_pct.min(100)) / 100.0,
+            turn: f32::from(turn_deg.min(PIE_TURN_MAX)).to_radians(),
+        }
+    }
+
+    /// Whether this is the circle.
+    pub fn is_circle(self) -> bool {
+        self.sides == 0
+    }
+
+    /// The distance of the rim from the center toward `angle` (radians, as on screen), in outer
+    /// radii. The corners of a polygon reach 1 (so a sharp one fits the circle around it), its flat
+    /// sides are nearer; the corners are rounded with arcs of a radius that grows with the
+    /// roundness until the arcs meet and the outline is a circle again.
+    pub fn radius(self, angle: f32) -> f32 {
+        if self.is_circle() {
+            return 1.0;
+        }
+        // a polygon with corners at distance 1: its sides are `flat` away from the center
+        let half = PI / f32::from(self.sides);
+        let flat = half.cos();
+        // the corners are rounded with arcs of radius `arc`, around the corners of a smaller polygon
+        let arc = flat * self.round;
+        let inset = flat - arc;
+        // the flat part of a side is what is left of it between two arcs
+        let reach = inset * half.tan();
+        // the direction measured from the nearest side's normal, in `-half..half`
+        let phi = (angle - (PI + self.turn) + half).rem_euclid(2.0 * half) - half;
+        let (sin, cos) = phi.sin_cos();
+        let t = if flat * (sin / cos).abs() <= reach {
+            flat / cos
+        } else {
+            // on an arc: where the ray leaves the circle around the corner `(inset, reach)`
+            let corner = (inset, reach * phi.signum());
+            let along = cos * corner.0 + sin * corner.1;
+            let off = corner.0 * corner.0 + corner.1 * corner.1 - arc * arc;
+            along + (along * along - off).max(0.0).sqrt()
+        };
+        // scaled so that the farthest point is at 1; at a sharp corner the square root above sits
+        // on a difference that is zero up to rounding, so it can overshoot by about 2e-4
+        (t / (1.0 - self.round * (1.0 - flat))).min(1.0)
+    }
+}
+
 /// Start angle (radians) of slice `i` out of `total`.
 pub fn slice_start(i: usize, total: usize) -> f32 {
     let sl = TAU / total as f32;
@@ -230,6 +312,67 @@ pub fn slice_at(center: Point, p: Point, total: usize, dead_zone: f32) -> Option
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::f32::consts::FRAC_1_SQRT_2;
+
+    fn outline(sides: u8, round: u8) -> Outline {
+        Outline::from_settings(true, sides, round, 0)
+    }
+
+    #[test]
+    fn the_circle_is_one_all_round_and_the_default() {
+        assert_eq!(Outline::default(), Outline::CIRCLE);
+        assert_eq!(Outline::from_settings(false, 5, 30, 90), Outline::CIRCLE);
+        assert!((0..360).all(|d| Outline::CIRCLE.radius((d as f32).to_radians()) == 1.0));
+    }
+
+    #[test]
+    fn a_sharp_square_reaches_one_at_its_corners_and_less_on_its_sides() {
+        let sq = outline(4, 0);
+        // a flat side faces left (slice 0); the corners are between the slices
+        assert!((sq.radius(PI) - FRAC_1_SQRT_2).abs() < 1e-4);
+        assert!((sq.radius(PI + PI / 4.0) - 1.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn full_roundness_is_a_circle_again() {
+        for sides in PIE_SIDES_RANGE.0..=PIE_SIDES_RANGE.1 {
+            let o = outline(sides, 100);
+            assert!((0..360).all(|d| (o.radius((d as f32).to_radians()) - 1.0).abs() < 1e-3));
+        }
+    }
+
+    #[test]
+    fn the_outline_fits_the_circle_is_continuous_and_repeats_every_side() {
+        for sides in PIE_SIDES_RANGE.0..=PIE_SIDES_RANGE.1 {
+            for round in [0, 25, 45, 80] {
+                let o = outline(sides, round);
+                let step = TAU / f32::from(sides);
+                let mut last = o.radius(0.0);
+                for k in 1..=720 {
+                    let a = TAU * k as f32 / 720.0;
+                    let r = o.radius(a);
+                    assert!(r > 0.4 && r <= 1.0 + 1e-4, "{sides} sides, {round} %: {r}");
+                    assert!((r - last).abs() < 0.03, "{sides} sides, {round} %: a jump");
+                    assert!((r - o.radius(a + step)).abs() < 1e-3, "not periodic");
+                    last = r;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_turn_moves_the_outline_and_the_settings_are_kept_in_range() {
+        let turned = Outline::from_settings(true, 4, 0, 45);
+        assert!(
+            (turned.radius(PI) - 1.0).abs() < 1e-4,
+            "a corner now faces left"
+        );
+        let wild = Outline::from_settings(true, 200, 250, 9000);
+        assert_eq!(
+            wild,
+            Outline::from_settings(true, PIE_SIDES_RANGE.1, 100, PIE_TURN_MAX)
+        );
+    }
 
     fn at(x: f64, y: f64) -> Point {
         Point::new(x, y)

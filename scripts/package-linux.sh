@@ -16,7 +16,9 @@ ARCH=$(uname -m)
 NAME="cursorpie-$VERSION-linux-$ARCH"
 OUT="target/bundle/$NAME"
 
-cargo build --release
+# CURSORPIE_CARGO_ARGS: more arguments for cargo, e.g. "--features debug-log" (the build with the log)
+# shellcheck disable=SC2086
+cargo build --release ${CURSORPIE_CARGO_ARGS:-}
 rm -rf "$OUT" "$OUT.tar.gz"
 mkdir -p "$OUT"
 cp target/release/cursorpie "$OUT/cursorpie"

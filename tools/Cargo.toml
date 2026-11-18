@@ -7,6 +7,16 @@ rust-version = "1.88"
 description = "Developer tools of the CursorPie repository, run as `cargo tools <command>`. Not shipped with the app."
 license = "MIT"
 publish = false
+default-run = "cursorpie-tools"
 
-# No dependencies, on purpose: the tools build in seconds and run on every OS the project supports.
+# `cpd` is the short name of the part that reads the diagnostic logs (docs/DEBUGGING.md, "cpd"). It is
+# attached to every release, so a person who is asked for a log can read it themselves.
+[[bin]]
+name = "cpd"
+path = "src/cpd.rs"
+
+# No dependencies of its own, on purpose: the tools build in seconds and run on every OS the project
+# supports. The one path dependency is the diag crate (itself without dependencies), whose reader names
+# what went wrong in a log, so the terminal and the Developer panel of the app say the same things.
 [dependencies]
+logscan = { package = "cursorpie-diag", path = "../diag", features = ["force"] }

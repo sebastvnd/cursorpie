@@ -8,6 +8,7 @@
 //! | Event | Handled by |
 //! |---|---|
 //! | pause | the top of `dispatch` |
+//! | Space while a pie is open | `space`: opens Settings, if the setting is on |
 //! | key down / up | `keyboard`: only used to record a shortcut in Settings |
 //! | a click while a trackpad pie is open | `touch::extra`: one more finger clicks (macOS trackpad, Windows precision touchpad) |
 //! | right button | `right_click`: switches the side-button pie while a pie is open |
@@ -30,6 +31,7 @@ mod pie_clicks;
 mod resolve;
 mod right_click;
 mod side_buttons;
+mod space;
 mod timers;
 mod trigger;
 // The trackpad source runs on macOS, Windows and Linux; its portable core is built and tested everywhere.
@@ -61,7 +63,8 @@ pub fn touch_last_scan() -> Option<usize> {
     touch::last_scan()
 }
 
-/// First start of a new user: switches the trackpad hold on when a trackpad is present. Call it
+/// Every start: switches the trackpad hold on, once, when a trackpad is present and nobody decided
+/// yet. `first_start` only says when `config.json` is written. Call it
 /// before [`spawn`]. Returns whether it did. See `touch::probe`.
 pub fn enable_trackpad_on_first_start(first_start: bool) -> bool {
     touch::auto_enable_on_first_start(first_start)
@@ -266,6 +269,10 @@ pub(crate) fn dispatch(
         Ev::Key { down, code, mods } => {
             if down {
                 touch::note_key(); // the typing guard of the trackpad hold
+            }
+            // Space while a pie is open may open Settings (Behavior > Trigger)
+            if let Some(verdict) = space::handle(state, notifier, down, code, mods) {
+                return verdict;
             }
             keyboard::handle_key(notifier, down, code, mods)
         }

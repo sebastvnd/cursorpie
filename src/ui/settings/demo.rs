@@ -24,12 +24,12 @@
 
 use super::theme::*;
 use crate::config::{AppGesture, AppIconStyle, DesktopMode, SideTarget, TargetApp};
-use crate::geometry::{TrailNode, TrailShape, trail_layout};
+use crate::geometry::{Outline, TrailNode, TrailShape, trail_layout};
 use crate::ui::draw::{
-    ease_out_back, ease_out_cubic, glass_colors, mix, on_accent, pie_colors, rgb, ring_slice,
+    Bend, ease_out_back, ease_out_cubic, mix, on_accent, pie_colors, rgb, ring_slice,
 };
 use crate::ui::fonts;
-use crate::ui::pie::glass::{self, Glass};
+use crate::ui::pie::{Material, genz, glass};
 use crate::ui::symbols;
 use eframe::egui::{
     self, Align2, Color32, CornerRadius, FontId, Pos2, Rect, Stroke, StrokeKind, Vec2,
@@ -580,6 +580,7 @@ pub(in crate::ui::settings) fn open_choice_demo(ui: &mut egui::Ui, accent: Color
             0.05,
             quarter - 0.05,
             accent.gamma_multiply(f.hover * f.pie),
+            Bend::NONE,
         ));
     }
     for new_window in [true, false] {
@@ -757,29 +758,28 @@ fn look_caption(size: f32, labels: bool) -> String {
     format!("{size:.0} px, {what}")
 }
 
-/// The pie as the Look & feel settings make it: size, names, the app's icon in the middle (in its
-/// colors or as a silhouette), the accent on the slice under the pointer, and the material (solid
-/// or glass).
-pub(in crate::ui::settings) fn look_demo(
-    ui: &mut egui::Ui,
-    accent: Color32,
-    size: f32,
-    labels: bool,
-    center_icon: bool,
-    app_icon: AppIconStyle,
-    glass: Option<Glass>,
-) {
-    let (p, rect, t) = stage(ui);
-    let f = look_frame(t);
-    // glass is smoked in either appearance, like the real pie
-    let colors = if glass.is_some() {
-        glass_colors()
-    } else {
-        pie_colors()
-    };
-    let c = Pos2::new(rect.center().x, rect.min.y + PIE_Y);
-    let r = look_radius(size);
-    let inner = r * 0.4;
+/// What a pie of the look demos is like: the accent on the slice under the pointer, its names, the
+/// app's icon in the middle (in its colors or as a silhouette), the material and the outline.
+#[derive(Clone, Copy)]
+pub(in crate::ui::settings) struct LookPie {
+    pub accent: Color32,
+    pub labels: bool,
+    pub center_icon: bool,
+    pub app_icon: AppIconStyle,
+    pub material: Material,
+    pub outline: Outline,
+}
+
+/// Paints a pie of radius `r` centered on `c` for a moment of a demo: `open` (0 to 1) is how far it
+/// has come out, `f` where the pointer is. It is drawn the way the real pie draws itself.
+fn look_pie(p: &egui::Painter, c: Pos2, r: f32, (open, f): (f32, LookFrame), look: &LookPie) {
+    let fade = ease_out_cubic(open);
+    let pop = ease_out_back(open);
+    let r = r * (0.80 + 0.20 * pop);
+    let inner = r * 0.4 * (0.75 + 0.25 * pop) / (0.80 + 0.20 * pop);
+    let bend = Bend::new(look.outline, inner, r);
+    let colors = look.material.colors();
+    let accent = look.accent;
     let quarter = TAU / 4.0;
     let slices = [
         (symbols::COPY, "Copy"),
@@ -792,50 +792,192 @@ pub(in crate::ui::settings) fn look_demo(
         let mid = -FRAC_PI_2 + quarter * i as f32;
         let (a0, a1) = (mid - quarter / 2.0 + 0.03, mid + quarter / 2.0 - 0.03);
         let base = mix(colors.slice, [accent.r(), accent.g(), accent.b()], h * 0.95);
-        if let Some(g) = glass {
-            glass::slice(&p, c, (inner, r), (a0, a1), base, h, 1.0, g, false);
-        } else {
-            p.add(ring_slice(&p, c, inner, r, a0, a1, rgb(base)));
+        match look.material {
+            Material::Glass(g) => {
+                glass::slice(p, c, bend, (inner, r), (a0, a1), base, h, fade, g, false);
+            }
+            Material::GenZ => genz::slice(p, c, bend, (inner, r), (a0, a1), base, h, fade, false),
+            Material::Solid => {
+                let fill = rgb(base).gamma_multiply(fade);
+                p.add(ring_slice(p, c, inner, r, a0, a1, fill, bend));
+            }
         }
         let ink = colors.ink.lerp_to_gamma(on_accent(accent), h * 0.95);
-        let at = c + Vec2::angled(mid) * ((inner + r) / 2.0);
-        let (dy, icon_size) = if labels {
+        let at = c + Vec2::angled(mid) * bend.radius(mid, (inner + r) / 2.0);
+        let (dy, icon_size) = if look.labels {
             (-r * 0.12, r * 0.36)
         } else {
             (0.0, r * 0.44)
         };
-        fonts::paint_icon(&p, at + Vec2::new(0.0, dy), icon, icon_size, ink, false);
-        if labels {
+        fonts::paint_icon(
+            p,
+            at + Vec2::new(0.0, dy),
+            icon,
+            icon_size,
+            ink.gamma_multiply(fade),
+            false,
+        );
+        if look.labels {
             p.text(
                 at + Vec2::new(0.0, r * 0.2),
                 Align2::CENTER_CENTER,
                 name,
                 FontId::proportional((r * 0.17).max(9.0)),
-                ink.gamma_multiply(0.8),
+                ink.gamma_multiply(0.8 * fade),
             );
         }
     }
-    if glass.is_none() {
-        p.circle_stroke(c, r, Stroke::new(1.0, pal().border));
+    if look.material == Material::Solid {
+        p.add(bend.rim(c, r, Stroke::new(1.0, pal().border.gamma_multiply(fade))));
     }
     let core = inner * 0.86;
-    if let Some(g) = glass {
-        glass::core(&p, c, core, 1.0, Some(colors.core), g);
-    } else {
-        p.circle_filled(c, core, colors.core);
+    match look.material {
+        Material::Glass(g) => glass::core(p, c, core, fade, Some(colors.core), g),
+        Material::GenZ => genz::core(p, c, core, fade, colors.core),
+        Material::Solid => {
+            p.circle_filled(c, core, colors.core.gamma_multiply(fade));
+        }
     }
-    if center_icon {
+    if look.center_icon {
         // the app's icon, here a made-up one: in its colors, or a silhouette in the ink
-        let blend = if app_icon == AppIconStyle::Color {
+        let blend = if look.app_icon == AppIconStyle::Color {
             0.0
         } else {
             1.0
         };
         let ink = colors.ink.gamma_multiply(0.85);
-        demo_app_icon(&p, c, core * 1.3, blend, ink, 1.0);
+        demo_app_icon(p, c, core * 1.3, blend, ink, fade);
     }
-    caption(&p, rect, &look_caption(size, labels));
+}
+
+/// The pie as the Look & feel settings make it: size, names, the app's icon in the middle, the
+/// accent on the slice under the pointer, the material (solid, glass or Gen Z) and the outline.
+pub(in crate::ui::settings) fn look_demo(ui: &mut egui::Ui, look: LookPie, size: f32) {
+    let (p, rect, t) = stage(ui);
+    let c = Pos2::new(rect.center().x, rect.min.y + PIE_Y);
+    look_pie(&p, c, look_radius(size), (1.0, look_frame(t)), &look);
+    caption(&p, rect, &look_caption(size, look.labels));
     ui.add_space(GAP);
+}
+
+// ------------------------------------------------------------ the pies side by side
+
+/// Seconds a pie of [`tiles_demo`] waits, open, before the pointer comes to its first slice.
+const TILE_LEAD: f32 = 0.45;
+/// Seconds one round of [`tiles_demo`] takes: the pie comes out, the pointer visits the four
+/// slices, the pie goes away.
+const TILE_LOOP: f32 = TILE_LEAD + LOOK_STEP * 4.0 + 0.5;
+/// Seconds between one pie of [`tiles_demo`] and the next, so they are not all on the same slice.
+const TILE_SHIFT: f32 = LOOK_STEP;
+
+/// The pie of [`tiles_demo`] at `t` seconds: how far it is open and where the pointer is. The
+/// pointer is only on it while it is open.
+pub(super) fn tile_frame(t: f32) -> (f32, LookFrame) {
+    let t = t.rem_euclid(TILE_LOOP);
+    let u = t - TILE_LEAD;
+    let open = ramp(t, 0.0, OPEN_SECS) - ramp(t, TILE_LOOP - CLOSE_SECS, CLOSE_SECS);
+    let pointer = if (0.0..LOOK_STEP * 4.0).contains(&u) {
+        look_frame(u)
+    } else {
+        LookFrame::default()
+    };
+    (open, pointer)
+}
+
+/// One pie of [`tiles_demo`].
+pub(in crate::ui::settings) struct Tile<'a> {
+    /// Under the pie.
+    pub name: &'a str,
+    /// Shown while the pointer is on the pie.
+    pub hint: &'a str,
+    pub material: Material,
+    /// The one the settings have (it gets the accent around its name).
+    pub chosen: bool,
+}
+
+/// The colors the glass sits on: a few blobs of color and a sharp diagonal, so what comes through
+/// shows (and what does not).
+fn backdrop(p: &egui::Painter, rect: Rect) {
+    p.rect_filled(rect, CONTROL_R, rgb([64, 120, 214]));
+    for (dx, dy, r, c) in [
+        (0.12, 0.2, 52.0, [255, 149, 0]),
+        (0.35, 0.9, 44.0, [255, 45, 85]),
+        (0.62, 0.15, 56.0, [52, 199, 89]),
+        (0.88, 0.8, 50.0, [175, 82, 222]),
+    ] {
+        let at = Pos2::new(
+            rect.min.x + rect.width() * dx,
+            rect.min.y + rect.height() * dy,
+        );
+        p.circle_filled(at, r, rgb(c));
+    }
+    p.line_segment(
+        [rect.left_bottom(), rect.right_top()],
+        Stroke::new(3.0, Color32::WHITE),
+    );
+}
+
+/// The id of tile `i` of the [`tiles_demo`] called `salt`. It must be unique to that call: two
+/// calls on one page (the material and the shape of the pie) that built it from the id of their
+/// `Ui` shared the id of their first tile, and the one drawn last took the clicks of the other,
+/// so the first material (Solid) could not be chosen.
+fn tile_id(salt: &str, i: usize) -> egui::Id {
+    egui::Id::new(("tiles_demo", salt, i))
+}
+
+/// Pies of different materials side by side, each coming out and being passed over by the pointer
+/// the way the real one does, over a colorful backdrop. A click on one returns its index, so the
+/// demo is also how a material is chosen. `salt` tells this demo from any other on the page.
+pub(in crate::ui::settings) fn tiles_demo(
+    ui: &mut egui::Ui,
+    salt: &str,
+    accent: Color32,
+    outline: Outline,
+    tiles: &[Tile],
+) -> Option<usize> {
+    let (p, rect, t) = stage(ui);
+    backdrop(&p, rect);
+    let width = rect.width() / tiles.len().max(1) as f32;
+    let r = (width / 2.0 - 14.0).clamp(30.0, 50.0);
+    let mut clicked = None;
+    for (i, tile) in tiles.iter().enumerate() {
+        let column = Rect::from_min_size(
+            rect.min + Vec2::new(width * i as f32, 0.0),
+            Vec2::new(width, rect.height()),
+        );
+        let c = Pos2::new(column.center().x, rect.min.y + PIE_Y - 8.0);
+        let look = LookPie {
+            accent,
+            labels: false,
+            center_icon: false,
+            app_icon: AppIconStyle::Glyph,
+            material: tile.material,
+            outline,
+        };
+        look_pie(&p, c, r, tile_frame(t + TILE_SHIFT * i as f32), &look);
+        // the name, on a pill that reads on any color
+        let (fill, ink) = if tile.chosen {
+            (accent, on_accent(accent))
+        } else {
+            (pal().input, pal().text)
+        };
+        let name = p.layout_no_wrap(tile.name.to_owned(), FontId::proportional(12.5), ink);
+        let pill = Rect::from_center_size(
+            Pos2::new(column.center().x, rect.max.y - 30.0),
+            name.size() + Vec2::new(22.0, 10.0),
+        );
+        p.rect_filled(pill, pill.height() / 2.0, fill);
+        p.galley(pill.center() - name.size() / 2.0, name, ink);
+        let response = ui
+            .interact(column, tile_id(salt, i), egui::Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text(tile.hint);
+        if response.clicked() {
+            clicked = Some(i);
+        }
+    }
+    ui.add_space(GAP);
+    clicked
 }
 
 // --------------------------------------------------------------- the submenu trail
@@ -1731,6 +1873,7 @@ fn mini_pie(
             a0,
             a1,
             rgb(colors.slice).gamma_multiply(open),
+            Bend::NONE,
         ));
         let dot = c + Vec2::angled((a0 + a1) / 2.0) * ((inner + outer) / 2.0);
         p.circle_filled(dot, r * 0.07, colors.ink.gamma_multiply(open * 0.8));
@@ -1758,6 +1901,7 @@ fn mini_pie(
             a0,
             a1,
             accent.gamma_multiply(open),
+            Bend::NONE,
         ));
     }
 }
@@ -1765,6 +1909,7 @@ fn mini_pie(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::PieStyle;
 
     #[test]
     fn the_trail_demo_opens_a_submenu_leaves_a_node_and_comes_back() {
@@ -2090,6 +2235,30 @@ mod tests {
     }
 
     #[test]
+    fn a_tile_pie_comes_out_is_passed_over_by_the_pointer_and_goes_away() {
+        let (open, f) = tile_frame(0.0);
+        assert_eq!((open, f.hover), (0.0, 0.0), "a round starts closed");
+        let mut seen = [false; 4];
+        for step in 0..(TILE_LOOP * 100.0) as usize {
+            let (open, f) = tile_frame(step as f32 * 0.01);
+            assert!((0.0..=1.0).contains(&open), "open {open} at {step}");
+            assert!(
+                open >= 0.99 || f.hover == 0.0,
+                "the pointer is on a closed pie"
+            );
+            if f.hover > 0.99 {
+                seen[f.slice] = true;
+            }
+        }
+        assert_eq!(seen, [true; 4]);
+        assert_eq!(
+            tile_frame(TILE_LOOP - 0.001).0.round(),
+            0.0,
+            "and ends closed"
+        );
+    }
+
+    #[test]
     fn a_bigger_pie_setting_draws_a_bigger_demo_pie_within_the_stage() {
         assert!(look_radius(360.0) > look_radius(200.0));
         assert!(look_radius(200.0) > look_radius(140.0));
@@ -2259,14 +2428,31 @@ mod tests {
                 ] {
                     desktop_demo(ui, accent, mode, "workspace");
                 }
-                let smoked = Some(Glass {
-                    clear: 0.6,
-                    frost: 0.45,
-                    shine: 0.6,
+                let cfg = crate::config::Config::default();
+                let pie = |material, outline| LookPie {
+                    accent,
+                    labels: true,
+                    center_icon: true,
+                    app_icon: AppIconStyle::Glyph,
+                    material,
+                    outline,
+                };
+                let square = Outline::from_settings(true, 4, 45, 0);
+                let triangle = Outline::from_settings(true, 3, 0, 90);
+                look_demo(ui, pie(Material::Solid, Outline::CIRCLE), 140.0);
+                look_demo(
+                    ui,
+                    pie(Material::styled(PieStyle::Glass, &cfg), square),
+                    360.0,
+                );
+                look_demo(ui, pie(Material::GenZ, triangle), 220.0);
+                let tiles = [PieStyle::Solid, PieStyle::Glass, PieStyle::GenZ].map(|style| Tile {
+                    name: "style",
+                    hint: "",
+                    material: Material::styled(style, &cfg),
+                    chosen: style == PieStyle::Glass,
                 });
-                look_demo(ui, accent, 140.0, true, false, AppIconStyle::Glyph, None);
-                look_demo(ui, accent, 360.0, false, true, AppIconStyle::Color, None);
-                look_demo(ui, accent, 220.0, true, true, AppIconStyle::Glyph, smoked);
+                tiles_demo(ui, "test", accent, square, &tiles);
                 let other = Color32::from_rgb(255, 59, 48);
                 side_demo(ui, accent, other, SideTarget::App, true, true);
                 side_demo(ui, accent, other, SideTarget::General, false, false);
@@ -2279,6 +2465,21 @@ mod tests {
             })
             .drop_without_applying_deltas();
         }
+    }
+
+    #[test]
+    fn the_tiles_of_two_demos_never_share_an_id() {
+        let mut ids = std::collections::HashSet::new();
+        for salt in ["material", "shape"] {
+            for i in 0..3 {
+                assert!(ids.insert(tile_id(salt, i)), "{salt} {i}");
+            }
+        }
+        assert_eq!(
+            ids.len(),
+            6,
+            "the first tile of each demo has an id of its own"
+        );
     }
 
     #[test]

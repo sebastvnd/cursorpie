@@ -35,6 +35,8 @@ mod add_panel;
 pub(crate) mod brand;
 mod clip;
 mod demo;
+mod developer;
+mod export_error;
 mod icon_catalog;
 mod icon_picker;
 mod import_report;

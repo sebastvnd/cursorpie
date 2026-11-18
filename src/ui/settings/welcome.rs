@@ -848,13 +848,34 @@ fn ready_page(ui: &mut egui::Ui, w: &mut Welcome, accent: Color32, os: Os) -> bo
         );
     });
     ui.add_space(GAP);
-    let hold = cfg().settings_hold_ms;
+    let (hold, by_hold, by_space, presses) = {
+        let c = cfg();
+        (
+            c.settings_hold_ms,
+            c.settings_by_hold,
+            c.settings_by_space,
+            c.settings_space_presses,
+        )
+    };
     let mut open_settings = false;
     // the tips on the left, the startup choice and the way into Settings on the right
     let (left, right) = two_columns(ui, 0.56);
     ui.scope_builder(egui::UiBuilder::new().max_rect(left), |ui| {
         panel(ui, "Good to know", |ui| {
-            for tip in tips(os, hold) {
+            let mut list = tips(os, hold);
+            // the first tip is the way into Settings: it follows what is switched on
+            match (by_hold, by_space) {
+                (true, _) => {}
+                (false, true) => {
+                    let times = if presses >= 2 { "twice" } else { "once" };
+                    list[0] =
+                        format!("Press Space {times} while the pie is open to open Settings.");
+                }
+                (false, false) => {
+                    list.remove(0);
+                }
+            }
+            for tip in list {
                 note(ui, &tip);
             }
         });

@@ -80,6 +80,7 @@ impl App {
             Msg::ProfileImportPicked(file) => self.import_profile(&file),
             Msg::FlowImportPicked(file) => self.import_flow(&file),
             Msg::Notice(text) => self.say(text),
+            Msg::ExportFailed { what, reason } => self.export_failed(&what, reason),
             Msg::FlowKit(status) => {
                 self.say(status.notice());
                 self.ed.flow_kit = status;
@@ -323,9 +324,9 @@ impl App {
                 self.ed.stop_recording();
                 self.ed.open_import(bundle, file_label(file), runs_commands);
                 self.say(if runs_commands {
-                    "Pie opened beside yours. Some of its slices can run shell commands, write files or send messages: they are marked. Drag the slices you need across."
+                    "Pie opened beside yours. Some of its slices can run shell commands, write files or send messages: they are marked. Drag the slices you need across, pick several with select mode, or add it all with one button."
                 } else {
-                    "Pie opened beside yours. Drag the slices you need across, then press Save to apply."
+                    "Pie opened beside yours. Drag slices across, pick several with select mode, or add it all with one button; then press Save to apply."
                 });
             }
             Err(e) => self.import_refused(file, e),

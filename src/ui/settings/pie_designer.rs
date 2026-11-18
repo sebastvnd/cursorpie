@@ -132,6 +132,7 @@ pub(super) fn pie_designer(
             a0 + 0.03,
             a0 + sl - 0.03,
             rgb(mix(base, accent, t)),
+            Bend::NONE,
         ));
 
         let am = a0 + sl / 2.0;

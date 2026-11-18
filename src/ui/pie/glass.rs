@@ -12,7 +12,7 @@
 //! configuration shape it, all in percent: how clear, how frosted and how shiny.
 
 use crate::config::Config;
-use crate::ui::draw::{arc_segments, glass_colors, ring_slice};
+use crate::ui::draw::{Bend, arc_segments, glass_colors, ring_slice};
 use eframe::egui::{self, Color32, Painter, Pos2, Shape, Vec2};
 use std::f32::consts::{PI, TAU};
 
@@ -43,7 +43,8 @@ impl Glass {
         (cfg.pie_style == crate::config::PieStyle::Glass).then(|| Self::from_percent(cfg))
     }
 
-    fn from_percent(cfg: &Config) -> Self {
+    /// The glass of the glass numbers of `cfg`, whichever style `cfg` has chosen.
+    pub fn from_percent(cfg: &Config) -> Self {
         let f = |v: u8| f32::from(v.min(100)) / 100.0;
         Self {
             clear: f(cfg.glass_clear),
@@ -269,11 +270,13 @@ fn pixel(painter: &Painter) -> f32 {
 
 /// Paints one slice of glass. `base` is its color (the rest color blended toward the accent), `h`
 /// how hovered it is and `lf` how far its entrance went (both `0.0..=1.0`). A `lone` slice is a
-/// full ring; it is recognised by its sweep, so the flag only documents the call.
+/// full ring; it is recognised by its sweep, so the flag only documents the call. The slice is bent
+/// to the outline of the pie by `bend`.
 #[allow(clippy::too_many_arguments)]
 pub fn slice(
     painter: &Painter,
     center: Pos2,
+    bend: Bend,
     (inner, outer): (f32, f32),
     (s0, s1): (f32, f32),
     base: [u8; 3],
@@ -292,6 +295,7 @@ pub fn slice(
         s0,
         s1,
         with_alpha(base, body * lf),
+        bend,
     ));
 
     let feather = pixel(painter);
@@ -302,6 +306,7 @@ pub fn slice(
         let a = 0.13 * lf * (0.4 + 0.6 * shade) * (-s.edge / 0.9).exp();
         Color32::from_black_alpha((a * 255.0).round() as u8)
     });
+    let dark = bend.mesh(center, dark);
     if !dark.is_empty() {
         painter.add(Shape::mesh(dark));
     }
@@ -316,6 +321,7 @@ pub fn slice(
     let light = field_mesh(center, (inner, outer), (s0, s1), feather, |s| {
         with_alpha(veil, look.alpha(s) * lf)
     });
+    let light = bend.mesh(center, light);
     if !light.is_empty() {
         painter.add(Shape::mesh(light));
     }

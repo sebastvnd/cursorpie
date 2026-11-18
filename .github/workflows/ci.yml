@@ -40,6 +40,11 @@ jobs:
       - name: Build release
         if: matrix.os != 'ubuntu-latest'
         run: cargo build --release
+      # The build that keeps the diagnostic log (About, Developer mode) is a release with one more
+      # feature; it must keep compiling, and an ordinary release must stay free of the log code.
+      - name: Log build compiles
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo check --release --features debug-log
       # The tag of a release must be the version in Cargo.toml, with the notes moved out of
       # "Unreleased" (see CONTRIBUTING.md, "Releasing").
       - name: Tag matches the release
@@ -211,6 +216,229 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # The build that keeps the diagnostic log (docs/DEBUGGING.md, "Developer mode"). The app offers it
+  # to a person who turns on Developer mode in About: the same release, the same program built with
+  # `--features debug-log`, named CursorPie-devlog-*. It is built for a version tag (and on demand),
+  # not for every pull request: the packaging is the same as above, only the cargo arguments differ.
+  package-devlog-macos:
+    name: Package macOS log build (universal)
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build universal DMG with the log
+        env:
+          UNIVERSAL: "1"
+          CURSORPIE_CARGO_ARGS: --features debug-log
+        run: scripts/make-dmg.sh
+      - name: Prepare stable release asset names
+        shell: bash
+        run: |
+          version=$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -n1)
+          cp "target/bundle/CursorPie-$version-universal.dmg" target/bundle/CursorPie-devlog-macos-universal.dmg
+          (cd target/bundle && shasum -a 256 CursorPie-devlog-macos-universal.dmg > CursorPie-devlog-macos-universal.dmg.sha256)
+      - name: Packaged app starts and has the log
+        run: |
+          mnt="$(mktemp -d)"
+          hdiutil attach -nobrowse -readonly -noverify -quiet -mountpoint "$mnt" target/bundle/CursorPie-devlog-macos-universal.dmg
+          "$mnt/CursorPie.app/Contents/MacOS/CursorPie" --selftest | tee /dev/stderr | grep -q "(log build)"
+          hdiutil detach "$mnt" -quiet
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CursorPie-devlog-macos-universal
+          path: |
+            target/bundle/CursorPie-devlog-macos-universal.dmg
+            target/bundle/CursorPie-devlog-macos-universal.dmg.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  package-devlog-windows:
+    name: Package Windows log build (x86_64)
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          $have = (Get-Command ISCC.exe -ErrorAction SilentlyContinue) -or
+            (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe") -or
+            (Test-Path "$env:ProgramFiles\Inno Setup 6\ISCC.exe")
+          if ($have) { Write-Host "Inno Setup is already installed."; exit 0 }
+          for ($i = 1; $i -le 3; $i++) {
+            winget install --id JRSoftware.InnoSetup --exact --silent --accept-package-agreements --accept-source-agreements
+            if ($LASTEXITCODE -eq 0) { exit 0 }
+            Write-Host "winget failed (attempt $i), retrying"
+            Start-Sleep -Seconds (10 * $i)
+          }
+          exit 1
+      - name: Build ZIP and Setup installer with the log
+        shell: pwsh
+        env:
+          CURSORPIE_CARGO_ARGS: --features debug-log
+        run: .\scripts\package-windows.ps1
+      - name: Prepare stable installer names
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"(.*)"' | Select-Object -First 1).Matches.Groups[1].Value
+          Copy-Item "target\bundle\CursorPie-$version-setup.exe" "target\bundle\CursorPie-devlog-windows-setup.exe"
+          Copy-Item "target\bundle\CursorPie-windows.zip" "target\bundle\CursorPie-devlog-windows.zip"
+      - name: Setup installs silently and the program has the log
+        shell: pwsh
+        run: |
+          $setup = Start-Process -FilePath "target\bundle\CursorPie-devlog-windows-setup.exe" -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/MERGETASKS=!startup" -Wait -PassThru
+          if ($setup.ExitCode -ne 0) { throw "Setup ended with $($setup.ExitCode)" }
+          $exe = Join-Path $env:LOCALAPPDATA "Programs\CursorPie\cursorpie.exe"
+          if (-not (Test-Path $exe)) { throw "Setup did not install $exe" }
+          $out = & $exe --selftest
+          if ($LASTEXITCODE -ne 0) { throw "The installed program does not start" }
+          if ("$out" -notmatch "\(log build\)") { throw "The program has no log: $out" }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CursorPie-devlog-windows-x86_64
+          path: |
+            target/bundle/CursorPie-devlog-windows.zip
+            target/bundle/CursorPie-devlog-windows-setup.exe
+          if-no-files-found: error
+          retention-days: 30
+
+  package-devlog-linux-ubuntu:
+    name: Package Linux log build (Ubuntu x86_64)
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libx11-dev libxi-dev libxtst-dev libxrandr-dev
+      - name: Build Linux package with the log
+        env:
+          CURSORPIE_CARGO_ARGS: --features debug-log
+        run: scripts/package-linux.sh
+      - name: Prepare Ubuntu release asset name
+        run: |
+          version=$(sed -nE 's/^version = "([^"]+)"/\1/p' Cargo.toml | head -n1)
+          cp "target/bundle/cursorpie-$version-linux-x86_64.tar.gz" target/bundle/CursorPie-devlog-ubuntu-24.04-x86_64.tar.gz
+      - name: Packaged program starts and has the log
+        run: |
+          dir="$(mktemp -d)"
+          tar -xzf target/bundle/CursorPie-devlog-ubuntu-24.04-x86_64.tar.gz -C "$dir"
+          "$dir"/*/cursorpie --selftest | tee /dev/stderr | grep -q "(log build)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CursorPie-devlog-linux-ubuntu-x86_64
+          path: target/bundle/CursorPie-devlog-ubuntu-24.04-x86_64.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+  package-devlog-linux-fedora:
+    name: Package Linux log build (Fedora 44 x86_64)
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare Fedora Rust caches
+        run: mkdir -p "$HOME/.cache/cursorpie-fedora/cargo" "$HOME/.cache/cursorpie-fedora/rustup"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/cursorpie-fedora/cargo
+            ~/.cache/cursorpie-fedora/rustup
+          key: fedora-44-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+      - name: Build inside Fedora 44 with the log
+        run: |
+          host_uid="$(id -u)"
+          host_gid="$(id -g)"
+          docker run --rm \
+            --env HOST_UID="$host_uid" \
+            --env HOST_GID="$host_gid" \
+            --env CURSORPIE_CARGO_ARGS="--features debug-log" \
+            --volume "$GITHUB_WORKSPACE:/workspace" \
+            --volume "$HOME/.cache/cursorpie-fedora/cargo:/root/.cargo" \
+            --volume "$HOME/.cache/cursorpie-fedora/rustup:/root/.rustup" \
+            --workdir /workspace \
+            fedora:44 \
+            bash -euxo pipefail -c '
+              dnf install -y gcc libX11-devel libXi-devel libXtst-devel libXrandr-devel curl tar gzip
+              curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+              source /root/.cargo/env
+              rustup update stable
+              scripts/package-linux.sh
+              version=$(grep -m1 "^version" Cargo.toml | cut -d \" -f2)
+              cp "target/bundle/cursorpie-$version-linux-x86_64.tar.gz" target/bundle/CursorPie-devlog-fedora-44-x86_64.tar.gz
+              dir=$(mktemp -d)
+              tar -xzf target/bundle/CursorPie-devlog-fedora-44-x86_64.tar.gz -C "$dir"
+              "$dir"/*/cursorpie --selftest | tee /dev/stderr | grep -q "(log build)"
+              chown -R "$HOST_UID:$HOST_GID" target
+            '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CursorPie-devlog-linux-fedora-44-x86_64
+          path: target/bundle/CursorPie-devlog-fedora-44-x86_64.tar.gz
+          if-no-files-found: error
+          retention-days: 30
+
+  # `cpd`, the diagnostic logs in a terminal (tools/src/cpd.rs). One small program with no
+  # dependencies per system, built for a version tag (and on demand) and attached to the release.
+  # On Linux it is built for musl, so it runs on every distribution.
+  package-cpd:
+    name: cpd (${{ matrix.system }})
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest, system: macos-universal, asset: cpd-macos-universal }
+          - { os: windows-latest, system: windows-x86_64, asset: cpd-windows-x86_64.exe }
+          - { os: ubuntu-24.04, system: linux-x86_64, asset: cpd-linux-x86_64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build (macOS, both architectures)
+        if: runner.os == 'macOS'
+        run: |
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          cargo build --release -p cursorpie-tools --bin cpd --target aarch64-apple-darwin
+          cargo build --release -p cursorpie-tools --bin cpd --target x86_64-apple-darwin
+          mkdir -p dist
+          lipo -create -output dist/${{ matrix.asset }} \
+            target/aarch64-apple-darwin/release/cpd target/x86_64-apple-darwin/release/cpd
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cargo build --release -p cursorpie-tools --bin cpd
+          mkdir -p dist
+          cp target/release/cpd.exe dist/${{ matrix.asset }}
+      - name: Build (Linux, static)
+        if: runner.os == 'Linux'
+        run: |
+          rustup target add x86_64-unknown-linux-musl
+          cargo build --release -p cursorpie-tools --bin cpd --target x86_64-unknown-linux-musl
+          mkdir -p dist
+          cp target/x86_64-unknown-linux-musl/release/cpd dist/${{ matrix.asset }}
+      - name: It runs
+        shell: bash
+        run: |
+          chmod +x dist/${{ matrix.asset }}
+          dist/${{ matrix.asset }} help | head -n 3
+          dist/${{ matrix.asset }} --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cpd-${{ matrix.system }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+          retention-days: 30
+
   # A version tag turns the validated packages into public, ready-to-install Release assets.
   publish-release:
     name: Publish GitHub Release assets
@@ -221,6 +449,11 @@ jobs:
       - package-windows
       - package-linux-ubuntu
       - package-linux-fedora
+      - package-devlog-macos
+      - package-devlog-windows
+      - package-devlog-linux-ubuntu
+      - package-devlog-linux-fedora
+      - package-cpd
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -230,6 +463,11 @@ jobs:
           pattern: CursorPie-*
           path: release-assets
           merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cpd-*
+          path: release-assets
+          merge-multiple: true
       - name: List release assets
         run: ls -lah release-assets
       # The update looks for these files by name (asset_name in src/update/install.rs).
@@ -237,7 +475,11 @@ jobs:
         run: |
           for name in CursorPie-macos-universal.dmg CursorPie-macos-universal.dmg.sha256 \
                       CursorPie-windows-setup.exe CursorPie-windows.zip \
-                      CursorPie-ubuntu-24.04-x86_64.tar.gz CursorPie-fedora-44-x86_64.tar.gz; do
+                      CursorPie-ubuntu-24.04-x86_64.tar.gz CursorPie-fedora-44-x86_64.tar.gz \
+                      CursorPie-devlog-macos-universal.dmg CursorPie-devlog-macos-universal.dmg.sha256 \
+                      CursorPie-devlog-windows-setup.exe CursorPie-devlog-windows.zip \
+                      CursorPie-devlog-ubuntu-24.04-x86_64.tar.gz CursorPie-devlog-fedora-44-x86_64.tar.gz \
+                      cpd-macos-universal cpd-windows-x86_64.exe cpd-linux-x86_64; do
             test -f "release-assets/$name" || { echo "missing $name"; exit 1; }
           done
       - name: Publish release assets

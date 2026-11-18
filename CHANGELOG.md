@@ -2,6 +2,97 @@
 
 ## Unreleased
 
+## 0.8.21
+
+- **Fixed: the Solid pie could not be chosen in Behavior, Pie material.** The pies of *Pie material* and the one of
+  *Pie shape* are drawn by the same demo, and each tile took its id from the id of the panel it was in, which two panels
+  of one page can share: the tile of *Pie shape* took the clicks of the first tile of *Pie material*. Glass and Gen Z
+  worked, Solid did not. Every demo now gives its tiles ids of its own.
+
+- **New: bring a whole pie in without dragging slice by slice (import tray).** The tray that opens beside your pie
+  when you import a profile file used to take one slice at a time (a drag or a double click), or the whole file as a
+  new pie, which failed for a file that lists no apps. Now:
+  - **Select mode** (cursor button of the bar; Shift or Ctrl/Cmd + click does the same without it): a click picks or
+    unpicks a slice and nothing is dragged, so a click can never move one by accident. Clicking the middle of a pie
+    picks every slice of that ring, **Pick all** (or Ctrl/Cmd + A) picks the whole top ring, and a picked submenu
+    goes with everything in it. **Add selected** (the arrow) then adds everything picked at once.
+  - **Add every slice**, **As a submenu** and **Use as this pie** (new buttons of the tray bar) bring the file in with
+    one press: to the end of the lit ring, as one submenu of it (it fits whenever the ring has one free place), or as
+    the slices of the pie you are editing (its name and apps stay; Undo brings the old slices back).
+  - A group is added whole or not at all: when it does not fit (ring of 8, 5 rings deep) nothing is changed, no
+    image is written, and the notice says how many slices still fit. Images and flows come along, and slices that
+    can run commands are reported, as for a single slice.
+  - A profile file dropped on the window (pie editor, slice editor closed) opens in the tray, and so does a profile
+    file copied as text and pasted with Ctrl/Cmd + V in the pie editor.
+  - Logic lives in `config::pie_edit` (`insert_many`, `group_item`, `replace_items`, `top_paths`, `ring_paths`,
+    `first_mode_path`) and is unit tested.
+
+- **Added: Settings can be opened with Space while the pie is open, and the hold can be switched off (Behavior, Trigger).**
+  *Open settings by holding* (on by default, as before) decides whether keeping the trigger in the center opens Settings;
+  off, the pie never turns into Settings by itself and the progress arc is not drawn. *Open settings with Space* (off by
+  default) opens Settings when Space is pressed while a pie is open, after one or two presses (*Presses of Space*; two
+  must come within half a second). Space is swallowed, with its repeat and release, so it never reaches the app under the
+  pie. The two work independently: whichever comes first opens Settings. Space works on macOS and Windows; on Linux X11 the
+  key also reaches the app, and on Wayland CursorPie sees no keys. New settings `settings_by_hold`, `settings_by_space` and
+  `settings_space_presses`; a file without them keeps the old behavior.
+
+- **Changed: the Gen Z pie style is the default of a fresh install.** A saved `pie_style` is kept; a file that has none
+  (written before the setting existed) now loads as `"GenZ"`.
+
+- **Changed: a trackpad that is found switches the trackpad hold on, at any start.** It used to happen only at the very
+  first start of a new user. Now the first start that finds a trackpad switches `touch_trigger` on once and sets the new
+  `touch_auto_done`; turning the switch off (or on) in Settings, or pressing *Scan for trackpad*, sets it too, so a choice
+  made in Settings is never undone. Someone who had turned the hold off before this version sees it on once more.
+
+- **Fixed: on Windows the Windows key could not be recorded in a shortcut; it opened the Start menu instead.** While a
+  shortcut is being recorded, the Windows key (left or right) is now taken for the recorder and never reaches Windows,
+  so Win+S, Win+Shift+S, Win+L and the rest record like any other combination and no Start menu or shell shortcut
+  runs. Its repeats and its release are swallowed as well, also when the recording ends before the key is let go.
+  Outside a recording the key works as always.
+
+- **Fixed: on Windows the default "Lock" slice (Win+L) did nothing.** Windows handles Win+L itself and ignores it
+  when it is sent with `SendInput`, which is how every other shortcut slice works (Win+S, Win+Tab and the rest were
+  never affected). A shortcut that is exactly Win+L, the default slice, one saved in `config.json` or one inside a
+  flow, now locks the PC through `LockWorkStation`. Nothing has to be changed in an existing configuration.
+
+- **Added: a Gen Z pie style (Behavior, Look & feel, Pie material).** Besides *Solid* and *Glass*, the pie can be drawn
+  like the one on the website: white slices with thick dark outlines, hard offset shadows that grow under the slice
+  the pointer is on, and the accent as its fill. It looks the same in the light and the dark appearance, and the
+  center disc and the badges of an "Open app" slice follow it. The setting is `pie_style: "GenZ"`; a file without it
+  keeps the style it had.
+
+- **Added: the pie can be given another shape (Behavior, Look & feel, Pie shape).** *Custom* turns the circle into a
+  regular polygon with rounded corners: how many sides (3 to 12), how round the corners are (from sharp to a circle)
+  and how far it is turned. All three materials follow it, and so does the point where a drag over a submenu slice
+  opens the submenu. The default is still the circle, and a file without the new settings keeps it.
+
+- **Added: demos of the pie materials.** The Pie material panel shows Solid, Glass and Gen Z as three small pies that
+  open and are passed over by the pointer, over a colorful backdrop; a click on one chooses it (it replaces the static
+  strip that only Glass had).
+
+- **New: Developer mode, a build with the diagnostic log that a person can install from About, and `cpd` for the
+  terminal.** At the bottom of About, **Developer mode** offers to replace the running copy with the log build of the
+  same release (`CursorPie-devlog-*`, built for every version tag; same download, checksum and swap as an update). With
+  it running, About lists what the log found in plain words (errors first, repeats counted, a pie that was asked for
+  and never drawn is named), shows the last events by category, switches the log and what it records, copies a
+  report for an issue, opens the logs folder and goes back to the ordinary build. The command `cpd` (attached to every
+  release for macOS, Windows and Linux) reads the same logs in a terminal and names the same problems: `cpd`,
+  `cpd d`, `cpd s|t|g|sl|df|f|r`, `cpd on|off|path|clean`. The ordinary release is unchanged and has none of the log
+  code. See `docs/DEBUGGING.md`, "Developer mode and `cpd`".
+
+  Turning Developer mode **off** in the log build asks first, because the way back to the ordinary build is among the
+  tools that go away with the mode: **Install standard build** replaces this copy with the ordinary one of the same
+  version and switches developer mode and the log off once that swap has started (a download or a check that fails
+  leaves everything as it was); **Keep log build** only hides the tools and stops the log at the next start; **Cancel**
+  changes nothing.
+
+- **Fixed: on Windows with a mouse, the pie did not come up after a panel of a flow had been closed, and the held
+  trigger opened Settings instead.** A panel makes the shared window take the pointer, and nothing gave that back
+  when the panel ended (Settings does it in `close_settings`). The pie of a mouse hold is click-through and flipped
+  that state on the hidden window, after which the window never showed. A trackpad pie takes the pointer itself, so
+  it never flipped anything and was not affected. Closing a panel (or the pie taking its window) now makes the
+  window click-through again, while it is still mapped.
+
 ## 0.8.20
 
 - **Changed: code that existed twice or more now exists once (no change in behavior).** The sheets of Settings

@@ -212,9 +212,15 @@ fn run(state: Arc<Mutex<Gesture>>, notifier: Notifier) {
     }
 }
 
+/// Whether key events are wanted: the typing guard of the trackpad hold, and Space to open Settings.
+fn keys_wanted() -> bool {
+    let c = cfg();
+    c.touch_trigger || c.settings_by_space
+}
+
 /// Installs the grabs and handles events. Returns only if the trigger button could not be grabbed.
 fn serve(conn: &'static Conn, state: &Arc<Mutex<Gesture>>, notifier: &Notifier) -> bool {
-    let raw_keys = cfg().touch_trigger;
+    let raw_keys = keys_wanted();
     conn.select_raw(raw_keys);
     let (trigger, extras) = {
         let c = cfg();
@@ -554,7 +560,7 @@ impl Tap {
         }
 
         // the typing guard listens to keys only while the trackpad hold is on
-        let keys = cfg().touch_trigger;
+        let keys = keys_wanted();
         if keys != self.raw_keys {
             self.raw_keys = keys;
             self.conn.select_raw(keys);

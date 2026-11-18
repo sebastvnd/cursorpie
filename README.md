@@ -66,7 +66,7 @@ For step-by-step instructions, including the Linux `install.sh` script and macOS
 3. Move the pointer toward a slice.
 4. Release to run the action.
 
-No middle button? Turn on *Open the pie with a trackpad hold* in **Settings > Behavior > Trackpad** and touch and hold the trackpad instead. Hold the trigger in the center of the pie to open Settings and customize your menus. The [user guide](docs/user/README.md) explains gestures, actions, profiles and settings in detail.
+No middle button? Turn on *Open the pie with a trackpad hold* in **Settings > Behavior > Trackpad** and touch and hold the trackpad instead. Hold the trigger in the center of the pie (or press Space, if you turned that on) to open Settings and customize your menus. The [user guide](docs/user/README.md) explains gestures, actions, profiles and settings in detail.
 
 ## Platform support
 

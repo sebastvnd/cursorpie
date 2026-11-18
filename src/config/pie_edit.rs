@@ -327,6 +327,108 @@ pub fn move_item(
     insert_item(items, &to_ring, place, item)
 }
 
+// ------------------------------------------------------------------ bringing in many slices at once
+
+/// The paths of every slice of the top ring of `items` (`[0]`, `[1]`, ...). A submenu stands for
+/// everything in it, so this is what *select all* of the import tray picks.
+pub fn top_paths(items: &[Item]) -> BTreeSet<Vec<usize>> {
+    (0..items.len()).map(|i| vec![i]).collect()
+}
+
+/// The paths of the slices of the ring at `ring` (`ring + [i]`), or none when the ring is gone.
+pub fn ring_paths(items: &[Item], ring: &[usize]) -> Vec<Vec<usize>> {
+    items_at(items, ring).map_or_else(Vec::new, |r| {
+        (0..r.len())
+            .map(|i| {
+                let mut p = ring.to_vec();
+                p.push(i);
+                p
+            })
+            .collect()
+    })
+}
+
+/// Adds all of `new` to the end of the ring at `ring` in one go: either every slice fits (room in
+/// the ring and in the depth of the tree) or nothing is changed. Returns the index of the first
+/// slice added and how many were added.
+pub fn insert_many(
+    items: &mut Vec<Item>,
+    ring: &[usize],
+    new: Vec<Item>,
+) -> Result<(usize, usize), String> {
+    if new.is_empty() {
+        return Err("There is nothing to add.".into());
+    }
+    let Some(target) = items_at(items, ring) else {
+        return Err("That ring does not exist any more.".into());
+    };
+    let first = target.len();
+    let room = MAX_ITEMS.saturating_sub(first);
+    if new.len() > room {
+        return Err(if room == 0 {
+            format!(
+                "That ring is full ({MAX_ITEMS} slices). Pick another pie, or use \"As a submenu\"."
+            )
+        } else {
+            format!(
+                "That ring has room for {room} more slice{} and {} were chosen. Choose fewer, or use \"As a submenu\".",
+                if room == 1 { "" } else { "s" },
+                new.len()
+            )
+        });
+    }
+    // a trial on a copy, so a slice that goes too deep leaves the pie untouched
+    let count = new.len();
+    let mut trial = items.clone();
+    for it in new {
+        insert_item(&mut trial, ring, Place::End, it)?;
+    }
+    *items = trial;
+    Ok((first, count))
+}
+
+/// One submenu slice that holds `children` (the whole of an imported pie): it is put in a ring
+/// that is `ring_depth` rings deep, so what is inside is cut to the limits of the pie like a file
+/// that is loaded ([`MAX_ITEMS`] a ring, [`MAX_DEPTH`] rings).
+pub fn group_item(name: &str, icon: &str, mut children: Vec<Item>, ring_depth: usize) -> Item {
+    clean_items(&mut children, ring_depth + 1);
+    Item::submenu(name, icon, children)
+}
+
+/// The path of the first side-button mode slice of `items` (submenus included), or empty when
+/// there is none. That is the slice a pie starts with after its slices were replaced.
+pub fn first_mode_path(items: &[Item]) -> Vec<usize> {
+    for (i, it) in items.iter().enumerate() {
+        match &it.kind {
+            ItemKind::Mode { .. } => return vec![i],
+            ItemKind::Submenu(kids) => {
+                let mut p = first_mode_path(kids);
+                if !p.is_empty() {
+                    p.insert(0, i);
+                    return p;
+                }
+            }
+            ItemKind::Run(_) => {}
+        }
+    }
+    Vec::new()
+}
+
+/// Makes `new` the slices of the pie `items` (the slices that were there are gone: Undo brings them
+/// back). What is put in is cleaned like a file that is loaded. An empty `new` is refused and
+/// nothing is changed.
+pub fn replace_items(items: &mut Vec<Item>, mut new: Vec<Item>) -> Result<(), String> {
+    if new.is_empty() {
+        return Err("That file has no slices to put in your pie.".into());
+    }
+    clean_items(&mut new, 0);
+    for it in &mut new {
+        it.at = None;
+    }
+    *items = new;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -612,5 +714,97 @@ mod tests {
         assert_eq!(remove_slices(&mut one, &BTreeSet::from([vec![0]])), 0);
         assert_eq!(names(&one), ["only"]);
         assert_eq!(remove_slices(&mut w, &BTreeSet::from([vec![], vec![9]])), 0);
+    }
+
+    #[test]
+    fn many_slices_go_in_together_or_not_at_all() {
+        let mut v = sample(); // 4 slices
+        let (first, count) = insert_many(&mut v, &[], vec![leaf("p"), leaf("q")]).unwrap();
+        assert_eq!((first, count), (4, 2));
+        assert_eq!(names(&v), ["a", "s", "b", "c", "p", "q"]);
+        // 6 + 3 > 8: nothing changes
+        let before = v.clone();
+        let err = insert_many(&mut v, &[], vec![leaf("x1"), leaf("x2"), leaf("x3")]).unwrap_err();
+        assert!(err.contains("room for 2"), "{err}");
+        assert_eq!(v, before);
+        // into a submenu
+        let (first, count) = insert_many(&mut v, &[1], vec![leaf("z")]).unwrap();
+        assert_eq!((first, count), (2, 1));
+        assert!(insert_many(&mut v, &[], vec![]).is_err());
+        assert!(
+            insert_many(&mut v, &[0], vec![leaf("n")]).is_err(),
+            "a leaf has no ring"
+        );
+    }
+
+    #[test]
+    fn many_slices_that_go_too_deep_leave_the_pie_untouched() {
+        let mut v = vec![leaf("a")];
+        // five rings below the top one: one more than a pie can hold
+        let deep = sub(
+            "1",
+            vec![sub(
+                "2",
+                vec![sub("3", vec![sub("4", vec![sub("5", vec![leaf("x")])])])],
+            )],
+        );
+        assert_eq!(levels(&deep), MAX_DEPTH);
+        let before = v.clone();
+        assert!(insert_many(&mut v, &[], vec![leaf("ok"), deep]).is_err());
+        assert_eq!(v, before, "the slice that fit was not kept either");
+    }
+
+    #[test]
+    fn select_all_picks_the_top_ring_and_a_ring_lists_its_slices() {
+        let v = sample();
+        assert_eq!(top_paths(&v).len(), 4);
+        assert_eq!(ring_paths(&v, &[1]), vec![vec![1, 0], vec![1, 1]]);
+        assert!(ring_paths(&v, &[0]).is_empty());
+        assert!(ring_paths(&v, &[9]).is_empty());
+        // picked together with slices_at: a slice inside a picked submenu is not taken twice
+        let mut paths = top_paths(&v);
+        paths.extend(ring_paths(&v, &[1]));
+        assert_eq!(slices_at(&v, &paths).len(), 4);
+    }
+
+    #[test]
+    fn a_whole_pie_becomes_one_submenu_cut_to_the_limits() {
+        let many: Vec<Item> = (0..10).map(|i| leaf(&format!("s{i}"))).collect();
+        let g = group_item("Photo", "ico:folder-simple", many, 0);
+        assert_eq!(g.name, "Photo");
+        let ItemKind::Submenu(kids) = &g.kind else {
+            panic!("not a submenu");
+        };
+        assert_eq!(kids.len(), MAX_ITEMS);
+        let mut v = sample();
+        let (first, _) = insert_many(&mut v, &[], vec![g]).unwrap();
+        assert_eq!(first, 4);
+        assert_eq!(levels(&v[4]), 1);
+    }
+
+    #[test]
+    fn replacing_a_pie_cleans_what_comes_in_and_refuses_nothing() {
+        let mut v = sample();
+        let mut incoming = vec![leaf("n1"), leaf("n2")];
+        incoming[0].at = Some([5.0, 5.0]);
+        replace_items(&mut v, incoming).unwrap();
+        assert_eq!(names(&v), ["n1", "n2"]);
+        assert_eq!(v[0].at, None);
+        let before = v.clone();
+        assert!(replace_items(&mut v, Vec::new()).is_err());
+        assert_eq!(v, before);
+    }
+
+    #[test]
+    fn the_first_mode_is_found_inside_submenus_too() {
+        let mode = Item::mode(
+            "m",
+            "ico:mouse-simple",
+            crate::keys::Shortcut::new(1, 0),
+            crate::keys::Shortcut::new(2, 0),
+        );
+        assert!(first_mode_path(&sample()).is_empty());
+        let v = vec![leaf("a"), sub("s", vec![leaf("x"), mode.clone()]), mode];
+        assert_eq!(first_mode_path(&v), vec![1, 1]);
     }
 }

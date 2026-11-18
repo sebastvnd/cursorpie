@@ -23,7 +23,7 @@
 //!   hook only helps it in one way: while a touchpad pie is open, a left click (or the right click
 //!   of a two-finger tap) may be the extra finger's click and is swallowed (`touch::extra`).
 
-use super::{Ev, Gesture, Kind, Verdict, dispatch};
+use super::{Ev, Gesture, Kind, RECORDING, Verdict, dispatch};
 use crate::actions::SYNTH_TAG;
 use crate::config::{cfg, lock};
 use crate::geometry::Point;
@@ -267,12 +267,22 @@ fn on_key(ctx: &Ctx, msg: u32, info: &KBDLLHOOKSTRUCT) -> bool {
     let Some(down) = key_is_down(msg) else {
         return false;
     };
-    // a modifier is only remembered (the order of a recorded shortcut), never swallowed
+    // a modifier is remembered (the order of a recorded shortcut) and passes through, except the
+    // Windows key while a shortcut is recorded: that one is taken for the recorder, because
+    // Windows would open the Start menu (or run its own Win+key shortcut) for it
     if let Some(bit) = modifier_bit(info.vkCode as u16) {
         if down {
             super::modorder::press(bit);
         } else {
             super::modorder::release(bit);
+        }
+        if bit == MOD_CMD {
+            let side = if info.vkCode == 0x5C {
+                super::modorder::WIN_RIGHT
+            } else {
+                super::modorder::WIN_LEFT
+            };
+            return super::modorder::win_event(side, down, RECORDING.load(Ordering::SeqCst));
         }
         return false;
     }
@@ -281,10 +291,15 @@ fn on_key(ctx: &Ctx, msg: u32, info: &KBDLLHOOKSTRUCT) -> bool {
     else {
         return false; // modifiers and keys without a code pass through
     };
+    // a Windows key the hook swallowed is down for us only: Windows does not report it
+    let mut mods = current_mods();
+    if super::modorder::win_swallowed() {
+        mods |= MOD_CMD;
+    }
     let ev = Ev::Key {
         down,
         code: code as i32,
-        mods: current_mods(),
+        mods,
     };
     dispatch(&ctx.state, &ctx.notifier, ev, &|| {}) == Verdict::Drop
 }

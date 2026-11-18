@@ -13,8 +13,8 @@
 //! | macOS | `ioreg` for the trackpad classes of the I/O registry | nothing, the private framework stays unloaded |
 //!
 //! The count is what a **scan** (the button of the Trackpad panel, "Detect again" of the Mouse
-//! panel) and the **first start** use: with a trackpad present the hold is switched on for a new
-//! user, so nobody has to find the switch (see [`auto_enable_on_first_start`]).
+//! panel) and **every start** use: with a trackpad present the hold is switched on once, so nobody
+//! has to find the switch (see [`auto_enable_on_first_start`]).
 
 use crate::config::{cfg, save_config};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -60,34 +60,49 @@ pub fn last_scan() -> Option<usize> {
     }
 }
 
-/// The decision of the first start, from the three facts it depends on. Pure, so it is unit tested.
-pub fn should_auto_enable(first_start: bool, trackpads: usize, already_on: bool) -> bool {
-    first_start && trackpads > 0 && !already_on
+/// The decision of a start, from the facts it depends on. Pure, so it is unit tested.
+///
+/// `done` is [`crate::config::Config::touch_auto_done`]: once the hold was switched on for a found
+/// trackpad, or the person decided in Settings, the choice is theirs and is never made for them again.
+pub fn should_auto_enable(done: bool, trackpads: usize, already_on: bool) -> bool {
+    !done && trackpads > 0 && !already_on
 }
 
-/// First start of a new user: when a trackpad is present, the trackpad hold is switched on, so
-/// nobody has to find the switch. Returns whether it did.
+/// Every start: when a trackpad is present and nobody decided yet, the trackpad hold is switched
+/// on, so nobody has to find the switch. Returns whether it switched it on.
 ///
-/// Only a *new* user is touched. Someone who already has a `config.json` made the choice (the
-/// switch is off by default) and keeps it; a scan in Settings is how they turn it on later. The
-/// switch is changed in memory here, before the tap starts, and written to disk by
-/// [`take_pending_save`] when the welcome window ends: writing `config.json` now would make the
-/// next start look like an existing user's and skip the welcome window if the app was quit early.
+/// This used to be the first start of a new user only. Now any start that finds a trackpad does it
+/// once (a Bluetooth trackpad, a docked laptop, or a copy that was installed before this existed);
+/// without a trackpad nothing is decided, so the first one that shows up is picked up at the next
+/// start. After that [`crate::config::Config::touch_auto_done`] is set and the switch in Settings
+/// is the only thing that changes the hold.
+///
+/// On the first start of a new user the switch is changed in memory here, before the tap starts, and
+/// written to disk by [`take_pending_save`] when the welcome window ends: writing `config.json` now
+/// would make the next start look like an existing user's and skip the welcome window if the app was
+/// quit early. Any other start writes it at once.
 pub fn auto_enable_on_first_start(first_start: bool) -> bool {
-    if !first_start {
+    if cfg().touch_auto_done {
         return false;
     }
     let n = scan();
-    let enable = {
+    if n == 0 {
+        diag::log!("touch", "auto_enable", trackpads = n, enabled = false);
+        return false;
+    }
+    let (enable, snapshot) = {
         let mut c = cfg();
-        let go = should_auto_enable(first_start, n, c.touch_trigger);
+        let go = should_auto_enable(c.touch_auto_done, n, c.touch_trigger);
         if go {
             c.touch_trigger = true;
         }
-        go
+        c.touch_auto_done = true;
+        (go, c.clone())
     };
-    if enable {
+    if first_start {
         PENDING_SAVE.store(true, Ordering::SeqCst);
+    } else {
+        save_config(&snapshot);
     }
     diag::log!("touch", "auto_enable", trackpads = n, enabled = enable);
     enable
@@ -107,18 +122,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_trackpad_is_switched_on_only_for_a_new_user_who_has_one() {
-        assert!(should_auto_enable(true, 1, false));
-        assert!(should_auto_enable(true, 3, false));
+    fn a_trackpad_is_switched_on_once_when_one_is_found() {
+        assert!(should_auto_enable(false, 1, false));
+        assert!(should_auto_enable(false, 3, false));
         assert!(
-            !should_auto_enable(true, 0, false),
+            !should_auto_enable(false, 0, false),
             "no trackpad, nothing to turn on"
         );
         assert!(
-            !should_auto_enable(false, 1, false),
-            "an existing user keeps their choice"
+            !should_auto_enable(true, 1, false),
+            "a decided switch is never changed again"
         );
-        assert!(!should_auto_enable(true, 1, true), "already on");
+        assert!(!should_auto_enable(false, 1, true), "already on");
     }
 
     #[test]
@@ -141,7 +156,9 @@ mod tests {
     }
 
     #[test]
-    fn an_existing_user_is_never_touched() {
+    fn a_decided_switch_is_never_touched() {
+        cfg().touch_auto_done = true;
         assert!(!auto_enable_on_first_start(false));
+        cfg().touch_auto_done = false;
     }
 }

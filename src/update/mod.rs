@@ -302,17 +302,22 @@ pub enum Outcome {
 struct Applied {
     from: String,
     to: String,
+    /// The build that was handed over (`standard` or `log`); a file from before there were two
+    /// builds has none.
+    #[serde(default)]
+    build: Option<String>,
 }
 
 /// Remembers, just before the swap starts, which update is being installed. Errors are ignored: the
 /// update goes on without the closing message.
-pub fn mark_applied(to: Version) {
+pub fn mark_applied(to: Version, build: install::Build) {
     let Some(from) = Version::current() else {
         return;
     };
     let applied = Applied {
         from: from.to_string(),
         to: to.to_string(),
+        build: Some(build.word().to_string()),
     };
     if let Ok(data) = serde_json::to_string(&applied) {
         let _ = write_atomic(&app_support_dir().join(APPLIED_FILE), &data);
@@ -330,7 +335,14 @@ pub fn outcome_of(text: &str, current: Version) -> Option<Outcome> {
     let applied: Applied = serde_json::from_str(text).ok()?;
     let from = Version::parse(&applied.from)?;
     let to = Version::parse(&applied.to)?;
-    if current >= to {
+    // the same version in another build is not "newer": it came about only if the build is the one
+    // that was asked for
+    let wrong_build = from == to
+        && applied
+            .build
+            .as_deref()
+            .is_some_and(|b| b != install::Build::running().word());
+    if current >= to && !wrong_build {
         Some(Outcome::Updated { from, to: current })
     } else {
         Some(Outcome::Unfinished { from, to })
@@ -584,6 +596,26 @@ mod tests {
                 to: v("0.9.0")
             })
         );
+        // the same version in the other build counts only when that build is what runs now
+        let other = if install::Build::running() == install::Build::Log {
+            "standard"
+        } else {
+            "log"
+        };
+        let text = format!(r#"{{"from":"0.9.0","to":"0.9.0","build":"{other}"}}"#);
+        assert_eq!(
+            outcome_of(&text, v("0.9.0")),
+            Some(Outcome::Unfinished {
+                from: v("0.9.0"),
+                to: v("0.9.0")
+            })
+        );
+        let mine = install::Build::running().word();
+        let text = format!(r#"{{"from":"0.9.0","to":"0.9.0","build":"{mine}"}}"#);
+        assert!(matches!(
+            outcome_of(&text, v("0.9.0")),
+            Some(Outcome::Updated { .. })
+        ));
         assert_eq!(outcome_of("not json", v("0.9.0")), None);
         assert_eq!(outcome_of(r#"{"from":"x","to":"y"}"#, v("0.9.0")), None);
     }
