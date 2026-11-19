@@ -67,7 +67,7 @@ The quick actions depend on the system:
 
 The knobs, grouped:
 
-- **Trigger and timing:** trigger button, hold times for the pie and for Settings, pie size, accent color.
+- **Trigger and timing:** trigger button, hold times for the pie and for Settings, pie size, accent color. **Look & feel** also has the **theme** of Settings (see [Themes](themes.md)).
 - **Look:** **Appearance** (System, Light or Dark, for Settings and the pie) and **Pie material** (*Solid*, *Glass* or *Gen Z*;
   Glass has sliders for Clearness, Frost and Shine; Gen Z is the look of the website: thick outlines and hard shadows).
   The materials are shown as three small pies that open and are passed over by the pointer, and a click on one

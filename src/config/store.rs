@@ -137,6 +137,12 @@ pub fn config_path() -> PathBuf {
     app_support_dir().join("config.json")
 }
 
+/// The folder of the theme files: `<app support dir>/themes`. It is not created until someone asks
+/// for it (the button of Behavior, Look & feel); see `ui::settings::theme::spec` for the format.
+pub fn themes_dir() -> PathBuf {
+    app_support_dir().join("themes")
+}
+
 /// Reads `config.json`. A missing file gives the defaults; an invalid one is copied to
 /// `config.broken.json` first and the defaults are used.
 pub fn load_config() -> Config {

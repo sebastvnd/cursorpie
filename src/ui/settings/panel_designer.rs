@@ -574,9 +574,9 @@ fn list_row(
     );
     if on {
         ui.painter()
-            .rect_filled(rect, CONTROL_R, wash(accent, 0.16));
+            .rect_filled(rect, control_r(), wash(accent, 0.16));
     } else if resp.hovered() {
-        ui.painter().rect_filled(rect, CONTROL_R, pal().idle);
+        ui.painter().rect_filled(rect, control_r(), pal().idle);
     }
     fonts::paint_icon(
         ui.painter(),
@@ -972,7 +972,7 @@ fn left_column(ui: &mut egui::Ui, d: &mut PanelDesign, accent: Color32) -> bool 
 // ------------------------------------------------------------------ middle: the real panel
 
 fn preview_column(ui: &mut egui::Ui, d: &mut PanelDesign, rect: Rect, accent: Color32) -> bool {
-    ui.painter().rect_filled(rect, PANEL_R, pal().bg);
+    ui.painter().rect_filled(rect, panel_r(), pal().bg);
     let mut next = None;
     // the selected widget was dragged by its grip to another place
     let mut changed = false;
@@ -1861,7 +1861,13 @@ fn panel_fields(ui: &mut egui::Ui, d: &mut PanelDesign, accent: Color32) -> bool
         let [r, g, b, _] = accent.to_array();
         let usual = [r, g, b];
         let mut swatches: Vec<(&str, [u8; 3])> = vec![("Color of Settings", usual)];
-        swatches.extend(ACCENTS.iter().filter(|(_, rgb)| *rgb != usual).copied());
+        swatches.extend(
+            super::theme::swatches()
+                .accents
+                .iter()
+                .filter(|(_, rgb)| *rgb != usual)
+                .copied(),
+        );
         let mut slot = spec.accent.as_deref().and_then(parse_hex);
         if field(ui, "Badge and main button", |ui| {
             color_dots(ui, &mut slot, &swatches)
@@ -2179,7 +2185,7 @@ fn nav_row(ui: &mut egui::Ui, label: &str, summary: &str) -> bool {
     let hot = resp.hovered();
     let painter = ui.painter();
     if hot {
-        painter.rect_filled(rect.shrink2(vec2(-6.0, 5.0)), CONTROL_R, pal().idle);
+        painter.rect_filled(rect.shrink2(vec2(-6.0, 5.0)), control_r(), pal().idle);
     }
     painter.text(
         pos2(rect.min.x, rect.center().y),
@@ -2224,7 +2230,7 @@ fn chips(ui: &mut egui::Ui, items: &[(&str, bool)], accent: Color32) -> Option<u
             } else {
                 pal().idle
             };
-            ui.painter().rect_filled(rect, CONTROL_R, fill);
+            ui.painter().rect_filled(rect, control_r(), fill);
             let fg = if *on { accent_text(accent) } else { pal().text };
             ui.painter().text(
                 rect.center(),
@@ -2995,7 +3001,7 @@ fn text_format_fields(
         c |= field(ui, "Color", |ui| {
             let [cr, cg, cb, _] = pal().text.to_array();
             let mut swatches: Vec<(&str, [u8; 3])> = vec![("Usual", [cr, cg, cb])];
-            swatches.extend(ACCENTS.iter().copied());
+            swatches.extend(super::theme::swatches().accents.iter().copied());
             let mut slot = fmt.rgb();
             let changed = color_dots(ui, &mut slot, &swatches);
             if changed {
@@ -3468,7 +3474,13 @@ fn type_fields(
                 c |= text_field_in(ui, "Label", "", label, 1);
                 let usual = [0x3b, 0x82, 0xf6];
                 let mut swatches: Vec<(&str, [u8; 3])> = vec![("Blue", usual)];
-                swatches.extend(ACCENTS.iter().filter(|(_, rgb)| *rgb != usual).copied());
+                swatches.extend(
+                    super::theme::swatches()
+                        .accents
+                        .iter()
+                        .filter(|(_, rgb)| *rgb != usual)
+                        .copied(),
+                );
                 let mut slot = parse_hex(value).filter(|rgb| *rgb != usual);
                 let changed = field(ui, "Starts as", |ui| color_dots(ui, &mut slot, &swatches));
                 if changed || value.is_empty() {

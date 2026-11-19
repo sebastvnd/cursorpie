@@ -293,6 +293,10 @@ fn mouse_verdict(
     pos: Point,
     replay_drag: &dyn Fn(),
 ) -> Verdict {
+    // the pointer moved while some other button is down: the open pie must still follow it
+    if kind == Kind::Drag {
+        follow_motion(state, notifier, button, pos);
+    }
     // a click while a trackpad pie is open may be the extra click (one more finger)
     if (button == LEFT_BUTTON || button == RIGHT_BUTTON)
         && let Some(v) = touch::extra::handle(state, notifier, kind)
@@ -323,6 +327,39 @@ fn mouse_verdict(
         return Verdict::Keep;
     }
     trigger::handle(state, notifier, kind, pos, button, flick, replay_drag)
+}
+
+/// The pointer moved while a button that is not the trigger was down (a left or right click, or an
+/// extra button, made while the pie is open): the open pie of a mouse hold still has to follow it.
+///
+/// Some layers report every move as a drag of the trigger (X11, Windows, Wayland), and for those
+/// this does nothing. macOS reports a move as a drag of the button that is down: once the left or
+/// the right button is pressed over the open pie, the moves arrive as `LeftMouseDragged` or
+/// `RightMouseDragged`. Those belong to the left and right paths, which only swallow them, so the
+/// hover was never updated again and the pie stopped choosing slices until the click was
+/// released. The move is now also handed to the trigger path as the drag it is. What happens to the
+/// event itself (it is swallowed for the app) is decided by the caller as before.
+fn follow_motion(state: &Arc<Mutex<Gesture>>, notifier: &Notifier, button: i64, pos: Point) {
+    let (trigger, flick) = {
+        let c = cfg();
+        (c.trigger_button, c.flick)
+    };
+    if button == trigger {
+        return; // the trigger path gets this event anyway
+    }
+    // Only the pie of a mouse hold that is open. A press that is still pending (nothing is open
+    // yet) must not read the drag of another button as its own, and a trackpad pie has its own
+    // motion. The lock is let go before the trigger path takes it.
+    let open = matches!(
+        &*lock(state),
+        Gesture::ActivePie {
+            source: gesture::Source::Mouse,
+            ..
+        }
+    );
+    if open {
+        let _ = trigger::handle(state, notifier, Kind::Drag, pos, trigger, flick, &|| {});
+    }
 }
 
 /// Resets everything after the OS disabled the hook (a timeout, or the user): no gesture is in
@@ -598,6 +635,82 @@ mod tests {
             button,
             pos: Point::new(10.0, 10.0),
         }
+    }
+
+    #[test]
+    fn moving_with_the_left_or_right_button_down_still_aims_the_open_pie() {
+        let _s = serial();
+        PAUSED.store(false, Ordering::SeqCst);
+        let trigger = cfg().trigger_button;
+        for button in [LEFT_BUTTON, RIGHT_BUTTON] {
+            if button == trigger {
+                continue;
+            }
+            let (n, _rx) = notifier();
+            let st = Arc::new(Mutex::new(Gesture::ActivePie {
+                id: 1,
+                center: Point::new(0.0, 0.0),
+                profile: 0,
+                path: Vec::new(),
+                hover: Some(usize::MAX), // a value no slice can have: any aiming replaces it
+                source: gesture::Source::Mouse,
+            }));
+            // the way a real click goes: the press comes first (the open pie swallows it and
+            // remembers it), and only then the moves made with the button down
+            let press = Ev::Mouse {
+                kind: Kind::Down,
+                button,
+                pos: Point::new(0.0, 0.0),
+            };
+            assert_eq!(
+                dispatch(&st, &n, press, &|| {}),
+                Verdict::Drop,
+                "button {button}: the press is swallowed"
+            );
+            if let Gesture::ActivePie { hover, .. } = &mut *lock(&st) {
+                *hover = Some(usize::MAX);
+            }
+            let ev = Ev::Mouse {
+                kind: Kind::Drag,
+                button,
+                pos: Point::new(0.0, -80.0),
+            };
+            // the event itself stays swallowed for the app
+            assert_eq!(dispatch(&st, &n, ev, &|| {}), Verdict::Drop);
+            let hover = match &*lock(&st) {
+                Gesture::ActivePie { hover, .. } => *hover,
+                _ => panic!("the pie closed"),
+            };
+            assert_ne!(
+                hover,
+                Some(usize::MAX),
+                "button {button}: the pie did not follow"
+            );
+            // and the click ends with its release, which leaves no swallowed press behind
+            let release = Ev::Mouse {
+                kind: Kind::Up,
+                button,
+                pos: Point::new(0.0, -80.0),
+            };
+            assert_eq!(dispatch(&st, &n, release, &|| {}), Verdict::Drop);
+            pie_clicks::clear();
+        }
+    }
+
+    #[test]
+    fn a_drag_of_another_button_is_not_the_pointer_of_a_pie_that_is_not_open() {
+        let _s = serial();
+        PAUSED.store(false, Ordering::SeqCst);
+        let (n, rx) = notifier();
+        let st = idle();
+        let ev = Ev::Mouse {
+            kind: Kind::Drag,
+            button: LEFT_BUTTON,
+            pos: Point::new(5.0, 5.0),
+        };
+        assert_eq!(dispatch(&st, &n, ev, &|| {}), Verdict::Keep);
+        assert!(matches!(*lock(&st), Gesture::Idle));
+        assert!(rx.try_recv().is_err());
     }
 
     #[test]

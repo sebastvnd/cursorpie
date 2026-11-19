@@ -898,7 +898,7 @@ pub(in crate::ui::settings) struct Tile<'a> {
 /// The colors the glass sits on: a few blobs of color and a sharp diagonal, so what comes through
 /// shows (and what does not).
 fn backdrop(p: &egui::Painter, rect: Rect) {
-    p.rect_filled(rect, CONTROL_R, rgb([64, 120, 214]));
+    p.rect_filled(rect, control_r(), rgb([64, 120, 214]));
     for (dx, dy, r, c) in [
         (0.12, 0.2, 52.0, [255, 149, 0]),
         (0.35, 0.9, 44.0, [255, 45, 85]),
@@ -1750,7 +1750,7 @@ fn stage(ui: &mut egui::Ui) -> (egui::Painter, Rect, f32) {
         egui::Sense::hover(),
     );
     let painter = ui.painter().with_clip_rect(rect);
-    painter.rect_filled(rect, CONTROL_R, pal().input);
+    painter.rect_filled(rect, control_r(), pal().input);
     if ui.is_rect_visible(rect) {
         ui.ctx().request_repaint_after(FRAME);
     }

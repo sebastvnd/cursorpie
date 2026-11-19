@@ -2,6 +2,50 @@
 
 ## Unreleased
 
+## 0.8.22
+
+- **Windows: the pie does not open over a program that runs as administrator, and nothing said why.** Windows never
+  calls a low-level hook for the windows of such a program (an elevated graphics editor, an installer, a terminal)
+  unless CursorPie runs as administrator too. The watchdog now notices when the program in front is one of them and
+  shows a notice, once per program and run, that names the program and says what to do.
+- **Fixed: on macOS the pie stopped choosing slices after a left or right click.** While the pie is open a click is
+  swallowed, and the moves made with that button down arrive as drags of the left or right button, not of the trigger.
+  Those drags were only swallowed, so the hover was never updated and the slice under the pointer stayed as it was
+  until the click was released. A drag of any other button now also aims the open pie of a mouse hold, exactly like a
+  move with the trigger held; the app under the pie still hears nothing.
+
+- **Fixed: on Windows "Open app" did nothing for an app that was not already running (Telegram and the like).** An app
+  given by name was handed to `ShellExecuteW`, which only looks in App Paths and `PATH`; programs installed in the
+  user's own folders are in neither. The name is now first looked up where the app list finds apps (App Paths, the
+  Start menu, the program folders) and the program is started by its full path. Anything that is a path or a link, or
+  that cannot be found, is opened as before.
+
+- **Changed: Space is the way into Settings by default, the hold is off.** *Open settings with Space* is now on and
+  *Open settings by holding* is off in a fresh configuration (and in a file that does not name them). Space opens
+  Settings in any pie that is open: the top ring, a submenu at any depth and the pie of an app. The hold keeps behaving
+  exactly as before when it is switched on (only the untouched top ring of the pie that a hold opened). A saved choice
+  is kept as it is.
+
+- **Fixed: on Windows the pie sometimes could not be aimed: the pointer moved and no slice was chosen.** The hover only
+  depended on every mouse move reaching the low-level hook, which Windows drops when the hook is late and removes
+  when a callback times out (the watchdog installs it again only after a few seconds). While the pie of a mouse press
+  is open the pointer is now also read every 16 ms and aims the pie like a move of the hook does, so a missed move
+  never leaves the pie dead.
+
+- **New: themes.** *Behavior > Look & feel > Theme* now picks the look of Settings and of the Solid pie. **Sage** is the
+  look it always had (and the default, so nothing changes until you choose); **Gen Z** is the look of the website: cream or
+  violet-black, 2-point ink outlines, pill controls, hard shadows and a lime accent. Choosing a theme moves the accent to
+  its own unless you picked one. Your own colors (*Colors of the light/dark appearance*) are laid over any theme.
+  - **Make your own:** a theme is a small `.json` file in the new `themes/` folder (button *Open themes folder*) that
+    extends Sage, Gen Z or another file and lists only what it changes (colors, radii, outlines, shadows). The text is kept
+    readable whatever it says, a bad file is skipped with the reason shown, and *Reload themes* picks up edits without a
+    restart. See [Themes](docs/user/themes.md) and `docs/examples/themes/bubblegum.json`.
+  - **For developers:** a theme is data (`ui/settings/theme/`: `Theme`, `Shape`, palettes), not drawing code. Widgets
+    read colors from `pal()` and radii, outlines and shadows from `shape()`, so a new look needs no copy of any widget.
+    `CONTROL_R`, `PANEL_R` and `CARD_RADIUS` (and their `_PT` forms) became the functions `control_r()`, `panel_r()` and
+    `card_radius()` (`_pt()` for the number); `PAGES`, `PANELS`, `SIDEBARS`, `TEXTS` and `ACCENTS` became
+    `theme::swatches()`; `Palette` has a new `line` color.
+
 ## 0.8.21
 
 - **Fixed: the Solid pie could not be chosen in Behavior, Pie material.** The pies of *Pie material* and the one of

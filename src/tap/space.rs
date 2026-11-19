@@ -1,5 +1,9 @@
-//! Space while the pie is open opens Settings (the way into Settings for someone who turned off
-//! "Hold to open settings").
+//! Space while the pie is open opens Settings. It is on by default, and it is the way into Settings
+//! now that "Open settings by holding" is off by default.
+//!
+//! It works in every pie that is open: the top ring, a submenu at any depth (in the trail mode
+//! too) and the pie of an app (opened by a double click). The hold in the center cannot do that
+//! (it only counts for the untouched top ring of the pie that a hold opened).
 //!
 //! One or two presses of Space, as set in Behavior. The key is only taken while a pie is open and
 //! the setting is on; in every other case it passes through untouched. A press that is taken is
@@ -108,5 +112,163 @@ mod tests {
     #[test]
     fn the_number_of_presses_is_never_zero() {
         assert_eq!(step(0, None, 0), (0, true));
+    }
+
+    use crate::geometry::Point;
+    use crate::msg::Msg;
+    use crate::tap::TEST_SERIAL;
+    use crate::tap::gesture::Source;
+    use std::sync::mpsc;
+
+    /// Puts the statics of this module back to "nothing happened".
+    fn reset() {
+        HELD.store(false, Ordering::SeqCst);
+        COUNT.store(0, Ordering::SeqCst);
+        LAST_MS.store(0, Ordering::SeqCst);
+    }
+
+    /// Switches Space on (with `presses`) for one test and puts the person's own setting back
+    /// afterwards, even if the test panics.
+    struct SpaceSetting(bool, u8);
+
+    impl SpaceSetting {
+        fn set(on: bool, presses: u8) -> Self {
+            let mut c = cfg();
+            let own = Self(c.settings_by_space, c.settings_space_presses);
+            c.settings_by_space = on;
+            c.settings_space_presses = presses;
+            own
+        }
+    }
+
+    impl Drop for SpaceSetting {
+        fn drop(&mut self) {
+            let mut c = cfg();
+            c.settings_by_space = self.0;
+            c.settings_space_presses = self.1;
+        }
+    }
+
+    fn notifier() -> (Notifier, mpsc::Receiver<Msg>) {
+        let (tx, rx) = mpsc::channel();
+        (
+            Notifier {
+                tx,
+                ctx: eframe::egui::Context::default(),
+            },
+            rx,
+        )
+    }
+
+    fn pie(profile: usize, path: Vec<usize>) -> Arc<Mutex<Gesture>> {
+        Arc::new(Mutex::new(Gesture::ActivePie {
+            id: 1,
+            center: Point::new(40.0, 50.0),
+            profile,
+            path,
+            hover: None,
+            source: Source::Mouse,
+        }))
+    }
+
+    fn space() -> i32 {
+        i32::from(key::SPACE)
+    }
+
+    fn opened_settings(rx: &mpsc::Receiver<Msg>) -> bool {
+        std::iter::from_fn(|| rx.try_recv().ok()).any(|m| matches!(m, Msg::OpenSettings { .. }))
+    }
+
+    #[test]
+    fn space_opens_settings_in_the_top_ring_in_submenus_and_in_an_app_pie() {
+        let _s = TEST_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let _on = SpaceSetting::set(true, 1);
+        RECORDING.store(false, Ordering::SeqCst);
+        // (profile, path): the top ring, a submenu, a submenu of a submenu, and the same in the
+        // pie of an app (any profile other than the first)
+        for (profile, path) in [
+            (0, vec![]),
+            (0, vec![2]),
+            (0, vec![1, 3]),
+            (1, vec![]),
+            (1, vec![0]),
+            (2, vec![4, 1, 0]),
+        ] {
+            reset();
+            let st = pie(profile, path.clone());
+            let (n, rx) = notifier();
+            assert_eq!(
+                handle(&st, &n, true, space(), 0),
+                Some(Verdict::Drop),
+                "Space is taken at profile {profile}, path {path:?}"
+            );
+            assert!(
+                matches!(*lock(&st), Gesture::InSettings(Source::Mouse)),
+                "the gesture became Settings at profile {profile}, path {path:?}"
+            );
+            assert!(
+                opened_settings(&rx),
+                "Settings was asked for at profile {profile}, path {path:?}"
+            );
+            // its repeat and its release never reach the app
+            assert_eq!(handle(&st, &n, true, space(), 0), Some(Verdict::Drop));
+            assert_eq!(handle(&st, &n, false, space(), 0), Some(Verdict::Drop));
+            assert_eq!(
+                handle(&st, &n, false, space(), 0),
+                None,
+                "the key is free again"
+            );
+        }
+        reset();
+    }
+
+    #[test]
+    fn two_presses_open_settings_in_a_submenu_too() {
+        let _s = TEST_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let _on = SpaceSetting::set(true, 2);
+        RECORDING.store(false, Ordering::SeqCst);
+        reset();
+        let st = pie(1, vec![3, 1]);
+        let (n, rx) = notifier();
+        assert_eq!(handle(&st, &n, true, space(), 0), Some(Verdict::Drop));
+        assert_eq!(handle(&st, &n, false, space(), 0), Some(Verdict::Drop));
+        assert!(!opened_settings(&rx), "one press only counts");
+        assert!(matches!(*lock(&st), Gesture::ActivePie { .. }));
+        assert_eq!(handle(&st, &n, true, space(), 0), Some(Verdict::Drop));
+        assert!(opened_settings(&rx), "the second one opens");
+        assert!(matches!(*lock(&st), Gesture::InSettings(_)));
+        assert_eq!(handle(&st, &n, false, space(), 0), Some(Verdict::Drop));
+        reset();
+    }
+
+    #[test]
+    fn space_is_left_alone_without_an_open_pie_or_when_it_is_off() {
+        let _s = TEST_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        RECORDING.store(false, Ordering::SeqCst);
+        let (n, rx) = notifier();
+        {
+            let _on = SpaceSetting::set(true, 1);
+            reset();
+            let idle = Arc::new(Mutex::new(Gesture::Idle));
+            assert_eq!(
+                handle(&idle, &n, true, space(), 0),
+                None,
+                "no pie, no Space"
+            );
+            assert_eq!(handle(&idle, &n, false, space(), 0), None);
+            // a shortcut with Space (Ctrl+Space, ...) is never ours
+            let st = pie(0, vec![1]);
+            assert_eq!(handle(&st, &n, true, space(), 1), None);
+            assert!(matches!(*lock(&st), Gesture::ActivePie { .. }));
+        }
+        {
+            let _off = SpaceSetting::set(false, 1);
+            reset();
+            let st = pie(0, vec![1]);
+            assert_eq!(handle(&st, &n, true, space(), 0), None, "switched off");
+            assert!(matches!(*lock(&st), Gesture::ActivePie { .. }));
+        }
+        assert!(!opened_settings(&rx));
+        reset();
     }
 }

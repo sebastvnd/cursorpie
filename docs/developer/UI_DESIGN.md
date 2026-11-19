@@ -120,7 +120,7 @@ in a 324 pt column:
 
 The colors are the ones of the website (`assets/site.css`), so the app and the site look like one product:
 a cream page, paper-white panels and sage-green neutrals in the light appearance, and the sage green as the default
-accent (`ACCENTS[0]`, `[90, 120, 94]`: deep enough for white text). The dark appearance is graphite with only a faint
+accent (`SAGE_ACCENT`, `[90, 120, 94]`: deep enough for white text). The dark appearance is graphite with only a faint
 sage tint, not the full green of the site's dark mode, so the accent stands out from the panels. The accent is
 chosen to carry white text on a fill, so when it is used as the color of text (links, the version badge) it goes through
 `theme::accent_text`, which lightens or darkens it until it reads at 4.5:1. The logo is the real artwork (`assets/cursorpie-mark.png`,
@@ -135,11 +135,26 @@ on the dark one. The sidebar shows the wordmark, which has the name written in i
 | `idle`, `hot` | controls at rest and under the pointer |
 | `input` | text fields |
 | `border`, `divider` | outline of cards, lines between rows |
+| `line` | the strong line of a theme: the outline and hard-shadow color where a theme has them (ink, or cream in the dark) |
 | `text`, `muted` | text, secondary text |
 | `good`, `bad` | status text (granted / not granted, destructive actions) |
 | `track`, `keycap` | rail of a slider or switch, face of a key in a shortcut |
 
-The tests in `theme.rs` enforce 7:1 for `text` and 4.5:1 for `muted`, `good` and `bad` on every surface of both palettes,
+#### Themes
+
+What is described above is the **sage** theme. A theme is *data*, not code (`ui/settings/theme/`): `tokens.rs` defines
+`Theme` (two `Palette`s, a `Shape`, the accent, the Solid pie colors and the swatches it suggests), `builtin.rs` holds
+sage and **gen z** (the tokens of `assets/site.css`: cream `#fff8ec`, ink `#14110f`, 2 px outlines, hard 3-4 px shadows,
+lime), `spec.rs` reads a user file (a layer over another theme) and `registry.rs` lists built-in themes and the files of
+the `themes/` folder. The widgets never branch on the theme: they read colors from `pal()` and radii, outlines and
+shadows from `shape()` (`control_r()`, `control_stroke()`, `paint_control()`, `card()`, `window_shadow()`...), so a
+look costs values and no drawing code. What reaches the widgets went through three layers, in this order: the theme,
+the user's own colors (`with_colors`), and `ensure_readable`. To change how something is drawn *for every theme*, change the
+widget; to change it *for one theme*, change that theme's `Shape`. A new token is a field of `Shape` (or `Palette`), a
+value in every theme of `builtin.rs`, and a field of `ShapeSpec` in `spec.rs`. Sizes (`CONTROL_H`, `GAP`) are not
+tokens on purpose. The user format is in [`docs/user/themes.md`](../user/themes.md).
+
+The tests in `theme.rs` enforce 7:1 for `text` and 4.5:1 for `muted`, `good` and `bad` on every surface of both palettes of every built-in theme,
 and check that `on_accent` stays readable on any accent the user can choose; `widgets.rs` checks the same
 for every button look.
 
@@ -183,6 +198,13 @@ Glass is **always smoked graphite**, in the light appearance as well (`draw::gla
 light page has nothing to catch the light against, so it looked washed out. Only the Solid style follows the
 appearance.
 
+**What follows the Settings theme.** Only **Solid** does: its colors come from the theme in use
+(`draw::pie_colors()` asks `theme::pie_colors_of`). **Glass** and **Gen Z** are materials with their own drawing
+code and colors, the same under every theme (`draw::glass_colors`, `draw::genz_colors`), so a fix to the way a
+pie is drawn goes to the code of that material (the `match` on `Material` in `pie/mod.rs` and in the demos of
+`settings/demo.rs`, and `pie/glass.rs`, `pie/genz.rs`), not to the theme. The *Gen Z* theme of Settings and the *Gen Z* pie material are two separate choices that happen to share
+the look of the website.
+
 **Gen Z** (`ui/pie/genz.rs`) is the pie of the website: opaque white slices, a 2.2-point near-black outline on
 every slice, the center disc and the badges, and a *hard* shadow (the same shape in ink, offset 3 right and 4
 down, farther under the hovered slice) instead of the blurred one. The slice under the pointer fills with the
@@ -225,7 +247,12 @@ Timing: 0.22 s to open (slices appear one after another, with a small overshoot)
 5. **Pick curve resolution from the error you accept** (`arc_segments`), not from a constant.
 6. **Keep icons premultiplied** from load to draw; never upload a texture with a color channel above its
    alpha.
-7. **Keep colors, radii and sizes in `theme.rs`.**
+7. **Keep colors, radii and sizes in `theme.rs`, and let a widget ask for them.** A widget takes a color from
+   `pal()`, and a radius, an outline or a shadow from `shape()` (or from `control_r()`, `control_stroke()`,
+   `paint_control()`, `card()`, `popup_frame()`), and a size from `CONTROL_H`, `GAP`, `PANEL_PAD`. Never write a
+   color, a radius or an outline in a widget, never keep a color in a `const`, and never branch on the theme
+   (`if theme == "genz"`): a look that a theme needs and the tokens cannot say is a new token (see *Themes*), not
+   a special case. Fix a widget once and every theme gets the fix.
 8. **Draw only what is on screen.** A list or grid that can pass a screenful uses `ScrollArea::show_rows` (see `icon_picker.rs`), builds its tiles from indexes instead of cloned strings, and loads textures only for the visible rows, a few per frame (`LOADS_PER_FRAME`).
 9. **Limit a file where it enters.** Read an image's size from its header and refuse it before decoding (`draw::MAX_SOURCE_SIDE`); shrink what the user chooses once (`ui::iconfit`) and say so in the status bar.
 

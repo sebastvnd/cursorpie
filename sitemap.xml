@@ -41,6 +41,10 @@
     <priority>0.5</priority>
   </url>
   <url>
+    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/user/themes.md</loc>
+    <priority>0.5</priority>
+  </url>
+  <url>
     <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/user/configuration.md</loc>
     <priority>0.5</priority>
   </url>
@@ -66,6 +70,10 @@
   </url>
   <url>
     <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/PANELS.md</loc>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/PANEL_DESIGN_FOR_AI.md</loc>
     <priority>0.5</priority>
   </url>
   <url>
@@ -102,6 +110,22 @@
   </url>
   <url>
     <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/developer/TRACKPAD_HAPTICS_PLAN.md</loc>
+    <priority>0.3</priority>
+  </url>
+  <url>
+    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/developer/BROWSER_BRIDGE.md</loc>
+    <priority>0.3</priority>
+  </url>
+  <url>
+    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/developer/UPDATES_TESTING.md</loc>
+    <priority>0.3</priority>
+  </url>
+  <url>
+    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=docs/developer/OPEN_URL_CHOICE.md</loc>
+    <priority>0.3</priority>
+  </url>
+  <url>
+    <loc>https://sebastvnd.github.io/cursorpie/index.html?doc=diag/README.md</loc>
     <priority>0.3</priority>
   </url>
   <url>

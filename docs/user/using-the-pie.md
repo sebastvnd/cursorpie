@@ -29,7 +29,7 @@ What else the trigger does:
 | **Release** over a slice | Runs that slice |
 | **Drag outward** across the rim of a submenu slice | Opens the submenu, re-centered on the cursor |
 | **Keep holding** in the center | After 1200 ms in total, opens Settings. A progress arc fills around the center disc. Can be switched off, see [Opening Settings from the pie](#opening-settings-from-the-pie) |
-| **Press Space** while the pie is open | Opens Settings, if *Open settings with Space* is on (off by default) |
+| **Press Space** while the pie is open | Opens Settings, if *Open settings with Space* is on (on by default). Works in any ring, in a submenu and in the pie of an app |
 
 In *classic* mode (see [Profiles](profiles-and-buttons.md#profiles)) there is no double-click: holding opens the app's own pie if it has
 one, otherwise the general pie. Every timing can be changed in **Settings > Behavior**.
@@ -41,8 +41,8 @@ independent, so either, both or neither can be on:
 
 | Setting | What it does | Default |
 |---|---|---|
-| *Open settings by holding* | Keep the trigger held in the center of the pie until *Hold to open settings* (1200 ms in total) has passed. Off: the pie never turns into Settings by itself and the progress arc is not drawn | On |
-| *Open settings with Space* | Press Space while the pie is open. Space is taken by CursorPie, so it does not reach the app under the pie | Off |
+| *Open settings by holding* | Keep the trigger held in the center of the pie until *Hold to open settings* (1200 ms in total) has passed. Only the untouched top ring counts. Off: the pie never turns into Settings by itself and the progress arc is not drawn | Off |
+| *Open settings with Space* | Press Space while the pie is open. Space is taken by CursorPie, so it does not reach the app under the pie | On |
 | *Presses of Space* | One press, or two in quick succession (the second within half a second). Two is the most | One press |
 
 With both on, whichever comes first opens Settings; the other then does nothing. Turning the hold off is for people

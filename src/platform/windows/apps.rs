@@ -13,11 +13,16 @@ use crate::platform::{NativeIcon, ScreenRect};
 use crate::windowing::Windows;
 use std::collections::HashSet;
 use std::time::Duration;
-use windows_sys::Win32::Foundation::{CloseHandle, HWND, LPARAM, POINT, RECT, S_FALSE, S_OK};
+use windows_sys::Win32::Foundation::{
+    CloseHandle, HANDLE, HWND, LPARAM, POINT, RECT, S_FALSE, S_OK,
+};
 use windows_sys::Win32::Graphics::Gdi::{
     BI_RGB, BITMAP, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, DeleteObject,
     EnumDisplayMonitors, GetDC, GetDIBits, GetMonitorInfoW, GetObjectW, HDC, HMONITOR,
     MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromPoint, MonitorFromWindow, ReleaseDC,
+};
+use windows_sys::Win32::Security::{
+    GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation,
 };
 use windows_sys::Win32::Storage::FileSystem::SearchPathW;
 use windows_sys::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
@@ -25,8 +30,8 @@ use windows_sys::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW, TH32CS_SNAPPROCESS,
 };
 use windows_sys::Win32::System::Threading::{
-    AttachThreadInput, GetCurrentProcessId, GetCurrentThreadId, OpenProcess,
-    PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+    AttachThreadInput, GetCurrentProcess, GetCurrentProcessId, GetCurrentThreadId, OpenProcess,
+    OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
 use windows_sys::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows_sys::Win32::UI::Shell::{SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON, SHGetFileInfoW};
@@ -76,6 +81,94 @@ pub fn frontmost_bundle_id() -> Option<String> {
         return None;
     }
     app_id_of_pid(pid_of(hwnd))
+}
+
+/// Whether the token behind `token` (open with `TOKEN_QUERY`) belongs to an elevated process.
+fn token_is_elevated(token: HANDLE) -> bool {
+    let mut e = TOKEN_ELEVATION { TokenIsElevated: 0 };
+    let mut len = 0u32;
+    // SAFETY: `e` is a live TOKEN_ELEVATION and its size is passed along.
+    let ok = unsafe {
+        GetTokenInformation(
+            token,
+            TokenElevation,
+            (&mut e as *mut TOKEN_ELEVATION).cast(),
+            std::mem::size_of::<TOKEN_ELEVATION>() as u32,
+            &mut len,
+        )
+    };
+    ok != 0 && e.TokenIsElevated != 0
+}
+
+/// Whether CursorPie itself runs as administrator (it then sees every window).
+fn own_process_elevated() -> bool {
+    // SAFETY: the token handle is closed before returning.
+    unsafe {
+        let mut token: HANDLE = std::ptr::null_mut();
+        if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
+            return false;
+        }
+        let elevated = token_is_elevated(token);
+        CloseHandle(token);
+        elevated
+    }
+}
+
+/// Programs of the secure desktop that Windows shows in front: nobody opens a pie there, and
+/// naming them in a notice would only confuse.
+fn is_secure_desktop_app(app: &str) -> bool {
+    matches!(
+        app,
+        "consent.exe" | "logonui.exe" | "winlogon.exe" | "lockapp.exe"
+    )
+}
+
+/// The app in front when Windows keeps the pointer from CursorPie in its windows, else `None`.
+///
+/// A low-level mouse hook is never called for a window of a program that runs as administrator
+/// (the integrity level is higher) unless the hook's program runs as administrator too. In such a
+/// window the trigger simply does nothing: no pie, with no sign of why. This is the one case where
+/// "the pie does not open over some apps" has nothing to do with what the app does with the
+/// button, so it is told to the person (see `tap::windows::warn_elevated`).
+///
+/// A program of a higher integrity level cannot have its token opened by one of a lower level, so
+/// "the token cannot be opened: access denied" counts as elevated, as does a readable token that
+/// says so. `None` when CursorPie runs as administrator, when the program in front is CursorPie
+/// itself, or when nothing can be told.
+pub fn foreground_app_blocks_input() -> Option<String> {
+    if own_process_elevated() {
+        return None;
+    }
+    // SAFETY: the handles are closed before returning.
+    let pid = unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.is_null() {
+            return None;
+        }
+        let pid = pid_of(hwnd);
+        if pid == 0 || pid == GetCurrentProcessId() {
+            return None;
+        }
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if process.is_null() {
+            return None;
+        }
+        let mut token: HANDLE = std::ptr::null_mut();
+        let opened = OpenProcessToken(process, TOKEN_QUERY, &mut token);
+        // read the error before anything else can change it
+        let denied = opened == 0 && std::io::Error::last_os_error().raw_os_error() == Some(5);
+        CloseHandle(process);
+        let elevated = if opened != 0 {
+            let e = token_is_elevated(token);
+            CloseHandle(token);
+            e
+        } else {
+            denied
+        };
+        elevated.then_some(pid)
+    }?;
+    let app = app_id_of_pid(pid)?;
+    (!is_secure_desktop_app(&app)).then_some(app)
 }
 
 /// Window class of `hwnd`.

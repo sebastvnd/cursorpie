@@ -272,8 +272,8 @@ impl App {
         );
 
         let painter = ui.painter().clone();
-        painter.add(window_shadow().as_shape(card_rect, CARD_RADIUS));
-        painter.rect_filled(card_rect, CARD_RADIUS, pal().bg);
+        painter.add(window_shadow().as_shape(card_rect, card_radius()));
+        painter.rect_filled(card_rect, card_radius(), pal().bg);
         window_outline(&painter, card_rect, accent);
 
         // dragging the empty part of the top bar moves the window
@@ -466,10 +466,10 @@ fn hero(ui: &mut egui::Ui, accent: Color32, height: f32) {
     ctx.request_repaint_after(Duration::from_millis(33));
 
     // the band: a tint of the accent, with a faint copy of the mark bleeding off the right edge
-    painter.rect_filled(rect, PANEL_R, wash(accent, 0.10));
+    painter.rect_filled(rect, panel_r(), wash(accent, 0.10));
     painter.rect_stroke(
         rect,
-        PANEL_R,
+        panel_r(),
         Stroke::new(1.0, wash(accent, 0.22)),
         egui::StrokeKind::Inside,
     );
@@ -576,10 +576,10 @@ fn intro_page(ui: &mut egui::Ui, accent: Color32) {
                 Vec2::new(col.available_width(), card_h),
                 egui::Sense::hover(),
             );
-            col.painter().rect_filled(r, PANEL_R, pal().card);
+            col.painter().rect_filled(r, panel_r(), pal().card);
             col.painter().rect_stroke(
                 r,
-                PANEL_R,
+                panel_r(),
                 Stroke::new(1.0, pal().divider),
                 egui::StrokeKind::Inside,
             );
@@ -625,7 +625,7 @@ fn intro_page(ui: &mut egui::Ui, accent: Color32) {
             });
             painter.rect_stroke(
                 r,
-                PANEL_R,
+                panel_r(),
                 Stroke::new(1.5, wash(accent, 0.55 * on)),
                 egui::StrokeKind::Inside,
             );

@@ -34,7 +34,7 @@ Built with **Rust** and [egui](https://github.com/emilk/egui), CursorPie is insp
 
 ## Highlights
 
-- **A quick, natural gesture.** Hold for 150 ms by default, flick toward a slice, and release. Hold in the center to open Settings.
+- **A quick, natural gesture.** Hold for 150 ms by default, flick toward a slice, and release. Press Space while the pie is open to open Settings.
 - **A menu for every app.** Keep a general pie and create app-specific profiles for the tools you use most.
 - **Mouse or trackpad.** Touch and hold a trackpad instead of pressing a button, on macOS, Windows and Linux (X11 and Wayland). It is off by default and uses the same pie, timings and profiles; see [Trackpad](#trackpad).
 - **Useful mouse buttons.** Assign actions to back, forward and other supported extra buttons with configurable modes.
@@ -66,7 +66,7 @@ For step-by-step instructions, including the Linux `install.sh` script and macOS
 3. Move the pointer toward a slice.
 4. Release to run the action.
 
-No middle button? Turn on *Open the pie with a trackpad hold* in **Settings > Behavior > Trackpad** and touch and hold the trackpad instead. Hold the trigger in the center of the pie (or press Space, if you turned that on) to open Settings and customize your menus. The [user guide](docs/user/README.md) explains gestures, actions, profiles and settings in detail.
+No middle button? Turn on *Open the pie with a trackpad hold* in **Settings > Behavior > Trackpad** and touch and hold the trackpad instead. Press Space while the pie is open (or hold the trigger in the center of the pie, if you turned that on) to open Settings and customize your menus. The [user guide](docs/user/README.md) explains gestures, actions, profiles and settings in detail.
 
 ## Platform support
 

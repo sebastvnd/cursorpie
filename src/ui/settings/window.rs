@@ -310,22 +310,19 @@ impl App {
         if full_screen {
             painter.rect_filled(card_rect, 0.0, pal().bg);
         } else {
-            painter.add(window_shadow().as_shape(card_rect, CARD_RADIUS));
-            painter.rect_filled(card_rect, CARD_RADIUS, pal().bg);
+            painter.add(window_shadow().as_shape(card_rect, card_radius()));
+            painter.rect_filled(card_rect, card_radius(), pal().bg);
             painter.rect_filled(
                 side,
                 egui::CornerRadius {
-                    nw: CARD_RADIUS_PT,
-                    sw: CARD_RADIUS_PT,
+                    nw: card_radius_pt(),
+                    sw: card_radius_pt(),
                     ne: 0,
                     se: 0,
                 },
                 pal().sidebar,
             );
-            painter.line_segment(
-                [side.right_top(), side.right_bottom()],
-                egui::Stroke::new(1.0, pal().border),
-            );
+            painter.line_segment([side.right_top(), side.right_bottom()], side_stroke());
             window_outline(&painter, card_rect, accent);
         }
 
@@ -490,7 +487,12 @@ impl App {
 
         // ---------------------------------------------------------------- body
         ui.scope_builder(egui::UiBuilder::new().max_rect(body), |ui| {
-            ui.set_clip_rect(ui.clip_rect().intersect(body));
+            // a panel that has an outline and a hard shadow (a theme's choice) reaches a little past the
+            // body at the sides: the clip lets that through, but still cuts a page that scrolls
+            ui.set_clip_rect(
+                ui.clip_rect()
+                    .intersect(body.expand2(Vec2::new(panel_bleed(), 0.0))),
+            );
             if self.ed.tab != Tab::Flow {
                 crate::tap::FLOW_CANVAS_HOVER.store(false, std::sync::atomic::Ordering::SeqCst);
                 self.ed.flow_menu = None;

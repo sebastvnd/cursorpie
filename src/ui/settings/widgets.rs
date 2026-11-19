@@ -140,7 +140,7 @@ pub(in crate::ui::settings) fn button_frame(
     resp: &egui::Response,
     look: Look,
 ) -> Color32 {
-    button_frame_r(ui, rect, resp, look, CONTROL_R)
+    button_frame_r(ui, rect, resp, look, control_r())
 }
 
 /// [`button_frame`] with corners of the given `radius` (a panel button that says how round it is).
@@ -166,7 +166,18 @@ pub(in crate::ui::settings) fn button_frame_r(
     } else {
         rest
     };
-    ui.painter().rect_filled(rect, radius, fill);
+    // the filled looks are the ones a theme outlines and casts a shadow under; a pressed one loses it
+    if enabled && matches!(look, Look::Primary(_) | Look::Soft) {
+        paint_control(
+            ui.painter(),
+            rect,
+            radius,
+            fill,
+            !resp.is_pointer_button_down_on(),
+        );
+    } else {
+        ui.painter().rect_filled(rect, radius, fill);
+    }
     if resp.has_focus()
         && let Look::Primary(accent) = look
     {
@@ -558,7 +569,7 @@ pub(in crate::ui::settings) fn segmented(
     }
     let total = w.iter().sum::<f32>() + 2.0 * TRACK_PAD;
     let (track, _) = ui.allocate_exact_size(Vec2::new(total, CONTROL_H), egui::Sense::hover());
-    ui.painter().rect_filled(track, PILL, pal().idle);
+    paint_control(ui.painter(), track, PILL, pal().idle, false);
     let raised = if pal().dark { pal().hot } else { pal().card };
 
     let mut picked = None;
@@ -582,12 +593,8 @@ pub(in crate::ui::settings) fn segmented(
         let on = i == selected;
         if on {
             ui.painter().rect_filled(seg, PILL, raised);
-            ui.painter().rect_stroke(
-                seg,
-                PILL,
-                Stroke::new(1.0, pal().border),
-                egui::StrokeKind::Inside,
-            );
+            ui.painter()
+                .rect_stroke(seg, PILL, chip_stroke(), egui::StrokeKind::Inside);
         }
         if resp.has_focus() {
             focus_ring(ui, seg, PILL, pal().text);
@@ -651,11 +658,14 @@ pub(in crate::ui::settings) fn icon_tabs(
                 egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, on, *label)
             });
             if resp.hovered() && !on {
-                ui.painter()
-                    .rect_filled(rect.shrink2(Vec2::new(3.0, 3.0)), CONTROL_R, pal().idle);
+                ui.painter().rect_filled(
+                    rect.shrink2(Vec2::new(3.0, 3.0)),
+                    control_r(),
+                    pal().idle,
+                );
             }
             if resp.has_focus() {
-                focus_ring(ui, rect.shrink(3.0), CONTROL_R, accent);
+                focus_ring(ui, rect.shrink(3.0), control_r(), accent);
             }
             let fg = if on || resp.hovered() {
                 pal().text
@@ -708,9 +718,14 @@ pub(in crate::ui::settings) fn tile_sense(
 ) -> (Rect, egui::Response) {
     let (rect, resp) = ui.allocate_exact_size(size, sense);
     let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
-    let radius = egui::CornerRadius::same(14);
+    let radius = egui::CornerRadius::same(control_r_pt() + 2);
     let painter = ui.painter();
-    if selected {
+    if selected && control_stroke().width > 0.0 {
+        // a theme that outlines its controls shows the choice as a filled, lifted tile: an accent
+        // outline would sink into a page of the same family (lime on cream)
+        let fill = pal().card.lerp_to_gamma(accent, 0.4);
+        paint_control(painter, rect, radius, fill, true);
+    } else if selected {
         painter.rect_filled(rect, radius, wash(accent, 0.10));
         painter.rect_stroke(
             rect,
@@ -719,15 +734,12 @@ pub(in crate::ui::settings) fn tile_sense(
             egui::StrokeKind::Inside,
         );
     } else {
-        painter.rect_filled(
-            rect,
-            radius,
-            if resp.hovered() {
-                pal().hot
-            } else {
-                pal().idle
-            },
-        );
+        let fill = if resp.hovered() {
+            pal().hot
+        } else {
+            pal().idle
+        };
+        paint_control(painter, rect, radius, fill, false);
     }
     (rect, resp)
 }
@@ -740,6 +752,10 @@ const SWITCH: Vec2 = Vec2::new(46.0, 28.0);
 /// Paints a switch into `rect`, `t` going from 0 (off) to 1 (on).
 fn paint_switch(painter: &egui::Painter, rect: Rect, t: f32, accent: Color32) {
     painter.rect_filled(rect, PILL, pal().track.lerp_to_gamma(accent, t));
+    let outline = control_stroke();
+    if outline.width > 0.0 {
+        painter.rect_stroke(rect, PILL, outline, egui::StrokeKind::Inside);
+    }
     let r = rect.height() / 2.0 - 3.0;
     let x = egui::lerp((rect.min.x + 3.0 + r)..=(rect.max.x - 3.0 - r), t);
     let c = Pos2::new(x, rect.center().y);
@@ -750,6 +766,9 @@ fn paint_switch(painter: &egui::Painter, rect: Rect, t: f32, accent: Color32) {
         Color32::from_black_alpha(26),
     );
     painter.circle_filled(c, r, Color32::WHITE);
+    if outline.width > 0.0 {
+        painter.circle_stroke(c, r, outline);
+    }
 }
 
 /// Where along a rail of `0..=1` the value `v` of `range` sits.
@@ -941,7 +960,7 @@ pub(in crate::ui::settings) fn slider<Num: egui::emath::Numeric>(
         Color32::from_black_alpha(30),
     );
     painter.circle_filled(c, KNOB + grow, Color32::WHITE);
-    painter.circle_stroke(c, KNOB + grow, Stroke::new(1.0, wash(Color32::BLACK, 0.08)));
+    painter.circle_stroke(c, KNOB + grow, knob_stroke());
     if resp.has_focus() {
         painter.circle_stroke(c, KNOB + grow + 2.0, Stroke::new(2.0, wash(accent, 0.55)));
     }
@@ -988,7 +1007,12 @@ pub(in crate::ui::settings) fn nav_highlight(
     let bottom = a.max.y + (b.max.y - a.max.y) * if down { lead } else { lag };
     let wash_rect = Rect::from_min_max(Pos2::new(a.min.x, top), Pos2::new(a.max.x, bottom));
     ui.painter()
-        .rect_filled(wash_rect, CONTROL_R, wash(accent, 0.14));
+        .rect_filled(wash_rect, control_r(), wash(accent, shape().nav_wash));
+    let outline = control_stroke();
+    if outline.width > 0.0 {
+        ui.painter()
+            .rect_stroke(wash_rect, control_r(), outline, egui::StrokeKind::Inside);
+    }
     (0..count)
         .map(|i| {
             if from == to {
@@ -1027,9 +1051,15 @@ pub(in crate::ui::settings) fn nav_item(
     });
     let painter = ui.painter();
     if near < 0.05 && resp.hovered() {
-        painter.rect_filled(rect, CONTROL_R, wash(pal().text, 0.07));
+        painter.rect_filled(rect, control_r(), wash(pal().text, 0.07));
     }
-    let ink = pal().muted.lerp_to_gamma(accent, near);
+    // where the wash is strong, the accent would sink into it: the icon takes the text color then
+    let chosen = if shape().nav_icon_accent {
+        accent
+    } else {
+        pal().text
+    };
+    let ink = pal().muted.lerp_to_gamma(chosen, near);
     let icon_x = if compact {
         rect.center().x
     } else {
@@ -1503,7 +1533,7 @@ pub(in crate::ui::settings) fn sheet<R>(
         .constrain(false)
         .show(ctx, |ui| {
             let scrim = ui.allocate_rect(bounds, egui::Sense::click());
-            ui.painter().rect_filled(bounds, CARD_RADIUS, pal().scrim);
+            ui.painter().rect_filled(bounds, card_radius(), pal().scrim);
             let rect = Rect::from_center_size(bounds.center(), size);
             let mut inner = None;
             ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
@@ -1726,7 +1756,7 @@ fn select_with(
     } else {
         pal().idle
     };
-    ui.painter().rect_filled(rect, CONTROL_R, fill);
+    paint_control(ui.painter(), rect, control_r(), fill, false);
     let mut text_x = rect.min.x + 14.0;
     if let Some(icon) = current_icon {
         fonts::paint_icon(
@@ -1933,7 +1963,7 @@ pub(in crate::ui::settings) fn select_item(
         egui::Sense::click(),
     );
     if resp.hovered() {
-        ui.painter().rect_filled(rect, CONTROL_R, pal().idle);
+        ui.painter().rect_filled(rect, control_r(), pal().idle);
     }
     let mut text_x = rect.min.x + 12.0;
     if let Some(icon) = icon {
@@ -2008,7 +2038,7 @@ pub(in crate::ui::settings) fn menu_item(
         egui::Sense::click(),
     );
     if resp.hovered() {
-        ui.painter().rect_filled(rect, CONTROL_R, pal().idle);
+        ui.painter().rect_filled(rect, control_r(), pal().idle);
     }
     fonts::paint_icon(
         ui.painter(),
@@ -2137,7 +2167,7 @@ pub(in crate::ui::settings) fn shortcut_button(
         (false, true) => pal().hot,
         (false, false) => pal().idle,
     };
-    ui.painter().rect_filled(rect, CONTROL_R, fill);
+    paint_control(ui.painter(), rect, control_r(), fill, false);
     if recording {
         let at = Pos2::new(
             rect.center().x - prompt.size().x / 2.0,
@@ -2155,7 +2185,7 @@ pub(in crate::ui::settings) fn shortcut_button(
             ui.painter().rect_stroke(
                 cap,
                 egui::CornerRadius::same(7),
-                Stroke::new(1.0, pal().border),
+                chip_stroke(),
                 egui::StrokeKind::Inside,
             );
             ui.painter().galley(
@@ -2174,7 +2204,7 @@ pub(in crate::ui::settings) fn accent_picker(ui: &mut egui::Ui, color: &mut [u8;
     ui.spacing_mut().item_spacing.x = 8.0;
     // added from the right edge, so the picker comes first and the swatches fill in toward the left
     ui.color_edit_button_srgb(color).on_hover_text("Any color");
-    for (name, rgb) in ACCENTS.iter().rev() {
+    for (name, rgb) in swatches().accents.iter().rev() {
         let (rect, resp) = ui.allocate_exact_size(Vec2::splat(24.0), egui::Sense::click());
         let c = Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
         let on = *color == *rgb;
@@ -2400,7 +2430,7 @@ mod tests {
     #[test]
     fn every_look_has_readable_text() {
         let accent = Color32::from_rgb(88, 86, 214);
-        for p in [LIGHT, DARK] {
+        for p in builtin_themes().iter().flat_map(|t| [t.light, t.dark]) {
             for look in [Look::Primary(accent), Look::Soft, Look::Plain, Look::Danger] {
                 let (rest, hot, fg) = look.colors_in(&p);
                 for bg in [rest, hot] {

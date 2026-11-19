@@ -28,7 +28,7 @@ use crate::actions::SYNTH_TAG;
 use crate::config::{cfg, lock};
 use crate::geometry::Point;
 use crate::keys::{MOD_ALT, MOD_CMD, MOD_CTRL, MOD_SHIFT};
-use crate::msg::Notifier;
+use crate::msg::{Msg, Notifier};
 use crate::platform::keymap;
 use crate::platform::windows::{px_to_logical, scale_at_physical, set_last_scale};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -343,6 +343,31 @@ unsafe extern "system" fn key_proc(code: i32, wparam: WPARAM, lparam: LPARAM) ->
     unsafe { CallNextHookEx(std::ptr::null_mut(), code, wparam, lparam) }
 }
 
+/// Tells the person, once per program, that the program in front runs as administrator.
+///
+/// Windows does not call a low-level hook for the windows of such a program unless the hook's
+/// program runs as administrator too, so the trigger does nothing there and nothing says why.
+/// Called by the watchdog tick (every couple of seconds, on the hook's own thread, never from a
+/// hook callback). It only looks while the pie is on and Settings is closed, and one program is
+/// told about once per run.
+fn warn_elevated(n: &Notifier, told: &mut Vec<String>) {
+    if super::PAUSED.load(Ordering::SeqCst) || super::settings_open() {
+        return;
+    }
+    let Some(app) = crate::platform::windows::foreground_app_blocks_input() else {
+        return;
+    };
+    if told.contains(&app) {
+        return;
+    }
+    told.push(app.clone());
+    diag::log!("tap", "elevated_front", told = told.len());
+    n.send(Msg::Notice(format!(
+        "{app} runs as administrator, so Windows does not let CursorPie react in its windows. \
+         Start CursorPie as administrator to use the pie there."
+    )));
+}
+
 /// Starts the hooks on their own thread and keeps retrying until Windows accepts them.
 pub fn spawn(notifier: Notifier) {
     let state = Arc::new(Mutex::new(Gesture::Idle));
@@ -358,6 +383,8 @@ pub fn spawn(notifier: Notifier) {
             // a hook callback that waits behind a busy program for about a second is dropped
             crate::platform::windows::raise_current_thread();
             let mut warned = false;
+            // programs run as administrator that the person was already told about
+            let mut told_elevated: Vec<String> = Vec::new();
             let mut last_restart: Option<Instant> = None;
             loop {
                 // set only by the watchdog: the hooks went quiet, so they are installed again
@@ -405,6 +432,7 @@ pub fn spawn(notifier: Notifier) {
                             if msg.message != WM_TIMER {
                                 continue;
                             }
+                            warn_elevated(&notifier, &mut told_elevated);
                             let gap = SystemTime::now().duration_since(last_tick).ok();
                             last_tick = SystemTime::now();
                             let quiet = last_restart.is_none_or(|t| t.elapsed() >= MIN_RESTART_GAP)

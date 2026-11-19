@@ -96,8 +96,8 @@ Every field with its default value, and a small menu. A field you leave out take
   "version": 2,
   "pie_hold_ms": 150,
   "settings_hold_ms": 1200,
-  "settings_by_hold": true,
-  "settings_by_space": false,
+  "settings_by_hold": false,
+  "settings_by_space": true,
   "settings_space_presses": 1,
   "pie_size": 200.0,
   "accent": [90, 120, 94],
@@ -200,8 +200,8 @@ Every field with its default value, and a small menu. A field you leave out take
 | `accent` | Accent color as `[r, g, b]`. The default is `[90, 120, 94]`; the old default blue `[64, 156, 255]` is replaced by the new default when a file is loaded |
 | `pie_hold_ms` | Hold time before the pie opens (50 to 2000 in the file; the Settings slider goes from 50 to 1500; default 150) |
 | `settings_hold_ms` | Hold time before Settings opens (always at least `pie_hold_ms` + 300; the Settings slider goes from 500 to 4000) |
-| `settings_by_hold` | `true` (default) or `false`: whether holding the trigger in the center of the pie opens Settings after `settings_hold_ms`. `false` also hides the progress arc |
-| `settings_by_space` | `false` (default) or `true`: pressing Space while the pie is open opens Settings. The key is swallowed. Not available on Wayland |
+| `settings_by_hold` | `false` (default) or `true`: whether holding the trigger in the center of the pie opens Settings after `settings_hold_ms`. Only the untouched top ring of the pie that a hold opened counts. `false` also hides the progress arc |
+| `settings_by_space` | `true` (default) or `false`: pressing Space while a pie is open opens Settings, in any ring, in a submenu and in the pie of an app. The key is swallowed. Not available on Wayland |
 | `settings_space_presses` | `1` (default) or `2` (other values are clamped to that range): how many presses of Space open Settings; two must come within 500 ms |
 | `pie_size` | Pie window size in px (140 to 360) |
 | `app_gesture` | `"DoubleClick"` (hold = general pie, double-click = app pie) or `"Merged"` (classic) |
@@ -228,6 +228,7 @@ Every field with its default value, and a small menu. A field you leave out take
 | `app_icon_shadow` | `"Auto"` (default), `"Soft"`, `"Strong"` or `"Off"`: the shadow under the app's icon in the center of the pie. `Auto` adds it only on a plain light center |
 | `show_labels` | Show each slice's name under its icon (default `false` = icons only; a file that lacks the field keeps the names) |
 | `appearance` | `"System"` (default), `"Light"` or `"Dark"`: the look of Settings and the pie |
+| `ui_theme` | The theme of Settings and the Solid pie: `"sage"` (default, not written to the file), `"genz"`, or the name of a file of the `themes/` folder next to `config.json`. See [Themes](themes.md) |
 | `pie_custom_shape` | `false` (default): the pie is a circle. `true`: it is a regular polygon with rounded corners, shaped by the three settings below |
 | `pie_sides` | Custom shape: sides of the polygon, 3 to 12 (default 4) |
 | `pie_round` | Custom shape: how round the corners are, 0 (sharp) to 100 (a circle), in percent (default 45) |

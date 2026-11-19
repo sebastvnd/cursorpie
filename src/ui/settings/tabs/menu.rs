@@ -66,7 +66,11 @@ impl App {
         let left = Rect::from_min_size(avail.min, vec2(left_w, avail.height()));
         let right = Rect::from_min_size(
             pos2(avail.min.x + left_w + gap, avail.min.y),
-            vec2((content_w - left_w - gap).max(200.0), avail.height()),
+            // leave room for the hard shadow of the panel the inspector draws, if the theme has one
+            vec2(
+                (content_w - left_w - gap - panel_bleed()).max(200.0),
+                avail.height(),
+            ),
         );
 
         let Some(prof) = edit.profiles.get_mut(ed.profile) else {
@@ -79,7 +83,7 @@ impl App {
         let sel_before = ed.sel;
 
         // left: a bordered tile with the breadcrumb + pie inside
-        ui.painter().rect_filled(left, PANEL_R, pal().card);
+        ui.painter().rect_filled(left, panel_r(), pal().card);
         let (res, add_slice, delete_slice) = ui
             .scope_builder(UiBuilder::new().max_rect(left.shrink(pad)), |ui| {
                 ui.horizontal_wrapped(|ui| {
@@ -239,7 +243,11 @@ impl App {
             flows: &flow_list,
         };
         ui.scope_builder(UiBuilder::new().max_rect(right), |ui| {
-            ui.set_clip_rect(ui.clip_rect().intersect(right)); // clip anything that overflows
+            // clip anything that overflows, but let the outline and the hard shadow of a panel through
+            ui.set_clip_rect(
+                ui.clip_rect()
+                    .intersect(right.expand2(vec2(panel_bleed(), 0.0))),
+            );
             // the editor's width is computed from `right`, so its scrollbar must not take any of it
             ui.spacing_mut().scroll = egui::style::ScrollStyle::floating();
             egui::ScrollArea::vertical()

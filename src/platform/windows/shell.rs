@@ -38,9 +38,32 @@ fn shell_execute(file: &str, params: Option<&str>, show: i32) {
     }
 }
 
-/// Launches an app by name (`chrome`, resolved through App Paths and `PATH`) or by path.
+/// The program file of an app that is given by a bare name (`telegram.exe`, `Telegram`), looked up
+/// where the app list finds apps: App Paths, the Start menu, the program folders. `None` for a
+/// path, a link or anything else that is not a bare name, and for a program that cannot be found.
+///
+/// `ShellExecuteW` resolves a bare name only through App Paths and `PATH`. Many apps are in
+/// neither (Telegram, Discord and the other programs that install into the user's own folders), so
+/// opening them by name did nothing (and showed an error of the shell) unless they already ran.
+fn installed_program(app: &str) -> Option<String> {
+    let app = app.trim().trim_matches('"');
+    if app.is_empty() || app.contains(['\\', '/', ':']) {
+        return None;
+    }
+    let id = super::util::app_id_for_open(app)?;
+    super::apppath::find_exe(&id)
+}
+
+/// Launches an app by name (`chrome`, resolved through App Paths and `PATH`, then through the
+/// installed apps) or by path.
 pub fn open_app(app: &str) {
-    shell_execute(app, None, SW_SHOWNORMAL);
+    match installed_program(app) {
+        Some(path) => {
+            diag::log!("act", "open_app_resolved");
+            shell_execute(&path, None, SW_SHOWNORMAL);
+        }
+        None => shell_execute(app, None, SW_SHOWNORMAL),
+    }
 }
 
 /// Whether the app declares that it has a single main window. Windows has no such declaration that can be read without starting the app; `windowing` has the list.

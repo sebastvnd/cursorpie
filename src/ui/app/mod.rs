@@ -389,13 +389,17 @@ impl eframe::App for App {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         // light or dark for this frame; Settings previews the choice before it is saved
-        let (appearance, theme) = if self.settings_open {
-            (self.edit.appearance, self.edit.theme)
+        let (appearance, ui_theme, theme) = if self.settings_open {
+            (
+                self.edit.appearance,
+                self.edit.ui_theme.clone(),
+                self.edit.theme,
+            )
         } else {
             let c = cfg();
-            (c.appearance, c.theme)
+            (c.appearance, c.ui_theme.clone(), c.theme)
         };
-        crate::ui::settings::theme::apply_appearance(ui.ctx(), appearance, &theme);
+        crate::ui::settings::theme::apply_appearance(ui.ctx(), appearance, &ui_theme, &theme);
         if self.show_wait.is_some() {
             // waiting to be mapped: draw nothing, so the buffer shown first is fully transparent
         } else if self.settle_frames > 0 {

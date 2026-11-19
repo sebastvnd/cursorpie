@@ -163,11 +163,11 @@ pub(super) fn sidebar(
             ui.set_clip_rect(body);
             ui.set_opacity(t);
             ui.allocate_rect(panel, Sense::hover());
-            ui.painter().add(popup_shadow().as_shape(panel, PANEL_R));
-            ui.painter().rect_filled(panel, PANEL_R, pal().card);
+            ui.painter().add(popup_shadow().as_shape(panel, panel_r()));
+            ui.painter().rect_filled(panel, panel_r(), pal().card);
             ui.painter().rect_stroke(
                 panel,
-                PANEL_R,
+                panel_r(),
                 Stroke::new(1.0, pal().border),
                 egui::StrokeKind::Inside,
             );
@@ -249,14 +249,14 @@ fn flow_row(ui: &mut egui::Ui, name: &str, on: bool, accent: Color32) -> egui::R
         .animate_bool_with_time(resp.id.with("hot"), resp.hovered(), 0.12);
     let p = ui.painter();
     if on {
-        p.rect_filled(rect, CONTROL_R, wash(accent, 0.14));
+        p.rect_filled(rect, control_r(), wash(accent, 0.14));
         p.rect_filled(
             Rect::from_center_size(pos2(rect.min.x + 4.0, rect.center().y), vec2(3.0, 16.0)),
             PILL,
             accent,
         );
     } else if hot > 0.0 {
-        p.rect_filled(rect, CONTROL_R, pal().idle.gamma_multiply(hot));
+        p.rect_filled(rect, control_r(), pal().idle.gamma_multiply(hot));
     }
     fonts::paint_icon(
         p,
@@ -1805,7 +1805,7 @@ fn card_of(ui: &mut egui::Ui, cx: &mut Cx, id: u32, number: usize, first: bool, 
     egui::Frame::new()
         .fill(pal().card)
         .stroke(Stroke::new(1.0, border))
-        .corner_radius(CONTROL_R)
+        .corner_radius(control_r())
         .inner_margin(egui::Margin::symmetric(14, 12))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());

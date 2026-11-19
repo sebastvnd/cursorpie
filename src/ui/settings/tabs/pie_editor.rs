@@ -721,7 +721,7 @@ fn pane(ui: &mut Ui, ctx: &egui::Context, ed: &mut Ed, p: Pane) -> PaneOut {
 
     // ---- the page of the canvas
     let screen = ui.painter_at(rect);
-    screen.rect_filled(rect, PANEL_R, pal().input);
+    screen.rect_filled(rect, panel_r(), pal().input);
     if z >= 0.45 {
         // a grid of dots that moves with the canvas
         let step = 28.0 * z;
@@ -985,14 +985,14 @@ fn pane(ui: &mut Ui, ctx: &egui::Context, ed: &mut Ed, p: Pane) -> PaneOut {
     // ---- the selection box
     if let Some(r) = marquee_box {
         let r = r.intersect(canvas.shrink(1.0));
-        painter.rect_filled(r, CONTROL_R, wash(accent, 0.10));
-        painter.rect_stroke(r, CONTROL_R, Stroke::new(1.0, accent), StrokeKind::Inside);
+        painter.rect_filled(r, control_r(), wash(accent, 0.10));
+        painter.rect_stroke(r, control_r(), Stroke::new(1.0, accent), StrokeKind::Inside);
     }
 
     // ---- the frame of the canvas, its badge and the hint strip
     screen.rect_stroke(
         rect,
-        PANEL_R,
+        panel_r(),
         Stroke::new(1.0, pal().border),
         StrokeKind::Inside,
     );
@@ -2666,10 +2666,10 @@ impl App {
             // the panel is drawn the way the inspector of the Flow tab is: as tall as the canvas, on
             // paper, with its content a little inside it (see `flow_inspect::panel`)
             let painter = ui.painter_at(right);
-            painter.rect_filled(right, PANEL_R, pal().card);
+            painter.rect_filled(right, panel_r(), pal().card);
             painter.rect_stroke(
                 right,
-                PANEL_R,
+                panel_r(),
                 Stroke::new(1.0, pal().border),
                 StrokeKind::Inside,
             );

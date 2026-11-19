@@ -18,8 +18,11 @@ and hold the trackpad. See [Trackpad hold](trackpad.md).
 
 ## 3. Open Settings
 
-Keep holding in the center of the pie. A progress arc fills around the center disc and Settings opens after 1200 ms.
-On macOS and Windows you can also use the menu bar or tray icon.
+With the pie open (in any ring, in a submenu or in the pie of an app), press **Space**. Settings opens and Space does not
+reach the app under the pie. On macOS and Windows you can also use the menu bar or tray icon.
+
+Prefer the old way? Turn on *Open settings by holding* in **Settings > Behavior > Trigger**: keep holding in the center
+of the top ring, a progress arc fills around the center disc and Settings opens after 1200 ms.
 
 ## 4. What next
 

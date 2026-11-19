@@ -477,16 +477,23 @@ pub struct Config {
     pub profiles: Vec<Profile>,
     pub pie_hold_ms: u64,
     pub settings_hold_ms: u64,
-    /// Holding the trigger in the center of the pie opens Settings after `settings_hold_ms`.
-    /// Off: the pie never turns into Settings by itself (Space can, see `settings_by_space`).
+    /// Holding the trigger in the center of the pie opens Settings after `settings_hold_ms`
+    /// (only the untouched top ring of the pie that opened on the hold). Off by default: the pie
+    /// never turns into Settings by itself (Space does, see `settings_by_space`).
     pub settings_by_hold: bool,
-    /// Pressing Space while the pie is open opens Settings.
+    /// Pressing Space while a pie is open opens Settings: any ring, submenus and the pie of an
+    /// app included. On by default.
     pub settings_by_space: bool,
     /// How many presses of Space open Settings: 1 or 2 (two must come within half a second).
     pub settings_space_presses: u8,
     pub pie_size: f32,
     pub accent: [u8; 3],
-    /// The colors that replace the ones of the light and of the dark appearance.
+    /// Which look Settings and the Solid pie have: the id of a built-in theme (`sage`, `genz`) or of
+    /// a file of the themes folder (see [`super::store::themes_dir`]). An id that is not there is shown as sage and
+    /// kept, so the theme comes back with its file. Not saved while it is the default.
+    #[serde(skip_serializing_if = "is_default_ui_theme")]
+    pub ui_theme: String,
+    /// The colors that replace the ones of the light and of the dark appearance, laid over the theme.
     #[serde(skip_serializing_if = "ThemeColors::is_default")]
     pub theme: ThemeColors,
     /// Mouse button that opens the pie: 2 = middle, 5/6/7 = extra buttons.
@@ -677,4 +684,11 @@ impl Config {
             self.trail_fan,
         )
     }
+}
+
+/// The theme a fresh install starts with, and the one an unknown id is shown as.
+pub const DEFAULT_UI_THEME: &str = "sage";
+
+fn is_default_ui_theme(id: &String) -> bool {
+    id == DEFAULT_UI_THEME
 }

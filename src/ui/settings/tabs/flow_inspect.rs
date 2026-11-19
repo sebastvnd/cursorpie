@@ -250,10 +250,10 @@ pub(super) fn panel(
         check_flow(flow, &known)
     };
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, PANEL_R, pal().card);
+    painter.rect_filled(rect, panel_r(), pal().card);
     painter.rect_stroke(
         rect,
-        PANEL_R,
+        panel_r(),
         Stroke::new(1.0, pal().border),
         StrokeKind::Inside,
     );
@@ -626,7 +626,7 @@ fn variables_page(ui: &mut egui::Ui, flow: &Flow, ed: &mut Ed, accent: Color32) 
             pal().input
         };
         let p = ui.painter();
-        p.rect_filled(rect, CONTROL_R, fill);
+        p.rect_filled(rect, control_r(), fill);
         let room = count_pills(p, rect, row.writers.len(), row.readers.len());
         let p = p.with_clip_rect(Rect::from_min_max(rect.min, egui::pos2(room, rect.max.y)));
         let mut x = rect.min.x + 12.0;
@@ -748,7 +748,7 @@ fn block_row(
         pal().input
     };
     let p = ui.painter();
-    p.rect_filled(rect, CONTROL_R, fill);
+    p.rect_filled(rect, control_r(), fill);
     fonts::paint_icon(
         p,
         egui::pos2(rect.min.x + 22.0, rect.center().y),

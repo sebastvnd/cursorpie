@@ -1816,10 +1816,10 @@ fn canvas(
         // `screen` paints in the window's own coordinates (background, grid, texts that do not
         // zoom); `painter` below paints in the coordinates of the blocks
         let screen = ui.painter_at(rect);
-        screen.rect_filled(rect, PANEL_R, pal().input);
+        screen.rect_filled(rect, panel_r(), pal().input);
         screen.rect_stroke(
             rect,
-            PANEL_R,
+            panel_r(),
             Stroke::new(1.0, pal().border),
             StrokeKind::Inside,
         );
@@ -2309,8 +2309,8 @@ fn canvas(
             let (icon, title) = kind_info(&flow.nodes[i].kind);
             let color = tint(&flow.nodes[i].kind, accent);
 
-            painter.rect_filled(body_rect, CONTROL_R, pal().card);
-            let r = CONTROL_R_PT;
+            painter.rect_filled(body_rect, control_r(), pal().card);
+            let r = control_r_pt();
             painter.rect_filled(
                 head,
                 egui::CornerRadius {
@@ -2333,7 +2333,7 @@ fn canvas(
             };
             painter.rect_stroke(
                 body_rect,
-                CONTROL_R,
+                control_r(),
                 if selected {
                     Stroke::new(2.0, accent)
                 } else if let Some(c) = flagged {
@@ -2349,7 +2349,7 @@ fn canvas(
                 if r {
                     painter.rect_stroke(
                         body_rect.expand(3.0),
-                        CONTROL_R,
+                        control_r(),
                         Stroke::new(2.5, READS_C),
                         StrokeKind::Middle,
                     );
@@ -2357,7 +2357,7 @@ fn canvas(
                 if w {
                     painter.rect_stroke(
                         body_rect.expand(if r { 7.0 } else { 3.0 }),
-                        CONTROL_R,
+                        control_r(),
                         Stroke::new(2.5, SETS_C),
                         StrokeKind::Middle,
                     );

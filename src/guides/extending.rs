@@ -120,7 +120,8 @@
 //!
 //! 1. Take colors from `pal()` (`pal().bg`, `.card`, `.idle`, `.hot`, ...: Settings is light or
 //!    dark, so never keep a color in a `const`), and radius, spacing and height from
-//!    `ui/settings/theme.rs` (`CONTROL_R`, `PANEL_R`, `GAP`, `CONTROL_H`). Do not write `Color32::from_rgb(..)`, a
+//!    `ui/settings/theme.rs` (`control_r()`, `panel_r()`, `GAP`, `CONTROL_H`; outlines and shadows through
+//!    `paint_control` and `shape()`: a theme sets them). Do not write `Color32::from_rgb(..)`, a
 //!    corner radius or a pixel height in an editor. Text on the accent color uses
 //!    `on_accent(accent)`, because the user picks the accent and it can be light.
 //! 2. Every button, chip, input and list row is `CONTROL_H` (36) high, and spacing is `GAP` (12) or

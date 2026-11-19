@@ -224,8 +224,10 @@ Merges, reverts, `Release ...` commits and `fixup!` or `squash!` commits are not
   it, pass events through when unsure, release the gesture lock before sending messages, and keep the lock order
   *gesture, then config, then side state*.
 - **Keep the Settings look consistent.** Colors, corner radii and spacing come from `src/ui/settings/theme.rs`
-  (controls are 32 px high, the gap is 8 px), controls from `src/ui/settings/widgets.rs` (see `guides::extending`
-  and `docs/developer/UI_DESIGN.md`). No emoji on buttons.
+  (`CONTROL_H` is the height of every control, `GAP` the space between them), controls from
+  `src/ui/settings/widgets.rs` (see `guides::extending` and `docs/developer/UI_DESIGN.md`). A widget reads colors
+  from `pal()` and radii, outlines and shadows from `shape()`; it never writes one itself and never branches on the
+  theme, so a fix to a widget reaches every theme. No emoji on buttons.
 - **Keep drawing sharp.** Never push a hand-made `egui::Mesh` for something with an edge: use
   `ui::draw::ring_slice` (anti-aliased) or an egui shape. Drive animations with `ui::draw::step_linear` plus one
   easing curve, not by feeding an exponential through an easing function. Test the geometry and math you add (see

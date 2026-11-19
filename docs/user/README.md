@@ -11,6 +11,7 @@ Everything about installing and using CursorPie. Developers: see the [developer 
 | [Trackpad hold](trackpad.md) | Opening the pie with a trackpad on macOS, Windows and Linux |
 | [Flows](flows.md) | Chains of steps drawn in the node editor |
 | [Settings and backups](settings.md) | Every Settings tab, undo, backups, sharing, memory use |
+| [Themes](themes.md) | The Sage and Gen Z themes, and how to make your own with a small `.json` file |
 | [CursorPie on Linux](linux.md) | X11 (pre-stable), Wayland (experimental), setup per compositor |
 | [Configuration](configuration.md) | `config.json`: location, structure and every field |
 | [Updates](updates.md) | The daily check and the one-click install |

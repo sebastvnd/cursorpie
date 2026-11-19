@@ -39,7 +39,7 @@ pub(super) fn handle(
     match (kind, &*g) {
         (Kind::Down, _) => on_press(state, notifier, g, p, button, Press::mouse()),
         (Kind::Drag, Gesture::Pending { .. }) => {
-            on_drag_pending(notifier, g, replay_drag, p, button, flick)
+            on_drag_pending(state, notifier, g, replay_drag, p, button, flick)
         }
         (Kind::Drag, Gesture::ActivePie { .. }) => on_drag_in_pie(notifier, g, p),
         (Kind::Up, Gesture::Pending { .. }) => on_release_pending(state, g, button),
@@ -193,6 +193,7 @@ fn on_press<'a>(
                 profile: ap,
                 path: Vec::new(),
             });
+            watch_pointer(state, notifier, id, source);
             return Verdict::Drop; // no "open Settings" timer for an app pie
         }
         late = Some(first); // too late: the first click still has to reach the app
@@ -300,6 +301,7 @@ fn hold_open_pie(st: &Arc<Mutex<Gesture>>, n: &Notifier, id: u64, pie_ms: u64, s
     if source == Source::Touch {
         haptic::emit(n, Tick::Open);
     }
+    watch_pointer(st, n, id, source);
     // "Hold to open settings" is off: the pie stays what it is until the button is released
     if !cfg().settings_by_hold {
         return;
@@ -511,6 +513,7 @@ fn replay_first_click(st: &Arc<Mutex<Gesture>>, id: u64, button: i64, waited_ms:
 /// Moved while pressed, before the pie opened: either a real drag (hand it back to the app) or,
 /// with "flick" enabled, a request to open the pie instantly.
 fn on_drag_pending(
+    state: &Arc<Mutex<Gesture>>,
     notifier: &Notifier,
     mut g: MutexGuard<'_, Gesture>,
     replay_drag: &dyn Fn(),
@@ -552,6 +555,7 @@ fn on_drag_pending(
                 profile,
                 path: Vec::new(),
             });
+            watch_pointer(state, notifier, id, source);
         } else {
             // a real drag: hand the gesture back to the app (e.g. panning)
             *g = Gesture::Passthrough;
@@ -561,6 +565,57 @@ fn on_drag_pending(
         }
     }
     Verdict::Drop
+}
+
+/// How often the pointer is read while the pie of a mouse press is open on Windows.
+#[cfg(windows)]
+const POINTER_POLL: Duration = Duration::from_millis(16);
+
+/// Windows: while the pie of a mouse press is open, the pointer is also read on a timer and fed to
+/// the same hover code that the moves of the mouse hook feed.
+///
+/// The hover used to depend only on `WM_MOUSEMOVE` reaching the low-level hook. Windows drops a
+/// move when the hook is late (a busy machine, the first press after a long idle time) and removes
+/// the hook altogether when a callback times out; until the watchdog has installed it again (it
+/// only looks every few seconds) the pointer moved and no slice was ever chosen. Reading the
+/// pointer here makes the pie follow it whatever the hook delivered. It is cheap (a read of the
+/// cursor position, the hover code only does something when the slice changes) and ends by itself
+/// as soon as the gesture is no longer this pie. A trackpad hold has a watcher of its own
+/// (`touch::watch_pointer`), and the other systems do not need one.
+#[cfg(windows)]
+fn watch_pointer(st: &Arc<Mutex<Gesture>>, n: &Notifier, id: u64, source: Source) {
+    if source != Source::Mouse {
+        return;
+    }
+    let (st, n) = (Arc::clone(st), n.clone());
+    // if no timer can be started the hook alone aims the pie, as before
+    let _ = super::timers::after(POINTER_POLL, move || pointer_tick(st, n, id, None));
+}
+
+#[cfg(not(windows))]
+fn watch_pointer(_st: &Arc<Mutex<Gesture>>, _n: &Notifier, _id: u64, _source: Source) {}
+
+/// One step of [`watch_pointer`]: when the pie of mouse gesture `id` is still open, the pointer
+/// (if it moved since `last`) aims it, and the next step is set.
+#[cfg(windows)]
+fn pointer_tick(st: Arc<Mutex<Gesture>>, n: Notifier, id: u64, last: Option<(f64, f64)>) {
+    let g = lock(&st);
+    let ours = matches!(
+        &*g,
+        Gesture::ActivePie { id: cur, source: Source::Mouse, .. } if *cur == id
+    );
+    if !ours {
+        return; // released, replaced by another press, or turned into Settings
+    }
+    let now = crate::platform::cursor_pos();
+    match now {
+        Some((x, y)) if now != last => {
+            on_drag_in_pie(&n, g, Point::new(x, y));
+        }
+        _ => drop(g),
+    }
+    let (st2, n2) = (Arc::clone(&st), n.clone());
+    let _ = super::timers::after(POINTER_POLL, move || pointer_tick(st2, n2, id, now));
 }
 
 /// Trail ("web") mode: the centers of the rings that were left to open a submenu, outermost first.

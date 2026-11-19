@@ -50,6 +50,7 @@ mod run_report;
 mod state;
 mod tabs;
 pub mod theme;
+mod theme_picker;
 mod undo;
 mod update_dialog;
 mod wayland_keys;

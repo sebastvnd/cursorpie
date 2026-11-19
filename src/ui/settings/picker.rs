@@ -4,7 +4,7 @@
 //! beside it. While one is open Settings is dimmed and ignores input ([`waiting_scrim`]), a second
 //! chooser cannot be started, and a press of the trigger does not pull Settings over the chooser.
 
-use super::theme::{CARD_RADIUS, pal};
+use super::theme::{card_radius, pal};
 use crate::msg::Msg;
 use crate::platform::{self, FileKind};
 use eframe::egui;
@@ -151,7 +151,7 @@ pub(super) fn waiting_scrim(ctx: &egui::Context, bounds: egui::Rect) {
         .constrain(false)
         .show(ctx, |ui| {
             ui.allocate_rect(bounds, egui::Sense::click_and_drag());
-            ui.painter().rect_filled(bounds, CARD_RADIUS, pal().scrim);
+            ui.painter().rect_filled(bounds, card_radius(), pal().scrim);
             // a pill under the words: the dimmed window shows through the scrim, and its text would
             // run into the words
             let galley = ui.painter().layout_no_wrap(

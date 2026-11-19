@@ -150,7 +150,7 @@ fn soft_area(ui: &mut egui::Ui, size: Vec2, sense: egui::Sense) -> (Rect, egui::
     } else {
         pal().idle
     };
-    ui.painter().rect_filled(rect, CONTROL_R, fill);
+    ui.painter().rect_filled(rect, control_r(), fill);
     (rect, resp)
 }
 
@@ -208,7 +208,7 @@ fn profile_chip(
                 let on = i == ed.profile;
                 if r.hovered() || on {
                     let fill = if on { wash(accent, 0.10) } else { pal().idle };
-                    ui.painter().rect_filled(row, CONTROL_R, fill);
+                    ui.painter().rect_filled(row, control_r(), fill);
                 }
                 let a = Rect::from_center_size(
                     Pos2::new(row.min.x + 12.0 + 15.0, row.center().y),
@@ -575,7 +575,7 @@ fn pick_app_sheet(
                         );
                         let inner = row.shrink2(Vec2::new(0.0, 2.0));
                         if resp.hovered() && !taken {
-                            ui.painter().rect_filled(inner, CONTROL_R, pal().idle);
+                            ui.painter().rect_filled(inner, control_r(), pal().idle);
                         }
                         let icon = Rect::from_center_size(
                             Pos2::new(inner.min.x + 12.0 + 18.0, inner.center().y),
@@ -972,7 +972,7 @@ fn apps_sheet(
                         let hot = ui.rect_contains_pointer(tile);
                         ui.painter().rect_filled(
                             tile,
-                            PANEL_R,
+                            panel_r(),
                             if hot { pal().hot } else { pal().idle },
                         );
                         let icon = Rect::from_center_size(
@@ -1027,7 +1027,7 @@ fn apps_sheet(
                     let c = if resp.hovered() { accent } else { pal().border };
                     ui.painter().rect_stroke(
                         tile.shrink(0.75),
-                        PANEL_R,
+                        panel_r(),
                         Stroke::new(1.5, c),
                         egui::StrokeKind::Inside,
                     );

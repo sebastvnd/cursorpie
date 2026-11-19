@@ -148,6 +148,11 @@ impl Config {
             self.pie_round = self.pie_round.min(100);
             self.pie_turn = self.pie_turn.min(PIE_TURN_MAX);
         }
+        // an id that cannot be a theme file name (a hand-edited config) is the default theme; one
+        // that is just not there is kept, so the theme is back when its file is
+        if !crate::ui::settings::theme::registry::is_valid_id(&self.ui_theme) {
+            self.ui_theme = super::DEFAULT_UI_THEME.to_owned();
+        }
         // the blue of earlier versions was the old default; it is the one that hurt the eyes
         if self.accent == OLD_DEFAULT_ACCENT {
             self.accent = Config::default().accent;
@@ -204,9 +209,18 @@ mod tests {
     #[test]
     fn settings_by_hold_and_by_space_default_and_are_clamped() {
         let old = parse(r#"{"version":2}"#);
-        assert!(old.settings_by_hold, "holding opens Settings as before");
-        assert!(!old.settings_by_space);
+        assert!(
+            !old.settings_by_hold,
+            "the hold is off unless it is switched on"
+        );
+        assert!(
+            old.settings_by_space,
+            "Space is the default way into Settings"
+        );
         assert_eq!(old.settings_space_presses, 1);
+        // a file that switched the hold on keeps it, and Space can still be turned off
+        let kept = parse(r#"{"version":2,"settings_by_hold":true,"settings_by_space":false}"#);
+        assert!(kept.settings_by_hold && !kept.settings_by_space);
         let wild = parse(
             r#"{"version":2,"settings_by_hold":false,"settings_by_space":true,"settings_space_presses":9}"#,
         );

@@ -227,6 +227,7 @@
       { file: 'docs/user/trackpad.md', label: 'Trackpad hold', icon: '\ue586' },
       { file: 'docs/user/flows.md', label: 'Flows', icon: '\ue2d8' },
       { file: 'docs/user/settings.md', label: 'Settings and backups', icon: '\ue434' },
+      { file: 'docs/user/themes.md', label: 'Themes', icon: '\ue150' },
       { file: 'docs/user/linux.md', label: 'CursorPie on Linux', icon: '\ue1aa' },
       { file: 'docs/user/updates.md', label: 'Updates', icon: '\ue1a0' },
       { file: 'docs/user/configuration.md', label: 'Configuration', icon: '\ue434' },

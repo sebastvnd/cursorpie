@@ -32,6 +32,7 @@ The site does not contain converted copies of the documentation. It reads the Ma
 - `docs/user/trackpad.md`
 - `docs/user/flows.md`
 - `docs/user/settings.md`
+- `docs/user/themes.md`
 - `docs/user/linux.md`
 - `docs/user/updates.md`
 - `docs/user/configuration.md`
@@ -49,6 +50,9 @@ The site does not contain converted copies of the documentation. It reads the Ma
 - `docs/developer/OTHER_DESKTOPS.md`
 - `docs/developer/UI_DESIGN.md`
 - `docs/developer/TRACKPAD_HAPTICS_PLAN.md`
+- `docs/developer/BROWSER_BRIDGE.md`
+- `docs/developer/UPDATES_TESTING.md`
+- `docs/developer/OPEN_URL_CHOICE.md`
 - `CONTRIBUTING.md`
 - `CHANGELOG.md`
 - `README.md`

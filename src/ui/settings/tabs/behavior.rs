@@ -19,6 +19,7 @@ use crate::ui::pie::Material;
 use crate::ui::settings::demo;
 use crate::ui::settings::state::BehaviorPage;
 use crate::ui::settings::theme::*;
+use crate::ui::settings::theme_picker::{theme_files, theme_picker};
 use crate::ui::settings::widgets::*;
 use crate::ui::symbols;
 use eframe::egui::{self, Color32, Vec2};
@@ -200,7 +201,7 @@ impl App {
                 ui,
                 &mut cfg.settings_by_hold,
                 "Open settings by holding",
-                "Keep the trigger held in the center of the pie to open Settings. Off: the pie never turns into Settings by itself.",
+                "Keep the trigger held in the center of the pie to open Settings. Only the top ring of the pie that a hold opened counts. Off by default: use Space instead.",
                 accent,
             );
             ui.add_enabled_ui(cfg.settings_by_hold, |ui| {
@@ -217,7 +218,7 @@ impl App {
                 ui,
                 &mut cfg.settings_by_space,
                 "Open settings with Space",
-                "Press Space while the pie is open. The key is not sent to the app under the pie. Handy when holding to open settings is off.",
+                "Press Space while a pie is open: any ring, a submenu or the pie of an app. The key is not sent to the app under the pie.",
                 accent,
             );
             ui.add_enabled_ui(cfg.settings_by_space, |ui| {
@@ -350,6 +351,14 @@ impl App {
                     cfg.appearance = modes[i].0;
                 }
             });
+            row_wide(
+                ui,
+                "Theme",
+                "The look of Settings. Make your own in the themes folder.",
+                400.0,
+                |ui| theme_picker(ui, &mut cfg.ui_theme, &mut cfg.accent, accent),
+            );
+            theme_files(ui);
             slider_row(
                 ui,
                 "Pie size",
@@ -374,20 +383,20 @@ impl App {
                 },
             );
             row_wide(ui, "Page background", "Behind the panels.", 260.0, |ui| {
-                swatch_picker(ui, &mut mode.page, PAGES[at])
+                swatch_picker(ui, &mut mode.page, swatches().pages[at])
             });
             row_wide(ui, "Panels", "The cards and popups.", 260.0, |ui| {
-                swatch_picker(ui, &mut mode.panel, PANELS[at])
+                swatch_picker(ui, &mut mode.panel, swatches().panels[at])
             });
             row_wide(
                 ui,
                 "Sidebar",
                 "The column with the sections.",
                 260.0,
-                |ui| swatch_picker(ui, &mut mode.sidebar, SIDEBARS[at]),
+                |ui| swatch_picker(ui, &mut mode.sidebar, swatches().sidebars[at]),
             );
             row_wide(ui, "Text", "Kept readable on every surface.", 260.0, |ui| {
-                swatch_picker(ui, &mut mode.text, TEXTS[at])
+                swatch_picker(ui, &mut mode.text, swatches().texts[at])
             });
             toggle_row(
                 ui,
@@ -1158,7 +1167,7 @@ fn hud_preview(ui: &mut egui::Ui, cfg: &Config) {
         egui::Sense::hover(),
     );
     let painter = ui.painter().with_clip_rect(rect);
-    painter.rect_filled(rect, CONTROL_R, pal().bg);
+    painter.rect_filled(rect, control_r(), pal().bg);
     let note = HudNote::new(HudKind::App, "Open app", "Safari");
     hud::paint_pill(&painter, rect.center(), &note, &hud::PillLook::at_rest(cfg));
 }

@@ -324,8 +324,10 @@ impl Config {
             ],
             pie_hold_ms: 150,
             settings_hold_ms: 1200,
-            settings_by_hold: true,
-            settings_by_space: false,
+            // Space is the way into Settings (it works in every ring, in submenus and in the pie of
+            // an app); the old hold in the center is still there, but off until it is switched on
+            settings_by_hold: false,
+            settings_by_space: true,
             settings_space_presses: 1,
             pie_size: 200.0,
             accent: [90, 120, 94],
@@ -369,6 +371,7 @@ impl Config {
             show_labels: false,
             sleep_after_s: 60,
             appearance: Appearance::System,
+            ui_theme: super::DEFAULT_UI_THEME.to_owned(),
             pie_style: PieStyle::GenZ,
             glass_clear: 60,
             glass_frost: 45,
@@ -495,6 +498,11 @@ mod tests {
         );
         assert_eq!(c.pie_hold_ms, 150);
         assert_eq!(c.settings_hold_ms, 1200);
+        assert!(
+            c.settings_by_space && !c.settings_by_hold,
+            "Space opens Settings by default, the hold is off"
+        );
+        assert_eq!(c.settings_space_presses, 1);
         assert_eq!(c.pie_size, 200.0);
         assert_eq!(c.accent, [90, 120, 94]);
         assert_eq!(c.trigger_button, 2);

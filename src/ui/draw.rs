@@ -324,7 +324,7 @@ pub fn set_dark(on: bool) {
 }
 
 /// The colors of the pie in one appearance.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PieColors {
     /// A slice at rest. The hovered slice blends toward the accent.
     pub slice: [u8; 3],
@@ -342,30 +342,18 @@ pub fn pie_colors() -> PieColors {
     pie_colors_for(dark())
 }
 
-/// The pie colors of one appearance, whatever the interface is showing right now.
+/// The pie colors of one appearance, whatever the interface is showing right now, in the theme in
+/// use (see [`ui::settings::theme`](crate::ui::settings::theme)).
 pub fn pie_colors_for(dark: bool) -> PieColors {
-    if dark {
-        PieColors {
-            slice: [47, 51, 49],
-            ghost: [37, 41, 39],
-            ink: Color32::from_rgb(244, 244, 239),
-            core: Color32::from_rgb(31, 34, 32),
-        }
-    } else {
-        PieColors {
-            slice: [255, 254, 250],
-            ghost: [238, 238, 229],
-            ink: Color32::from_rgb(41, 54, 47),
-            core: Color32::from_rgb(255, 254, 250),
-        }
-    }
+    crate::ui::settings::theme::pie_colors_of(dark)
 }
 
 /// The colors of the glass pie. Glass is always smoked, in the light appearance too: frosted
 /// white glass over a light page has nothing to catch the light against and looks washed out,
 /// which is not how Liquid Glass looks.
 pub fn glass_colors() -> PieColors {
-    pie_colors_for(true)
+    // the smoked graphite of sage, in every theme: glass is a material, not a theme
+    crate::ui::settings::theme::SAGE_PIE[1]
 }
 
 /// The colors of the Gen Z pie: white slices and near-black ink, as on the website. They are the

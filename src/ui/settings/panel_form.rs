@@ -8,7 +8,7 @@
 //! header and the buttons stay in place, and the widgets between them scroll when there are more
 //! than the display holds. Every height used here comes from the same constants.
 
-use super::theme::{CARD_RADIUS, CONTROL_R, pal, wash, window_outline, window_shadow};
+use super::theme::{card_radius, control_r, pal, wash, window_outline, window_shadow};
 use super::widgets::{
     Look, accent_picker, button_frame_r, fit_galley, icon_button_look, select_capped, slider,
     text_field, text_font,
@@ -164,8 +164,8 @@ fn paint(
         v.selection.stroke = Stroke::new(1.5, accent);
     }
     let painter = ui.painter().clone();
-    painter.add(window_shadow().as_shape(card, CARD_RADIUS));
-    painter.rect_filled(card, CARD_RADIUS, pal().card);
+    painter.add(window_shadow().as_shape(card, card_radius()));
+    painter.rect_filled(card, card_radius(), pal().card);
     window_outline(&painter, card, accent);
 
     let mut event = Event::None;
@@ -622,7 +622,7 @@ fn action_button(
 ) -> egui::Response {
     let resp = ui.interact(rect, id, Sense::click());
     // how round: what the button says (never more than half its height), else the usual
-    let radius = radius.map_or(crate::ui::settings::theme::CONTROL_R, |r| {
+    let radius = radius.map_or(crate::ui::settings::theme::control_r(), |r| {
         egui::CornerRadius::same(r.min((rect.height() / 2.0).floor() as u8))
     });
     let fg = button_frame_r(ui, rect, &resp, look, radius);
@@ -1300,9 +1300,9 @@ fn option_row(
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::click());
     let p = ui.painter();
     if on {
-        p.rect_filled(rect, CONTROL_R, wash(accent, 0.14));
+        p.rect_filled(rect, control_r(), wash(accent, 0.14));
     } else if resp.hovered() {
-        p.rect_filled(rect, CONTROL_R, pal().idle);
+        p.rect_filled(rect, control_r(), pal().idle);
     }
     let mark_w = 30.0;
     let max_w = (rect.width() - 14.0 - mark_w).max(20.0);
