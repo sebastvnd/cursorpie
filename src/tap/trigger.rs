@@ -568,8 +568,31 @@ fn on_drag_pending(
 }
 
 /// How often the pointer is read while the pie of a mouse press is open on Windows.
-#[cfg(windows)]
 const POINTER_POLL: Duration = Duration::from_millis(16);
+
+/// Whether the pointer is read on a timer while the pie of a mouse press is open: on Windows, where
+/// the hook can miss moves (see [`watch_pointer`]). The code is compiled and tested on every system,
+/// so that a change to it is checked wherever the tests run, not only on a Windows machine.
+const POLL_POINTER: bool = cfg!(windows) || cfg!(test);
+
+/// Where the pointer is now. The system's, except in tests: a test that opens a pie with made-up
+/// positions must not hear the real pointer of the machine it runs on (on a CI runner it sits
+/// wherever the desktop left it, and the timer would aim the pie at it), so there it is whatever
+/// the test put in `TEST_POINTER`, and nowhere by default.
+fn read_pointer() -> Option<(f64, f64)> {
+    #[cfg(test)]
+    {
+        *TEST_POINTER.lock().unwrap_or_else(|e| e.into_inner())
+    }
+    #[cfg(not(test))]
+    {
+        crate::platform::cursor_pos()
+    }
+}
+
+/// The pointer of the tests (see [`read_pointer`]).
+#[cfg(test)]
+static TEST_POINTER: Mutex<Option<(f64, f64)>> = Mutex::new(None);
 
 /// Windows: while the pie of a mouse press is open, the pointer is also read on a timer and fed to
 /// the same hover code that the moves of the mouse hook feed.
@@ -582,9 +605,8 @@ const POINTER_POLL: Duration = Duration::from_millis(16);
 /// cursor position, the hover code only does something when the slice changes) and ends by itself
 /// as soon as the gesture is no longer this pie. A trackpad hold has a watcher of its own
 /// (`touch::watch_pointer`), and the other systems do not need one.
-#[cfg(windows)]
 fn watch_pointer(st: &Arc<Mutex<Gesture>>, n: &Notifier, id: u64, source: Source) {
-    if source != Source::Mouse {
+    if !POLL_POINTER || source != Source::Mouse {
         return;
     }
     let (st, n) = (Arc::clone(st), n.clone());
@@ -592,12 +614,8 @@ fn watch_pointer(st: &Arc<Mutex<Gesture>>, n: &Notifier, id: u64, source: Source
     let _ = super::timers::after(POINTER_POLL, move || pointer_tick(st, n, id, None));
 }
 
-#[cfg(not(windows))]
-fn watch_pointer(_st: &Arc<Mutex<Gesture>>, _n: &Notifier, _id: u64, _source: Source) {}
-
 /// One step of [`watch_pointer`]: when the pie of mouse gesture `id` is still open, the pointer
 /// (if it moved since `last`) aims it, and the next step is set.
-#[cfg(windows)]
 fn pointer_tick(st: Arc<Mutex<Gesture>>, n: Notifier, id: u64, last: Option<(f64, f64)>) {
     let g = lock(&st);
     let ours = matches!(
@@ -607,7 +625,7 @@ fn pointer_tick(st: Arc<Mutex<Gesture>>, n: Notifier, id: u64, last: Option<(f64
     if !ours {
         return; // released, replaced by another press, or turned into Settings
     }
-    let now = crate::platform::cursor_pos();
+    let now = read_pointer();
     match now {
         Some((x, y)) if now != last => {
             on_drag_in_pie(&n, g, Point::new(x, y));
@@ -1010,6 +1028,94 @@ mod tests {
             }
         }
         false
+    }
+
+    /// Puts the factory config in place for a test and the live one back afterwards: the hover
+    /// depends on the pie, and the live config is the one of whoever runs the test.
+    struct FactoryConfig(crate::config::Config);
+
+    impl FactoryConfig {
+        fn set() -> Self {
+            let mut c = crate::config::cfg();
+            let saved = c.clone();
+            *c = crate::config::Config::default();
+            Self(saved)
+        }
+    }
+
+    impl Drop for FactoryConfig {
+        fn drop(&mut self) {
+            *crate::config::cfg() = self.0.clone();
+            *TEST_POINTER.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        }
+    }
+
+    fn put_pointer(p: Option<(f64, f64)>) {
+        *TEST_POINTER.lock().unwrap_or_else(|e| e.into_inner()) = p;
+    }
+
+    /// Whether a `Hover` message arrives within `within_ms`.
+    fn hovered(rx: &mpsc::Receiver<Msg>, within_ms: u64) -> Option<Option<usize>> {
+        let end = Instant::now() + Duration::from_millis(within_ms);
+        while let Some(left) = end.checked_duration_since(Instant::now()) {
+            if let Ok(Msg::Hover(h)) = rx.recv_timeout(left) {
+                return Some(h);
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn the_pointer_timer_aims_the_pie_with_no_event_from_the_hook() {
+        let _serial = super::super::TEST_SERIAL
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _config = FactoryConfig::set();
+        let (st, n, rx) = setup(21);
+        // 100 points to the right of the center of the pie
+        put_pointer(Some((110.0, 10.0)));
+        watch_pointer(&st, &n, 21, Source::Mouse);
+        let hover = hovered(&rx, 5000);
+        assert!(
+            hover.is_some(),
+            "the timer read the pointer and aimed the pie"
+        );
+        assert_ne!(hover, Some(None), "the pointer is over a slice");
+        // the pointer back on the center: nothing is chosen
+        put_pointer(Some((10.0, 10.0)));
+        assert_eq!(hovered(&rx, 5000), Some(None));
+        // the gesture ends: so does the timer
+        *lock(&st) = Gesture::Idle;
+        std::thread::sleep(Duration::from_millis(60));
+        while rx.try_recv().is_ok() {}
+        put_pointer(Some((110.0, 10.0)));
+        assert_eq!(hovered(&rx, 150), None, "no gesture, no aiming");
+    }
+
+    #[test]
+    fn the_pointer_timer_hears_nothing_where_the_test_put_no_pointer() {
+        let _serial = super::super::TEST_SERIAL
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _config = FactoryConfig::set();
+        let (st, n, rx) = setup(22);
+        put_pointer(None); // the real pointer of the machine is never read
+        watch_pointer(&st, &n, 22, Source::Mouse);
+        assert_eq!(hovered(&rx, 200), None);
+        *lock(&st) = Gesture::Idle;
+        std::thread::sleep(Duration::from_millis(60));
+    }
+
+    #[test]
+    fn a_trackpad_pie_has_no_pointer_timer_of_this_kind() {
+        let _serial = super::super::TEST_SERIAL
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _config = FactoryConfig::set();
+        let (st, n, rx) = setup(23);
+        put_pointer(Some((110.0, 10.0)));
+        watch_pointer(&st, &n, 23, Source::Touch); // the trackpad has its own watcher
+        assert_eq!(hovered(&rx, 200), None);
     }
 
     #[test]
