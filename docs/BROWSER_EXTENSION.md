@@ -19,6 +19,10 @@ This page is the manual of those commands. How the extension is installed and ho
    folder *Show the extension files* opens. Firefox forgets a temporary add-on when it closes, so there it still has to be
    loaded again after a restart of Firefox. The one exception is the update that first brings this: the extension that is
    loaded then is the old code, which does not know the request, so reload it by hand that once.
+   In Settings the same thing is one button per installed browser (*Set up in Chrome*, or *Add to Chrome* once the
+   extension is in the store): it writes the files, opens the extensions page of that browser and the folder.
+   **Updates.** A folder copy is kept current by CursorPie (above). A copy from a store is updated by the store, on
+   its own schedule, so it can be a little behind or ahead of the app: only an *older* one is reported as outdated.
 3. Make a slice: *+ Add item* > *Custom* > **Browser** (or change the kind of any slice to *Browser*). Choose a command in
    the list, for example *Media: Next track*. Commands that take text show a field beside the list.
 4. Open YouTube (or Spotify, SoundCloud...) in the browser, start a song, and use the slice.
@@ -264,6 +268,28 @@ Notify            Paused on {{where}}
 ```
 
 Flows can also be written as JSON (`docs/FLOWS_FOR_AI.md`): `{"Native": {"op": "Browser", "a": "media.state", "b": "state"}}`.
+
+## Flow Hub: installing flows from the website
+
+The **Flow Hub** page of the website (`https://sebastvnd.github.io/cursorpie/flowhub/`) lists ready-made flows. Its
+**Install** button uses this extension:
+
+1. The page asks the extension (a content script that runs on that page only) whether CursorPie is there and may
+   take a flow. The app answers over the same link as everything else.
+2. If so, the button says **Install**. Press it and the page sends the text of the flow file to CursorPie.
+3. CursorPie reads it like **Import** (same limits and repairs), shows a panel with the flow's name and what it can
+   do (run shell commands, change files, send messages or close tabs), and asks. **Nothing is added before you press
+   Install.** The flow is added as a **new** flow and only runs when you give it to a slice.
+4. If the extension is missing, CursorPie is not running, or *Let Flow Hub install flows* is off (Settings >
+   Behavior), the button says **Download** and saves the `.json` file; import it in Settings > Flow.
+
+Only the Flow Hub page can use this: the extension's content script is limited to
+`https://sebastvnd.github.io/cursorpie/flowhub/*`, and the background script checks the address of the sender again.
+The page learns whether the extension and the app are there; it learns nothing of yours. If the website moves to
+another address, change it in both manifests and in `HUB_PAGE` of `background.js` (a test keeps the three equal).
+
+For now only the author adds flows to the catalog (`flowhub/catalog.json`, files in `flowhub/flows/`; run
+`python3 scripts/flowhub-check.py` before a commit).
 
 ## What you see
 

@@ -2,6 +2,160 @@
 
 ## Unreleased
 
+## 0.9.0
+
+- **Fixed: the pie did not appear over an app in full screen (macOS).** An app in full screen lives in a Space of its
+  own, and a window is drawn there only if it says so. The pie window (also the notices and panels) now joins every
+  Space, may sit beside a full-screen window and is raised above the Dock while it is shown, so the pie opens over a
+  full-screen browser, editor or game window instead of behind it on the desktop. Settings keeps its normal behavior
+  (one Space, below the system's own panels).
+
+- **Fixed: the pie in the editor drew the names under the icons.** The pie itself shows the name of a slice in the
+  pill, so the Menu tab and the pie editor now draw icons only, like the real pie.
+
+- **Fixed: the pill with the name of the slice no longer moves with the pie.** It sat at the bottom of the pie
+  window, so it changed place with every place the pie was called. While *Show the slice name in a pill* is on, the
+  pie window is now as big as the display for as long as the pie is open (still one window, with the same
+  click-through, always-on-top and focus handling), so the pill stays at the bottom center like a notice (*Notice
+  position* is followed). With the setting off nothing changes: the window is the small one. The big window is made
+  small again as soon as the pie is gone, so no display-sized surface is kept in memory.
+
+- **Changed: the name of a slice is shown in the pill, not under its icon.** *Show the slice name in a pill*
+  (Behavior > Look & feel; it was *Show names under the icons*) no longer writes the name under the icon, which
+  crowded it. The pie and the pill are now on screen together: the pill sits where the notices of actions appear (*Notice position*;
+  kept inside the pie window when that is out of reach) and, with every slice the pointer reaches, swaps its text for the name of that slice and its
+  badge for the icon of that slice, with the animation of the other pills (it comes in on the first slice, the badge
+  bounces on each change, the pill glides to the new width and goes away when the pointer leaves the slices). Icons are
+  centered and a little larger in every case. The pill follows the pie's look (smoked on Glass) and the size set for
+  notices.
+
+- **New: *Reinstall as administrator* on Windows (Settings > About > Administrator mode).** An install for your user
+  cannot send input to windows of programs that run as administrator (Task Manager, an elevated terminal), because
+  Windows blocks it. The new button asks for UAC once, copies CursorPie to `C:\Program Files\CursorPie` (where only
+  administrators can write, so nothing can swap what runs with full rights), adds a machine-wide *Apps & features*
+  entry and a logon task that starts it with administrator rights at every sign-in, and removes the per-user startup
+  entry and folder. *Launch at login* now switches that task's trigger. A copy started without the rights hands over to
+  the installed one instead of running limited next to it, a newer download offers to update the installed copy, and
+  uninstalling asks for UAC and removes the task. If the elevated step fails, a message says why and CursorPie starts
+  again as it was. The notice about a window that runs as administrator now points to this button.
+
+- **Fixed: a copy without administrator rights could start next to one that has them.** The single-instance lock of
+  an elevated copy cannot be opened by a normal one; that refusal was taken for "cannot tell", so both ran and every
+  gesture fired twice. Access denied now counts as "already running".
+
+- **Fixed and improved: the intelligent pie.**
+  - *Kept until you switch it off.* Holding Space now keeps the intelligent pie: closing the pie no longer
+    ends it, and the next presses open it again, until Space is held once more. (Not saved: a restart starts with
+    the normal pie.)
+  - *Sorted into submenus.* The intelligent pie is now grouped by default into **Apps**, **Sites**, **Actions** and
+    **Flows**, each a submenu of suggestions. *Mixed* is still there in Behavior > Intelligent.
+  - *The right icons.* A suggested site shows its own logo (fetched in the background with the lookup of *Icon from
+    a website*, kept as `icons/site-<host>.png`, deleted by *Forget everything*; switch off with *Show the icon of a
+    site*), and the icons of suggested apps are loaded ahead like the ones of any other pie, so the first frame no
+    longer shows placeholders.
+  - *Intelligent slice, easy to add.* New **Intelligent slice** panel (add it to the general pie or to the pie of
+    one app), the same slice under *Add a slice > Custom*, and switching the feature on adds one to the general pie.
+  - *Settings.* *Forget everything* was drawn over its description; the ignore lists now use the app list and a
+    new site list (with icons) instead of a text field.
+
+- **New: intelligent pie and intelligent slices.** Hold Space for about a second in an open pie and it turns into a pie
+  of suggestions made from what you use: the apps you open most and the ones that are open now, the sites you visit
+  most and the pages that are open (with the browser extension), what you run most from the pie in the app in front,
+  and your flows. Hold Space again to come back. A quick press of Space still opens Settings, but on the key-up while
+  the feature is on. A new **Smart** slice kind puts the same suggestions in a submenu of any pie. CursorPie learns
+  from the app in front, the page in view and the actions you run, fades what you stop doing, and tidies and saves
+  while you are idle (or at once with *Learn now*). It is **off until switched on** in Behavior > Intelligent, keeps
+  only sites (never titles or contents) unless you allow paths, has ignore lists, and stores everything in one local
+  file, `smart-habits.json`. See [Intelligent pie](docs/user/intelligent-pie.md).
+
+- **Changed: the loading animation of the website icon sheet sits in the middle.** It was stuck under the address
+  field with the rest of the sheet empty; it now takes the room that is left and centres tile, ring and text in it.
+
+- **Fixed: *Round a square icon* did nothing for claude.ai's icon.** The test for "a full square" wanted every pixel
+  opaque, and the site's picture has a few that are not (its corners). A picture whose pixels are 97% or more opaque is
+  now a tile and gets the rounded corners.
+
+- **Fixed: a website icon that is a full square (claude.ai's orange tile) stayed a sharp square.** Such a picture, with
+  nothing transparent in it, now gets rounded corners like the other icons and no plate around it (*Round a square icon*,
+  on by default, with the Roundness slider). *Trim* no longer cuts a plain background that was not removed, which
+  had cropped a tile down to the logo inside it.
+
+- **Fixed: a website icon on a black square came out as a cropped square.** *Remove plain background* turned itself
+  on for a white square only, so GitHub's icon (a white circle on black) kept its black corners, and trimming then cut
+  the picture right at the circle. It now turns on for a white **or black** square, and removes only the background that
+  reaches the border, so the black cat inside the circle stays.
+
+- **Fixed: "Use website icon" gave nothing, and could blank the icon it had.** The old lookup read the home page
+  whole and gave up on a page bigger than 512 KB (GitHub's is), so it never saw the icon links, and it deleted the
+  site's earlier icon file *before* looking, leaving the slice with a **?** when the lookup failed. The page is now read
+  only as far as its head, nothing is deleted, and the **Use website icon** button opens the *Icon from a website*
+  sheet, with its loading animation and the tools that make site icons look alike. The old `ui::favicon` module is gone.
+
+- **New: icon from a website, with a loading animation and a tidy-up step.** In the icon picker, **+ > From a website…**
+  asks for an address (a slice that opens a link starts with its site, and the fetching starts at once). While CursorPie
+  looks for the icon, the sheet shows a breathing tile with a comet circling it, what is being done (*Reading
+  github.com*, *Downloading the icon (2 of 5)*) and a Cancel button. It reads the home page for `apple-touch-icon` and
+  `rel="icon"` links and tries the biggest first, then `/favicon.ico`; only if the site gives nothing usable does it ask
+  Google's favicon service (the host name is all it is told). The picture is then shown as the site serves it and as it
+  will look on the pie, with controls that make every site icon look alike: *Remove plain background* (turned on by
+  itself for a white square), *Trim the empty border*, *Colour* (original, white or black), *Plate* (none, light or
+  dark rounded square) with *Roundness*, and *Margin*. The look is remembered in `web-icon-style.json`, so the next
+  site starts with it. The result is a 256 px PNG in the icons folder (*Mine*). The request is made by the system's
+  `curl` (or `wget`) like the update check; only `https` is used.
+
+- **New: lock CursorPie with three fingers on the trackpad.** While the pie of a trackpad hold is open, tap with two more
+  fingers together (three on the trackpad in all): the pie turns into a padlock that snaps shut, then a pill says
+  *CursorPie locked*. While locked, a hold opens no pie and shows the same pill instead (after the hold time), so it is
+  clear why. Hold with one finger and tap with two more to unlock: the padlock opens into the pie and the pill says
+  *CursorPie unlocked*. The lock covers the trackpad hold only (the mouse is unaffected), is kept in memory (restarting
+  unlocks), and the click some systems make of a two-finger tap is swallowed. *Lock with three fingers* (Settings >
+  Behavior, on by default; `touch_lock`) turns it off, and two more fingers then close the pie as before. The lock
+  pills show even with the action notice (`hud`) switched off.
+
+- **New: Flow Hub, a page of ready-made flows on the website, with one-tap install.** `flowhub/` of the website lists
+  flows the author wrote (for now only the author adds flows; `flowhub/catalog.json` and `flowhub/flows/`). With the
+  browser extension and CursorPie running, **Install** hands the flow to CursorPie over the existing browser link:
+  the app reads it exactly like **Import**, shows a panel that names the flow and what it can do (shell commands,
+  files, messages) and, only after you press **Install**, adds it as a new flow. Without the extension, or with
+  CursorPie closed or the new setting off, the same button downloads the `.json` file. The extension gets one content
+  script that runs on the Flow Hub page only. *Let Flow Hub install flows* (Settings > Behavior, on by default, needs the
+  browser link) turns it off. `scripts/flowhub-check.py` checks the catalog before a commit.
+  The **New flow** dialog gets a wide *Flow Hub* tile under the three choices: it opens the page and shows whether the
+  extension is connected (so Install will work) or not (the page will download the file).
+
+- **Changed: the theme choice slides, and a change of theme spreads over the window.** In *Behavior > Look & feel* the
+  themes are no longer tiles that wrap into a second row: they are larger cards in one row that fills the panel and
+  slides sideways (drag it, use the trackpad or Shift + wheel, or the two arrows next to the title), with a soft edge
+  where more cards wait and one dot for each theme under it. The chosen card glides to the middle and wears a check.
+  Choosing a theme starts a wave: a disc in the colors of the new theme grows from the card until it fills the
+  window, the theme is swapped under it, and a round hole opens from the same point to uncover the new look. The
+  wave is clipped to the rounded corners of the window.
+- **Changed: the Welcome guide has six pages and asks what you do most.** The guide is now *Welcome*, *How it works*
+  (the gesture next to a small pie that plays it), *About you*, *Your pie*, *Setup* and *All set*. On *About you* a
+  person picks one or several of Everyday, Student, Developer, Designer, Writer and Creator; *Your pie* shows the pie
+  that follows from it. With "Get started" or "Open Settings" the general pie takes those slices and a pie for the
+  apps of the pick (Design, Writing, Editing) is added next to the profiles that exist; Skip and Esc change nothing.
+  The card is larger (900 x 640, at least 720 x 540), the sticker shadows are no longer cut off at the right and
+  bottom edges of a page, and the gaps between cards, rows and buttons are wider.
+- **Changed: Gen Z is the default theme, and Bubblegum ships with the app.** A fresh configuration (and a file that does
+  not name a theme) now starts in **Gen Z**, the look of the website, with its lime accent. **Sage** is still one click
+  away in *Behavior > Look & feel > Theme*, and so is the new built-in **Bubblegum**: Gen Z in candy pink (cotton-candy
+  page, plum outlines, rounder corners, pink accent, a berry-tinted dark appearance). A theme file named `bubblegum.json`
+  (the old docs example) is now skipped with a note, since the name belongs to the built-in theme; the example of the docs
+  is `mint-soda.json` now. A saved choice (`ui_theme`) and a saved accent are kept as they are.
+- **Changed: the Welcome guide follows the Gen Z style of the website.** Ink outlines and hard shadows on the banner,
+  the three gesture cards and the step badges, candy-colored stickers that bob around the logo, a sticker label for
+  each step, pill page dots with an outline, and a card that lifts into color as the gesture is shown. It uses the
+  colors of the theme in use (cream or violet-black, ink or cream outlines), so it reads in both appearances.
+
+- **New: the demo GIFs are in the README, the guides and the website.** Fourteen 720 x 405 animations now live in
+  `docs/gifs/` (see its `README.md` for what each shows and where it is used): the problem hook and the intro at the top
+  of the README, the gesture and its cancel in the README, *Getting started* and *Using the pie*, any action and nested
+  submenus in *Using the pie*, per-app pies and side buttons in *Profiles and mouse buttons*, the trackpad, flows,
+  Settings, themes and sharing, and the platforms in the page each belongs to, and a **See it in motion** section on the
+  landing page that loads each one only when you scroll to it. The folder is excluded from the crate (`Cargo.toml`) and
+  `*.gif` is binary in `.gitattributes`.
+
 ## 0.8.22
 
 - **Windows: the pie does not open over a program that runs as administrator, and nothing said why.** Windows never
@@ -39,7 +193,7 @@
   - **Make your own:** a theme is a small `.json` file in the new `themes/` folder (button *Open themes folder*) that
     extends Sage, Gen Z or another file and lists only what it changes (colors, radii, outlines, shadows). The text is kept
     readable whatever it says, a bad file is skipped with the reason shown, and *Reload themes* picks up edits without a
-    restart. See [Themes](docs/user/themes.md) and `docs/examples/themes/bubblegum.json`.
+    restart. See [Themes](docs/user/themes.md) and `docs/examples/themes/mint-soda.json`.
   - **For developers:** a theme is data (`ui/settings/theme/`: `Theme`, `Shape`, palettes), not drawing code. Widgets
     read colors from `pal()` and radii, outlines and shadows from `shape()`, so a new look needs no copy of any widget.
     `CONTROL_R`, `PANEL_R` and `CARD_RADIUS` (and their `_PT` forms) became the functions `control_r()`, `panel_r()` and

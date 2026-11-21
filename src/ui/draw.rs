@@ -601,8 +601,8 @@ impl Bend {
         }
     }
 
-    /// The points of the rim, once round.
-    fn rim_points(self, c: Pos2, r: f32) -> Vec<Pos2> {
+    /// The points of the rim, once round (public so a halo or a fill can follow the outline too).
+    pub fn rim_points(self, c: Pos2, r: f32) -> Vec<Pos2> {
         let mut round = arc_points(c, r, 0.0, TAU);
         round.pop();
         self.points(c, round)
@@ -655,10 +655,12 @@ mod tests {
     #[test]
     fn glass_is_always_smoked_whatever_the_appearance() {
         let g = glass_colors();
-        let smoked = pie_colors_for(true);
+        // glass is the smoked graphite of sage in every theme (not the dark pie of the theme in use,
+        // which another theme may have made different), and it is not the light pie of sage
+        let smoked = crate::ui::settings::theme::SAGE_PIE[1];
         assert_eq!(g.slice, smoked.slice);
         assert_eq!(g.core, smoked.core);
-        assert_ne!(g.slice, pie_colors_for(false).slice);
+        assert_ne!(g.slice, crate::ui::settings::theme::SAGE_PIE[0].slice);
         // the name and the icon are light and read on the dark slice
         assert!(contrast(g.ink, rgb(g.slice)) >= 7.0);
     }

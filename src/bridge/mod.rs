@@ -17,6 +17,7 @@
 //! * [`commands`]: what a "Browser" action can ask the browser to do (`media.next`, `tab.close`,
 //!   `chat.next_unread`...), see `docs/BROWSER_EXTENSION.md`.
 //! * [`extension`]: the extension files, embedded at build time, and their export.
+//! * [`setup`]: takes the person to the store page or the extensions page of a browser.
 //! * [`install`]: registers the host with the installed browsers (a file, or a registry key).
 //! * [`host`]: the process the browser starts: a relay with no window.
 //! * this file: the server inside the app, the list of connected browsers and their tabs.
@@ -37,6 +38,7 @@ pub mod extension;
 pub mod host;
 pub mod install;
 pub mod proto;
+pub mod setup;
 
 use crate::config::is_web_url;
 use crate::platform::web::{normalize, site_and_path};
@@ -389,6 +391,29 @@ fn on_line(id: u64, line: &str) {
             }
             return;
         }
+        // the website's Flow Hub asks whether the app is there: a quick yes (or why not)
+        FromBrowser::FlowPing { req } => {
+            let (install, reason) = match crate::flowhub::allowed() {
+                Ok(()) => (true, String::new()),
+                Err(why) => (false, why),
+            };
+            if let Some(c) = lock().clients.get(&id) {
+                let _ = send(
+                    c,
+                    &ToBrowser::FlowPong {
+                        req,
+                        install,
+                        reason,
+                    },
+                );
+            }
+            return;
+        }
+        // the website's Flow Hub: the person is asked, so it is answered on a thread of its own
+        FromBrowser::FlowInstall { req, author, flow } => {
+            flow_install(id, req, author, flow);
+            return;
+        }
         other => other,
     };
     if let FromBrowser::Outcome {
@@ -528,6 +553,43 @@ fn panel_request(client: u64, req: u64, spec: serde_json::Value) {
     crate::panel::ask_in_background(spec, source, reply);
 }
 
+/// The extension passes on a flow of the website's Flow Hub (`flow` is the text of the file): the
+/// app reads it, asks the person and tells the extension what became of it. It always answers, so
+/// the page is never left waiting for a refusal.
+fn flow_install(client: u64, req: u64, author: String, flow: String) {
+    diag::log!("bridge", "flow_install", req = req, size = flow.len());
+    let spawned = std::thread::Builder::new()
+        .name("cursorpie-bridge-flowhub".into())
+        .spawn(move || {
+            let answer = crate::flowhub::offer(&author, &flow);
+            diag::log!("bridge", "flow_result", req = req, ok = answer.is_in());
+            let msg = ToBrowser::FlowResult {
+                req,
+                state: answer.state().into(),
+                message: answer.message(),
+            };
+            // the connection may be gone by now (the browser closed): then nobody waits
+            if let Some(c) = lock().clients.get(&client) {
+                let _ = send(c, &msg);
+            }
+            if answer.is_in() {
+                crate::platform::native::notify("CursorPie", &answer.message());
+            }
+        });
+    if spawned.is_err()
+        && let Some(c) = lock().clients.get(&client)
+    {
+        let _ = send(
+            c,
+            &ToBrowser::FlowResult {
+                req,
+                state: "failed".into(),
+                message: "CursorPie could not start the install.".into(),
+            },
+        );
+    }
+}
+
 /// Shows the person what a command said, when the extension asked for it (it follows the
 /// person's option "Notifications" of the extension).
 fn show_result(ok: bool, message: &str, notify: bool) {
@@ -576,7 +638,9 @@ fn apply_message(client: &mut Client, msg: FromBrowser) {
         FromBrowser::Outcome { .. }
         | FromBrowser::Panel { .. }
         | FromBrowser::PanelUpdate { .. }
-        | FromBrowser::PanelClose { .. } => {}
+        | FromBrowser::PanelClose { .. }
+        | FromBrowser::FlowPing { .. }
+        | FromBrowser::FlowInstall { .. } => {}
         FromBrowser::Tabs { tabs } => {
             client.tabs = tabs
                 .into_iter()
@@ -644,6 +708,25 @@ pub fn urls_open(urls: &[String]) -> Option<Vec<bool>> {
         return None;
     }
     Some(urls.iter().map(|u| find_tab(&s, u).is_some()).collect())
+}
+
+/// The web tabs that are open in the connected browsers, as `(address, in view)`, for the
+/// intelligent pie (see [`smart`](crate::smart)). `in view` is true only for the showing tab of the
+/// browser that was heard from last, the one the person is most likely looking at; every other tab
+/// is false, a showing tab of another browser included. Empty while the bridge is off or no browser
+/// is connected. Only addresses: the extension never tells the app a title or a page's content.
+pub fn open_tabs() -> Vec<(String, bool)> {
+    let s = lock();
+    if !s.running {
+        return Vec::new();
+    }
+    let latest = s.clients.values().map(|c| c.seen).max();
+    let mut out = Vec::new();
+    for c in s.clients.values() {
+        let newest = Some(c.seen) == latest;
+        out.extend(c.tabs.iter().map(|t| (t.url.clone(), t.active && newest)));
+    }
+    out
 }
 
 /// Asks the browser that has `url` open to go to that tab and focus its window. Returns the name
@@ -888,7 +971,7 @@ pub fn status() -> Status {
         outdated: s
             .clients
             .values()
-            .filter(|c| c.version != env!("CARGO_PKG_VERSION"))
+            .filter(|c| setup::is_older(&c.version, env!("CARGO_PKG_VERSION")))
             .map(|c| browser_label(&c.browser).to_string())
             .collect(),
     }

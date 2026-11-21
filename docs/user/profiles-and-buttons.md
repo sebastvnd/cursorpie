@@ -13,6 +13,8 @@ CursorPie knows your mouse's extra buttons.
 
 A profile is a pie plus the apps it applies to. Up to 16 profiles are allowed.
 
+<img src="../gifs/06-per-app-profiles.gif" width="720" alt="Per-app profiles">
+
 - Apps are identified by bundle id on macOS (for example `com.apple.Safari`), executable name on Windows (for
   example `chrome.exe`, not case sensitive) and desktop-entry id on Linux (for example `firefox`).
 - There is **exactly one general profile**: the one with **no apps**. It serves every app without a profile of
@@ -24,6 +26,8 @@ A profile is a pie plus the apps it applies to. Up to 16 profiles are allowed.
   - *Classic*: hold opens the app's own pie if it has one, otherwise the general pie.
 
 ## Side buttons and app pies
+
+<img src="../gifs/07-mouse-side-buttons.gif" width="720" alt="Back and forward as undo and redo">
 
 An app with its own profile has two pies: its own and the general one. The back and forward buttons follow
 exactly one of them. Each pie shows which one with its ring color: **accent = the side buttons follow this pie,

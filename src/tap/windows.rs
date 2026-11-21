@@ -364,7 +364,7 @@ fn warn_elevated(n: &Notifier, told: &mut Vec<String>) {
     diag::log!("tap", "elevated_front", told = told.len());
     n.send(Msg::Notice(format!(
         "{app} runs as administrator, so Windows does not let CursorPie react in its windows. \
-         Start CursorPie as administrator to use the pie there."
+         Open Settings > About and choose Reinstall as administrator to use the pie there."
     )));
 }
 

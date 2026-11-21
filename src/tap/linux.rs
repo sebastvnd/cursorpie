@@ -215,7 +215,7 @@ fn run(state: Arc<Mutex<Gesture>>, notifier: Notifier) {
 /// Whether key events are wanted: the typing guard of the trackpad hold, and Space to open Settings.
 fn keys_wanted() -> bool {
     let c = cfg();
-    c.touch_trigger || c.settings_by_space
+    c.touch_trigger || c.settings_by_space || c.smart.enabled
 }
 
 /// Installs the grabs and handles events. Returns only if the trigger button could not be grabbed.

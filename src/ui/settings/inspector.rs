@@ -67,11 +67,12 @@ fn section_label(ui: &mut egui::Ui, text: &str) {
     ui.label(fonts::title(text, 13.0, pal().muted));
 }
 
-/// Initial kind for the kind control: 0 = mode, 1 = run, otherwise submenu.
+/// Initial kind for the kind control: 0 = mode, 1 = run, 3 = intelligent, otherwise submenu.
 fn default_kind(k: usize) -> ItemKind {
     match k {
         0 => presets().remove(0).kind,
         1 => ItemKind::Run(Action::Key(Shortcut::new(key::F13, 0))),
+        3 => ItemKind::Smart(crate::config::SmartSlice::default()),
         _ => ItemKind::Submenu(Vec::new()),
     }
 }
@@ -286,6 +287,15 @@ pub(super) fn item_inspector(
             pick_icon(env, &path);
             ed.picking_icon = false;
         }
+        if r.pick_web {
+            // a slice that opens a link starts with that site
+            let link = match &ring[i].kind {
+                ItemKind::Run(Action::OpenUrl(s)) => s.clone(),
+                _ => String::new(),
+            };
+            ed.web_icon.open_for(&link, env.ctx);
+            ed.picking_icon = false;
+        }
         if let Some(file) = r.delete {
             // one small file: removed here; the UI thread says what it was (and who used it)
             let error = super::icon_catalog::delete_user_icon(&file).err();
@@ -294,6 +304,26 @@ pub(super) fn item_inspector(
         }
         if floating.close {
             ed.picking_icon = false;
+        }
+    }
+
+    // ---- icon from a website: fetched with a loading animation, then tidied to match the others
+    if ed.web_icon.open {
+        let step =
+            super::web_icon::web_icon_sheet(&mut ed.web_icon, env.ctx, env.bounds, env.accent);
+        match step {
+            super::web_icon::Step::Use { file, note } => {
+                let _ = env.tx.send(Msg::IconPicked {
+                    profile: env.profile,
+                    path: path.clone(),
+                    file,
+                    note,
+                });
+                ed.web_icon.close();
+                env.ctx.request_repaint();
+            }
+            super::web_icon::Step::Close => ed.web_icon.close(),
+            super::web_icon::Step::Stay => {}
         }
     }
 
@@ -325,6 +355,8 @@ pub(super) fn item_inspector(
     let mut change_icon = false;
     // "use the icon of the app this slice opens", in this tone (with the app as the action has it)
     let mut use_app_icon: Option<(SliceTone, String)> = None;
+    // "use the icon of the website this slice opens": the web link, as the action has it
+    let mut use_site_icon: Option<String> = None;
 
     let mut body = |ui: &mut egui::Ui| {
         let item = &mut ring[i];
@@ -363,20 +395,27 @@ pub(super) fn item_inspector(
                         ItemKind::Run(_) => 0,
                         ItemKind::Mode { .. } => 1,
                         ItemKind::Submenu(_) => 2,
+                        ItemKind::Smart(_) => 3,
                     };
-                    let mut kinds: Vec<(Option<char>, &str)> = vec![
-                        (Some(symbols::LIGHTNING), "Action"),
-                        (Some(symbols::MOUSE_SIMPLE), "Side buttons"),
+                    // (what the button makes, the button); a ring one level deeper than the limit
+                    // is not offered, unless the slice already is one
+                    let mut kinds: Vec<(usize, Option<char>, &str)> = vec![
+                        (1, Some(symbols::LIGHTNING), "Action"),
+                        (0, Some(symbols::MOUSE_SIMPLE), "Side buttons"),
                     ];
                     if nav.len() + 1 < MAX_DEPTH || now == 2 {
-                        kinds.push((Some(symbols::STACK), "Submenu"));
+                        kinds.push((2, Some(symbols::STACK), "Submenu"));
                     }
-                    if let Some(sel) = segmented(ui, &kinds, now) {
-                        item.kind = match sel {
-                            0 => default_kind(1),
-                            1 => default_kind(0),
-                            _ => default_kind(2),
-                        };
+                    if nav.len() + 1 < MAX_DEPTH || now == 3 {
+                        kinds.push((3, Some(symbols::SPARKLE), "Intelligent"));
+                    }
+                    let buttons: Vec<(Option<char>, &str)> =
+                        kinds.iter().map(|(_, i, l)| (*i, *l)).collect();
+                    let at = kinds.iter().position(|(k, _, _)| *k == now).unwrap_or(0);
+                    if let Some(sel) = segmented(ui, &buttons, at)
+                        && let Some((made, _, _)) = kinds.get(sel)
+                    {
+                        item.kind = default_kind(*made);
                     }
                 }
             });
@@ -413,6 +452,20 @@ pub(super) fn item_inspector(
                         }
                     });
                     muted(ui, "White suits a dark or glass pie, black a light one.");
+                }
+                // a slice that opens a web link can wear the icon of that website, taken from the
+                // site itself (no browser extension) and kept in the icons folder
+                if let Action::OpenUrl(url) = a
+                    && crate::config::is_web_url(url)
+                {
+                    section_label(ui, "Icon of this website");
+                    if button(ui, Look::Soft, Some(symbols::LINK), "Use website icon").clicked() {
+                        use_site_icon = Some(url.trim().to_string());
+                    }
+                    muted(
+                        ui,
+                        "Fetched from the site, tidied to match your other icons, and saved in Mine.",
+                    );
                 }
             }
             ItemKind::Mode {
@@ -470,6 +523,33 @@ pub(super) fn item_inspector(
                 if button(ui, Look::Soft, Some(symbols::CARET_RIGHT), "Edit submenu").clicked() {
                     enter = true;
                 }
+            }
+            ItemKind::Smart(s) => {
+                section_label(ui, "Suggested from your habits");
+                muted(
+                    ui,
+                    "A ring that is made when the pie opens. Choose what it draws from; none chosen means everything that is switched on in Behavior > Intelligent.",
+                );
+                for src in crate::config::SmartSource::ALL {
+                    let on = s.sources.contains(&src);
+                    let look = if on {
+                        Look::Primary(env.accent)
+                    } else {
+                        Look::Soft
+                    };
+                    if button(ui, look, None, src.label()).clicked() {
+                        if on {
+                            s.sources.retain(|x| *x != src);
+                        } else {
+                            s.sources.push(src);
+                            s.sources.sort();
+                        }
+                    }
+                }
+                ui.horizontal(|ui| {
+                    ui.label("Suggestions");
+                    ui.add(egui::DragValue::new(&mut s.count).range(1..=MAX_ITEMS as u8));
+                });
             }
         }
 
@@ -546,6 +626,12 @@ pub(super) fn item_inspector(
                 env.ctx.request_repaint();
             }
         }
+    }
+    if let Some(url) = use_site_icon {
+        // the sheet fetches the icon (with a loading animation) and lets the user tidy it
+        ed.picking_icon = false;
+        ed.web_icon.open_for(&url, env.ctx);
+        env.ctx.request_repaint();
     }
     if change_icon {
         ed.picking_icon = true;

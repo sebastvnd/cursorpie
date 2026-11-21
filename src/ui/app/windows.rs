@@ -145,6 +145,15 @@ impl App {
     /// Puts the window away: hides it.
     pub(crate) fn hide_root(&mut self, ctx: &egui::Context) {
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        if self.pie_full {
+            // The pie of the slice names had the window the size of the display: it is made small
+            // again now, so a display-sized surface (tens of MB on a 4K screen) is not kept while
+            // nothing is shown. The next pie asks for the size it needs.
+            self.pie_full = false;
+            let w = crate::geometry::window_size(self.win);
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize([w, w].into()));
+            platform::release_unused_memory();
+        }
     }
 
     /// Turns the window into a borderless, always-on-top overlay of size `win` with its top-left
@@ -387,6 +396,7 @@ impl App {
         self.ed.tab = if about { Tab::About } else { Tab::Menu };
         self.edit = cfg().clone();
         self.edit.launch_at_login = platform::launch_at_login_enabled();
+        self.ed.admin_mode = platform::admin_mode();
         self.history.reset(&self.edit); // undo starts from what Settings opened with
         self.opened = Some(self.edit.clone()); // what "unsaved" is measured against
 
@@ -524,10 +534,25 @@ impl App {
         crate::config::mark_welcomed();
         // a trackpad found at the first start switched its hold on; this is where it is written
         crate::tap::save_first_start_trackpad();
-        let (apply, login, open_settings) = match &self.welcome {
-            Some(w) => (w.apply, w.launch_at_login, w.open_settings_after),
-            None => (false, false, false),
+        let (apply, login, open_settings, picks) = match &self.welcome {
+            Some(w) => (
+                w.apply,
+                w.launch_at_login,
+                w.open_settings_after,
+                w.picks.clone(),
+            ),
+            None => (false, false, false, Vec::new()),
         };
+        // what the person said they do most shapes the pie: only when the guide was finished, so
+        // Skip and Esc leave the pie as it was
+        if apply && !picks.is_empty() {
+            let snapshot = {
+                let mut c = cfg();
+                config::persona::apply(&mut c, platform::OS, &picks);
+                c.clone()
+            };
+            config::save_config(&snapshot);
+        }
         if apply && login != platform::launch_at_login_enabled() {
             match platform::set_launch_at_login(login) {
                 Ok(()) => {
@@ -698,33 +723,62 @@ impl App {
             drift = drift.min(((screen - base) / 2.0).max(0.0));
         }
         let w = base + 2.0 * drift;
+        // *Show slice names* on: the window is the display for as long as the pie is open, so the
+        // pill of the names can sit at the bottom center of the display like a notice, wherever
+        // the pie was called (see `ui::pie::pill`). Only then, and only while the pie is open:
+        // `hide_root` gives the big surface back. The ring is not at the center of such a window,
+        // it is drawn `pie_off` away from it, the way a submenu is in a window that stands still.
+        let full = if cfg().show_labels {
+            screen_rect_at(self.pie_pos).and_then(|r| {
+                let size = crate::ui::screen::names_window_size(r, scale, base)?;
+                let (cx, cy) =
+                    platform::window_point(f64::from(r.center().x), f64::from(r.center().y));
+                let top_left = egui::pos2(
+                    (cx as f32 - size.x / 2.0).round(),
+                    (cy as f32 - size.y / 2.0).round(),
+                );
+                Some((r.center(), size, top_left))
+            })
+        } else {
+            None
+        };
+        let win_sz = full.map_or(Vec2::splat(w), |(_, size, _)| size);
         // The window of the level that was left is already the right size, undecorated, on top and
         // click-through (or not) for this gesture. Saying it all again made the window manager
         // reconfigure a mapped window (and the drawing surface with it) at every change of level,
         // which is what stalled a frame. Only a window that has to change gets the commands.
-        let same_size = ctx
-            .input(|i| i.viewport().inner_rect)
-            .is_some_and(|r| (r.width() - w).abs() <= 1.0 && (r.height() - w).abs() <= 1.0);
+        let same_size = ctx.input(|i| i.viewport().inner_rect).is_some_and(|r| {
+            (r.width() - win_sz.x).abs() <= 1.0 && (r.height() - win_sz.y).abs() <= 1.0
+        });
         let reuse = relevel && same_size && self.show_wait.is_none();
         // where the ring would be in the window that stands, on whole pixels (a ring on a half
         // pixel is resampled and softens)
         let ppp = ctx.pixels_per_point();
         let off = {
-            let d = (self.pie_pos - self.pie_anchor) * scale;
+            let from = full.map_or(self.pie_anchor, |(center, _, _)| center);
+            let d = (self.pie_pos - from) * scale;
             Vec2::new((d.x * ppp).round() / ppp, (d.y * ppp).round() / ppp)
         };
         let reach =
             crate::geometry::window_size(self.win) / 2.0 + if trail_on { room } else { 0.0 };
         let spare = w / 2.0 - reach - 2.0;
-        let fixed = reuse && off.x.abs() <= spare && off.y.abs() <= spare;
+        let fixed = match full {
+            // the window is the display: it stands while the pie stays on that display
+            Some((_, _, top_left)) => reuse && (top_left - self.pie_origin).abs().max_elem() < 1.0,
+            None => reuse && off.x.abs() <= spare && off.y.abs() <= spare,
+        };
         if fixed {
+            self.pie_off = off;
+        } else if let Some((center, _, _)) = full {
+            self.pie_anchor = center;
             self.pie_off = off;
         } else {
             self.pie_anchor = self.pie_pos;
             self.pie_off = Vec2::ZERO;
         }
+        self.pie_full = full.is_some();
         if !reuse {
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize([w, w].into()));
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(win_sz));
             ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
         }
         // A mouse hold has a button down, so the apps under the pie hear no pointer motion. A
@@ -745,6 +799,8 @@ impl App {
         let (wx, wy) = platform::window_point(x, y);
         let top_left = if fixed {
             self.pie_origin // the window stays where it is
+        } else if let Some((_, _, top_left)) = full {
+            top_left
         } else {
             egui::pos2((wx as f32 - w / 2.0).round(), (wy as f32 - w / 2.0).round())
         };
@@ -753,7 +809,9 @@ impl App {
             "show_pie",
             x = x,
             y = y,
-            win = w,
+            win = win_sz.x,
+            win_h = win_sz.y,
+            names_full = full.is_some(),
             left = top_left.x,
             top = top_left.y,
             ppp = ctx.pixels_per_point(),
@@ -774,7 +832,7 @@ impl App {
         }
         if !self.visible {
             self.visible = true;
-            self.show_window(ctx, Vec2::splat(w));
+            self.show_window(ctx, win_sz);
             if let Some(wait) = self.show_wait.as_mut() {
                 wait.pos = Some(top_left); // asked again once the window is mapped
             }

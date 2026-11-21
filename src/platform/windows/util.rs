@@ -350,6 +350,189 @@ pub fn shell_bgra_to_rgba(px: &mut [u8]) {
     }
 }
 
+// ---------------------------------------------------------------------------- administrator mode
+
+/// Command-line switch of the elevated step of *Reinstall as administrator* (About tab). Only the
+/// program starts itself with it, through the system's question for permission (UAC); the other
+/// switches below belong to it. See [`parse_admin_install`].
+pub const ADMIN_INSTALL_ARG: &str = "--install-admin";
+
+/// The switch that carries the account the logon task is made for.
+const FOR_USER_ARG: &str = "--for-user";
+
+/// The switch that carries the process id of the copy that quits to make room.
+const WAIT_PID_ARG: &str = "--wait-pid";
+
+/// The switch that carries whether the program starts at login (`1`) or not (`0`).
+const LOGIN_ARG: &str = "--login";
+
+/// Folder of the administrator install, below the program folder (`C:\Program Files`). Only
+/// administrators can write there, which is the point: the logon task starts the program with
+/// administrator rights, so a folder that an ordinary program could write to would let it replace
+/// what runs elevated.
+pub fn admin_install_dir(program_files: &str, app_name: &str) -> String {
+    format!(
+        r"{}\{app_name}",
+        program_files.trim_end_matches(['\\', '/'])
+    )
+}
+
+/// Full path of the executable of the administrator install.
+pub fn admin_installed_exe(program_files: &str, app_name: &str) -> String {
+    format!("{}\\{EXE_NAME}", admin_install_dir(program_files, app_name))
+}
+
+/// What the elevated step of *Reinstall as administrator* is asked to do.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AdminInstallRequest {
+    /// The account (`DOMAIN\name`) whose logon starts the program. `None`: the account that runs
+    /// the elevated step.
+    pub user: Option<String>,
+    /// The process that quits to make room: the step waits for it before it replaces files.
+    pub wait_pid: Option<u32>,
+    /// Whether the program starts when the account signs in.
+    pub launch_at_login: bool,
+}
+
+/// The parameters that start the elevated step: `exe --install-admin --for-user "DOMAIN\name"
+/// --wait-pid 1234 --login 1`. A double quote in the account name (there cannot be one) is dropped.
+pub fn admin_install_params(user: &str, wait_pid: u32, launch_at_login: bool) -> String {
+    format!(
+        "{ADMIN_INSTALL_ARG} {FOR_USER_ARG} \"{}\" {WAIT_PID_ARG} {wait_pid} {LOGIN_ARG} {}",
+        user.replace('"', ""),
+        u8::from(launch_at_login)
+    )
+}
+
+/// Reads the elevated step's request from the command line. `args` is `std::env::args()` without
+/// the program name. `None` when the switch is not there. A missing launch flag means yes.
+pub fn parse_admin_install<I: IntoIterator<Item = String>>(args: I) -> Option<AdminInstallRequest> {
+    let args: Vec<String> = args.into_iter().collect();
+    if !args
+        .iter()
+        .any(|a| a.eq_ignore_ascii_case(ADMIN_INSTALL_ARG))
+    {
+        return None;
+    }
+    let value_of = |name: &str| {
+        let at = args.iter().position(|a| a.eq_ignore_ascii_case(name))?;
+        args.get(at + 1).map(|v| v.trim().to_string())
+    };
+    Some(AdminInstallRequest {
+        user: value_of(FOR_USER_ARG).filter(|u| !u.is_empty() && !u.starts_with("--")),
+        wait_pid: value_of(WAIT_PID_ARG).and_then(|p| p.parse().ok()),
+        launch_at_login: value_of(LOGIN_ARG).is_none_or(|v| v != "0"),
+    })
+}
+
+/// `DOMAIN\name` from the two environment variables that name the account (`USERDOMAIN`,
+/// `USERNAME`); just the name when there is no domain. `None` without a name.
+pub fn account_name(domain: Option<&str>, user: Option<&str>) -> Option<String> {
+    let user = user?.trim();
+    if user.is_empty() {
+        return None;
+    }
+    match domain.map(str::trim).filter(|d| !d.is_empty()) {
+        Some(domain) => Some(format!(r"{domain}\{user}")),
+        None => Some(user.to_string()),
+    }
+}
+
+/// Text for the inside of an XML element.
+pub fn xml_escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// The Task Scheduler definition of the logon task of administrator mode, for `schtasks /Create
+/// /XML`: starts `exe --autostart` when `user` signs in, with the highest rights that account has
+/// and without a password (`InteractiveToken`: it runs in the signed-in session).
+///
+/// `at_login` switches the logon trigger on or off while the task itself stays enabled, so
+/// `schtasks /Run` (what starts the program when an ordinary copy is started) always works, and
+/// *Launch at login* in Settings is this one flag. The settings that a task made with the command
+/// line would have are not wanted: the default stops the task after 72 hours, does not start it
+/// on battery and gives it the priority of a background job, which a mouse hook must not have.
+pub fn task_xml(user: &str, exe: &str, dir: &str, at_login: bool) -> String {
+    let (user, exe, dir) = (xml_escape(user), xml_escape(exe), xml_escape(dir));
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Starts CursorPie with administrator rights when you sign in, so the pie also works in windows that run as administrator.</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>{at_login}</Enabled>
+      <UserId>{user}</UserId>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>{user}</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>HighestAvailable</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>false</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>5</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>{exe}</Command>
+      <Arguments>{autostart}</Arguments>
+      <WorkingDirectory>{dir}</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>
+"#,
+        autostart = crate::about::AUTOSTART_ARG,
+    )
+}
+
+/// `text` as the bytes of a UTF-16 (little endian) file with a byte order mark, the form `schtasks
+/// /XML` reads without guessing.
+pub fn utf16le_with_bom(text: &str) -> Vec<u8> {
+    let mut out = vec![0xFF, 0xFE];
+    for unit in text.encode_utf16() {
+        out.extend_from_slice(&unit.to_le_bytes());
+    }
+    out
+}
+
+/// The `cmd.exe` command that deletes `dir` once the program that runs from it has quit: it waits a
+/// moment first (a program cannot delete its own file while it runs). Unlike [`cleanup_command`] it
+/// leaves other copies of the program running.
+pub fn remove_dir_command(dir: &str) -> String {
+    format!("ping -n 4 127.0.0.1 >nul & rmdir /S /Q \"{dir}\"")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -717,5 +900,134 @@ mod tests {
         let mut px = [1, 2, 3, 0, 4, 5, 6, 0];
         shell_bgra_to_rgba(&mut px);
         assert_eq!(px, [3, 2, 1, 255, 6, 5, 4, 255]);
+    }
+
+    #[test]
+    fn the_administrator_install_lives_in_the_program_folder() {
+        assert_eq!(
+            admin_install_dir(r"C:\Program Files\", "CursorPie"),
+            r"C:\Program Files\CursorPie"
+        );
+        assert_eq!(
+            admin_installed_exe(r"C:\Program Files", "CursorPie"),
+            r"C:\Program Files\CursorPie\cursorpie.exe"
+        );
+    }
+
+    #[test]
+    fn the_request_of_the_elevated_step_is_read_back() {
+        let params = admin_install_params(r"PC\Ann Lee", 4242, false);
+        assert_eq!(
+            params,
+            r#"--install-admin --for-user "PC\Ann Lee" --wait-pid 4242 --login 0"#
+        );
+        // what the command line parser of the elevated copy hands to `parse_admin_install`
+        let args = [
+            "--install-admin",
+            "--for-user",
+            r"PC\Ann Lee",
+            "--wait-pid",
+            "4242",
+            "--login",
+            "0",
+        ]
+        .map(String::from);
+        let req = parse_admin_install(args).expect("a request");
+        assert_eq!(req.user.as_deref(), Some(r"PC\Ann Lee"));
+        assert_eq!(req.wait_pid, Some(4242));
+        assert!(!req.launch_at_login);
+    }
+
+    #[test]
+    fn a_request_without_details_asks_for_the_defaults() {
+        let req = parse_admin_install(["--INSTALL-ADMIN".to_string()]).expect("a request");
+        assert_eq!(
+            req,
+            AdminInstallRequest {
+                user: None,
+                wait_pid: None,
+                launch_at_login: true
+            }
+        );
+        // a switch that is not followed by a value, or by a number, gives nothing
+        let args = ["--install-admin", "--for-user", "--wait-pid", "soon"].map(String::from);
+        let req = parse_admin_install(args).expect("a request");
+        assert_eq!((req.user, req.wait_pid), (None, None));
+        // without the switch it is no request, whatever else is there
+        assert_eq!(parse_admin_install(["--for-user".to_string()]), None);
+        assert_eq!(parse_admin_install(Vec::<String>::new()), None);
+    }
+
+    #[test]
+    fn an_account_is_named_with_its_domain_when_it_has_one() {
+        assert_eq!(
+            account_name(Some("PC"), Some("Ann")),
+            Some(r"PC\Ann".into())
+        );
+        assert_eq!(account_name(Some(" "), Some("Ann")), Some("Ann".into()));
+        assert_eq!(account_name(None, Some(" Ann ")), Some("Ann".into()));
+        assert_eq!(account_name(Some("PC"), Some("")), None);
+        assert_eq!(account_name(Some("PC"), None), None);
+    }
+
+    #[test]
+    fn xml_text_is_escaped() {
+        assert_eq!(
+            xml_escape(r#"A&B <c> "d" 'e'"#),
+            "A&amp;B &lt;c&gt; &quot;d&quot; &apos;e&apos;"
+        );
+        assert_eq!(xml_escape("plain"), "plain");
+    }
+
+    #[test]
+    fn the_logon_task_starts_the_program_elevated_for_one_account() {
+        let xml = task_xml(
+            r"PC\Ann & Co",
+            r"C:\Program Files\CursorPie\cursorpie.exe",
+            r"C:\Program Files\CursorPie",
+            true,
+        );
+        assert!(xml.starts_with("<?xml version=\"1.0\" encoding=\"UTF-16\"?>"));
+        assert!(xml.trim_end().ends_with("</Task>"));
+        // the highest rights, in the signed-in session, without a stored password
+        assert!(xml.contains("<RunLevel>HighestAvailable</RunLevel>"));
+        assert!(xml.contains("<LogonType>InteractiveToken</LogonType>"));
+        // for that account only, written so that XML reads it
+        assert_eq!(xml.matches(r"<UserId>PC\Ann &amp; Co</UserId>").count(), 2);
+        assert!(!xml.contains("Ann & Co"));
+        // what it runs, and how
+        assert!(xml.contains(r"<Command>C:\Program Files\CursorPie\cursorpie.exe</Command>"));
+        assert!(xml.contains("<Arguments>--autostart</Arguments>"));
+        // never stopped, never held back on battery, not a background priority
+        assert!(xml.contains("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>"));
+        assert!(xml.contains("<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>"));
+        assert!(xml.contains("<Priority>5</Priority>"));
+        // a second start while it runs is ignored, so a double click cannot make two copies
+        assert!(xml.contains("<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>"));
+    }
+
+    #[test]
+    fn launch_at_login_is_the_flag_of_the_logon_trigger_alone() {
+        let on = task_xml("u", "e.exe", "d", true);
+        let off = task_xml("u", "e.exe", "d", false);
+        assert!(on.contains("<LogonTrigger>\n      <Enabled>true</Enabled>"));
+        assert!(off.contains("<LogonTrigger>\n      <Enabled>false</Enabled>"));
+        // the task itself stays enabled, so `schtasks /Run` still starts it
+        let task = "<AllowStartOnDemand>true</AllowStartOnDemand>\n    <Enabled>true</Enabled>";
+        assert!(off.contains(task));
+    }
+
+    #[test]
+    fn the_task_file_is_utf16_with_a_byte_order_mark() {
+        assert_eq!(utf16le_with_bom("A"), [0xFF, 0xFE, 0x41, 0x00]);
+        assert_eq!(utf16le_with_bom("\u{e9}"), [0xFF, 0xFE, 0xE9, 0x00]);
+        assert_eq!(utf16le_with_bom(""), [0xFF, 0xFE]);
+    }
+
+    #[test]
+    fn removing_a_folder_leaves_the_other_copies_alone() {
+        let cmd = remove_dir_command(r"C:\Program Files\CursorPie");
+        assert!(cmd.ends_with(r#"rmdir /S /Q "C:\Program Files\CursorPie""#));
+        assert!(!cmd.contains("taskkill"));
     }
 }

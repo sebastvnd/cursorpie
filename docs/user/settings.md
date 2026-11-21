@@ -15,6 +15,8 @@ Where you build menus, tune the gestures and keep your configuration safe.
 
 ## Opening, saving and quitting
 
+<img src="../gifs/10-settings-editor.gif" width="720" alt="Settings editor">
+
 Open Settings from the menu bar or tray icon (macOS and Windows), or by holding the trigger in the center of the pie
 (the only way on Linux, which has no tray icon yet).
 
@@ -74,12 +76,15 @@ The knobs, grouped:
   chooses it. **Pie shape** turns the circle into a polygon with rounded corners (*Custom*): Sides, Corner
   roundness and Rotation, with a live pie to see it on.
 - **Profiles:** whether holding opens the general pie or the app's own, and the double-click speed.
+- **Intelligent:** the pie that learns what you use and suggests it, and the intelligent slice. Off until you switch
+  **Learn and suggest** on. What it learns from, what it suggests, idle learning, privacy and the ignore lists, with
+  **Learn now** and **Forget everything**. See [Intelligent pie](intelligent-pie.md).
 - **App detection:** the app under the pointer or in front, and whether to bring it forward before sending shortcuts.
 - **Other desktops / Other Spaces:** what an Open app slice does when the app's window is elsewhere. Switch to it
   (default), bring the window to the current Space (macOS only, experimental) or just open the app here.
   How it works: [Other desktops](../developer/OTHER_DESKTOPS.md).
 - **Side buttons:** default pie, pick-to-follow, forget on app switch, right-click switching, ring colors, preview time.
-- **Other:** instant flick, hover sound, names under the icons, app icon in the pie center (glyph or color, and its
+- **Other:** instant flick, hover sound, the slice name in a pill, app icon in the pie center (glyph or color, and its
   shadow), launch at login, **Trackpad** (see [Trackpad hold](trackpad.md)), **Browser extension** and **Memory** (free
   caches after an idle time, on by default, 60 s).
 
@@ -137,6 +142,8 @@ temporary one, so a crash or a full disk cannot leave half a file. Where the fil
 [Configuration](configuration.md#where-the-file-lives).
 
 ## Sharing a profile
+
+<img src="../gifs/11-themes-and-share.gif" width="720" alt="Themes and profile export">
 
 **Menu > Share** moves one profile between computers, with its icons, so it looks the same on arrival.
 

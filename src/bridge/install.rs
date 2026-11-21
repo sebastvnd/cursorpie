@@ -15,7 +15,7 @@
 //! nothing is created for it. Browsers in a sandbox (Flatpak, Snap) cannot start a program outside
 //! it and are not covered.
 
-use super::extension::{CHROMIUM_ID, FIREFOX_ID};
+use super::extension::{CHROMIUM_ID, CHROMIUM_STORE_IDS, FIREFOX_ID};
 use super::proto::HOST_NAME;
 use crate::platform::Os;
 use std::path::{Path, PathBuf};
@@ -116,8 +116,12 @@ pub fn manifest_json(family: Family, exe: &Path) -> String {
     });
     match family {
         Family::Chromium => {
-            v["allowed_origins"] =
-                serde_json::json!([format!("chrome-extension://{CHROMIUM_ID}/")]);
+            // the id of the folder copy, and the ids the stores gave the published one
+            let origins: Vec<String> = std::iter::once(CHROMIUM_ID)
+                .chain(CHROMIUM_STORE_IDS.iter().copied())
+                .map(|id| format!("chrome-extension://{id}/"))
+                .collect();
+            v["allowed_origins"] = serde_json::json!(origins);
         }
         Family::Firefox => {
             v["allowed_extensions"] = serde_json::json!([FIREFOX_ID]);

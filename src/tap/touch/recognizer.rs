@@ -14,6 +14,7 @@
 //!             |-- HoldOpen                       still for the hold time: the pie is open
 //!             |-- Move                           the holding fingers moved (the pie is open)
 //!             |-- ExtraClick                     one more finger tapped while the pie is open
+//!             |-- LockTap                        two more fingers tapped together (three in all)
 //!             |-- Release                        a holding finger lifted
 //!             `-- Cancel(Why)                    too many fingers, the hold was broken, the device went away
 //! ```
@@ -52,6 +53,9 @@ pub const PALM_SIZE: f32 = 2.5;
 pub const EDGE: f32 = 0.03;
 /// The holding fingers must move this much (mm) for a `Move` to be reported.
 pub const MOVE_EPS_MM: f32 = 0.15;
+/// Two extra fingers tapping together (the lock gesture) must lift within this time of the first of
+/// them landing, and must not slide: a longer touch is two fingers resting or scrolling.
+pub const LOCK_TAP_MAX: Duration = Duration::from_millis(350);
 /// Surface size used when the device does not say (mm). A typical built-in trackpad.
 pub const DEFAULT_SURFACE_MM: (f32, f32) = (130.0, 90.0);
 
@@ -142,6 +146,10 @@ pub enum TouchEvent {
     Move,
     /// One more finger tapped while the pie was open.
     ExtraClick,
+    /// Two more fingers tapped together while one finger holds (three fingers on the surface in
+    /// all). It is what locks CursorPie, and what unlocks it again (see [`lock`](super::lock)).
+    /// It is reported once the two fingers lift, like [`TouchEvent::ExtraClick`].
+    LockTap,
     /// A holding finger lifted: the hold ends.
     Release,
     /// The hold ends without a release.
@@ -170,6 +178,16 @@ struct Extra {
     moved: bool,
 }
 
+/// Two extra fingers that are down together: a tap of both is the lock gesture.
+#[derive(Clone, Copy, Debug)]
+struct LockTapState {
+    /// When the first of the two landed.
+    since: Duration,
+    /// Where each of the two landed (their ids and positions).
+    start: [(i32, Mm); 2],
+    moved: bool,
+}
+
 #[derive(Clone, Debug)]
 struct Hold {
     t0: Duration,
@@ -180,6 +198,8 @@ struct Hold {
     /// Where the holding finger was at the last `Move` (or when the pie opened).
     last: Mm,
     extra: Option<Extra>,
+    /// Two extra fingers are down (the pie is open).
+    lock: Option<LockTapState>,
 }
 
 #[derive(Clone, Debug)]
@@ -434,6 +454,7 @@ impl Recognizer {
             double,
             last: centroid(now.iter().map(|c| c.mm)),
             extra: None,
+            lock: None,
         })
     }
 
@@ -518,28 +539,74 @@ impl Recognizer {
         // the pie is open
         match extras.as_slice() {
             [] => {
-                if let Some(e) = h.extra.take()
+                if let Some(l) = h.lock.take() {
+                    // both extra fingers are up: a quick tap that did not slide is the lock gesture
+                    h.extra = None;
+                    if time - l.since <= LOCK_TAP_MAX && !l.moved {
+                        out.push(TouchEvent::LockTap);
+                    }
+                } else if let Some(e) = h.extra.take()
                     && time - e.since <= TAP_MAX
                     && !e.moved
                 {
                     out.push(TouchEvent::ExtraClick);
                 }
             }
-            [one] => match &mut h.extra {
-                Some(e) if e.id == one.id => {
-                    if dist(e.start, one.mm) > still {
-                        e.moved = true;
+            [one] => {
+                if let Some(l) = h.lock {
+                    // one of the two fingers lifted before the other: the tap is still on, for a moment
+                    if time - l.since > LOCK_TAP_MAX {
+                        out.push(TouchEvent::Cancel(Why::TooManyFingers));
+                        self.finish(device);
+                        return Phase::Blocked;
+                    }
+                } else {
+                    match &mut h.extra {
+                        Some(e) if e.id == one.id => {
+                            if dist(e.start, one.mm) > still {
+                                e.moved = true;
+                            }
+                        }
+                        _ => {
+                            h.extra = Some(Extra {
+                                id: one.id,
+                                since: time,
+                                start: one.mm,
+                                moved: false,
+                            });
+                        }
                     }
                 }
-                _ => {
-                    h.extra = Some(Extra {
-                        id: one.id,
-                        since: time,
-                        start: one.mm,
-                        moved: false,
+            }
+            [a, b] => {
+                if let Some(l) = h.lock.as_mut() {
+                    if time - l.since > LOCK_TAP_MAX {
+                        // two fingers resting or scrolling, not a tap
+                        out.push(TouchEvent::Cancel(Why::TooManyFingers));
+                        self.finish(device);
+                        return Phase::Blocked;
+                    }
+                    let slid = [a, b].iter().any(|c| {
+                        l.start
+                            .iter()
+                            .any(|(id, p)| *id == c.id && dist(*p, c.mm) > still)
+                    });
+                    if slid {
+                        l.moved = true;
+                    }
+                } else {
+                    // the second extra finger landed: from here on it can only be the lock gesture
+                    let (since, moved) = match h.extra.take() {
+                        Some(e) => (e.since, e.moved),
+                        None => (time, false),
+                    };
+                    h.lock = Some(LockTapState {
+                        since,
+                        start: [(a.id, a.mm), (b.id, b.mm)],
+                        moved,
                     });
                 }
-            },
+            }
             _ => {
                 out.push(TouchEvent::Cancel(Why::TooManyFingers));
                 self.finish(device);
@@ -850,11 +917,87 @@ mod tests {
     }
 
     #[test]
-    fn two_extra_fingers_cancel_the_open_pie() {
+    fn three_extra_fingers_cancel_the_open_pie() {
         let mut s = Sim::new();
         s.hold(600, &[f(1, 0.5, 0.5)]);
         s.clear();
-        s.hold(20, &[f(1, 0.5, 0.5), f(2, 0.7, 0.5), f(3, 0.8, 0.5)]);
+        s.hold(
+            20,
+            &[
+                f(1, 0.5, 0.5),
+                f(2, 0.7, 0.5),
+                f(3, 0.8, 0.5),
+                f(4, 0.3, 0.5),
+            ],
+        );
+        assert_eq!(s.kinds(), vec![TouchEvent::Cancel(Why::TooManyFingers)]);
+    }
+
+    #[test]
+    fn a_quick_tap_of_two_extra_fingers_is_the_lock_gesture() {
+        let mut s = Sim::new();
+        s.hold(600, &[f(1, 0.5, 0.5)]);
+        s.clear();
+        s.hold(80, &[f(1, 0.5, 0.5), f(2, 0.7, 0.5), f(3, 0.8, 0.5)]);
+        assert!(
+            s.kinds().is_empty(),
+            "nothing until the two lift: {:?}",
+            s.kinds()
+        );
+        s.hold(20, &[f(1, 0.5, 0.5)]);
+        assert_eq!(s.kinds(), vec![TouchEvent::LockTap]);
+        assert_eq!(s.r.count(), 1);
+    }
+
+    #[test]
+    fn two_extra_fingers_that_land_one_after_the_other_still_lock() {
+        let mut s = Sim::new();
+        s.hold(600, &[f(1, 0.5, 0.5)]);
+        s.clear();
+        s.hold(30, &[f(1, 0.5, 0.5), f(2, 0.7, 0.5)])
+            .hold(50, &[f(1, 0.5, 0.5), f(2, 0.7, 0.5), f(3, 0.8, 0.5)])
+            .hold(20, &[f(1, 0.5, 0.5)]);
+        // the single finger that came first is not an extra click as well
+        assert_eq!(s.kinds(), vec![TouchEvent::LockTap]);
+    }
+
+    #[test]
+    fn the_two_fingers_may_lift_one_after_the_other() {
+        let mut s = Sim::new();
+        s.hold(600, &[f(1, 0.5, 0.5)]);
+        s.clear();
+        s.hold(60, &[f(1, 0.5, 0.5), f(2, 0.7, 0.5), f(3, 0.8, 0.5)])
+            .hold(20, &[f(1, 0.5, 0.5), f(3, 0.8, 0.5)])
+            .hold(20, &[f(1, 0.5, 0.5)]);
+        assert_eq!(s.kinds(), vec![TouchEvent::LockTap]);
+    }
+
+    #[test]
+    fn two_extra_fingers_resting_too_long_cancel_the_open_pie() {
+        let mut s = Sim::new();
+        s.hold(600, &[f(1, 0.5, 0.5)]);
+        s.clear();
+        s.hold(500, &[f(1, 0.5, 0.5), f(2, 0.7, 0.5), f(3, 0.8, 0.5)]);
+        assert_eq!(s.kinds(), vec![TouchEvent::Cancel(Why::TooManyFingers)]);
+    }
+
+    #[test]
+    fn two_extra_fingers_that_slide_are_not_the_lock_gesture() {
+        let mut s = Sim::new();
+        s.hold(600, &[f(1, 0.5, 0.5)]);
+        s.clear();
+        s.hold(30, &[f(1, 0.5, 0.5), f(2, 0.7, 0.5), f(3, 0.8, 0.5)])
+            .hold(30, &[f(1, 0.5, 0.5), f(2, 0.7, 0.5), f(3, 0.8, 0.9)])
+            .hold(20, &[f(1, 0.5, 0.5)]);
+        assert!(s.kinds().is_empty(), "{:?}", s.kinds());
+    }
+
+    #[test]
+    fn the_lock_gesture_needs_the_pie_to_be_open() {
+        let mut s = Sim::new();
+        s.hold(200, &[f(1, 0.5, 0.5)]); // armed, the hold time (500 ms) has not passed
+        s.clear();
+        s.hold(60, &[f(1, 0.5, 0.5), f(2, 0.7, 0.5), f(3, 0.8, 0.5)]);
         assert_eq!(s.kinds(), vec![TouchEvent::Cancel(Why::TooManyFingers)]);
     }
 

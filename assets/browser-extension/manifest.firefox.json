@@ -38,6 +38,17 @@
   "optional_permissions": [
     "<all_urls>"
   ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://sebastvnd.github.io/cursorpie/flowhub/*"
+      ],
+      "js": [
+        "flowhub-page.js"
+      ],
+      "run_at": "document_start"
+    }
+  ],
   "options_ui": {
     "page": "options.html",
     "open_in_tab": true

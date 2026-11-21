@@ -12,6 +12,7 @@
 //! | [`recognizer`] | frames of finger positions -> `HoldArmed`, `Move`, `ExtraClick`, `Release`, `Cancel` (pure) | every OS |
 //! | [`Bridge`] | the events -> `trigger::touch_press`, `touch_move`, `touch_release`, `touch_cancel` | every OS |
 //! | [`extra`] | the extra click: one more finger clicks while the pie is open | every OS |
+//! | [`lock`] | the lock: two more fingers tap while the pie is open (three in all), and CursorPie sleeps for the trackpad until the same gesture wakes it | every OS |
 //! | [`haptic`] | which moments tick and how often (pure), `Msg::Haptic` | every OS |
 //! | `multitouch` | macOS: the contact frames of the system, through the private `MultitouchSupport.framework` | by hand on a Mac (checklist) |
 //! | `ptp` | Windows: what the HID reports of a Precision Touchpad mean (layout, hybrid reports, palms; pure) | every OS |
@@ -31,6 +32,7 @@
 
 pub(crate) mod extra;
 pub(crate) mod haptic;
+pub(crate) mod lock;
 pub(crate) mod probe;
 pub(crate) mod recognizer;
 pub(crate) mod scroll;
@@ -41,7 +43,8 @@ use super::gesture::Gesture;
 use super::trigger;
 use crate::config::cfg;
 use crate::geometry::Point;
-use crate::msg::Notifier;
+use crate::msg::{Msg, Notifier};
+use crate::ui::hud::HudNote;
 use recognizer::{Frame, Params, Recognizer, TouchEvent};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -257,12 +260,21 @@ impl Bridge {
         FINGERS.store(0, Ordering::SeqCst);
         extra::clear();
         scroll::clear();
+        lock::set(false);
     }
 
     fn apply(&mut self, env: &Env<'_>, events: &[TouchEvent]) {
         for &ev in events {
             match ev {
                 TouchEvent::HoldArmed { elapsed, double } => {
+                    if lock::in_force() {
+                        // locked: this hold starts no pie (it says so once the hold time is over)
+                        self.ours = false;
+                        self.opened = false;
+                        ACTIVE.store(false, Ordering::SeqCst);
+                        diag::log!("touch", "arm_locked");
+                        continue;
+                    }
                     // the pointer is asked for now: the fingers moved it through the system alone,
                     // so the latest report may be from before the fingers stopped
                     let started = match (env.fresh)() {
@@ -292,6 +304,10 @@ impl Bridge {
                 }
                 TouchEvent::HoldOpen => {
                     self.opened = self.ours;
+                    if !self.ours && lock::in_force() {
+                        // a hold while locked: a pill says why no pie comes
+                        env.notifier.send(Msg::Hud(HudNote::locked()));
+                    }
                     diag::log!("touch", "open", ours = self.ours);
                 }
                 TouchEvent::Move => {
@@ -306,6 +322,7 @@ impl Bridge {
                         extra::tap(env.state, env.notifier);
                     }
                 }
+                TouchEvent::LockTap => self.lock_tap(env),
                 TouchEvent::Release => {
                     if self.ours {
                         trigger::touch_release(env.state, env.notifier, (env.fresh)());
@@ -325,6 +342,61 @@ impl Bridge {
                 }
             }
         }
+    }
+
+    /// Two more fingers tapped together while one holds: locks CursorPie, or unlocks it when it is
+    /// locked (see [`lock`]).
+    fn lock_tap(&mut self, env: &Env<'_>) {
+        if !cfg().touch_lock {
+            // the gesture is off: two more fingers break the hold, as they did before the lock existed
+            if self.ours {
+                trigger::touch_cancel(env.state, env.notifier);
+                (env.hot)(false);
+            }
+            diag::log!(
+                "touch",
+                "cancel",
+                why = "too_many_fingers",
+                ours = self.ours
+            );
+            self.end_gesture(true);
+            return;
+        }
+        if lock::in_force() {
+            // locked: hold + tap with two fingers opens the lock. The hold that is going on began
+            // while locked, so it opened no pie and opens none now.
+            lock::set(false);
+            extra::swallow_lock_tap_click();
+            diag::log!("touch", "unlock");
+            match (env.fresh)() {
+                Some(p) => env.notifier.send(Msg::LockAnim {
+                    x: p.x,
+                    y: p.y,
+                    locked: false,
+                }),
+                None => env.notifier.send(Msg::Hud(HudNote::unlocked())),
+            }
+            return;
+        }
+        if !self.ours || !self.opened {
+            return; // not a gesture of this source, or no pie is open: nothing to lock
+        }
+        // the pie closes without running anything, and the animation plays where it was
+        let at = trigger::touch_lock(env.state, env.notifier).or_else(|| (env.fresh)());
+        (env.hot)(false);
+        lock::set(true);
+        extra::swallow_lock_tap_click();
+        diag::log!("touch", "lock");
+        match at {
+            Some(p) => env.notifier.send(Msg::LockAnim {
+                x: p.x,
+                y: p.y,
+                locked: true,
+            }),
+            None => env.notifier.send(Msg::Hud(HudNote::locked())),
+        }
+        // the two fingers may scroll as they lift: the wheel stays ours until they are gone
+        self.end_gesture(true);
     }
 
     /// The gesture is over (a release or a cancel). The wheel stops being swallowed at once only
@@ -469,6 +541,7 @@ mod tests {
             ACTIVE.store(false, Ordering::SeqCst);
             FINGERS.store(0, Ordering::SeqCst);
             extra::clear();
+            lock::set(false);
             scroll::clear();
             crate::tap::pie_clicks::clear();
             Self {
@@ -484,6 +557,7 @@ mod tests {
             ACTIVE.store(false, Ordering::SeqCst);
             FINGERS.store(0, Ordering::SeqCst);
             extra::clear();
+            lock::set(false);
             scroll::clear();
             crate::tap::pie_clicks::clear();
         }
@@ -683,6 +757,110 @@ mod tests {
             y: 0.5,
             size: 1.0,
         }
+    }
+
+    fn third(x: f32) -> Finger {
+        Finger {
+            id: 3,
+            x,
+            y: 0.5,
+            size: 1.0,
+        }
+    }
+
+    /// What the bridge sent about the lock, in order: `hide`, `lock x y`, `unlock x y` and
+    /// `pill <kind>` (everything else is left out).
+    fn lock_messages(rx: &mpsc::Receiver<Msg>) -> Vec<String> {
+        let mut out = Vec::new();
+        while let Ok(m) = rx.try_recv() {
+            match m {
+                Msg::LockAnim { x, y, locked } => {
+                    out.push(format!(
+                        "{} {x} {y}",
+                        if locked { "lock" } else { "unlock" }
+                    ));
+                }
+                Msg::Hud(note) => out.push(format!("pill {:?}", note.kind)),
+                Msg::HidePie => out.push("hide".to_string()),
+                _ => {}
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn two_more_fingers_lock_the_pie_and_the_same_tap_unlocks_it() {
+        let _c = Cfg::set(fast);
+        let mut rig = Rig::new();
+        rig.frames(300, &[finger(0.5)]);
+        wait_for_pie(&rig);
+        lock_messages(&rig.rx); // what the opening of the pie sent
+        // one finger holds, two more tap
+        rig.frames(60, &[finger(0.5), second(0.7), third(0.8)]);
+        rig.frames(20, &[finger(0.5)]);
+        assert!(lock::is_locked());
+        assert_eq!(lock_messages(&rig.rx), ["hide", "lock 500 500"]);
+        assert!(matches!(*crate::config::lock(&rig.state), Gesture::Idle));
+        assert!(
+            !ACTIVE.load(Ordering::SeqCst),
+            "nothing of the hold is left running"
+        );
+        rig.frames(30, &[]);
+
+        // a hold while locked opens no pie, and a pill says why
+        rig.frames(300, &[finger(0.5)]);
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(
+            matches!(*crate::config::lock(&rig.state), Gesture::Idle),
+            "no pie while locked"
+        );
+        assert_eq!(lock_messages(&rig.rx), ["pill Locked"]);
+
+        // the same hold and tap unlock it, and the hold that unlocked does not open a pie
+        rig.frames(60, &[finger(0.5), second(0.7), third(0.8)]);
+        rig.frames(20, &[finger(0.5)]);
+        assert!(!lock::is_locked());
+        assert_eq!(lock_messages(&rig.rx), ["unlock 500 500"]);
+        rig.frames(30, &[]);
+
+        // and the next hold opens the pie again
+        rig.frames(300, &[finger(0.5)]);
+        wait_for_pie(&rig);
+        assert!(matches!(
+            *crate::config::lock(&rig.state),
+            Gesture::ActivePie {
+                source: Source::Touch,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn with_the_lock_gesture_off_two_more_fingers_just_close_the_pie() {
+        let _c = Cfg::set(|c| {
+            fast(c);
+            c.touch_lock = false;
+        });
+        let mut rig = Rig::new();
+        rig.frames(300, &[finger(0.5)]);
+        wait_for_pie(&rig);
+        lock_messages(&rig.rx);
+        rig.frames(60, &[finger(0.5), second(0.7), third(0.8)]);
+        rig.frames(20, &[finger(0.5)]);
+        assert!(!lock::is_locked());
+        assert_eq!(lock_messages(&rig.rx), ["hide"]);
+        assert!(matches!(*crate::config::lock(&rig.state), Gesture::Idle));
+    }
+
+    #[test]
+    fn a_lock_that_outlives_the_setting_is_forgotten() {
+        let _c = Cfg::set(|c| c.touch_lock = false);
+        lock::set(true);
+        assert!(!lock::in_force());
+        assert!(
+            !lock::is_locked(),
+            "switching the gesture on again does not bring it back"
+        );
     }
 
     #[test]

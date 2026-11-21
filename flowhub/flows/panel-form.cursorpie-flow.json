@@ -1,0 +1,63 @@
+{
+  "cursorpie_flow": 2,
+  "flow": {
+    "id": "panel-form",
+    "name": "Ask with a panel, then say it",
+    "nodes": [
+      {
+        "id": 1,
+        "x": 40.0,
+        "y": 60.0,
+        "kind": "Start",
+        "next": 2
+      },
+      {
+        "id": 2,
+        "x": 240.0,
+        "y": 60.0,
+        "kind": {
+          "Ask": {
+            "mode": "Panel",
+            "message": "{\n  \"id\": \"greeting\",\n  \"title\": \"Say hello\",\n  \"subtitle\": \"A panel made by a flow\",\n  \"icon\": \"flow\",\n  \"place\": \"center\",\n  \"widgets\": [\n    {\n      \"type\": \"input\",\n      \"id\": \"name\",\n      \"label\": \"Name\",\n      \"hint\": \"Who is it for?\",\n      \"required\": true\n    },\n    {\n      \"type\": \"choice\",\n      \"id\": \"size\",\n      \"label\": \"Size\",\n      \"layout\": \"chips\",\n      \"options\": [\n        \"small\",\n        \"medium\",\n        \"large\"\n      ],\n      \"value\": \"medium\"\n    },\n    {\n      \"type\": \"toggle\",\n      \"id\": \"loud\",\n      \"label\": \"Shout it\"\n    }\n  ],\n  \"buttons\": [\n    {\n      \"id\": \"cancel\",\n      \"label\": \"Cancel\",\n      \"cancel\": true\n    },\n    {\n      \"id\": \"go\",\n      \"label\": \"Say it\",\n      \"tone\": \"primary\"\n    }\n  ]\n}",
+            "preset": "",
+            "out": "button"
+          }
+        },
+        "next": 3
+      },
+      {
+        "id": 3,
+        "x": 540.0,
+        "y": 60.0,
+        "kind": {
+          "Branch": {
+            "a": "ok",
+            "op": "IsTrue",
+            "b": ""
+          }
+        },
+        "next": 4,
+        "alt": 5
+      },
+      {
+        "id": 4,
+        "x": 240.0,
+        "y": 260.0,
+        "kind": {
+          "Native": {
+            "op": "Notify",
+            "a": "Hello {{name}}",
+            "b": "size {{size}}, shout {{loud}}"
+          }
+        },
+        "next": 5
+      },
+      {
+        "id": 5,
+        "x": 540.0,
+        "y": 260.0,
+        "kind": "End"
+      }
+    ]
+  }
+}

@@ -24,8 +24,9 @@ impl App {
                 profile,
                 path,
             } => {
-                // a real gesture takes over from any preview
+                // a real gesture takes over from any preview, and from the lock animation
                 self.preview_until = None;
+                self.lock_anim = None;
                 diag::log!(
                     "ui",
                     "msg_show_pie",
@@ -34,6 +35,9 @@ impl App {
                     profile = profile,
                     depth = path.len()
                 );
+                if self.defer_pie_for_hud(ctx, x, y, profile, &path) {
+                    return;
+                }
                 self.show_pie(ctx, x, y, profile, path);
             }
             Msg::PieBlocked { x, y, touch } => self.pie_blocked(ctx, x, y, touch),
@@ -57,6 +61,7 @@ impl App {
                 }
                 self.hover = h;
             }
+            Msg::LockAnim { x, y, locked } => self.lock_anim_start(ctx, x, y, locked),
             Msg::Hud(note) => self.hud_note(ctx, note),
             Msg::HudEnd => self.hud_end(ctx),
             Msg::Panel(req) => self.panel_request(ctx, req),
@@ -79,6 +84,7 @@ impl App {
             }
             Msg::ProfileImportPicked(file) => self.import_profile(&file),
             Msg::FlowImportPicked(file) => self.import_flow(&file),
+            Msg::FlowHubInstall { flow, reply } => self.flow_hub_install(*flow, &reply),
             Msg::Notice(text) => self.say(text),
             Msg::ExportFailed { what, reason } => self.export_failed(&what, reason),
             Msg::FlowKit(status) => {
@@ -123,6 +129,8 @@ impl App {
                 );
                 crate::ui::memlog::mark("hide_pie");
                 self.hover = None;
+                // a pie that still waited for the notice to leave is not wanted any more
+                self.pie_pending = None;
                 self.pie_open = false;
                 self.preview_until = None;
                 // the pie that took the pointer for a trackpad hold lets it through again while it
@@ -213,7 +221,12 @@ impl App {
                 });
             }
             Msg::AppPicked { profile, bundle } => {
-                if let Some(p) = self.edit.profiles.get_mut(profile)
+                if let Some(i) = self.edit.profile_owning(&bundle, Some(profile)) {
+                    let name = self.edit.profiles[i].name.clone();
+                    self.say(format!(
+                        "That app already has the profile \u{201c}{name}\u{201d}. An app can have only one."
+                    ));
+                } else if let Some(p) = self.edit.profiles.get_mut(profile)
                     && !p.apps.contains(&bundle)
                 {
                     p.apps.push(bundle);
@@ -377,6 +390,52 @@ impl App {
             }
             Err(e) => self.import_refused(file, e),
         }
+    }
+}
+
+impl App {
+    /// The person confirmed a flow of the website's Flow Hub (see [`flowhub`](crate::flowhub)): it is
+    /// added as a **new** flow, like an import, and the answer goes back to the thread that waits.
+    ///
+    /// Normally Settings is closed (a panel is not shown while it is open), so the flow goes straight
+    /// into the live config and to disk. When Settings was opened after the question, the flow goes
+    /// into the Settings copy instead, where it waits for **Save** like any import: writing the live
+    /// config now would be undone by the next Save of that copy.
+    fn flow_hub_install(
+        &mut self,
+        flow: Flow,
+        reply: &std::sync::mpsc::Sender<crate::flowhub::Answer>,
+    ) {
+        use crate::flowhub::Answer;
+        let answer = if self.settings_open {
+            match add_flow(&mut self.edit.flows, flow) {
+                Ok(index) => {
+                    let name = self.edit.flows[index].name.clone();
+                    self.ed.flow = index;
+                    self.ed.flow_sel = None;
+                    self.ed.flow_wire = None;
+                    self.ed.flow_pan = egui::Vec2::ZERO;
+                    self.say(format!(
+                        "Flow \"{name}\" added from Flow Hub. Press Save to keep it."
+                    ));
+                    Answer::InSettings(name)
+                }
+                Err(e) => Answer::Failed(e),
+            }
+        } else {
+            let added = {
+                let mut c = cfg();
+                add_flow(&mut c.flows, flow).map(|index| (c.flows[index].name.clone(), c.clone()))
+            };
+            match added {
+                Ok((name, snapshot)) => {
+                    crate::config::save_config_with_backup(&snapshot);
+                    Answer::Installed(name)
+                }
+                Err(e) => Answer::Failed(e),
+            }
+        };
+        let _ = reply.send(answer);
     }
 }
 

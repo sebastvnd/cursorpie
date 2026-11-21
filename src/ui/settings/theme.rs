@@ -38,7 +38,7 @@ pub mod registry;
 pub mod spec;
 mod tokens;
 
-pub use builtin::{SAGE_PIE, all as builtin_themes};
+pub use builtin::{GENZ_ACCENT, SAGE_PIE, all as builtin_themes};
 pub use tokens::{DropShadow, Edge, Shape, Swatches, Theme, Tone};
 
 use crate::config::{Appearance, ModeColors, ThemeColors};
@@ -113,11 +113,11 @@ struct Key {
 }
 
 static LIVE: RwLock<Live> = RwLock::new(Live {
-    light: builtin::SAGE_LIGHT,
-    dark: builtin::SAGE_DARK,
-    shape: builtin::SAGE_SHAPE,
-    pie: builtin::SAGE_PIE,
-    swatches: &builtin::SAGE_SWATCHES,
+    light: builtin::GENZ_LIGHT,
+    dark: builtin::GENZ_DARK,
+    shape: builtin::GENZ_SHAPE,
+    pie: builtin::GENZ_PIE,
+    swatches: &builtin::GENZ_SWATCHES,
     made_from: Key {
         theme: String::new(),
         colors: ThemeColors {
@@ -799,12 +799,17 @@ mod tests {
     fn the_choice_of_theme_is_saved_only_when_it_is_not_the_default() {
         let mut c = crate::config::Config::default();
         assert_eq!(c.ui_theme, builtin::DEFAULT_ID);
-        c.ui_theme = builtin::GENZ_ID.into();
-        let text = serde_json::to_string(&c).unwrap();
-        assert!(text.contains(r#""ui_theme":"genz""#), "{text}");
-        let back: crate::config::Config = serde_json::from_str(&text).unwrap();
-        assert_eq!(back.ui_theme, "genz");
-        // a file from before themes existed is sage
+        assert_eq!(c.ui_theme, builtin::GENZ_ID, "Gen Z is the default");
+        let none = serde_json::to_string(&c).unwrap();
+        assert!(!none.contains("ui_theme"), "{none}");
+        for id in [builtin::SAGE_ID, builtin::BUBBLEGUM_ID] {
+            c.ui_theme = id.into();
+            let text = serde_json::to_string(&c).unwrap();
+            assert!(text.contains(&format!(r#""ui_theme":"{id}""#)), "{text}");
+            let back: crate::config::Config = serde_json::from_str(&text).unwrap();
+            assert_eq!(back.ui_theme, id);
+        }
+        // a file that does not name a theme is the default one
         let old: crate::config::Config = serde_json::from_str("{}").unwrap();
         assert_eq!(old.ui_theme, builtin::DEFAULT_ID);
     }

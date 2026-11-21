@@ -88,6 +88,22 @@ pub fn pie_center_shift(
     d
 }
 
+/// The pie window while *Show slice names* is on: as big as the display `display` (cursor points),
+/// in window points (`scale` converts one to the other), so that the pill of the names can sit at
+/// the bottom center of the display and not follow the ring around.
+///
+/// `None` when the display would not even hold the pie window of `min_side` (a display that small
+/// or a bad reading of it): the caller then keeps the small square window. The size is whole
+/// points, so the window sits on whole pixels like the small one does.
+pub fn names_window_size(display: egui::Rect, scale: f32, min_side: f32) -> Option<egui::Vec2> {
+    let size = egui::vec2(
+        (display.width() * scale).round(),
+        (display.height() * scale).round(),
+    );
+    (size.x.is_finite() && size.y.is_finite() && size.x >= min_side && size.y >= min_side)
+        .then_some(size)
+}
+
 /// The display containing `p` (global coordinates, same space as the cursor).
 pub fn screen_rect_at(p: Pos2) -> Option<egui::Rect> {
     pick_display(&platform::display_rects(), p)
@@ -219,5 +235,22 @@ mod tests {
         let v = [d(0.0, 0.0, 1000.0, 800.0), d(-1280.0, 0.0, 1280.0, 1024.0)];
         let r = pick_display(&v, egui::pos2(-10.0, 10.0)).unwrap();
         assert_eq!(r.min.x, -1280.0);
+    }
+
+    #[test]
+    fn the_window_of_the_names_is_the_display_or_nothing() {
+        let d = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(1920.0, 1080.0));
+        assert_eq!(
+            names_window_size(d, 1.0, 300.0),
+            Some(egui::vec2(1920.0, 1080.0))
+        );
+        assert_eq!(
+            names_window_size(d, 1.5, 300.0),
+            Some(egui::vec2(2880.0, 1620.0))
+        );
+        // a display that cannot hold the pie, or a reading that makes no sense: the small window
+        let tiny = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(200.0, 200.0));
+        assert_eq!(names_window_size(tiny, 1.0, 300.0), None);
+        assert_eq!(names_window_size(d, f32::NAN, 300.0), None);
     }
 }

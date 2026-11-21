@@ -61,6 +61,7 @@ pub(super) fn handle(
 /// Resets the gesture to `Idle` (consumes the guard, releasing the lock).
 fn release_to_idle(mut g: MutexGuard<'_, Gesture>) {
     *g = Gesture::Idle;
+    crate::smart::end_gesture();
 }
 
 /// What a press is made of besides where it happened: who pressed, how long the hold has already
@@ -133,6 +134,8 @@ fn on_press<'a>(
     // which apps of the "Open app" slices already run: asked once, off this thread, while the hold
     // timer runs (does nothing when no slice opens an app or the setting is off)
     running::warm(&profile_list(hold_profile, app));
+    // the suggestions of the intelligent pie are made again for this gesture (never blocks)
+    crate::smart::begin(&cfg());
     let dbl_ms = cfg().double_click_ms;
 
     // (A) second press inside the double-click window: open the app's own pie at once
@@ -273,6 +276,14 @@ fn hold_open_pie(st: &Arc<Mutex<Gesture>>, n: &Notifier, id: u64, pie_ms: u64, s
             *gg = Gesture::InSettings(source);
             return;
         }
+        // the intelligent pie, when it is kept (see `smart::kept`), is the pie that opens
+        let found = found.map(|(pos, profile, source)| {
+            (
+                pos,
+                crate::smart::opening(id, profile, &cfg().smart),
+                source,
+            )
+        });
         if let Some((pos, profile, source)) = found {
             *gg = Gesture::ActivePie {
                 id,
@@ -470,6 +481,51 @@ pub(super) fn open_settings_from_pie(st: &Arc<Mutex<Gesture>>, n: &Notifier) -> 
     true
 }
 
+/// Space was held in the open pie: the pie turns into the intelligent pie, or, when it already is
+/// one, back into the pie it came from (see [`smart`](crate::smart)). The gesture goes on in the new
+/// pie: its top ring, nothing hovered, the same center. Returns whether there was a pie to turn.
+pub(super) fn switch_smart_pie(st: &Arc<Mutex<Gesture>>, n: &Notifier) -> bool {
+    let switched = {
+        let mut gg = lock(st);
+        match &mut *gg {
+            Gesture::ActivePie {
+                id,
+                center,
+                profile,
+                path,
+                hover,
+                source,
+            } => {
+                // profile 0 is the general pie, where an origin that was lost goes back to
+                let target = crate::smart::switch_target(*id, *profile, 0);
+                *profile = target;
+                path.clear();
+                *hover = None;
+                Some((*center, *source, target))
+            }
+            _ => None,
+        }
+    };
+    let Some((pos, source, profile)) = switched else {
+        return false;
+    };
+    diag::log!(
+        "tap",
+        "space_smart",
+        smart = crate::smart::is_smart(profile)
+    );
+    if source == Source::Touch {
+        haptic::emit(n, Tick::Open);
+    }
+    n.send(Msg::ShowPie {
+        x: pos.x,
+        y: pos.y,
+        profile,
+        path: Vec::new(),
+    });
+    true
+}
+
 /// After a quick click on an app with its own pie: if no second press arrives within `ms`, the
 /// first click is replayed to the app. If no timer can be started the click is replayed at once.
 fn spawn_double_timer(st: &Arc<Mutex<Gesture>>, id: u64, button: i64, ms: u64) {
@@ -539,7 +595,8 @@ fn on_drag_pending(
     };
     if (p.x - start.x).hypot(p.y - start.y) > limit {
         if flick {
-            // dragging right away opens the pie instantly
+            // dragging right away opens the pie instantly (the intelligent pie, when it is kept)
+            let profile = crate::smart::opening(id, profile, &cfg().smart);
             *g = Gesture::ActivePie {
                 id,
                 center: start,
@@ -984,6 +1041,38 @@ pub(super) fn touch_cancel(state: &Arc<Mutex<Gesture>>, notifier: &Notifier) {
         }
         | Gesture::InSettings(Source::Touch) => *g = Gesture::Idle,
         _ => {}
+    }
+}
+
+/// The hold was locked away (see [`touch::lock`](super::touch)): like [`touch_cancel`], back to
+/// `Idle`, the pie closed, nothing run. Returns where the pie was (or where the hold began), so the
+/// animation of the lock plays there; `None` when no trackpad gesture was running.
+pub(super) fn touch_lock(state: &Arc<Mutex<Gesture>>, notifier: &Notifier) -> Option<Point> {
+    let mut g = lock(state);
+    let at = match &*g {
+        Gesture::ActivePie {
+            source: Source::Touch,
+            center,
+            ..
+        } => Some((*center, true)),
+        Gesture::Pending {
+            source: Source::Touch,
+            pos,
+            ..
+        } => Some((*pos, false)),
+        Gesture::InSettings(Source::Touch) => None,
+        _ => return None,
+    };
+    *g = Gesture::Idle;
+    drop(g);
+    match at {
+        Some((p, pie_open)) => {
+            if pie_open {
+                notifier.send(Msg::HidePie);
+            }
+            Some(p)
+        }
+        None => None,
     }
 }
 

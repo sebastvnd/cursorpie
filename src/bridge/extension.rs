@@ -45,6 +45,10 @@ pub const SUPPORT_FILES: &[(&str, &str)] = &[
         include_str!("../../assets/browser-extension/cmd-ui.js"),
     ),
     (
+        "flowhub-page.js",
+        include_str!("../../assets/browser-extension/flowhub-page.js"),
+    ),
+    (
         "options.html",
         include_str!("../../assets/browser-extension/options.html"),
     ),
@@ -67,6 +71,11 @@ const VERSION_PLACEHOLDER: &str = "{{VERSION}}";
 /// The id Chromium browsers give the extension: it comes from the `key` of the Chromium manifest,
 /// so it is the same on every machine, and the host manifest can name it (`allowed_origins`).
 pub const CHROMIUM_ID: &str = "mbfoipmefaenedenjnepgcdkgkmefpnk";
+
+/// The ids the Chrome Web Store (and Edge's store) assigned to the published extension, when they
+/// differ from [`CHROMIUM_ID`]. The host manifest names them too, so the store copy may talk to
+/// the app. Empty until the extension is published.
+pub const CHROMIUM_STORE_IDS: &[&str] = &[];
 
 /// The id of the extension in Firefox (`browser_specific_settings.gecko.id`), named by the host
 /// manifest (`allowed_extensions`).
@@ -208,6 +217,40 @@ mod tests {
         let chromium: serde_json::Value = serde_json::from_str(CHROMIUM_MANIFEST).unwrap();
         let page = chromium["options_ui"]["page"].as_str().unwrap();
         assert!(names.contains(&page));
+    }
+
+    #[test]
+    fn the_flow_hub_script_runs_on_the_flow_hub_page_only_and_is_shipped() {
+        let names: Vec<&str> = SUPPORT_FILES.iter().map(|(n, _)| *n).collect();
+        let mut matches = Vec::new();
+        for text in [CHROMIUM_MANIFEST, FIREFOX_MANIFEST] {
+            let v: serde_json::Value = serde_json::from_str(text).unwrap();
+            let scripts = v["content_scripts"].as_array().unwrap();
+            assert_eq!(
+                scripts.len(),
+                1,
+                "the Flow Hub script is the only content script"
+            );
+            for js in scripts[0]["js"].as_array().unwrap() {
+                assert!(names.contains(&js.as_str().unwrap()), "{js}");
+            }
+            matches.push(scripts[0]["matches"].clone());
+        }
+        assert_eq!(matches[0], matches[1], "both browsers match the same pages");
+        let urls = matches[0].as_array().unwrap();
+        assert_eq!(urls.len(), 1);
+        let url = urls[0].as_str().unwrap();
+        assert!(url.starts_with("https://"), "{url}");
+        assert!(
+            url.ends_with("/flowhub/*"),
+            "{url}: the Flow Hub folder, not the whole site"
+        );
+        // the worker only listens to the same page: the address in its pattern is the one of the manifests
+        let host = url
+            .trim_start_matches("https://")
+            .trim_end_matches("/flowhub/*")
+            .replace('.', "\\.");
+        assert!(BACKGROUND_JS.contains(&host.replace('/', "\\/")), "{host}");
     }
 
     #[test]

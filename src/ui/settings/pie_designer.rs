@@ -34,7 +34,9 @@ enum Hit {
 
 /// Draws the pie of `items` at `size` px; click a slice to select it, drag it onto another slice to
 /// move it or onto the trash button of the editor to delete it. `show_labels` off draws icons only,
-/// like the pie itself.
+/// like the pie itself. `outline` is the shape of the pie as the settings give it (circle or rounded
+/// polygon), so the pie here is the one the person will see when it opens.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn pie_designer(
     ui: &mut egui::Ui,
     ed: &mut Ed,
@@ -43,18 +45,24 @@ pub(super) fn pie_designer(
     accent: [u8; 3],
     size: f32,
     show_labels: bool,
+    outline: Outline,
 ) -> Designer {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), Sense::click_and_drag());
     let painter = ui.painter_at(rect);
     let c = rect.center();
     let (outer, inner) = (pie_outer(size), pie_inner(size));
+    // the ring is made round and bent to the outline, exactly as the real pie does it
+    let bend = Bend::new(outline, inner, outer);
 
     let n = items.len();
     let total = n;
 
     let hit = |p: Pos2| -> Hit {
-        let d = (p - c).length();
-        if d > outer + 6.0 {
+        let v = p - c;
+        let d = v.length();
+        // the rim is where the outline is in that direction, not a circle
+        let rim = outer * outline.radius(v.y.atan2(v.x));
+        if d > rim + 6.0 {
             Hit::Out
         } else if d < inner {
             Hit::Center
@@ -132,11 +140,11 @@ pub(super) fn pie_designer(
             a0 + 0.03,
             a0 + sl - 0.03,
             rgb(mix(base, accent, t)),
-            Bend::NONE,
+            bend,
         ));
 
         let am = a0 + sl / 2.0;
-        let tp = c + Vec2::new(am.cos(), am.sin()) * ((inner + outer) / 2.0);
+        let tp = c + Vec2::new(am.cos(), am.sin()) * bend.radius(am, (inner + outer) / 2.0);
         if let Some(it) = item {
             let tex = ed.icon_for(ctx, &it.icon);
             // icons only: the icon sits in the middle of the slice

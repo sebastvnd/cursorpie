@@ -8,7 +8,7 @@
 
 use super::{
     Action, AppGesture, AppIconStyle, Appearance, CONFIG_VERSION, Config, DesktopMode, HudPosition,
-    IconShadow, Item, PieStyle, Profile, SideTarget, TargetApp, TouchClickAction,
+    IconShadow, Item, PieStyle, Profile, SideTarget, SmartConfig, TargetApp, TouchClickAction,
 };
 use crate::keys::{MOD_ALT, MOD_CMD, MOD_CTRL, MOD_SHIFT, Shortcut, key};
 use crate::platform::Os;
@@ -198,6 +198,12 @@ pub fn blank_items(allow_submenu: bool) -> Vec<Item> {
     ];
     if allow_submenu {
         v.push(Item::submenu("Submenu", "ico:dots-three", Vec::new()));
+        // a submenu whose slices are suggested from what the person uses (Behavior > Intelligent)
+        v.push(Item::smart(
+            "Intelligent",
+            "ico:sparkle",
+            super::SmartSlice::default(),
+        ));
     }
     v
 }
@@ -330,7 +336,7 @@ impl Config {
             settings_by_space: true,
             settings_space_presses: 1,
             pie_size: 200.0,
-            accent: [90, 120, 94],
+            accent: crate::ui::settings::theme::GENZ_ACCENT,
             theme: super::ThemeColors::default(),
             trigger_button: 2,
             flick: false,
@@ -357,6 +363,7 @@ impl Config {
             panels: true,
             progress_panel: true,
             extension_panels: false,
+            flowhub_install: true,
             check_updates: true,
             side_default: SideTarget::App,
             side_adopt: true,
@@ -385,9 +392,11 @@ impl Config {
             touch_still_mm: 2.0,
             touch_click_action: TouchClickAction::SwitchPie,
             touch_typing_guard_ms: 400,
+            touch_lock: true,
             haptics: true,
             haptic_hover: true,
             flows: Vec::new(),
+            smart: SmartConfig::default(),
         }
     }
 }
@@ -470,9 +479,10 @@ mod tests {
     fn blank_items_offer_a_submenu_only_when_allowed() {
         let with = blank_items(true);
         let without = blank_items(false);
-        assert_eq!(with.len(), 5);
+        assert_eq!(with.len(), 6);
         assert_eq!(without.len(), 4);
         assert!(matches!(with[4].kind, ItemKind::Submenu(_)));
+        assert!(matches!(with[5].kind, ItemKind::Smart(_)));
         assert_eq!(key_of(&with[0]), (key::F13, 0));
     }
 
@@ -504,7 +514,7 @@ mod tests {
         );
         assert_eq!(c.settings_space_presses, 1);
         assert_eq!(c.pie_size, 200.0);
-        assert_eq!(c.accent, [90, 120, 94]);
+        assert_eq!(c.accent, [200, 255, 46]);
         assert_eq!(c.trigger_button, 2);
         assert_eq!(c.double_click_ms, 260);
         assert_eq!(c.sleep_after_s, 60);

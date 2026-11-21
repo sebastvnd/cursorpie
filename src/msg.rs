@@ -122,6 +122,10 @@ pub enum Msg {
     /// notice on the screen (see [`ui::hud`](crate::ui::hud)). Ignored while Settings is open or
     /// when the notice is switched off.
     Hud(crate::ui::hud::HudNote),
+    /// CursorPie was locked (`locked`) or unlocked with the three-finger gesture of the trackpad
+    /// (see [`tap::touch::lock`](crate::tap)): the pie that was open turns into a padlock, or a
+    /// padlock opens into the pie, at (x, y), and a pill says what happened when it is over.
+    LockAnim { x: f64, y: f64, locked: bool },
     /// The run that the notices were announcing is over (sent by the actions worker, see
     /// [`HudNote::live`](crate::ui::hud::HudNote::live)): the pill fills its bar and goes away
     /// after its usual time. Ignored when no such pill is on the screen.
@@ -143,6 +147,12 @@ pub enum Msg {
     PanelClose {
         panel: String,
         source: crate::panel::Source,
+    },
+    /// The person confirmed a flow of the website's Flow Hub (see [`flowhub`](crate::flowhub)): the
+    /// UI adds it as a new flow and answers down `reply`.
+    FlowHubInstall {
+        flow: Box<crate::config::Flow>,
+        reply: mpsc::Sender<crate::flowhub::Answer>,
     },
     /// The package of a newer release was downloaded, checked and made ready (or could not be): see
     /// [`update::install`](crate::update::install).

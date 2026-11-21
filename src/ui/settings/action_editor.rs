@@ -293,8 +293,8 @@ pub(in crate::ui::settings) fn bridge_line(
     if !status.outdated.is_empty() {
         return (
             format!(
-                "The extension in {} is from another version: show the extension files again and \
-                 reload it, or new commands will not work there.",
+                "The extension in {} is older than this app: update it in the browser, or show the \
+                 extension files again and reload it, or new commands will not work there.",
                 status.outdated.join(", ")
             ),
             false,
@@ -333,7 +333,7 @@ mod bridge_line_tests {
             outdated: vec!["Chrome".into()],
             ..Status::default()
         };
-        assert!(bridge_line(true, &old).0.contains("another version"));
+        assert!(bridge_line(true, &old).0.contains("older than this app"));
         let good = Status {
             running: true,
             browsers: vec![("Chrome".into(), 12)],

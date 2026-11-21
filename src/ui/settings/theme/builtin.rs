@@ -1,5 +1,6 @@
-//! The themes that ship with CursorPie: **sage** (the look Settings always had) and **gen z** (the
-//! look of the website). Both are only values: see [`super::tokens`] for what each one means.
+//! The themes that ship with CursorPie: **gen z** (the look of the website, and the default),
+//! **sage** (the look Settings had before themes existed) and **bubblegum** (Gen Z in candy pink).
+//! All of them are only values: see [`super::tokens`] for what each one means.
 //!
 //! To add a theme of your own to the app, copy one of the functions below, change the values, and
 //! list it in [`all`]. To make one without touching the code, write a file: see `spec.rs`.
@@ -13,14 +14,23 @@ use eframe::egui::Color32;
 pub const DEFAULT_ID: &str = crate::config::DEFAULT_UI_THEME;
 /// The id of the Gen Z theme.
 pub const GENZ_ID: &str = "genz";
+/// The id of the Sage theme: the base of a theme file that does not say what it `extends`.
+pub const SAGE_ID: &str = "sage";
+/// The id of the Bubblegum theme.
+pub const BUBBLEGUM_ID: &str = "bubblegum";
 
 const fn c(r: u8, g: u8, b: u8) -> Color32 {
     Color32::from_rgb(r, g, b)
 }
 
-/// The built-in themes, in the order they are offered.
+/// The built-in themes, in the order they are offered: the default first.
 pub fn all() -> Vec<Theme> {
-    vec![sage(), genz()]
+    vec![genz(), sage(), bubblegum()]
+}
+
+/// The theme a fresh install starts with, and the one an unknown id is shown as.
+pub fn default_theme() -> Theme {
+    find(DEFAULT_ID).unwrap_or_else(genz)
 }
 
 /// The built-in theme with this id.
@@ -200,7 +210,7 @@ pub static SAGE_SWATCHES: Swatches = Swatches {
 /// The sage theme.
 pub fn sage() -> Theme {
     Theme {
-        id: DEFAULT_ID.to_owned(),
+        id: SAGE_ID.to_owned(),
         name: "Sage".to_owned(),
         light: SAGE_LIGHT,
         dark: SAGE_DARK,
@@ -390,6 +400,183 @@ pub fn genz() -> Theme {
     }
 }
 
+// ======================================================================================== bubblegum
+
+/// The light appearance of Bubblegum: a cotton-candy pink page and sidebar, a milky panel and plum
+/// ink instead of the near black of Gen Z. The strong line is plum, so outlines and hard shadows
+/// stay as bold as on the website without the page turning cream.
+pub const BUBBLEGUM_LIGHT: Palette = Palette {
+    dark: false,
+    bg: c(255, 227, 241),
+    sidebar: c(255, 208, 231),
+    card: c(255, 250, 253),
+    idle: c(255, 236, 246),
+    hot: c(255, 214, 236),
+    input: c(255, 240, 248),
+    border: c(232, 184, 208),
+    divider: c(246, 214, 230),
+    line: c(42, 16, 48),
+    text: c(42, 16, 48),
+    muted: c(108, 70, 104),
+    good: c(18, 92, 52),
+    bad: c(170, 20, 60),
+    scrim: Color32::from_rgba_premultiplied(21, 6, 24, 128),
+    track: c(245, 200, 225),
+    keycap: c(255, 250, 253),
+};
+
+/// The dark appearance of Bubblegum: a berry-tinted near black with blush ink, where the outlines and
+/// the hard shadows turn blush.
+pub const BUBBLEGUM_DARK: Palette = Palette {
+    dark: true,
+    bg: c(26, 15, 28),
+    sidebar: c(34, 20, 38),
+    card: c(44, 27, 50),
+    idle: c(60, 38, 68),
+    hot: c(80, 50, 90),
+    input: c(30, 18, 34),
+    border: c(88, 58, 98),
+    divider: c(66, 42, 74),
+    line: c(255, 236, 246),
+    text: c(255, 236, 246),
+    muted: c(206, 174, 200),
+    good: c(96, 208, 132),
+    bad: c(255, 138, 160),
+    scrim: Color32::from_rgba_premultiplied(0, 0, 0, 130),
+    track: c(100, 70, 112),
+    keycap: c(84, 56, 94),
+};
+
+/// Gen Z with rounder shapes: the same outlines and hard shadows, bubblier corners.
+pub const BUBBLEGUM_SHAPE: Shape = Shape {
+    control_r: 18,
+    panel_r: 26,
+    window_r: 34,
+    control: Edge::new(2.0, Tone::Line),
+    chip: Edge::new(2.0, Tone::Line),
+    panel: Edge::new(2.0, Tone::Line),
+    popup: Edge::new(2.0, Tone::Line),
+    window: Edge::new(2.5, Tone::Line),
+    side: Edge::new(2.0, Tone::Line),
+    window_accent_mix: 0.0,
+    control_drop: DropShadow::hard(3, 235),
+    panel_drop: DropShadow::hard(4, 235),
+    popup_drop: DropShadow::hard(4, 235),
+    window_drop: DropShadow::hard(6, 235),
+    nav_wash: 0.55,
+    nav_icon_accent: false,
+};
+
+/// Milky slices with plum ink, or berry ones in the dark.
+pub const BUBBLEGUM_PIE: [PieColors; 2] = [
+    PieColors {
+        slice: [255, 250, 253],
+        ghost: [255, 232, 244],
+        ink: c(42, 16, 48),
+        core: c(255, 250, 253),
+    },
+    PieColors {
+        slice: [60, 38, 68],
+        ghost: [44, 27, 50],
+        ink: c(255, 236, 246),
+        core: c(34, 20, 38),
+    },
+];
+
+/// The pink of Bubblegum. It carries ink, not white.
+pub const BUBBLEGUM_ACCENT: [u8; 3] = [255, 94, 168];
+
+/// The colors Bubblegum suggests: sweets, as pale pages and bold accents.
+pub static BUBBLEGUM_SWATCHES: Swatches = Swatches {
+    pages: [
+        &[
+            ("Bubblegum", [255, 227, 241]),
+            ("Cotton", [255, 240, 248]),
+            ("Lilac", [241, 228, 255]),
+            ("Peach", [255, 234, 224]),
+            ("Mint", [222, 248, 238]),
+        ],
+        &[
+            ("Plum", [26, 15, 28]),
+            ("Grape", [24, 16, 34]),
+            ("Void", [14, 9, 16]),
+            ("Berry", [34, 14, 28]),
+            ("Navy", [16, 16, 32]),
+        ],
+    ],
+    panels: [
+        &[
+            ("Milk", [255, 250, 253]),
+            ("White", [255, 255, 255]),
+            ("Blush", [255, 242, 248]),
+            ("Lilac", [250, 244, 255]),
+            ("Mint", [243, 252, 248]),
+        ],
+        &[
+            ("Plum", [44, 27, 50]),
+            ("Ink", [30, 18, 34]),
+            ("Berry", [52, 24, 44]),
+            ("Grape", [40, 26, 58]),
+            ("Navy", [26, 28, 50]),
+        ],
+    ],
+    sidebars: [
+        &[
+            ("Candy", [255, 208, 231]),
+            ("Blush", [255, 224, 238]),
+            ("Lilac", [232, 218, 255]),
+            ("Peach", [255, 222, 206]),
+            ("Mint", [208, 242, 228]),
+        ],
+        &[
+            ("Dusk", [34, 20, 38]),
+            ("Grape", [30, 20, 42]),
+            ("Night", [18, 10, 20]),
+            ("Berry", [44, 18, 36]),
+            ("Navy", [20, 22, 40]),
+        ],
+    ],
+    texts: [
+        &[
+            ("Plum", [42, 16, 48]),
+            ("Ink", [20, 17, 15]),
+            ("Navy", [22, 24, 70]),
+            ("Berry", [84, 14, 56]),
+            ("Forest", [14, 40, 28]),
+        ],
+        &[
+            ("Blush", [255, 236, 246]),
+            ("Lilac", [232, 224, 255]),
+            ("White", [255, 255, 255]),
+            ("Mint", [210, 244, 224]),
+            ("Peach", [255, 226, 208]),
+        ],
+    ],
+    accents: &[
+        ("Bubblegum", BUBBLEGUM_ACCENT),
+        ("Lime", GENZ_ACCENT),
+        ("Violet", [141, 107, 255]),
+        ("Sky", [90, 208, 255]),
+        ("Orange", [255, 154, 61]),
+        ("Green", [47, 210, 122]),
+    ],
+};
+
+/// The Bubblegum theme.
+pub fn bubblegum() -> Theme {
+    Theme {
+        id: BUBBLEGUM_ID.to_owned(),
+        name: "Bubblegum".to_owned(),
+        light: BUBBLEGUM_LIGHT,
+        dark: BUBBLEGUM_DARK,
+        shape: BUBBLEGUM_SHAPE,
+        accent: BUBBLEGUM_ACCENT,
+        pie: BUBBLEGUM_PIE,
+        swatches: &BUBBLEGUM_SWATCHES,
+        builtin: true,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -398,6 +585,10 @@ mod tests {
     fn the_ids_are_unique_and_the_default_is_first() {
         let all = all();
         assert_eq!(all[0].id, DEFAULT_ID);
+        assert_eq!(DEFAULT_ID, GENZ_ID, "a fresh install is Gen Z");
+        assert_eq!(default_theme().id, GENZ_ID);
+        let ids: Vec<&str> = all.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, [GENZ_ID, SAGE_ID, BUBBLEGUM_ID]);
         for (i, t) in all.iter().enumerate() {
             assert!(t.builtin);
             assert!(!all[..i].iter().any(|o| o.id == t.id), "{} twice", t.id);
@@ -441,8 +632,26 @@ mod tests {
     }
 
     #[test]
+    fn bubblegum_is_gen_z_in_pink() {
+        let t = bubblegum();
+        assert_eq!(t.name, "Bubblegum");
+        assert_eq!(t.accent, BUBBLEGUM_ACCENT);
+        assert_eq!(
+            t.accent, t.swatches.accents[0].1,
+            "the first swatch is the default"
+        );
+        // outlines and hard shadows like the website, on a pink page
+        assert!(t.shape.control.is_visible() && t.shape.panel.is_visible());
+        assert_eq!(t.shape.panel_drop.blur, 0, "hard, not soft");
+        assert_ne!(t.light.bg, genz().light.bg);
+        // the same Edge and shadow tokens as Gen Z, rounder corners
+        assert!(t.shape.panel_r > genz().shape.panel_r);
+        assert_eq!(find(BUBBLEGUM_ID).unwrap().id, BUBBLEGUM_ID);
+    }
+
+    #[test]
     fn the_line_of_gen_z_is_its_text_so_it_is_always_seen() {
-        for p in [GENZ_LIGHT, GENZ_DARK] {
+        for p in [GENZ_LIGHT, GENZ_DARK, BUBBLEGUM_LIGHT, BUBBLEGUM_DARK] {
             assert_eq!(p.line, p.text);
         }
     }

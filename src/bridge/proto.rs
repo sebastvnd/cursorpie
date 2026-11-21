@@ -111,6 +111,22 @@ pub enum FromBrowser {
     /// Close the open panel `panel` as cancelled.
     #[serde(rename = "panel_close")]
     PanelClose { panel: String },
+    /// The website's Flow Hub asks whether CursorPie is there and may install flows: answered at once
+    /// with [`ToBrowser::FlowPong`]. The native host drops what is said while the app is not running,
+    /// so no answer means the app is not running.
+    #[serde(rename = "flow_ping")]
+    FlowPing { req: u64 },
+    /// The website's Flow Hub asks to install a flow (see [`crate::flowhub`]). `flow` is the text of
+    /// a `.cursorpie-flow.json` file, exactly as the page has it; the app reads it like an import,
+    /// asks the person in a panel and answers with [`ToBrowser::FlowResult`] carrying the same `req`.
+    #[serde(rename = "flow_install")]
+    FlowInstall {
+        req: u64,
+        /// The author the page lists, shown as a hint only.
+        #[serde(default)]
+        author: String,
+        flow: String,
+    },
 }
 
 /// A chat site that is open (`whatsapp`, `telegram`).
@@ -159,6 +175,22 @@ pub enum ToBrowser {
     /// as JSON (`outcome`, `button`, `values`, `reason`).
     #[serde(rename = "panel_result")]
     PanelResult { req: u64, result: serde_json::Value },
+    /// The answer to a [`FromBrowser::FlowPing`]: the app is running; `install` says whether it
+    /// would take a flow now, and `reason` why not when it would not.
+    #[serde(rename = "flow_pong")]
+    FlowPong {
+        req: u64,
+        install: bool,
+        reason: String,
+    },
+    /// The answer to a [`FromBrowser::FlowInstall`]: `state` is one of
+    /// [`flowhub::Answer::state`](crate::flowhub::Answer::state) (`installed`, `declined`...).
+    #[serde(rename = "flow_result")]
+    FlowResult {
+        req: u64,
+        state: String,
+        message: String,
+    },
     /// The app has written the files of version `version` into the folder this extension was loaded
     /// from (it does that when it starts after an update): load them. The extension reloads itself
     /// once per version asked; one from before this message existed ignores it.
@@ -224,6 +256,53 @@ mod tests {
         .unwrap();
         assert_eq!(out["type"], "reload");
         assert_eq!(out["version"], "0.9.0");
+    }
+
+    #[test]
+    fn a_flow_install_is_read_and_its_answer_written() {
+        let m: FromBrowser = serde_json::from_str(
+            r#"{"type":"flow_install","req":4,"author":"sebastvnd","flow":"{\"cursorpie_flow\":2}"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            m,
+            FromBrowser::FlowInstall {
+                req: 4,
+                author: "sebastvnd".into(),
+                flow: r#"{"cursorpie_flow":2}"#.into(),
+            }
+        );
+        // the author is optional, the flow and the request number are not
+        assert!(
+            serde_json::from_str::<FromBrowser>(r#"{"type":"flow_install","req":1,"flow":"x"}"#)
+                .is_ok()
+        );
+        assert!(
+            serde_json::from_str::<FromBrowser>(r#"{"type":"flow_install","flow":"x"}"#).is_err()
+        );
+        assert_eq!(
+            serde_json::from_str::<FromBrowser>(r#"{"type":"flow_ping","req":9}"#).unwrap(),
+            FromBrowser::FlowPing { req: 9 }
+        );
+        assert_eq!(
+            serde_json::to_string(&ToBrowser::FlowPong {
+                req: 9,
+                install: false,
+                reason: "off".into()
+            })
+            .unwrap(),
+            r#"{"type":"flow_pong","req":9,"install":false,"reason":"off"}"#
+        );
+        let out = serde_json::to_string(&ToBrowser::FlowResult {
+            req: 4,
+            state: "installed".into(),
+            message: "ok".into(),
+        })
+        .unwrap();
+        assert_eq!(
+            out,
+            r#"{"type":"flow_result","req":4,"state":"installed","message":"ok"}"#
+        );
     }
 
     #[test]

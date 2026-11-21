@@ -53,6 +53,7 @@ pub(super) fn clean_items(items: &mut Vec<Item>, depth: usize) {
                     && *b != crate::mouse::BACK
                     && *b != crate::mouse::FORWARD
             }),
+            ItemKind::Smart(s) => s.sanitize(),
             ItemKind::Run(_) => {}
         }
     }
@@ -66,7 +67,7 @@ fn upgrade_launchers(items: &mut [Item]) {
         match &mut it.kind {
             ItemKind::Run(action) => roles::upgrade(action),
             ItemKind::Submenu(children) => upgrade_launchers(children),
-            ItemKind::Mode { .. } => {}
+            ItemKind::Mode { .. } | ItemKind::Smart(_) => {}
         }
     }
 }
@@ -87,6 +88,25 @@ impl Config {
             let extra_general = p.is_general() && have_general;
             have_general |= p.is_general();
             !extra_general
+        });
+        // An app has one profile only: the first profile that lists it keeps it. Taking it away
+        // from the later ones changes nothing in use (the first one was always the one chosen);
+        // a later profile left with no app was never reachable and goes.
+        let mut claimed: Vec<String> = Vec::new();
+        self.profiles.retain_mut(|p| {
+            if p.is_general() {
+                return true;
+            }
+            p.apps.retain(|a| {
+                let free = !claimed
+                    .iter()
+                    .any(|c| crate::platform::OS.app_ids_equal(c, a));
+                if free {
+                    claimed.push(a.clone());
+                }
+                free
+            });
+            !p.apps.is_empty()
         });
         if self.profiles.is_empty() {
             self.profiles = Config::default().profiles;
@@ -113,6 +133,7 @@ impl Config {
         self.pie_hold_ms = self.pie_hold_ms.clamp(50, 2000);
         self.settings_hold_ms = self.settings_hold_ms.max(self.pie_hold_ms + 300);
         self.settings_space_presses = self.settings_space_presses.clamp(1, 2);
+        self.smart.sanitize();
         self.pie_size = self.pie_size.clamp(140.0, 360.0);
         self.preview_ms = self.preview_ms.min(3000);
         self.hud_ms = self.hud_ms.clamp(HUD_MS_MIN, HUD_MS_MAX);
@@ -252,6 +273,10 @@ mod tests {
         assert_eq!(old.touch_still_mm, 2.0);
         assert_eq!(old.touch_click_action, TouchClickAction::SwitchPie);
         assert_eq!(old.touch_typing_guard_ms, 400);
+        assert!(
+            old.touch_lock,
+            "the lock gesture is on unless it is switched off"
+        );
         assert!(old.haptics && old.haptic_hover);
         assert_eq!(old, defaults_of_an_old_file(old.version));
         // the two-finger mode is gone: the old field is ignored and never comes back
@@ -376,6 +401,28 @@ mod tests {
             !json.contains("extra"),
             "nothing is written for a mode without extras"
         );
+    }
+
+    #[test]
+    fn an_app_keeps_one_profile_the_first_one_that_lists_it() {
+        let item = r#"{"name":"s","icon":"x","kind":{"Run":"Nothing"}}"#;
+        let c = parse(&format!(
+            r#"{{"version":2,"profiles":[
+                {{"name":"G","apps":[],"items":[{item}],"active":[]}},
+                {{"name":"A","apps":["one.app","two.app"],"items":[{item}],"active":[]}},
+                {{"name":"B","apps":["two.app","three.app"],"items":[{item}],"active":[]}},
+                {{"name":"C","apps":["one.app"],"items":[{item}],"active":[]}}]}}"#
+        ));
+        let names: Vec<&str> = c.profiles.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["G", "A", "B"],
+            "C had nothing left and was never reachable"
+        );
+        assert_eq!(c.profiles[1].apps.len(), 2);
+        assert_eq!(c.profiles[2].apps.len(), 1, "B keeps only its own app");
+        assert_eq!(c.profile_owning("two.app", None), Some(1));
+        assert_eq!(c.profile_owning("two.app", Some(1)), None);
     }
 
     #[test]

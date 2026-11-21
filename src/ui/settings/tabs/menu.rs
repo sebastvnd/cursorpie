@@ -38,7 +38,11 @@ impl App {
         ed.profile = ed.profile.min(edit.profiles.len().saturating_sub(1));
         let accent = rgb(edit.accent);
         let accent_rgb = edit.accent;
-        let show_labels = edit.show_labels;
+        // The names are not drawn under the icons of the pie any more (the pill shows them, see
+        // `ui::pie::pill`), so the editor shows the pie as it is: icons only.
+        let show_labels = false;
+        // the shape of the pie as it is being set (the same one the Behavior tab previews)
+        let outline = edit.outline();
         let tx_ref: &Sender<Msg> = tx;
         let trigger = edit.trigger_button;
         let mouse = crate::mouse::active_buttons();
@@ -116,7 +120,16 @@ impl App {
                 ui.add_space(spare / 2.0);
                 let res = ui
                     .vertical_centered(|ui| {
-                        pie_designer(ui, ed, ctx, ring, accent_rgb, pie_size, show_labels)
+                        pie_designer(
+                            ui,
+                            ed,
+                            ctx,
+                            ring,
+                            accent_rgb,
+                            pie_size,
+                            show_labels,
+                            outline,
+                        )
                     })
                     .inner;
                 ui.add_space(GAP / 2.0);
@@ -258,7 +271,7 @@ impl App {
                     ui.set_max_width(right.width());
                     if let Some(ring) = ring_mut(&mut prof.items, &nav) {
                         if ed.adding {
-                            add_panel(ctx, ed, ring, nav.len(), accent);
+                            add_panel(ctx, ed, ring, nav.len(), accent, &edit.flows);
                         } else {
                             ed.add_catalog = None; // the closed sheet keeps nothing
                         }

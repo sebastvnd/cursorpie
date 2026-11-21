@@ -33,6 +33,10 @@ pub enum Source {
     Flow,
     /// The browser extension of this browser (`firefox`, `chrome`...).
     Extension(String),
+    /// CursorPie itself, asking about a flow the website's Flow Hub offers (see
+    /// [`flowhub`](crate::flowhub)). The panel is written by the app; only the words it quotes
+    /// come from the flow file.
+    Hub,
 }
 
 /// A panel on its way to the window.
@@ -67,6 +71,7 @@ pub fn allowed(source: &Source) -> Result<(), String> {
                 .into(),
         ),
         Source::Extension(_) => Ok(()),
+        Source::Hub => crate::flowhub::allowed(),
     }
 }
 

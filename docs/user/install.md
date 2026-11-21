@@ -3,6 +3,8 @@
 CursorPie runs on macOS, Windows and Linux. Install a ready-made package from the latest
 [GitHub Release](https://github.com/sebastvnd/cursorpie/releases/latest), or build from source.
 
+<img src="../gifs/13-platforms.gif" width="720" alt="macOS, Windows, Linux">
+
 ## Contents
 
 - [Choose a package](#choose-a-package)
@@ -136,9 +138,25 @@ Windows needs no permission. **One exception: programs that run as administrator
 normal program (clicks, shortcuts) to a window that runs as administrator (Task Manager, a terminal opened with
 *Run as administrator*, an installer that asked for UAC). In those windows the pie opens, but its slices do nothing.
 This is a Windows rule (UIPI), not a fault, and it is why the setup wizard, the first start from the zip and the
-welcome screen all mention it. To use the pie there too, right-click the CursorPie shortcut (or `cursorpie.exe`)
-and choose **Run as administrator**. Do this only if you need it: it asks for UAC at each start, and everything a
-slice runs, a *Shell command* block included, then runs with full rights.
+welcome screen all mention it. To use the pie there too, open **Settings > About > Administrator mode** and press
+**Reinstall as administrator** (see below). Right-clicking `cursorpie.exe` and choosing **Run as administrator**
+also works, but asks for UAC at each start and cannot be done from the login entry.
+
+**Administrator mode.** *Reinstall as administrator* asks Windows for permission once (UAC), then moves CursorPie
+from `%LOCALAPPDATA%\Programs\CursorPie` to `C:\Program Files\CursorPie`, adds a machine-wide entry to
+**Settings > Apps** and a scheduled task named *CursorPie* that starts it with administrator rights each time you
+sign in, with no question. CursorPie restarts by itself and your settings are kept. Details:
+
+- The program lives in Program Files because the task runs it elevated: a folder that an ordinary program can write
+  to would let that program replace what runs with full rights.
+- **Launch at login** in Settings and in the tray menu switches the logon trigger of that task.
+- Starting CursorPie from a shortcut, a download or an old startup entry does not start a second, limited copy: it
+  starts the installed one and quits. A newer download offers to update the installed copy first (one more UAC).
+- Your account must be an administrator, otherwise Windows has no higher rights to give.
+- Everything a slice runs, a *Shell command* block included, runs with full rights in this mode. Use it only if you
+  need the pie in elevated windows.
+- **To go back,** uninstall in **Settings > Apps > CursorPie** (this asks for UAC and removes the task, the entry and
+  the folder; `config.json` is kept) and start `cursorpie.exe` again to install it for your user.
 
 ## Linux
 

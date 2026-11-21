@@ -81,7 +81,8 @@ CursorPie, the trigger button and the output of `cargo run --release` from a ter
   number of buttons.
 - Programs running **as administrator** ignore the input CursorPie sends unless CursorPie also runs as
   administrator (a Windows rule, UIPI). This is the most common reason for "CursorPie does nothing in this
-  window" on Windows; see [Install](install.md#windows) for how to run it as administrator and what that costs.
+  window" on Windows; open **Settings > About > Reinstall as administrator** to fix it, see
+  [Install](install.md#windows) for what that does and what it costs.
 - **UWP apps cannot be told apart.** Store apps such as Calculator, Photos or Settings run inside one shared host
   process, so every one of them reports `applicationframehost.exe`. A profile with that id applies to all of them
   at once. Normal desktop programs (Chrome, VS Code, Explorer, Office...) are detected correctly.

@@ -3,7 +3,7 @@
 //! A hero panel on top (logo, name, version, link buttons), then one column of panels.
 
 use crate::about::*;
-use crate::platform;
+use crate::platform::{self, ReinstallError};
 use crate::ui::app::App;
 use crate::ui::fonts;
 use crate::ui::settings::theme::*;
@@ -64,6 +64,7 @@ impl App {
     pub(in crate::ui::settings) fn about_tab(&mut self, ui: &mut egui::Ui, accent: Color32) {
         hero_card(ui, accent);
         self.updates_panel(ui, accent);
+        self.admin_panel(ui, accent);
         details_panels(ui);
         self.developer_panels(ui, accent);
         credits_panel(ui);
@@ -164,6 +165,8 @@ impl App {
                 "Install update downloads the release from GitHub and checks its checksum. This copy is in a folder only an administrator can write to, so when CursorPie restarts to update, your system asks for your password; if you cancel, the old version starts again. Your settings are kept."
             } else if can_install {
                 "Install update downloads the release from GitHub, checks its checksum, replaces this copy and restarts CursorPie. Your settings are kept."
+            } else if self.ed.admin_mode.installed {
+                "CursorPie is installed as administrator, which Install update does not touch. Download the new version and start it: CursorPie offers to update the installed one."
             } else {
                 "This copy was not installed in the usual place, so it cannot update itself: Download page opens the release page in your browser."
             };
@@ -175,6 +178,85 @@ impl App {
                 );
             }
         });
+    }
+}
+
+impl App {
+    /// The "Administrator mode" panel (Windows only): Windows keeps the input of a normal program
+    /// from windows that run as administrator, so the pie does nothing there. The button installs
+    /// CursorPie to run as administrator at every login, with one question for permission now.
+    fn admin_panel(&mut self, ui: &mut egui::Ui, accent: Color32) {
+        let mode = self.ed.admin_mode;
+        if !mode.available {
+            return;
+        }
+        let ctx = ui.ctx().clone();
+        panel(ui, "Administrator mode", |ui| {
+            let (ok, text, hint) = match (mode.installed, mode.elevated) {
+                (true, true) => (
+                    true,
+                    "On",
+                    "Installed in Program Files, started with administrator rights at login.",
+                ),
+                (true, false) => (
+                    false,
+                    "Not running",
+                    "Installed as administrator, but this copy runs without those rights.",
+                ),
+                (false, true) => (
+                    true,
+                    "This session",
+                    "Running as administrator now, but not after a restart.",
+                ),
+                (false, false) => (
+                    false,
+                    "Off",
+                    "Windows ignores CursorPie in programs that run as administrator.",
+                ),
+            };
+            row_wide(ui, "Status", hint, 300.0, |ui| status(ui, ok, text));
+            actions(ui, |ui| {
+                // the main thing to do while it is off, a repair or an update once it is on
+                let look = if mode.installed && mode.elevated {
+                    Look::Soft
+                } else {
+                    Look::Primary(accent)
+                };
+                let label = "Reinstall as administrator";
+                let reinstall = button(ui, look, Some(symbols::SHIELD_CHECK), label);
+                if reinstall.clicked() {
+                    self.reinstall_as_administrator(&ctx);
+                }
+            });
+            note(
+                ui,
+                "Task Manager, a terminal opened with Run as administrator and installers that asked for permission ignore a program that does not run as administrator, so the pie does nothing in their windows. This moves CursorPie to Program Files and starts it with administrator rights each time you sign in, without a question every time. Windows asks for your permission once, now; CursorPie restarts and your settings are kept. Your account must be an administrator.",
+            );
+            note(
+                ui,
+                "While it runs as administrator, everything a slice starts, a Shell command block included, runs with full rights. To go back, uninstall CursorPie in Settings > Apps and start it again.",
+            );
+        });
+    }
+
+    /// The *Reinstall as administrator* button: starts the elevated step and, once Windows let it
+    /// start, quits so that the step can replace the files. Changes that Settings still holds are
+    /// not lost silently: the button asks to save or cancel them first.
+    fn reinstall_as_administrator(&mut self, ctx: &egui::Context) {
+        if self.has_unsaved_changes() {
+            self.say("Save or cancel your changes, then press Reinstall as administrator.");
+            return;
+        }
+        diag::log!("ui", "admin_reinstall");
+        match platform::reinstall_as_administrator() {
+            Ok(()) => self.quit(ctx),
+            Err(ReinstallError::Cancelled) => {
+                self.say("Cancelled: CursorPie was not reinstalled.");
+            }
+            Err(ReinstallError::Failed | ReinstallError::Unsupported) => {
+                self.say("Could not ask Windows for administrator rights.");
+            }
+        }
     }
 }
 

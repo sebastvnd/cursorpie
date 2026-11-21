@@ -20,6 +20,7 @@
 use super::super::gesture::{Gesture, Source};
 use super::super::resolve;
 use super::haptic::{self, Tick};
+use super::lock::LOCK_FINGERS;
 use super::{ACTIVE, FINGERS, now};
 use crate::config::{TouchClickAction, cfg, lock};
 use crate::msg::{Msg, Notifier};
@@ -42,6 +43,10 @@ static SWALLOWED: AtomicBool = AtomicBool::new(false);
 static SWALLOW_UNTIL: AtomicU64 = AtomicU64::new(0);
 /// When the extra click last ran (ms on the touch clock, plus 1; 0 = never).
 static LAST_FIRED: AtomicU64 = AtomicU64::new(0);
+/// Until this time (ms on the touch clock, plus 1; 0 = never) the next click is the one the tap of
+/// the lock gesture made (see [`super::lock`]): the system may call two fingers tapping a right-click, and
+/// that click is not for the app under the pointer.
+static LOCK_TAP_UNTIL: AtomicU64 = AtomicU64::new(0);
 
 fn now_ms() -> u64 {
     now().as_millis() as u64 + 1
@@ -51,6 +56,25 @@ fn now_ms() -> u64 {
 pub(crate) fn clear() {
     SWALLOWED.store(false, Ordering::SeqCst);
     SWALLOW_UNTIL.store(0, Ordering::SeqCst);
+    LOCK_TAP_UNTIL.store(0, Ordering::SeqCst);
+}
+
+/// The lock gesture was recognized (see [`super::lock`]): the click the system makes of the tap of its two
+/// fingers is swallowed, like the one of the extra click.
+pub(crate) fn swallow_lock_tap_click() {
+    LOCK_TAP_UNTIL.store(now_ms() + TAP_CLICK_WINDOW_MS, Ordering::SeqCst);
+}
+
+/// Whether a click that is arriving is the one of the lock gesture: it comes within the window
+/// after the gesture was recognized, or three fingers touch the surface while CursorPie is locked
+/// (a click that arrives before the recognizer has seen the fingers lift).
+fn lock_click() -> bool {
+    let until = LOCK_TAP_UNTIL.load(Ordering::SeqCst);
+    if until != 0 && now_ms() <= until {
+        LOCK_TAP_UNTIL.store(0, Ordering::SeqCst);
+        return true;
+    }
+    super::lock::in_force() && FINGERS.load(Ordering::SeqCst) == LOCK_FINGERS
 }
 
 /// Whether a click event of this kind is worth handing to [`handle`]: the native tap calls this for
@@ -58,7 +82,11 @@ pub(crate) fn clear() {
 /// atomic read while no trackpad hold is running.
 pub(crate) fn interested(kind: Kind) -> bool {
     match kind {
-        Kind::Down => ACTIVE.load(Ordering::Relaxed),
+        Kind::Down => {
+            ACTIVE.load(Ordering::Relaxed)
+                || LOCK_TAP_UNTIL.load(Ordering::Relaxed) != 0
+                || super::lock::is_locked()
+        }
         Kind::Up | Kind::Drag => SWALLOWED.load(Ordering::Relaxed),
     }
 }
@@ -82,6 +110,11 @@ pub(crate) fn handle(
         Kind::Down => {
             // every press decides again; a stale flag from a lost release ends here
             SWALLOWED.store(false, Ordering::SeqCst);
+            if lock_click() {
+                SWALLOWED.store(true, Ordering::SeqCst);
+                diag::log!("touch", "lock_click_swallowed");
+                return Some(Verdict::Drop);
+            }
             if !ACTIVE.load(Ordering::SeqCst) {
                 return None;
             }

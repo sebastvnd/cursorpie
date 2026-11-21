@@ -16,7 +16,7 @@
 //! | `log` | `logview.rs` | other views of a debug log: `summary`, `timeline`, `grep`, `slow`, `diff`, `follow`, `report` |
 //! | `diag-lint` | `lint.rs` | checks the log lines in `src/` against the rules and against what the analyzer reads |
 //! | `clean-logs` | `clean.rs` | deletes old debug logs |
-//! | `zip` | `zip.rs` | packs the project into a `.zip` file without `target/` and `.git/` |
+//! | `zip` | `zip.rs` | packs the project into a `.zip`, excluding `target/`, `.git/`, files larger than 10 MiB, video formats and `.gif` files |
 //! | `info` | `info.rs` | prints the facts a bug report needs (OS, session, tool versions) |
 //!
 //! The tools use only the standard library, so they build in seconds and work on every OS the
@@ -79,8 +79,9 @@ Commands:
   clean-logs [--keep N] [--older-than DAYS] [--all] [--dir PATH] [--dry-run]
                                delete old debug logs of the app (default: keep the newest 3)
   zip [-o FILE] [--list] [--no-git]
-                               pack the project into a .zip file without target/ and .git/
-                               (default file: NAME-VERSION.zip next to the project folder)
+                               pack the project into a .zip without target/, .git/, files larger
+                               than 10 MiB, common video formats or .gif files; --list uses the same
+                               filters (default file: NAME-VERSION.zip next to the project folder)
   info                         print the facts a bug report needs: OS, session, tool versions
   help                         show this text
 

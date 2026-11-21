@@ -22,6 +22,7 @@
 //! | `set_accessory_policy` | hide the Dock icon (macOS only, no-op elsewhere) |
 //! | `clear_window_frame` | strip the OS frame of the native window handle (Windows only, no-op elsewhere) |
 //! | `set_window_passive` | the window that shows the notice of an action must not take the focus (Windows: `WS_EX_NOACTIVATE`; no-op elsewhere) |
+//! | `keep_over_full_screen` | show the pie, the notices and the panels over an app in full screen (macOS: full-screen apps are Spaces of their own, so the window joins every Space, may sit beside a full-screen window and is raised above the Dock; `false` while Settings is open gives it back its normal behavior; Windows and Linux: no-op, the topmost window is already drawn over) |
 //! | `window_manager_may_recenter` | whether the window manager may ignore the position of a hidden window when it is shown again (X11 only) |
 //! | `window_point` | where to ask the toolkit to put a window centered on a point of the pointer's space (identity except on Linux in a Wayland session, where KWin's points and XWayland's differ) |
 //! | `window_scale` | how many of the toolkit's points one point of the pointer's space is, to turn a distance of the pointer into a distance in the pie (1 except on Linux in a Wayland session, where KWin's points and XWayland's differ) |
@@ -43,6 +44,7 @@
 //! | `haptic` | one haptic tick on a trackpad (macOS only, no-op elsewhere), see [`HapticKind`] |
 //! | `launch_at_login_enabled`, `set_launch_at_login` | start with the user session |
 //! | `ensure_installed`, `handle_command_line`, `single_instance` | Windows install step, `--uninstall`, one running copy (no-ops elsewhere) |
+//! | `admin_mode`, `reinstall_as_administrator` | Windows only: whether CursorPie runs as administrator or is installed for it, and the *Reinstall as administrator* button of the About tab (see [`AdminMode`]); elsewhere nothing is available |
 //! | `wait_for_login_ready` | after a login start (`--autostart`) wait for the desktop (Windows only, no-op elsewhere) |
 //! | `release_unused_memory` | give freed pages back to the OS, without evicting what the next press needs |
 //! | `memory_use` | the memory the program holds, as the OS counts it ([`MemoryUse`]); only read for the diagnostic log (category `mem`) |
@@ -374,6 +376,31 @@ pub enum NativeIcon {
         height: u32,
         data: Vec<u8>,
     },
+}
+
+/// What the About tab needs to know about *administrator mode* (Windows only): programs that run as
+/// administrator ignore the input of a program that does not, so CursorPie can be installed to run
+/// as administrator at every login. See `admin_mode`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AdminMode {
+    /// Whether this system has such a mode at all (Windows). The About tab shows nothing when not.
+    pub available: bool,
+    /// Whether this copy runs with administrator rights now.
+    pub elevated: bool,
+    /// Whether CursorPie is installed in administrator mode: in the program folder, with a task that
+    /// starts it elevated when the person signs in.
+    pub installed: bool,
+}
+
+/// Why `reinstall_as_administrator` did nothing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReinstallError {
+    /// This system has no administrator mode.
+    Unsupported,
+    /// The person said No to the system's question for permission (UAC).
+    Cancelled,
+    /// The elevated step could not be started.
+    Failed,
 }
 
 /// How much memory the program holds, as the operating system counts it. See [`memory_use`].

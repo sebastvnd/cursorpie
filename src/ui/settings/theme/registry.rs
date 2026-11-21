@@ -104,7 +104,7 @@ fn resolve_one(
             return Err("it extends too many themes in a row (or itself)".to_owned());
         }
         let file = files.get(id).ok_or("no such theme")?;
-        let base_id = file.extends.as_deref().unwrap_or(builtin::DEFAULT_ID);
+        let base_id = file.extends.as_deref().unwrap_or(builtin::SAGE_ID);
         let base = match builtin::find(base_id) {
             Some(base) => base,
             None if files.contains_key(base_id) => {
@@ -223,7 +223,7 @@ pub fn find(id: &str) -> Theme {
                 .find(|t| t.id == id)
                 .cloned()
         })
-        .unwrap_or_else(builtin::sage)
+        .unwrap_or_else(builtin::default_theme)
 }
 
 /// Whether a theme with this id exists right now.
@@ -308,6 +308,7 @@ mod tests {
             ("loop2", r#"{"extends":"loop1"}"#),
             ("self", r#"{"extends":"self"}"#),
             ("sage", "{}"),
+            ("bubblegum", "{}"),
         ]));
         let ids: Vec<&str> = loaded.themes.iter().map(|t| t.id.as_str()).collect();
         assert_eq!(ids, ["good"]);
@@ -318,6 +319,7 @@ mod tests {
             "loop2.json",
             "self.json",
             "sage.json",
+            "bubblegum.json",
         ] {
             assert!(said(id), "{id}: {:?}", loaded.problems);
         }
@@ -364,15 +366,20 @@ mod tests {
     fn an_unknown_id_is_the_default_theme() {
         assert_eq!(find("no-such-theme-anywhere").id, builtin::DEFAULT_ID);
         assert_eq!(find("genz").id, "genz");
-        assert!(exists("sage") && exists("genz") && !exists("no-such-theme-anywhere"));
+        assert!(
+            exists("sage")
+                && exists("genz")
+                && exists("bubblegum")
+                && !exists("no-such-theme-anywhere")
+        );
     }
 
     #[test]
     fn the_example_of_the_docs_is_a_theme() {
-        let text = include_str!("../../../../docs/examples/themes/bubblegum.json");
-        let loaded = resolve_all(vec![("bubblegum".into(), ThemeFile::parse(text).unwrap())]);
+        let text = include_str!("../../../../docs/examples/themes/mint-soda.json");
+        let loaded = resolve_all(vec![("mint-soda".into(), ThemeFile::parse(text).unwrap())]);
         assert!(loaded.problems.is_empty(), "{:?}", loaded.problems);
-        assert_eq!(loaded.themes[0].name, "Bubblegum");
+        assert_eq!(loaded.themes[0].name, "Mint Soda");
         assert_eq!(loaded.themes[0].shape.control_r, 14);
     }
 }

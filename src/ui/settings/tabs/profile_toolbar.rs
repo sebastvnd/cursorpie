@@ -103,6 +103,25 @@ fn avatar(
     );
 }
 
+/// [`avatar`] for an app that cannot be chosen: faded and washed with grey.
+fn avatar_taken(
+    painter: &egui::Painter,
+    ctx: &egui::Context,
+    ed: &mut Ed,
+    rect: Rect,
+    bundle: &str,
+) {
+    let mut faded = painter.clone();
+    faded.set_opacity(0.4);
+    avatar(&faded, ctx, ed, rect, bundle, pal().muted);
+    let radius = (rect.width() * 0.28).round() as u8;
+    painter.rect_filled(
+        rect,
+        CornerRadius::same(radius),
+        pal().idle.gamma_multiply(0.6),
+    );
+}
+
 /// The stand-in for a profile without an app (the general profile): a window symbol on a soft tile.
 fn general_avatar(painter: &egui::Painter, rect: Rect, accent: Color32) {
     let radius = (rect.width() * 0.28).round() as u8;
@@ -452,6 +471,8 @@ pub(super) fn profile_toolbar(
         Some(ProfileSheet::New) => new_profile_sheet(ctx, edit, ed, tx, accent),
         Some(ProfileSheet::Rename) => rename_sheet(ctx, edit, ed, accent),
         Some(ProfileSheet::Apps) => apps_sheet(ctx, edit, ed, tx, accent),
+        // these two belong to the Intelligent page, which draws them
+        Some(ProfileSheet::Pick(PickFor::Ignore) | ProfileSheet::Site) => {}
         Some(ProfileSheet::Pick(for_)) => pick_app_sheet(ctx, edit, ed, tx, accent, for_),
         None => {}
     }
@@ -494,7 +515,7 @@ fn pick_app_sheet(
     let back = match for_ {
         PickFor::New => Some(ProfileSheet::New),
         PickFor::Add => Some(ProfileSheet::Apps),
-        PickFor::Action | PickFor::Flow => None,
+        PickFor::Action | PickFor::Flow | PickFor::Ignore => None,
     };
     let profile = ed.profile;
     // apps that are already chosen are shown with a check and cannot be picked twice
@@ -505,10 +526,26 @@ fn pick_app_sheet(
             .map(|p| p.apps.clone())
             .unwrap_or_default(),
         PickFor::New => vec![ed.new_profile_app.clone()],
+        PickFor::Ignore => edit.smart.ignore_apps.clone(),
         PickFor::Action | PickFor::Flow => Vec::new(),
     };
-    let is_taken =
-        |id: &str| !id.is_empty() && taken.iter().any(|t| platform::OS.app_ids_equal(t, id));
+    // an app has one profile only: one that another profile has is shown grey and cannot be chosen
+    let owner_of = |id: &str| -> Option<String> {
+        let except = match for_ {
+            PickFor::Add => Some(profile),
+            _ => None,
+        };
+        match for_ {
+            PickFor::New | PickFor::Add => edit
+                .profile_owning(id, except)
+                .map(|i| edit.profiles[i].name.clone()),
+            PickFor::Action | PickFor::Flow | PickFor::Ignore => None,
+        }
+    };
+    let is_taken = |id: &str| {
+        !id.is_empty()
+            && (taken.iter().any(|t| platform::OS.app_ids_equal(t, id)) || owner_of(id).is_some())
+    };
 
     let size = Vec2::new(520.0, 580.0);
     let bounds = ed.card;
@@ -565,6 +602,7 @@ fn pick_app_sheet(
                     for k in range {
                         let app = ed.installed[shown[k]].clone();
                         let taken = is_taken(&app.id);
+                        let owner = owner_of(&app.id);
                         let (row, resp) = ui.allocate_exact_size(
                             Vec2::new(ui.available_width(), row_h),
                             if taken {
@@ -581,7 +619,11 @@ fn pick_app_sheet(
                             Pos2::new(inner.min.x + 12.0 + 18.0, inner.center().y),
                             Vec2::splat(36.0),
                         );
-                        avatar(ui.painter(), ctx, ed, icon, &app.id, accent);
+                        if taken {
+                            avatar_taken(ui.painter(), ctx, ed, icon, &app.id);
+                        } else {
+                            avatar(ui.painter(), ctx, ed, icon, &app.id, accent);
+                        }
                         let tint = if taken { pal().muted } else { pal().text };
                         ui.painter().text(
                             Pos2::new(inner.min.x + 64.0, inner.center().y - 9.0),
@@ -597,7 +639,16 @@ fn pick_app_sheet(
                             egui::FontId::new(12.0, egui::FontFamily::Proportional),
                             pal().muted,
                         );
-                        if taken {
+                        if let Some(name) = &owner {
+                            ui.painter().text(
+                                Pos2::new(inner.max.x - 12.0, inner.center().y),
+                                egui::Align2::RIGHT_CENTER,
+                                format!("Has profile \u{201c}{}\u{201d}", clip(name, 14)),
+                                egui::FontId::new(12.0, egui::FontFamily::Proportional),
+                                pal().muted,
+                            );
+                            resp.on_hover_text("An app can have only one profile");
+                        } else if taken {
                             fonts::paint_icon(
                                 ui.painter(),
                                 Pos2::new(inner.max.x - 20.0, inner.center().y),
@@ -619,14 +670,17 @@ fn pick_app_sheet(
         to_bottom(ui, CONTROL_H);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
-            if button(
-                ui,
-                Look::Soft,
-                Some(symbols::FOLDER_OPEN),
-                "Browse files\u{2026}",
-            )
-            .on_hover_text("For an app that is not in the list")
-            .clicked()
+            // the apps to ignore are chosen from the list only: an app CursorPie never saw is one
+            // it cannot learn anyway
+            if for_ != PickFor::Ignore
+                && button(
+                    ui,
+                    Look::Soft,
+                    Some(symbols::FOLDER_OPEN),
+                    "Browse files\u{2026}",
+                )
+                .on_hover_text("For an app that is not in the list")
+                .clicked()
             {
                 browse = true;
             }
@@ -663,6 +717,14 @@ fn pick_app_sheet(
                     ctx.request_repaint();
                 }
             }
+            PickFor::Ignore => {
+                let list = &mut edit.smart.ignore_apps;
+                if list.len() < SMART_IGNORE_MAX
+                    && !list.iter().any(|a| platform::OS.app_ids_equal(a, &app.id))
+                {
+                    list.push(app.id);
+                }
+            }
             PickFor::Action => {
                 // the same message a chosen file gives, so the slice also takes the app's icon
                 if let Some(t) = ed.action_target.take() {
@@ -695,6 +757,7 @@ fn pick_app_sheet(
                     platform::bundle_id_of(&file).map(|bundle| Msg::AppPicked { profile, bundle })
                 },
             ),
+            PickFor::Ignore => {} // not offered: the button is not drawn
             PickFor::Flow => {
                 if let Some((flow, node)) = ed.flow_target.take() {
                     spawn_file_picker(
@@ -744,6 +807,20 @@ pub(in crate::ui::settings) fn flow_app_sheet(
 ) {
     if let Some(ProfileSheet::Pick(PickFor::Flow)) = ed.profile_sheet {
         pick_app_sheet(ctx, edit, ed, tx, accent, PickFor::Flow);
+    }
+}
+
+/// The app list of the Intelligent page: shown while it was opened by **Choose app** of the list of
+/// apps that are never learned.
+pub(in crate::ui::settings) fn ignore_app_sheet(
+    ctx: &egui::Context,
+    edit: &mut Config,
+    ed: &mut Ed,
+    tx: &Sender<Msg>,
+    accent: egui::Color32,
+) {
+    if let Some(ProfileSheet::Pick(PickFor::Ignore)) = ed.profile_sheet {
+        pick_app_sheet(ctx, edit, ed, tx, accent, PickFor::Ignore);
     }
 }
 
@@ -839,9 +916,25 @@ fn new_profile_sheet(
             .size(12.5)
             .color(pal().muted),
         );
+        // an app has one profile only
+        let owner = edit
+            .profile_owning(&ed.new_profile_app, None)
+            .map(|i| edit.profiles[i].name.clone());
+        if let Some(name) = &owner {
+            ui.add_space(6.0);
+            ui.label(
+                egui::RichText::new(format!(
+                    "This app already has the profile \u{201c}{}\u{201d}. An app can have only one profile.",
+                    clip(name, 28)
+                ))
+                .size(12.5)
+                .color(pal().bad),
+            );
+        }
         to_bottom(ui, CONTROL_H);
         let full = edit.profiles.len() >= MAX_PROFILES;
-        let valid = Profile::for_app(&ed.new_profile_name, &ed.new_profile_app).is_some();
+        let valid = owner.is_none()
+            && Profile::for_app(&ed.new_profile_name, &ed.new_profile_app).is_some();
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             let go = button_if(
@@ -864,6 +957,7 @@ fn new_profile_sheet(
 
     if create
         && edit.profiles.len() < MAX_PROFILES
+        && edit.profile_owning(&ed.new_profile_app, None).is_none()
         && let Some(profile) = Profile::for_app(&ed.new_profile_name, &ed.new_profile_app)
     {
         edit.profiles.push(profile);
@@ -937,6 +1031,21 @@ fn apps_sheet(
     accent: Color32,
 ) {
     let profile = ed.profile;
+    // the apps the other profiles have: an app has one profile only
+    let claimed: Vec<(String, String)> = edit
+        .profiles
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != profile)
+        .flat_map(|(_, p)| p.apps.iter().map(|a| (a.clone(), p.name.clone())))
+        .collect();
+    let owner_of = |id: &str| -> Option<String> {
+        let id = platform::OS.normalize_app_id(id);
+        claimed
+            .iter()
+            .find(|(a, _)| !id.is_empty() && platform::OS.app_ids_equal(a, &id))
+            .map(|(_, n)| n.clone())
+    };
     let Some(prof) = edit.profiles.get_mut(profile) else {
         ed.profile_sheet = None;
         return;
@@ -1068,16 +1177,23 @@ fn apps_sheet(
                     .desired_width(ui.available_width() - 250.0)
                     .hint_text(format!("Or type an id, {}", platform::OS.app_id_hint())),
             );
+            let owner = owner_of(&ed.new_app);
             let go = button_if(
                 ui,
-                !ed.new_app.trim().is_empty(),
+                !ed.new_app.trim().is_empty() && owner.is_none(),
                 Look::Soft,
                 Some(symbols::PLUS),
                 "Add",
             );
-            if go.clicked() || entered(ctx, &field) {
+            if owner.is_none() && (go.clicked() || entered(ctx, &field)) {
                 add_app = Some(ed.new_app.trim().to_string());
                 ed.new_app.clear();
+            }
+            if let Some(name) = owner {
+                go.on_disabled_hover_text(format!(
+                    "That app already has the profile \u{201c}{}\u{201d}",
+                    clip(&name, 28)
+                ));
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if button(ui, Look::Primary(accent), None, "Done").clicked() {
@@ -1095,6 +1211,7 @@ fn apps_sheet(
     }
     if let Some(id) = add_app
         && !id.is_empty()
+        && owner_of(&id).is_none()
         && !prof.apps.contains(&id)
     {
         prof.apps.push(id);
@@ -1166,6 +1283,8 @@ mod tests {
             Some(ProfileSheet::Pick(PickFor::Add)),
             Some(ProfileSheet::Pick(PickFor::Action)),
             Some(ProfileSheet::Pick(PickFor::Flow)),
+            Some(ProfileSheet::Pick(PickFor::Ignore)),
+            Some(ProfileSheet::Site),
         ] {
             ed.profile_sheet = which;
             for _ in 0..3 {

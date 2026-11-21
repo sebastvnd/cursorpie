@@ -205,6 +205,14 @@ impl App {
                 v.extend(icons_to_warm(&c, a, target.as_deref()));
                 f.extend(icons_on_first_frame(&c, a, target.as_deref()));
             }
+            // the suggestions: the intelligent pie when it is the one kept, and the rings of the
+            // intelligent slices (they are not in the profiles, so nothing above knows them)
+            let mut open = vec![general];
+            open.extend(app);
+            let (more, top) = crate::smart::warm_icons(&c, &open);
+            v.extend(top.iter().cloned());
+            v.extend(more);
+            f.extend(top);
             (v, f)
         };
         // how long loading the icons took: it runs while the hold timer does, so it should end

@@ -311,6 +311,141 @@ pub fn clear_window_frame(_handle: isize) {}
 /// action is for. Nothing to ask here: the app has the accessory policy, so a window that is shown does not make it the active app.
 pub fn set_window_passive(_on: bool) {}
 
+// `NSWindowCollectionBehavior` bits (AppKit's `NSWindow.h`).
+const CB_CAN_JOIN_ALL_SPACES: usize = 1 << 0;
+const CB_MOVE_TO_ACTIVE_SPACE: usize = 1 << 1;
+const CB_MANAGED: usize = 1 << 2;
+const CB_PARTICIPATES_IN_CYCLE: usize = 1 << 5;
+const CB_IGNORES_CYCLE: usize = 1 << 6;
+const CB_FULL_SCREEN_PRIMARY: usize = 1 << 7;
+const CB_FULL_SCREEN_AUXILIARY: usize = 1 << 8;
+const CB_FULL_SCREEN_NONE: usize = 1 << 9;
+
+/// `NSFloatingWindowLevel`: what the toolkit gives an always-on-top window.
+const LEVEL_FLOATING: isize = 3;
+/// `NSStatusWindowLevel`: above the floating windows and the Dock; a window of a full-screen Space
+/// is at the normal level, so anything at this level is drawn over it.
+const LEVEL_OVER_FULL_SCREEN: isize = 25;
+
+/// Lets the window of the pie (and of the notices and panels) appear over an app in full screen.
+///
+/// A full-screen app lives in a Space of its own. A window is shown there only when it says so with
+/// its *collection behavior*: `CanJoinAllSpaces` (it follows the Space the person is in) and
+/// `FullScreenAuxiliary` (it may be drawn next to a full-screen window). The toolkit sets neither,
+/// so the pie opened on the desktop Space behind the full-screen app and nothing showed. The level
+/// is raised too (the toolkit's always-on-top is the floating level, which the Dock and the menu
+/// bar of a full-screen Space can cover).
+///
+/// `over` is false while Settings is open: Settings is a normal card that belongs to one Space and
+/// stays below the system's own panels (a file chooser must be able to cover it), so it goes back
+/// to the floating level. Only the toolkit's own window is touched, never the status item's window
+/// or any other window the app owns. Cheap enough to run every frame (a few messages, and nothing is
+/// sent when the window is already right), which is needed because the toolkit rewrites the level
+/// each time the window is shown.
+pub fn keep_over_full_screen(over: bool) {
+    use objc2::rc::{Retained, autoreleasepool};
+    use objc2::{MainThreadMarker, msg_send};
+    use objc2_app_kit::NSApplication;
+
+    let Some(mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    autoreleasepool(|_| {
+        let app = NSApplication::sharedApplication(mtm);
+        // SAFETY: `-[NSApplication windows]` takes nothing and returns an `NSArray` of windows;
+        // `-count` returns an `NSUInteger` and `-objectAtIndex:` takes one and returns the window.
+        // The calls are made on the main thread, as AppKit wants for windows.
+        let windows: Option<Retained<AnyObject>> = unsafe { msg_send![&*app, windows] };
+        let Some(windows) = windows else {
+            return;
+        };
+        let count: usize = unsafe { msg_send![&*windows, count] };
+        for i in 0..count {
+            let win: Option<Retained<AnyObject>> =
+                unsafe { msg_send![&*windows, objectAtIndex: i] };
+            let Some(win) = win else {
+                continue;
+            };
+            // winit's window class. The status item of the tray (`NSStatusBarWindow`) and the
+            // windows of the system's own panels are other classes and are left alone.
+            if !win.class().name().to_string_lossy().starts_with("Winit") {
+                continue;
+            }
+            let behavior: usize = unsafe { msg_send![&*win, collectionBehavior] };
+            let (want_behavior, want_level) = if over {
+                (over_full_screen_behavior(behavior), LEVEL_OVER_FULL_SCREEN)
+            } else {
+                (normal_behavior(behavior), LEVEL_FLOATING)
+            };
+            if behavior != want_behavior {
+                let _: () = unsafe { msg_send![&*win, setCollectionBehavior: want_behavior] };
+            }
+            let level: isize = unsafe { msg_send![&*win, level] };
+            // Settings keeps whatever level it has when it is above floating on purpose; only the
+            // levels this function sets (or the toolkit's own) are changed.
+            if level != want_level && (level == LEVEL_FLOATING || level == LEVEL_OVER_FULL_SCREEN) {
+                let _: () = unsafe { msg_send![&*win, setLevel: want_level] };
+            }
+        }
+    });
+}
+
+/// The collection behavior that shows a window over a full-screen app: in every Space, beside a
+/// full-screen window, out of Cmd+` and keeping the bits that do not conflict with those.
+/// (`CanJoinAllSpaces` excludes `MoveToActiveSpace` and `Managed`; `FullScreenAuxiliary` excludes
+/// `FullScreenPrimary` and `FullScreenNone`; AppKit raises an exception for a window that has both.)
+fn over_full_screen_behavior(current: usize) -> usize {
+    let keep = current
+        & !(CB_MOVE_TO_ACTIVE_SPACE
+            | CB_MANAGED
+            | CB_PARTICIPATES_IN_CYCLE
+            | CB_FULL_SCREEN_PRIMARY
+            | CB_FULL_SCREEN_NONE);
+    keep | CB_CAN_JOIN_ALL_SPACES | CB_FULL_SCREEN_AUXILIARY | CB_IGNORES_CYCLE
+}
+
+/// What a window that is not shown over a full-screen app has: the bits of
+/// [`over_full_screen_behavior`] are taken away again.
+fn normal_behavior(current: usize) -> usize {
+    current & !(CB_CAN_JOIN_ALL_SPACES | CB_FULL_SCREEN_AUXILIARY | CB_IGNORES_CYCLE)
+}
+
+#[cfg(test)]
+mod full_screen_tests {
+    use super::*;
+
+    #[test]
+    fn the_pie_joins_every_space_and_sits_beside_a_full_screen_window() {
+        let b = over_full_screen_behavior(0);
+        assert_ne!(b & CB_CAN_JOIN_ALL_SPACES, 0);
+        assert_ne!(b & CB_FULL_SCREEN_AUXILIARY, 0);
+        assert_ne!(b & CB_IGNORES_CYCLE, 0);
+    }
+
+    #[test]
+    fn bits_that_conflict_are_removed_so_appkit_does_not_raise() {
+        let b = over_full_screen_behavior(
+            CB_MOVE_TO_ACTIVE_SPACE
+                | CB_MANAGED
+                | CB_FULL_SCREEN_PRIMARY
+                | CB_FULL_SCREEN_NONE
+                | CB_PARTICIPATES_IN_CYCLE,
+        );
+        assert_eq!(b & CB_MOVE_TO_ACTIVE_SPACE, 0);
+        assert_eq!(b & CB_MANAGED, 0);
+        assert_eq!(b & CB_FULL_SCREEN_PRIMARY, 0);
+        assert_eq!(b & CB_FULL_SCREEN_NONE, 0);
+        assert_eq!(b & CB_PARTICIPATES_IN_CYCLE, 0);
+    }
+
+    #[test]
+    fn settings_gives_the_over_full_screen_bits_back() {
+        let b = normal_behavior(over_full_screen_behavior(0));
+        let ours = CB_CAN_JOIN_ALL_SPACES | CB_FULL_SCREEN_AUXILIARY | CB_IGNORES_CYCLE;
+        assert_eq!(b & ours, 0);
+    }
+}
+
 /// macOS keeps the position a hidden window was given.
 pub fn window_manager_may_recenter() -> bool {
     false

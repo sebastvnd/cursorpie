@@ -526,3 +526,14 @@ details p b,details p em{color:var(--ink)}
 
 /* After the entrance animation, interaction transitions take over (hover, tilt). */
 .js .rv.done{transition:transform .22s ease-out,box-shadow .25s,background-color .35s,opacity .3s;transition-delay:0s}
+
+/* a feature card that is a link (the Flow Hub cards) */
+a.bcard{display:block;text-decoration:none}
+a.bcard:focus-visible{outline-offset:4px}
+
+/* See it in motion: the demo GIFs (docs/gifs). The box keeps the clips' 16:9 shape while they load. */
+.tour{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:28px;margin-top:44px}
+.tour-item{margin:0;border:2px solid var(--ink);border-radius:24px;background:var(--card);box-shadow:var(--hard);overflow:hidden}
+.tour-item img{display:block;width:100%;height:auto;aspect-ratio:16/9;background:var(--bg-2)}
+.tour-item figcaption{padding:14px 18px 16px;border-top:2px solid var(--ink);font-weight:800;line-height:1.4}
+@media (max-width:760px){.tour{grid-template-columns:1fr;gap:22px}}

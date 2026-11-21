@@ -13,9 +13,14 @@
 //! Builds made by `cargo` are left alone, so development never touches the installed app (set
 //! `CURSORPIE_NO_INSTALL=1` to get the same for any other copy). A copy that the Setup wizard
 //! (`installer/cursorpie.iss`) put in place is left alone too: the wizard registered it.
+//!
+//! Programs that run as administrator ignore the input of a program that does not, which is the
+//! one limit of an install that needs no rights. *Reinstall as administrator* in the About tab
+//! moves the install to `%ProgramFiles%` and starts it elevated at login: see [`admin`](super::admin).
+//! Once that install exists this step never makes a per-user one next to it.
 
 use super::login_item::{launch_at_login_enabled, repair_launch_entry, set_launch_at_login};
-use super::registry;
+use super::registry::{self, Hive};
 use super::shell::run_shell;
 use super::util::{
     cleanup_command, install_dir, installed_by_setup, installed_exe, is_build_output, same_path,
@@ -45,7 +50,8 @@ fn user_agrees_to_install(dir: &Path) -> bool {
          Nothing needs administrator rights.\n\n\
          Note: Windows blocks input to programs that run as administrator (Task Manager, an \
          elevated terminal), so CursorPie does nothing in their windows unless it runs as \
-         administrator too. Every other program works normally.\n\n\
+         administrator too. Every other program works normally. If you need those windows too, \
+         Settings > About can reinstall CursorPie as administrator later.\n\n\
          Choose No to just run it from where it is.",
         dir.display()
     );
@@ -62,8 +68,9 @@ fn user_agrees_to_install(dir: &Path) -> bool {
     answer == IDYES
 }
 
-/// The "Apps & features" entry of this app.
-fn uninstall_key() -> String {
+/// The "Apps & features" entry of this app (the same name below `HKCU` for the per-user install and
+/// below `HKLM` for administrator mode).
+pub(super) fn uninstall_key() -> String {
     format!(r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{APP_NAME}")
 }
 
@@ -87,7 +94,7 @@ pub(super) fn same_file(a: &Path, b: &Path) -> bool {
 }
 
 /// The install folder.
-fn install_dir_path() -> Option<PathBuf> {
+pub(super) fn install_dir_path() -> Option<PathBuf> {
     local_app_data().map(|l| PathBuf::from(install_dir(&l, APP_NAME)))
 }
 
@@ -117,7 +124,7 @@ fn same_contents(a: &Path, b: &Path) -> bool {
 
 /// Puts `src` at `dst`. A running program cannot be overwritten, but it can be renamed, so the old
 /// copy is moved aside first; that is what lets a newer download update an app that is running.
-fn copy_over(src: &Path, dst: &Path) -> io::Result<()> {
+pub(super) fn copy_over(src: &Path, dst: &Path) -> io::Result<()> {
     if let Some(dir) = dst.parent() {
         fs::create_dir_all(dir)?;
     }
@@ -147,6 +154,12 @@ fn leftover(exe: &Path) -> PathBuf {
 
 /// Writes the "Apps & features" entry.
 fn register_uninstall(exe: &Path) -> io::Result<()> {
+    register_uninstall_in(Hive::CurrentUser, exe)
+}
+
+/// Writes the "Apps & features" entry in `hive`: `HKCU` for the per-user install, `HKLM` for
+/// administrator mode (which needs the rights to write there).
+pub(super) fn register_uninstall_in(hive: Hive, exe: &Path) -> io::Result<()> {
     let key = uninstall_key();
     let dir = exe.parent().unwrap_or(exe).to_string_lossy().into_owned();
     let exe_str = exe.to_string_lossy();
@@ -159,11 +172,11 @@ fn register_uninstall(exe: &Path) -> io::Result<()> {
         ("DisplayIcon", &exe_str),
         ("UninstallString", &uninstall_command(&exe_str)),
     ] {
-        registry::set_string(&key, name, value)?;
+        registry::set_string_in(hive, &key, name, value)?;
     }
     // no Modify or Repair buttons: there is nothing to modify or repair
-    registry::set_dword(&key, "NoModify", 1)?;
-    registry::set_dword(&key, "NoRepair", 1)
+    registry::set_dword_in(hive, &key, "NoModify", 1)?;
+    registry::set_dword_in(hive, &key, "NoRepair", 1)
 }
 
 /// Installs this program for the current user and keeps the installation current.
@@ -178,6 +191,11 @@ fn register_uninstall(exe: &Path) -> io::Result<()> {
 pub fn ensure_installed() -> Option<PathBuf> {
     let current = std::env::current_exe().ok()?;
     if std::env::var_os(OPT_OUT).is_some() || is_build_output(&current.to_string_lossy()) {
+        return None;
+    }
+    // Installed in administrator mode: that install is the one that runs, and no per-user install
+    // is ever made next to it (it would start at login without the rights and take the lock).
+    if super::admin::settle(&current) {
         return None;
     }
     // The Setup wizard installed this copy and owns its uninstall entry and startup entry.
@@ -247,8 +265,12 @@ fn install_step(current: &Path) -> Option<PathBuf> {
 }
 
 /// Handles a command-line switch. Returns `true` when the program should exit now instead of
-/// starting the app (today only `--uninstall`).
+/// starting the app: `--uninstall`, and `--install-admin`, the elevated step of *Reinstall as
+/// administrator* (see [`admin`](super::admin)).
 pub fn handle_command_line() -> bool {
+    if super::admin::run_admin_install_if_asked() {
+        return true;
+    }
     if !wants_uninstall(std::env::args().skip(1)) {
         return false;
     }
@@ -259,6 +281,10 @@ pub fn handle_command_line() -> bool {
 /// Removes the startup entry, the "Apps & features" entry and the install folder. The settings in
 /// `config.json` stay, so a later install picks them up again.
 fn uninstall() {
+    // the administrator install has its own entry, task and folder
+    if super::admin::uninstall_if_administrator_install() {
+        return;
+    }
     let _ = set_launch_at_login(false);
     crate::bridge::install::uninstall(); // the browser extension's host entries
     let _ = registry::delete_key(&uninstall_key());

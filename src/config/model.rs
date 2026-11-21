@@ -4,6 +4,7 @@
 //! breaking change of the file format.
 
 use super::item_at;
+use super::{SmartConfig, SmartSlice};
 use crate::keys::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -140,6 +141,10 @@ pub enum ItemKind {
     Run(Action),
     /// Drag outward across the rim to open it.
     Submenu(Vec<Item>),
+    /// A submenu whose slices are not written by hand: they are suggested when the pie opens, from
+    /// what CursorPie learned (see [`smart`](crate::smart)). Opens like a submenu; empty while
+    /// [`SmartConfig::enabled`](super::SmartConfig::enabled) is off.
+    Smart(SmartSlice),
 }
 
 /// One slice of a ring.
@@ -307,6 +312,15 @@ impl Item {
             name: name.into(),
             icon: icon.into(),
             kind: ItemKind::Run(action),
+            at: None,
+        }
+    }
+    /// Creates an intelligent slice: a ring that is suggested when the pie opens.
+    pub fn smart(name: &str, icon: &str, slice: SmartSlice) -> Self {
+        Self {
+            name: name.into(),
+            icon: icon.into(),
+            kind: ItemKind::Smart(slice),
             at: None,
         }
     }
@@ -488,9 +502,10 @@ pub struct Config {
     pub settings_space_presses: u8,
     pub pie_size: f32,
     pub accent: [u8; 3],
-    /// Which look Settings and the Solid pie have: the id of a built-in theme (`sage`, `genz`) or of
-    /// a file of the themes folder (see [`super::store::themes_dir`]). An id that is not there is shown as sage and
-    /// kept, so the theme comes back with its file. Not saved while it is the default.
+    /// Which look Settings and the Solid pie have: the id of a built-in theme (`genz`, `sage`,
+    /// `bubblegum`) or of a file of the themes folder (see [`super::store::themes_dir`]). An id that
+    /// is not there is shown as the default theme (Gen Z) and kept, so the theme comes back with its
+    /// file. Not saved while it is the default.
     #[serde(skip_serializing_if = "is_default_ui_theme")]
     pub ui_theme: String,
     /// The colors that replace the ones of the light and of the dark appearance, laid over the theme.
@@ -562,6 +577,11 @@ pub struct Config {
     /// because it puts content from outside CursorPie on the screen; needs
     /// [`Config::browser_bridge`].
     pub extension_panels: bool,
+    /// The website's **Flow Hub** may hand a flow to CursorPie through the browser extension (the
+    /// *Install* button). Even then nothing is added before the person confirms in a panel of the
+    /// app, and the flow is added as a new one (see [`flowhub`](crate::flowhub)). On by default,
+    /// because of that confirmation; needs [`Config::browser_bridge`].
+    pub flowhub_install: bool,
     /// Look for a newer release once a day, when Settings opens, and offer it (see
     /// [`update`](crate::update)). It is the only network connection CursorPie makes by itself; the package is only downloaded when the person presses *Install update*. On by default,
     /// also for a file saved before this setting existed; *Check now* in the About tab works either way.
@@ -586,8 +606,9 @@ pub struct Config {
     pub app_icon_style: AppIconStyle,
     /// With `center_app_icon`: when the icon gets a shadow (see [`IconShadow`]).
     pub app_icon_shadow: IconShadow,
-    /// Each slice shows its name under its icon. Off (the default): the pie shows icons only. A
-    /// file saved before this setting existed keeps the names.
+    /// The name of the slice under the pointer is shown in a pill next to the pie, with the icon of
+    /// the slice in its badge (see [`ui::pie::pill`](crate::ui::pie::pill)). Off (the default): the
+    /// pie shows icons only. A file saved before this setting existed keeps the names.
     #[serde(default = "names_on")]
     pub show_labels: bool,
     /// Seconds without a pie or Settings on screen before the UI frees its caches and Settings
@@ -629,6 +650,10 @@ pub struct Config {
     pub touch_click_action: TouchClickAction,
     /// Trackpad: no hold is armed this soon after a key press, in ms (0 = off).
     pub touch_typing_guard_ms: u64,
+    /// Trackpad: while the pie is open, two more fingers that tap together (three on the surface)
+    /// lock CursorPie for the trackpad; hold with one finger and tap with two to unlock it. See
+    /// [`tap::touch::lock`](crate::tap). Off: two more fingers just close the pie, as before.
+    pub touch_lock: bool,
     /// Haptic ticks on a trackpad (macOS), when the pie opens, the slice changes and the mode switches.
     pub haptics: bool,
     /// With `haptics`: also a tick when the hovered slice changes.
@@ -636,6 +661,10 @@ pub struct Config {
     /// The flows the *Flow* tab edits: chains of steps that a slice runs with [`Action::Flow`].
     /// Files from before flows existed have none.
     pub flows: Vec<super::flow::Flow>,
+    /// The intelligent pie and the intelligent slices: learning from what you use, and suggesting
+    /// it (see [`smart`](crate::smart)). Everything is off until `smart.enabled`. Files from
+    /// before it existed have the defaults.
+    pub smart: SmartConfig,
 }
 
 impl Config {
@@ -654,6 +683,21 @@ impl Config {
             p.apps
                 .iter()
                 .any(|a| crate::platform::OS.app_ids_equal(a, b))
+        })
+    }
+
+    /// Index of the profile that already lists `app`, not counting the profile `except`. An app
+    /// belongs to one profile only, so a profile that is about to take `app` asks this first.
+    pub fn profile_owning(&self, app: &str, except: Option<usize>) -> Option<usize> {
+        let app = crate::platform::OS.normalize_app_id(app);
+        if app.is_empty() {
+            return None;
+        }
+        self.profiles.iter().enumerate().position(|(i, p)| {
+            Some(i) != except
+                && p.apps
+                    .iter()
+                    .any(|a| crate::platform::OS.app_ids_equal(a, &app))
         })
     }
 
@@ -687,7 +731,7 @@ impl Config {
 }
 
 /// The theme a fresh install starts with, and the one an unknown id is shown as.
-pub const DEFAULT_UI_THEME: &str = "sage";
+pub const DEFAULT_UI_THEME: &str = "genz";
 
 fn is_default_ui_theme(id: &String) -> bool {
     id == DEFAULT_UI_THEME

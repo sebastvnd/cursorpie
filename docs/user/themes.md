@@ -3,10 +3,13 @@
 A theme is the look of the Settings window and of the Solid pie: colors, the roundness of corners, outlines and
 shadows. Pick one in **Settings > Behavior > Look & feel > Theme**.
 
+<img src="../gifs/11-themes-and-share.gif" width="720" alt="Themes and profile export">
+
 | Theme | Look |
 |---|---|
-| **Sage** | The default: soft sage-green neutrals, a cream page, paper panels, hairlines, soft shadows only under what floats. |
-| **Gen Z** | The look of the website: warm cream (or violet-tinted black), thick ink outlines, pill buttons and hard shadows without blur, lime accent. |
+| **Gen Z** | The default, and the look of the website: warm cream (or violet-tinted black), thick ink outlines, pill buttons and hard shadows without blur, lime accent. |
+| **Sage** | The look Settings had before themes: soft sage-green neutrals, a cream page, paper panels, hairlines, soft shadows only under what floats. |
+| **Bubblegum** | Gen Z in candy pink: a cotton-candy page, plum ink and outlines, rounder corners, hard shadows, pink accent (berry-tinted black in the dark appearance). |
 
 Choosing a theme also moves the accent color to the theme's own, unless you picked an accent yourself. The colors you
 pick under *Colors of the light/dark appearance* are laid over the theme, so they work with every theme, and the
@@ -19,21 +22,21 @@ A theme is one `.json` file in the themes folder (the **Open themes folder** but
 `themes/` next to `config.json`, see [Configuration](configuration.md)). The name of the file, without `.json`, is the
 id of the theme: letters, digits, `-` and `_`, up to 48 characters. Press **Reload themes** after saving a file.
 
-A file is a *layer over another theme*: it names the theme it `extends` (`sage` when it says nothing, or `genz`, or
-another file) and lists only what it changes. Everything left out is the base theme's. This is a whole theme:
+A file is a *layer over another theme*: it names the theme it `extends` (`sage` when it says nothing, or `genz`,
+`bubblegum` or another file) and lists only what it changes. Everything left out is the base theme's. This is a whole theme:
 
 ```json
 {
-  "name": "Bubblegum",
+  "name": "Mint Soda",
   "extends": "genz",
-  "accent": "#ff5ea8",
-  "light": { "bg": "#ffe3f1", "sidebar": "#ffd0e7", "text": "#2a1030" },
-  "dark": { "bg": "#1a0f1c" },
+  "accent": "#2fd27a",
+  "light": { "bg": "#e1faec", "sidebar": "#d0f2e0", "text": "#0e2a1c" },
+  "dark": { "bg": "#0f1a14" },
   "shape": { "control_radius": 14, "panel_radius": 20 }
 }
 ```
 
-(also in [`docs/examples/themes/bubblegum.json`](../examples/themes/bubblegum.json)). Colors are `"#rrggbb"`
+(also in [`docs/examples/themes/mint-soda.json`](../examples/themes/mint-soda.json)). Colors are `"#rrggbb"`
 (`"#rgb"`, `"#rrggbbaa"` and `[r, g, b]` work too). A file with a mistake is skipped, the reason is shown under the
 buttons, and the other themes keep working. Fields CursorPie does not know are ignored.
 
@@ -42,7 +45,7 @@ buttons, and the other themes keep working. Fields CursorPie does not know are i
 | Field | What it is |
 |---|---|
 | `name` | What the theme list shows (up to 40 characters). |
-| `extends` | `sage`, `genz` or the id of another file (up to 8 in a row). |
+| `extends` | `sage`, `genz`, `bubblegum` or the id of another file (up to 8 in a row). |
 | `accent` | The accent a fresh choice of this theme starts with. |
 | `light`, `dark` | The colors of each appearance, below. |
 | `shape` | Radii, outlines and shadows, below. |
@@ -64,5 +67,9 @@ Also `window_accent_mix` (0 to 1: how far the window outline leans to the accent
 sidebar highlight) and `nav_icon_accent` (`false`: the chosen sidebar icon uses the text color, for strong washes).
 Sizes (control height, spacing) are the same in every theme so that a theme cannot break a layout.
 
-The unknown id of a theme whose file was removed shows as Sage and stays in your settings, so the theme is back when
+The unknown id of a theme whose file was removed shows as Gen Z and stays in your settings, so the theme is back when
 the file is.
+
+The ids `genz`, `sage` and `bubblegum` belong to the themes that ship with CursorPie: a file with one of these names
+(a `bubblegum.json` copied from an older version of this page, say) is skipped with a note. Rename the file, and
+change its `name`, to keep it.

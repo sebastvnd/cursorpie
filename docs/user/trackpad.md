@@ -6,6 +6,8 @@ a mouse and a trackpad can be used in any order, with the same pie, hold time, d
 
 ## The gesture
 
+<img src="../gifs/08-trackpad.gif" width="720" alt="Touch and hold on a trackpad">
+
 | You do this | With a mouse | With a trackpad |
 |---|---|---|
 | Open the general pie | Hold the middle button | Touch and hold still with the chosen number of fingers for the hold time |
@@ -15,6 +17,8 @@ a mouse and a trackpad can be used in any order, with the same pie, hold time, d
 | Open Settings | Keep holding in the center | Keep holding in the center |
 | Switch the mode | Right-click | Click (or tap) with one more finger |
 | Open the app's own pie | Double-click the trigger | Tap, then touch and hold again within the double-click speed |
+| Lock CursorPie | (not available) | While the pie is open, tap with two more fingers (three on the trackpad in all) |
+| Unlock CursorPie | (not available) | Hold with one finger until the notice shows, then tap with two more fingers |
 
 ## Details
 
@@ -26,6 +30,15 @@ a mouse and a trackpad can be used in any order, with the same pie, hold time, d
   after a key press.
 - **Extra click** can switch the pie like the right-click (default), make the hovered Mode slice the active mode, or do
   nothing. The click never reaches the app under the pie.
+- **Lock with three fingers** (on by default). With the pie open, tap with two more fingers together: the pie turns into
+  a padlock that snaps shut, and a notice says *CursorPie locked*. While it is locked a hold opens no pie; once the hold
+  time has passed the same notice shows again, so you know why. Hold with one finger and tap with two more to unlock: the
+  padlock opens into the pie and the notice says *CursorPie unlocked*. The tap has to be quick (under about a third of a
+  second) and the fingers must not slide. The lock only affects the trackpad hold: the mouse trigger and the menu bar
+  item keep working. It is kept in memory only, so restarting CursorPie also unlocks it. With the setting off, two more
+  fingers close the pie, as they did before. The lock notice shows even when the action notice (`hud`) is off.
+  Some systems give a three-finger tap a meaning of their own (look up on macOS, search on Windows, middle click on
+  Linux); if it fires with the lock, turn that gesture off in the system's trackpad settings.
 - **Haptic feedback** (macOS only): a tick when the pie opens, a soft one when the slice changes and a distinct one
   when the mode switches. Only a trackpad ticks; the system's *Force Click and haptic feedback* setting stays in charge.
 

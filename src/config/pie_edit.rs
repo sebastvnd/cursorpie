@@ -408,7 +408,7 @@ pub fn first_mode_path(items: &[Item]) -> Vec<usize> {
                     return p;
                 }
             }
-            ItemKind::Run(_) => {}
+            ItemKind::Run(_) | ItemKind::Smart(_) => {}
         }
     }
     Vec::new()

@@ -1,0 +1,14 @@
+{
+  "cursorpie_flow": 1,
+  "flow": {
+    "id": "open-app-and-new-note",
+    "name": "Open Notes and start a note",
+    "nodes": [
+      { "id": 1, "x": 40.0,  "y": 60.0, "kind": "Start", "next": 2 },
+      { "id": 2, "x": 240.0, "y": 60.0, "kind": { "OpenApp": "Notes" }, "next": 3 },
+      { "id": 3, "x": 540.0, "y": 60.0, "kind": { "Wait": 600 }, "next": 4 },
+      { "id": 4, "x": 840.0, "y": 60.0, "kind": { "Key": { "key": 45, "mods": 8 } }, "next": 5 },
+      { "id": 5, "x": 40.0,  "y": 190.0, "kind": "End", "next": null }
+    ]
+  }
+}

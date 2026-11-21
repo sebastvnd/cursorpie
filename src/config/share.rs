@@ -432,6 +432,23 @@ pub fn read_bundle(path: &str) -> Result<Bundle, String> {
 /// least one app (there is only one general profile), a free slot, and gets a unique name.
 pub fn add_profile(cfg: &mut Config, mut profile: Profile) -> Result<usize, String> {
     profile.apps = clean_apps(&profile.apps);
+    // an app has one profile only: the apps that already have one stay with it
+    let taken: Vec<String> = profile
+        .apps
+        .iter()
+        .filter(|a| cfg.profile_owning(a, None).is_some())
+        .cloned()
+        .collect();
+    if !taken.is_empty() && taken.len() == profile.apps.len() {
+        let owner = cfg
+            .profile_owning(&taken[0], None)
+            .map(|i| cfg.profiles[i].name.clone())
+            .unwrap_or_default();
+        return Err(format!(
+            "Every app of that profile already has a profile (\u{201c}{owner}\u{201d}). An app can have only one."
+        ));
+    }
+    profile.apps.retain(|a| !taken.contains(a));
     if profile.apps.is_empty() {
         return Err(
             "That profile lists no apps. Every profile except the general one needs at least one."
@@ -707,6 +724,31 @@ mod tests {
     }
 
     #[test]
+    fn an_app_that_has_a_profile_cannot_have_a_second_one() {
+        let mut cfg = Config::default();
+        let owned = cfg
+            .profiles
+            .iter()
+            .find(|p| !p.is_general())
+            .map(|p| p.apps[0].clone())
+            .expect("the default config has a profile for an app");
+        let before = cfg.profiles.len();
+        let mut p = profile_with(&[]);
+        p.apps = vec![owned.clone()];
+        let err = add_profile(&mut cfg, p).unwrap_err();
+        assert!(err.contains("only one"), "{err}");
+        assert_eq!(cfg.profiles.len(), before);
+
+        // an app of its own is kept, the one that is taken stays with its profile
+        let mut p = profile_with(&[]);
+        p.apps = vec![owned.clone(), "com.x.fresh".into()];
+        let i = add_profile(&mut cfg, p).unwrap();
+        assert_eq!(cfg.profiles[i].apps.len(), 1);
+        assert!(cfg.profile_owning(&owned, Some(i)).is_some());
+        assert_ne!(cfg.profile_owning(&owned, None), Some(i));
+    }
+
+    #[test]
     fn adding_a_profile_needs_an_app_and_a_free_slot_and_a_unique_name() {
         let mut cfg = Config::default();
         let before = cfg.profiles.len();
@@ -715,16 +757,24 @@ mod tests {
         assert!(add_profile(&mut cfg, p).unwrap_err().contains("no apps"));
         assert_eq!(cfg.profiles.len(), before);
 
+        // every profile needs an app of its own (an app has one profile only)
+        let on = |app: &str| {
+            let mut p = profile_with(&[]);
+            p.apps = vec![app.into()];
+            p
+        };
         let i = add_profile(&mut cfg, profile_with(&[])).unwrap();
         assert_eq!(cfg.profiles[i].name, "Photo");
-        let j = add_profile(&mut cfg, profile_with(&[])).unwrap();
+        let j = add_profile(&mut cfg, on("com.x.second")).unwrap();
         assert_eq!(cfg.profiles[j].name, "Photo (2)");
 
+        let mut n = 0;
         while cfg.profiles.len() < MAX_PROFILES {
-            add_profile(&mut cfg, profile_with(&[])).unwrap();
+            n += 1;
+            add_profile(&mut cfg, on(&format!("com.x.fill{n}"))).unwrap();
         }
         assert!(
-            add_profile(&mut cfg, profile_with(&[]))
+            add_profile(&mut cfg, on("com.x.last"))
                 .unwrap_err()
                 .contains("already")
         );

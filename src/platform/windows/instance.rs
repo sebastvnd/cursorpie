@@ -7,7 +7,7 @@
 use super::util::wide;
 use crate::about::APP_NAME;
 use std::time::{Duration, Instant};
-use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
+use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_ALREADY_EXISTS, GetLastError};
 use windows_sys::Win32::System::Threading::CreateMutexW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{FindWindowExW, FindWindowW};
 
@@ -19,7 +19,10 @@ pub fn single_instance() -> bool {
     // SAFETY: `name` is zero terminated; null security attributes are allowed.
     let handle = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
     if handle.is_null() {
-        return true; // cannot tell: running twice is better than not running
+        // A copy that runs as administrator (see `admin`) owns the lock and a program without
+        // those rights cannot even open it: access denied means "taken", not "cannot tell".
+        // SAFETY: plain call, made right after the one that sets the error.
+        return unsafe { GetLastError() } != ERROR_ACCESS_DENIED; // else: cannot tell, run
     }
     // SAFETY: plain call, made right after the one that sets the error.
     let taken = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;

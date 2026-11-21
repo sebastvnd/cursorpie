@@ -146,6 +146,7 @@ Every field with its default value, and a small menu. A field you leave out take
   "touch_still_mm": 2.0,
   "touch_click_action": "SwitchPie",
   "touch_typing_guard_ms": 400,
+  "touch_lock": true,
   "haptics": true,
   "haptic_hover": true,
   "profiles": [
@@ -197,12 +198,14 @@ Every field with its default value, and a small menu. A field you leave out take
 | `version` | Always `2`. A file without it (the old v1 format) is rejected, see [What happens to bad files](#what-happens-to-bad-files) |
 | `flows` | The flows of the **Flow** tab, see [Flows](#flows) above |
 | `trigger_button` | `2` = middle, `5` / `6` / `7` = extra buttons (shown as "Extra button 6/7/8"). Only the middle button works on Windows and Linux |
-| `accent` | Accent color as `[r, g, b]`. The default is `[90, 120, 94]`; the old default blue `[64, 156, 255]` is replaced by the new default when a file is loaded |
+| `accent` | Accent color as `[r, g, b]`. The default is `[200, 255, 46]` (the lime of the Gen Z theme); the old default blue `[64, 156, 255]` is replaced by the new default when a file is loaded |
 | `pie_hold_ms` | Hold time before the pie opens (50 to 2000 in the file; the Settings slider goes from 50 to 1500; default 150) |
 | `settings_hold_ms` | Hold time before Settings opens (always at least `pie_hold_ms` + 300; the Settings slider goes from 500 to 4000) |
 | `settings_by_hold` | `false` (default) or `true`: whether holding the trigger in the center of the pie opens Settings after `settings_hold_ms`. Only the untouched top ring of the pie that a hold opened counts. `false` also hides the progress arc |
 | `settings_by_space` | `true` (default) or `false`: pressing Space while a pie is open opens Settings, in any ring, in a submenu and in the pie of an app. The key is swallowed. Not available on Wayland |
 | `settings_space_presses` | `1` (default) or `2` (other values are clamped to that range): how many presses of Space open Settings; two must come within 500 ms |
+| `smart` | The intelligent pie and intelligent slices: `enabled` (default `false`), `hold_ms`, `layout`, `pie_slices`, `sources`, `learn_*`, `ignore_*` and more. Missing fields take their defaults; every number is clamped. The learned habits are **not** here but in `smart-habits.json`. See [Intelligent pie](intelligent-pie.md#settings-reference) |
+| `profiles[].items[].kind` `{"Smart": {"sources": [...], "count": 6}}` | An intelligent slice: a submenu whose slices are suggested when the pie opens. Empty while `smart.enabled` is `false` |
 | `pie_size` | Pie window size in px (140 to 360) |
 | `app_gesture` | `"DoubleClick"` (hold = general pie, double-click = app pie) or `"Merged"` (classic) |
 | `double_click_ms` | Window for the second click (150 to 500) |
@@ -226,9 +229,9 @@ Every field with its default value, and a small menu. A field you leave out take
 | `center_app_icon` | Show the app's icon in the center of an app's own pie instead of the active mode's icon |
 | `app_icon_style` | `"Glyph"` or `"Color"`: that icon as a one-color silhouette in the pie's ink (default), or in the app's own colors |
 | `app_icon_shadow` | `"Auto"` (default), `"Soft"`, `"Strong"` or `"Off"`: the shadow under the app's icon in the center of the pie. `Auto` adds it only on a plain light center |
-| `show_labels` | Show each slice's name under its icon (default `false` = icons only; a file that lacks the field keeps the names) |
+| `show_labels` | Show the name and icon of the slice under the pointer in a pill next to the pie (default `false` = icons only; a file that lacks the field keeps the names) |
 | `appearance` | `"System"` (default), `"Light"` or `"Dark"`: the look of Settings and the pie |
-| `ui_theme` | The theme of Settings and the Solid pie: `"sage"` (default, not written to the file), `"genz"`, or the name of a file of the `themes/` folder next to `config.json`. See [Themes](themes.md) |
+| `ui_theme` | The theme of Settings and the Solid pie: `"genz"` (default, not written to the file), `"sage"`, `"bubblegum"`, or the name of a file of the `themes/` folder next to `config.json`. See [Themes](themes.md) |
 | `pie_custom_shape` | `false` (default): the pie is a circle. `true`: it is a regular polygon with rounded corners, shaped by the three settings below |
 | `pie_sides` | Custom shape: sides of the polygon, 3 to 12 (default 4) |
 | `pie_round` | Custom shape: how round the corners are, 0 (sharp) to 100 (a circle), in percent (default 45) |
@@ -240,6 +243,7 @@ Every field with its default value, and a small menu. A field you leave out take
 | `touch_still_mm` | 0.5 to 6.0 (default `2.0`): how far, in millimeters on the trackpad, the holding finger may move before the hold counts |
 | `touch_click_action` | `"SwitchPie"` (default, like the right-click), `"PickHovered"` (the hovered Mode slice becomes the active mode) or `"Nothing"`: what the extra click does |
 | `touch_typing_guard_ms` | 0 to 2000 (default `400`, `0` = off): no hold is armed this soon after a key press |
+| `touch_lock` | `true` (default) or `false`: with the pie of a trackpad hold open, tapping with two more fingers (three in all) locks CursorPie for the trackpad, and the same tap during a hold unlocks it. `false`: two more fingers close the pie. The lock is not saved: restarting CursorPie unlocks it. See [Trackpad hold](trackpad.md) |
 | `haptics`, `haptic_hover` | macOS only (ignored on Windows and Linux): trackpad ticks when the pie opens and the mode switches (default on), and when the hovered slice changes (default on, needs `haptics`) |
 | `hud` | `true` (default, also for a file that lacks the field): a small notice on the screen says what CursorPie does when an action runs: "Open app Safari", "Open link github.com", "Shortcut Cmd + C", "Run flow Morning". A shell command is announced as "Run command" and never with its text. The back and forward buttons stay quiet. `false` turns it off |
 | `hud_position` | `"Bottom"` (default, above the dock or taskbar), `"Top"` or `"Cursor"` (just below the pointer): where the notice appears, on the display the pointer is on |

@@ -118,7 +118,8 @@ in a 324 pt column:
 
 ### Palette
 
-The colors are the ones of the website (`assets/site.css`), so the app and the site look like one product:
+(Gen Z is now the default theme and Bubblegum is built in; the paragraph below describes **Sage**, the
+look Settings had before themes.) The colors are the ones of the website (`assets/site.css`), so the app and the site look like one product:
 a cream page, paper-white panels and sage-green neutrals in the light appearance, and the sage green as the default
 accent (`SAGE_ACCENT`, `[90, 120, 94]`: deep enough for white text). The dark appearance is graphite with only a faint
 sage tint, not the full green of the site's dark mode, so the accent stands out from the panels. The accent is

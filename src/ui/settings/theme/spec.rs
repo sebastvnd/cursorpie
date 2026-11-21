@@ -6,11 +6,11 @@
 //!
 //! ```json
 //! {
-//!   "name": "Bubblegum",
+//!   "name": "Mint Soda",
 //!   "extends": "genz",
-//!   "accent": "#ff5ea8",
-//!   "light": { "bg": "#ffe3f1", "sidebar": "#ffd0e7", "text": "#2a1030" },
-//!   "dark":  { "bg": "#1a0f1c" },
+//!   "accent": "#2fd27a",
+//!   "light": { "bg": "#e1faec", "sidebar": "#d0f2e0", "text": "#0e2a1c" },
+//!   "dark":  { "bg": "#0f1a14" },
 //!   "shape": { "control_radius": 10, "panel_radius": 14 }
 //! }
 //! ```

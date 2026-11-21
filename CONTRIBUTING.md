@@ -117,8 +117,14 @@ package (standard library only, never part of the app) and behave the same on ma
 | `cargo tools log VIEW` | other views of a debug log: `summary`, `timeline`, `grep`, `slow`, `diff`, `follow`, `report` (see [docs/DEBUGGING.md](docs/DEBUGGING.md)) |
 | `cargo tools diag-lint` | checks the log lines in `src/` against the rules and against what the analyzer reads (part of `ci --quick`) |
 | `cargo tools clean-logs` | deletes old debug logs, keeping the newest 3 by default (`--keep N`, `--older-than DAYS`, `--all`, `--dir PATH`, `--dry-run`) |
-| `cargo tools zip` | packs the project into a `.zip` without `target/` and `.git/` (`-o FILE`, `--list`, `--no-git`) |
+| `cargo tools zip` | packs the project into a `.zip`, excluding `target/`, `.git/`, files larger than 10 MiB, common video formats and `.gif` files (`-o FILE`, `--list`, `--no-git`) |
 | `cargo tools info` | prints the facts a bug report needs: OS, desktop session, tool versions |
+
+`cargo tools zip` applies the 10 MiB limit to **each individual file**, not to the ZIP as a
+whole. The limit is 10,485,760 bytes: files larger than that are skipped, while a file exactly
+at the limit is kept. Common video formats and `.gif` files are skipped regardless of size;
+extension matching is case-insensitive. The same filters apply to `cargo tools zip --list`, so
+its output contains only files that would be included in the archive.
 
 ### The loop
 

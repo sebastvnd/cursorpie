@@ -21,7 +21,7 @@
 use super::flow::{Do, notice, run, select_flow};
 use crate::config::flow_kit::{self, MAX_REQUEST_CHARS};
 use crate::config::flow_templates::{self, TEMPLATES};
-use crate::config::{Config, MAX_FLOWS};
+use crate::config::{Config, MAX_FLOWS, cfg};
 use crate::msg::Msg;
 use crate::platform::{self, Os};
 use crate::ui::fonts;
@@ -29,7 +29,7 @@ use crate::ui::settings::state::{Ed, FlowNew, KitStatus};
 use crate::ui::settings::theme::*;
 use crate::ui::settings::widgets::*;
 use crate::ui::symbols;
-use eframe::egui::{self, Align2, Color32, FontId, RichText, Vec2};
+use eframe::egui::{self, Align2, Color32, FontId, Pos2, RichText, Vec2};
 use std::sync::mpsc::Sender;
 
 /// Fewest characters of a request before the kit can be copied: an empty box would give the agent
@@ -106,6 +106,69 @@ fn choice_tile(
     resp
 }
 
+/// The wide tile under the three choices: a link to the Flow Hub page of the website, with a line
+/// that says whether its *Install* button will reach this app (the extension is connected) or will
+/// download the file instead. Returns the response; the caller opens the page.
+fn hub_tile(ui: &mut egui::Ui, accent: Color32) -> egui::Response {
+    let st = crate::bridge::status();
+    let browsers: Vec<String> = st.browsers.iter().map(|(b, _)| b.clone()).collect();
+    let (connected, line) = crate::flowhub::link_line(st.running, &browsers, cfg().flowhub_install);
+    let (rect, resp) = tile(ui, Vec2::new(ui.available_width(), 96.0), false, accent);
+    let pad = 16.0;
+    let painter = ui.painter();
+    fonts::paint_icon(
+        painter,
+        rect.min + Vec2::new(pad + 11.0, pad + 12.0),
+        symbols::LIGHTNING,
+        24.0,
+        accent_text(accent),
+        false,
+    );
+    painter.text(
+        rect.min + Vec2::new(pad + 34.0, pad),
+        Align2::LEFT_TOP,
+        "Flow Hub",
+        FontId::new(15.0, fonts::semibold()),
+        pal().text,
+    );
+    fonts::paint_icon(
+        painter,
+        Pos2::new(rect.max.x - pad - 9.0, pad + rect.min.y + 11.0),
+        symbols::ARROW_SQUARE_OUT,
+        18.0,
+        pal().muted,
+        false,
+    );
+    painter.text(
+        rect.min + Vec2::new(pad + 34.0, pad + 24.0),
+        Align2::LEFT_TOP,
+        "Ready-made flows on the website. Install one in a tap, or download the file.",
+        FontId::proportional(13.0),
+        pal().muted,
+    );
+    let (glyph, color) = if connected {
+        (symbols::CHECK_CIRCLE, pal().good)
+    } else {
+        (symbols::X_CIRCLE, pal().muted)
+    };
+    fonts::paint_icon(
+        painter,
+        rect.min + Vec2::new(pad + 11.0, pad + 58.0),
+        glyph,
+        16.0,
+        color,
+        true,
+    );
+    painter.text(
+        rect.min + Vec2::new(pad + 34.0, pad + 50.0),
+        Align2::LEFT_TOP,
+        line,
+        FontId::proportional(13.0),
+        if connected { pal().text } else { pal().muted },
+    );
+    resp
+}
+
 /// "How do you want to make it?": by hand, from a template, or with an AI agent.
 fn choose_page(
     ctx: &egui::Context,
@@ -117,11 +180,12 @@ fn choose_page(
     let mut by_hand = false;
     let mut with_ai = false;
     let mut from_template = false;
+    let mut open_hub = false;
     let (floating, ()) = sheet(
         ctx,
         "flow_new",
         ed.card,
-        Vec2::new(760.0, 300.0),
+        Vec2::new(760.0, 430.0),
         "New flow",
         |ui| {
             let width = (ui.available_width() - 2.0 * GAP) / 3.0;
@@ -155,8 +219,13 @@ fn choose_page(
                 )
                 .clicked();
             });
+            ui.add_space(GAP);
+            open_hub = hub_tile(ui, accent).clicked();
         },
     );
+    if open_hub {
+        platform::open_url(crate::flowhub::URL);
+    }
     if by_hand {
         ed.flow_new = None;
         run(Do::New, ctx, edit, ed, tx);

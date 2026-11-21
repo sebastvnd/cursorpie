@@ -8,9 +8,12 @@
 //                      "state"   how much is playing and how many chats wait (numbers only)
 //                      "result"  what happened to a command
 //                      "panel", "panel_update", "panel_close"  show, change or close a panel (ui.js)
+//                      "flow_ping", "flow_install"  the website's Flow Hub (flowhub-page.js): is the app
+//                                 there, and please add this flow (the person is asked in the app)
 //   app -> extension   "activate" go to a tab        "open"    open a link
 //                      "command"  do something in the browser: media.next, tab.close, chat.next_unread...
 //                      "panel_result"  the answer to a panel
+//                      "flow_pong", "flow_result"  the answers to flow_ping and flow_install
 //                      "reload"   the app wrote the files of a newer version where this extension was
 //                                 loaded from (after an update): reload to take them (CP.reloadFor)
 //                      "sync"     the app just accepted this connection (it started after the browser,
@@ -133,8 +136,9 @@ if (typeof importScripts === "function") {
       // Read the error so the browser does not log it: it is normal while CursorPie is not running.
       void api.runtime.lastError;
       if (port === p) port = null;
-      // nobody is going to answer the panels that were open
+      // nobody is going to answer the panels that were open, nor the page waiting for the app
       CP.ui.disconnected();
+      hubDisconnected();
     });
     hello();
   }
@@ -211,6 +215,8 @@ if (typeof importScripts === "function") {
     else if (m.type === "open") open(m);
     else if (m.type === "command") command(m);
     else if (m.type === "panel_result") CP.ui.handle(m);
+    else if (m.type === "flow_pong") hubAnswer(m.req, { app: true, install: !!m.install, reason: String(m.reason || "") });
+    else if (m.type === "flow_result") hubAnswer(m.req, { state: String(m.state || "failed"), message: String(m.message || "") });
     else if (m.type === "reload") CP.reloadFor(m.version);
     else if (m.type === "sync") hello();
   }
@@ -221,6 +227,85 @@ if (typeof importScripts === "function") {
     post(message);
     return !!port;
   };
+
+  // ---------------------------------------------------------------- the website's Flow Hub
+
+  // The Flow Hub page of the website reaches the app through here and nowhere else: its content
+  // script (flowhub-page.js) sends `flowhub_ping` and `flowhub_install`, and this relays them over the
+  // native link. The app asks the person before anything is added; this only carries the request.
+  const HUB_PAGE = /^https:\/\/sebastvnd\.github\.io\/cursorpie\/flowhub(\/|$)/; // keep in sync with the manifests
+  const HUB_PING_MS = 1500; // the host drops what is said while the app is not running: no answer = not running
+  const HUB_INSTALL_MS = 135000; // the app waits up to 120 s for the person
+  const HUB_MAX_FLOW = 1024 * 1024;
+  let hubSeq = 0;
+  const hubWaiting = new Map(); // req -> { resolve, timer, gone }
+
+  function hubWait(req, ms, timedOut, gone) {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        hubWaiting.delete(req);
+        resolve(timedOut);
+      }, ms);
+      hubWaiting.set(req, { resolve, timer, gone });
+    });
+  }
+
+  function hubAnswer(req, value) {
+    const w = hubWaiting.get(req);
+    if (!w) return; // late, or never asked
+    hubWaiting.delete(req);
+    clearTimeout(w.timer);
+    w.resolve(value);
+  }
+
+  // The link closed: nobody is going to answer.
+  function hubDisconnected() {
+    for (const req of Array.from(hubWaiting.keys())) {
+      const w = hubWaiting.get(req);
+      hubAnswer(req, w.gone);
+    }
+  }
+
+  function hubPing() {
+    if (!port) connect(true);
+    if (!port) return Promise.resolve({ app: false });
+    const req = ++hubSeq;
+    const answer = hubWait(req, HUB_PING_MS, { app: false }, { app: false });
+    post({ type: "flow_ping", req });
+    return answer;
+  }
+
+  function hubInstall(m) {
+    const offline = { state: "offline", message: "CursorPie is not running." };
+    if (typeof m.flow !== "string" || !m.flow || m.flow.length > HUB_MAX_FLOW) {
+      return Promise.resolve({ state: "invalid", message: "That is not a flow file." });
+    }
+    if (!port) connect(true);
+    if (!port) return Promise.resolve(offline);
+    const req = ++hubSeq;
+    const answer = hubWait(
+      req,
+      HUB_INSTALL_MS,
+      { state: "timeout", message: "CursorPie did not answer. Is it running, and is it up to date?" },
+      offline
+    );
+    post({ type: "flow_install", req, author: typeof m.author === "string" ? m.author.slice(0, 120) : "", flow: m.flow });
+    return answer;
+  }
+
+  if (api.runtime.onMessage) {
+    api.runtime.onMessage.addListener((m, sender, sendResponse) => {
+      if (!m || (m.kind !== "flowhub_ping" && m.kind !== "flowhub_install")) return false;
+      // only the content script of the Flow Hub page, in its top frame
+      const url = (sender && (sender.url || (sender.tab && sender.tab.url))) || "";
+      if (!sender || sender.id !== api.runtime.id || !sender.tab || sender.frameId !== 0 || !HUB_PAGE.test(url)) {
+        sendResponse(null);
+        return false;
+      }
+      (m.kind === "flowhub_ping" ? hubPing() : hubInstall(m)).then(sendResponse, () => sendResponse(null));
+      return true; // the answer comes later
+    });
+  }
 
   // ---------------------------------------------------------------- what the browser tells us
 

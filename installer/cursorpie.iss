@@ -98,8 +98,8 @@ begin
     'administrator (for example Task Manager, or a terminal opened with Run as administrator). ' +
     'In those windows CursorPie does nothing, and that is a Windows rule, not a fault.' + #13#10 + #13#10 +
     'Every other program works normally and CursorPie needs no administrator rights.' + #13#10 + #13#10 +
-    'If you need the pie in elevated windows too, start CursorPie as administrator: ' +
-    'right-click the CursorPie shortcut and choose Run as administrator. ' +
+    'If you need the pie in elevated windows too, open Settings > About in CursorPie and ' +
+    'choose Reinstall as administrator. ' +
     'More: Known issues in the documentation.');
 end;
 

@@ -68,6 +68,7 @@ pub mod cache;
 pub mod config;
 pub mod debug;
 pub mod devmode;
+pub mod flowhub;
 pub mod flowrun;
 pub mod flowstate;
 pub mod geometry;
@@ -83,6 +84,7 @@ pub mod refresh;
 pub mod running;
 pub mod runpanel;
 pub mod side;
+pub mod smart;
 pub mod tap;
 pub mod ui;
 pub mod update;
@@ -220,8 +222,10 @@ pub fn run() -> eframe::Result<()> {
                 ctx: cc.egui_ctx.clone(),
             };
             running::init(notifier.clone()); // before the tap: its presses ask what runs
+            smart::init(notifier.clone()); // before the tap: its presses ask what is open
             actions::set_notifier(notifier.clone()); // a flow that fails tells the UI
             panel::set_notifier(notifier.clone()); // a flow or the extension may ask for a panel
+            flowhub::set_notifier(notifier.clone()); // the Flow Hub installs through the UI
             // the first start of a new version: the files of the program that live outside its
             // executable are written again, before the extension connects and finds them old
             refresh::run();

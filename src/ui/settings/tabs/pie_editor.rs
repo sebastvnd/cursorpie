@@ -32,7 +32,7 @@
 //!   cuts them and Ctrl/Cmd + V pastes them at the end of the pie that is lit, the way the Flow canvas
 //!   copies blocks: through the system clipboard as text ([`pie_edit::copy_slices`]), so a copy can
 //!   go to another pie or profile;
-//! * the **+** of the floating bar unfolds the three groups of slices in the bar and opens a
+//! * the **+** of the floating bar unfolds the four groups of slices in the bar and opens a
 //!   list over it, and the right button opens the same list where it is pressed: not a sheet, a
 //!   floating list like the one of the Flow canvas ([`slice_menu`]);
 //! * drag a slice onto another slice to move it before that one, onto the middle of another pie to
@@ -68,7 +68,7 @@ use crate::config::pie_edit::{self, Landed, PasteSlices, Place};
 use crate::config::share::{self, Bundle};
 use crate::config::*;
 use crate::geometry::Point;
-use crate::geometry::{pie_inner, pie_outer, slice_at, slice_start};
+use crate::geometry::{Outline, pie_inner, pie_outer, slice_at, slice_start};
 use crate::msg::Msg;
 use crate::platform;
 use crate::ui::app::App;
@@ -88,7 +88,7 @@ use eframe::egui::{
     Stroke, StrokeKind, TextureHandle, Ui, UiBuilder, Vec2, pos2, vec2,
 };
 use std::collections::{BTreeSet, HashMap};
-use std::f32::consts::TAU;
+use std::f32::consts::{FRAC_PI_2, PI, TAU};
 use std::sync::mpsc::Sender;
 
 /// Diameter of a pie on the canvas, in the units of the canvas (the pie of the classic tab is
@@ -117,9 +117,10 @@ const UNFOLD_SECS: f32 = 0.24;
 const THUMB_SECS: f64 = 0.28;
 /// The groups of the list of slices (the order of `AddCatalog::groups`): the icon in the bar and
 /// what it says.
-const GROUPS: [(char, &str); 3] = [
+const GROUPS: [(char, &str); 4] = [
     (symbols::LIGHTNING, "Quick actions"),
     (symbols::MOUSE_SIMPLE, "Side buttons"),
+    (symbols::PLAY, "Flows"),
     (symbols::SQUARES_FOUR, "Custom"),
 ];
 
@@ -309,6 +310,8 @@ struct Pane<'a> {
     /// What the view is fitted to: when it changes the view is fitted again.
     fit_key: usize,
     show_labels: bool,
+    /// The shape of the pie, as the settings give it (the same for every pie on the canvas).
+    outline: Outline,
     accent: Color32,
     /// The pinch that [`platform::take_pinch`] gave this frame.
     pinch: f32,
@@ -321,6 +324,8 @@ struct Geom {
     c: Pos2,
     outer: f32,
     inner: f32,
+    /// The shape of the rim (a circle, or a rounded polygon).
+    outline: Outline,
     len: usize,
     parent: Option<(usize, usize)>,
 }
@@ -337,8 +342,11 @@ enum Hit {
 fn hit_at(geoms: &[Geom], p: Pos2) -> Hit {
     // the pie that is drawn last is on top, so it is asked first (two pies can overlap now)
     for (g, geom) in geoms.iter().enumerate().rev() {
-        let d = (p - geom.c).length();
-        if d > geom.outer + 6.0 {
+        let v = p - geom.c;
+        let d = v.length();
+        // the rim is where the outline is in that direction, not a circle
+        let rim = geom.outer * geom.outline.radius(v.y.atan2(v.x));
+        if d > rim + 6.0 {
             continue;
         }
         if d < geom.inner || geom.len == 0 {
@@ -431,6 +439,7 @@ fn kind_label(it: &Item) -> &'static str {
         ItemKind::Mode { .. } => "Side buttons",
         ItemKind::Run(_) => "Action",
         ItemKind::Submenu(_) => "Submenu",
+        ItemKind::Smart(_) => "Intelligent",
     }
 }
 
@@ -564,6 +573,149 @@ fn pick_pies(base: &BTreeSet<Vec<usize>>, touched: &[Vec<usize>]) -> BTreeSet<Ve
     chosen
 }
 
+/// How long the pointer rests on a slice before its tip shows, in seconds.
+const TIP_DELAY: f64 = 0.30;
+/// How long the tip takes to fade in (and out), in seconds.
+const TIP_FADE: f32 = 0.16;
+
+/// The words of a tip: what the slice is called, what it is, and a warning line if it needs one.
+struct TipText {
+    title: String,
+    note: String,
+    warn: String,
+}
+
+/// Where the tip of the canvas stands: what it is for, since when the pointer rests there, where the
+/// pointer was when it came, and what it said. It is kept (not dropped) when the pointer leaves, so
+/// the tip can fade out with its words still on it.
+#[derive(Clone)]
+struct TipState {
+    id: egui::Id,
+    armed: bool,
+    since: f64,
+    at: Pos2,
+    title: String,
+    note: String,
+    warn: String,
+}
+
+/// The tip of a slice or of the middle of a pie: a small card next to the pointer, drawn by hand.
+///
+/// (`on_hover_text` on the canvas put it under the whole canvas, at its bottom left corner, far from
+/// what it was about, because the canvas is one big widget.) It comes after the pointer has rested
+/// on the same thing for [`TIP_DELAY`], fades in while it rises a few points into place, stays where
+/// the pointer came (so it does not shake as the pointer moves over the slice), fades out when the
+/// pointer leaves, and keeps inside `bounds`: it goes above the pointer when there is no room under
+/// it, and left when there is none on the right. `target` is what the pointer is over (`None`:
+/// nothing, or a drag is going on) and `at` where the pointer is.
+fn hover_tip(ctx: &egui::Context, bounds: Rect, target: Option<(egui::Id, TipText)>, at: Pos2) {
+    let key = egui::Id::new("pie_hover_tip");
+    let now = ctx.input(|i| i.time);
+    let mut st = ctx.data(|d| d.get_temp::<TipState>(key));
+    let mut wanted = false;
+    match target {
+        Some((id, text)) => {
+            let fresh = st.as_ref().is_none_or(|s| s.id != id || !s.armed);
+            if fresh {
+                st = Some(TipState {
+                    id,
+                    armed: true,
+                    since: now,
+                    at,
+                    title: text.title,
+                    note: text.note,
+                    warn: text.warn,
+                });
+            }
+            if let Some(s) = &st {
+                let left = TIP_DELAY - (now - s.since);
+                wanted = left <= 0.0;
+                if !wanted {
+                    ctx.request_repaint_after(std::time::Duration::from_secs_f64(left));
+                }
+            }
+        }
+        None => {
+            if let Some(s) = st.as_mut() {
+                s.armed = false;
+            }
+        }
+    }
+    ctx.data_mut(|d| match &st {
+        Some(s) => {
+            d.insert_temp(key, s.clone());
+        }
+        None => {
+            d.remove::<TipState>(key);
+        }
+    });
+    let alpha = ctx.animate_bool_with_time_and_easing(
+        key.with("alpha"),
+        wanted,
+        TIP_FADE,
+        egui::emath::easing::cubic_out,
+    );
+    let Some(s) = st else { return };
+    if alpha <= 0.0 {
+        return;
+    }
+    let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, key));
+    let ink = pal().text.gamma_multiply(alpha);
+    let soft = pal().muted.gamma_multiply(alpha);
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        &s.title,
+        0.0,
+        egui::text::TextFormat::simple(FontId::new(12.5, fonts::semibold()), ink),
+    );
+    if !s.note.is_empty() {
+        job.append(
+            &format!("  \u{b7}  {}", s.note),
+            0.0,
+            egui::text::TextFormat::simple(FontId::proportional(12.0), soft),
+        );
+    }
+    if !s.warn.is_empty() {
+        job.append(
+            &format!("\n{}", s.warn),
+            0.0,
+            egui::text::TextFormat::simple(FontId::proportional(11.5), soft),
+        );
+    }
+    let galley = painter.layout_job(job);
+    let pad = vec2(11.0, 6.0);
+    let size = galley.size() + pad * 2.0;
+    // under and to the right of the pointer; above it or to the left when that would leave the canvas
+    let edge = 6.0;
+    let mut min = s.at + vec2(14.0, 20.0);
+    if min.x + size.x > bounds.max.x - edge {
+        min.x = (bounds.max.x - edge - size.x).max(bounds.min.x + edge);
+    }
+    if min.y + size.y > bounds.max.y - edge {
+        min.y = s.at.y - 14.0 - size.y;
+    }
+    // it rises into place while it fades in
+    let rect = Rect::from_min_size(min, size).translate(vec2(0.0, (1.0 - alpha) * 5.0));
+    let round = egui::CornerRadius::same((size.y / 2.0).min(14.0) as u8);
+    painter.add(
+        egui::Shadow {
+            offset: [0, 3],
+            blur: 10,
+            spread: 0,
+            color: Color32::from_black_alpha((34.0 * alpha) as u8),
+        }
+        .as_shape(rect, round),
+    );
+    painter.rect_filled(rect, round, pal().card.gamma_multiply(alpha));
+    painter.rect_stroke(
+        rect,
+        round,
+        Stroke::new(1.0, pal().border.gamma_multiply(alpha)),
+        StrokeKind::Inside,
+    );
+    painter.galley(rect.min + pad, galley, pal().text);
+}
+
 /// Draws one canvas of pies and handles what the pointer does there.
 fn pane(ui: &mut Ui, ctx: &egui::Context, ed: &mut Ed, p: Pane) -> PaneOut {
     let Pane {
@@ -581,6 +733,7 @@ fn pane(ui: &mut Ui, ctx: &egui::Context, ed: &mut Ed, p: Pane) -> PaneOut {
         select_mode,
         fit_key,
         show_labels,
+        outline,
         accent,
         pinch,
         hint,
@@ -601,6 +754,7 @@ fn pane(ui: &mut Ui, ctx: &egui::Context, ed: &mut Ed, p: Pane) -> PaneOut {
                 c: canvas.min.to_vec2().to_pos2() + view.pan + scene_center(b) * view.zoom,
                 outer: outer0 * view.zoom,
                 inner: inner0 * view.zoom,
+                outline,
                 len: items_at(items, &b.path).map_or(0, <[Item]>::len),
                 parent: b.parent,
             })
@@ -753,8 +907,10 @@ fn pane(ui: &mut Ui, ctx: &egui::Context, ed: &mut Ed, p: Pane) -> PaneOut {
         let parent = &geoms[pg];
         let sl = TAU / parent.len.max(1) as f32;
         let am = slice_start(slice, parent.len.max(1)) + sl / 2.0;
-        let a = parent.c + vec2(am.cos(), am.sin()) * parent.outer;
-        let b = geom.c - vec2(geom.outer + 8.0 * z, 0.0);
+        // the wire leaves from the rim of the pie, where the outline is, and ends at the rim of the
+        // next one (its slice 0 is at the left)
+        let a = parent.c + vec2(am.cos(), am.sin()) * (parent.outer * parent.outline.radius(am));
+        let b = geom.c - vec2(geom.outer * geom.outline.radius(PI) + 8.0 * z, 0.0);
         let hot = sel
             .as_ref()
             .is_some_and(|(r, i)| *r == parent.path && *i == slice);
@@ -782,29 +938,44 @@ fn pane(ui: &mut Ui, ctx: &egui::Context, ed: &mut Ed, p: Pane) -> PaneOut {
         let total = ring.len();
         let is_active = role == Role::Mine && active == geom.path;
         let picked = shown_picked.contains(&geom.path);
+        // the ring is made round and bent to the outline of the pie, as the real pie does it
+        let bend = Bend::new(geom.outline, geom.inner, geom.outer);
         // a soft shadow under the ring: one blurred shape, so it leaves no step at its edge
         if z >= 0.45 {
-            painter.add(
-                egui::Shadow {
-                    offset: [0, 6],
-                    blur: 22,
-                    spread: 0,
-                    color: Color32::from_black_alpha(26),
-                }
-                .as_shape(
-                    Rect::from_center_size(geom.c, Vec2::splat(geom.outer * 2.0)),
-                    PILL,
-                ),
-            );
+            if geom.outline.is_circle() {
+                painter.add(
+                    egui::Shadow {
+                        offset: [0, 6],
+                        blur: 22,
+                        spread: 0,
+                        color: Color32::from_black_alpha(26),
+                    }
+                    .as_shape(
+                        Rect::from_center_size(geom.c, Vec2::splat(geom.outer * 2.0)),
+                        PILL,
+                    ),
+                );
+            } else {
+                ring_shadow(&painter, geom.c, geom.outer, bend, 26);
+            }
         }
         // a selected pie sits on a tint of the accent with a thin ring (a tint, not a heavy border)
         if picked {
-            painter.circle_filled(geom.c, geom.outer + 12.0 * z, wash(accent, 0.10));
-            painter.circle_stroke(
+            let halo = geom.outer + 12.0 * z;
+            if geom.outline.is_circle() {
+                painter.circle_filled(geom.c, halo, wash(accent, 0.10));
+            } else {
+                painter.add(Shape::convex_polygon(
+                    bend.rim_points(geom.c, halo),
+                    wash(accent, 0.10),
+                    Stroke::NONE,
+                ));
+            }
+            painter.add(bend.rim(
                 geom.c,
-                geom.outer + 12.0 * z,
+                halo,
                 Stroke::new(1.5 * z.max(0.6), accent.gamma_multiply(0.75)),
-            );
+            ));
         }
         let name = if geom.path.is_empty() {
             title.clone()
@@ -815,7 +986,7 @@ fn pane(ui: &mut Ui, ctx: &egui::Context, ed: &mut Ed, p: Pane) -> PaneOut {
         };
         // the name of the ring over its pie
         painter.text(
-            geom.c - vec2(0.0, geom.outer + 10.0 * z),
+            geom.c - vec2(0.0, geom.outer * geom.outline.radius(-FRAC_PI_2) + 10.0 * z),
             Align2::CENTER_BOTTOM,
             name,
             FontId::proportional(text_size(14.0, z)),
@@ -826,18 +997,18 @@ fn pane(ui: &mut Ui, ctx: &egui::Context, ed: &mut Ed, p: Pane) -> PaneOut {
             },
         );
         if is_active && !picked {
-            painter.circle_stroke(
+            painter.add(bend.rim(
                 geom.c,
                 geom.outer + 7.0 * z,
                 Stroke::new(2.0 * z.max(0.6), accent.gamma_multiply(0.55)),
-            );
+            ));
         }
         if total == 0 {
-            painter.circle_stroke(
+            painter.add(bend.rim(
                 geom.c,
                 geom.outer,
                 Stroke::new(1.5 * z.max(0.6), pal().border),
-            );
+            ));
         }
         let sl = TAU / total.max(1) as f32;
         for (i, it) in ring.iter().enumerate() {
@@ -887,10 +1058,11 @@ fn pane(ui: &mut Ui, ctx: &egui::Context, ed: &mut Ed, p: Pane) -> PaneOut {
                 a0 + 0.03,
                 a0 + sl - 0.03,
                 rgb(mix(rgb3(pal().idle), accent_rgb, t)),
-                Bend::NONE,
+                bend,
             ));
             let am = a0 + sl / 2.0;
-            let tp = geom.c + vec2(am.cos(), am.sin()) * ((geom.inner + geom.outer) / 2.0);
+            let tp = geom.c
+                + vec2(am.cos(), am.sin()) * bend.radius(am, (geom.inner + geom.outer) / 2.0);
             let labels = show_labels && z >= 0.5;
             let (icon_dy, caret_dy) = if labels {
                 (-8.0 * z, 33.0 * z)
@@ -1087,27 +1259,48 @@ fn pane(ui: &mut Ui, ctx: &egui::Context, ed: &mut Ed, p: Pane) -> PaneOut {
             out.secondary = Some((ring, at));
         }
     }
-    // the name and kind of the slice under the pointer
-    if let Hit::Slice(g, i) = &hover
-        && let Some(it) = items_at(items, &geoms[*g].path).and_then(|r| r.get(*i))
-    {
-        let mut tip = format!("{} \u{b7} {}", it.name, kind_label(it));
-        if is_source && item_runs_commands(it) {
-            tip.push_str("\nCan run a shell command, write files or send messages.");
-        }
-        let _ = resp.clone().on_hover_text(tip);
-    } else if let Hit::Center(g) = &hover
-        && mine
-        && !resp.dragged()
-        && ed.pie_drag.is_none()
-    {
-        let tip = if geoms[*g].path.is_empty() {
-            "The main pie. The others are placed around it."
-        } else {
-            "Drag to move this pie \u{b7} click to add slices to it"
-        };
-        let _ = resp.clone().on_hover_text(tip);
-    }
+    // the name and kind of the slice under the pointer (or what the middle of a pie is for), as a
+    // tip next to the pointer; none while something is carried
+    let calm = !blocked && !resp.dragged() && ed.pie_drag.is_none() && !ed.pie_moving;
+    let tip = match &hover {
+        Hit::Slice(g, i) if calm => items_at(items, &geoms[*g].path)
+            .and_then(|r| r.get(*i))
+            .map(|it| {
+                let warn = if is_source && item_runs_commands(it) {
+                    "Can run a shell command, write files or send messages."
+                } else {
+                    ""
+                };
+                (
+                    egui::Id::new((id, "tip", *g, *i)),
+                    TipText {
+                        title: it.name.clone(),
+                        note: kind_label(it).into(),
+                        warn: warn.into(),
+                    },
+                )
+            }),
+        Hit::Center(g) if calm && mine => Some((
+            egui::Id::new((id, "tip", "middle", *g)),
+            TipText {
+                title: if geoms[*g].path.is_empty() {
+                    "The main pie. The others are placed around it."
+                } else {
+                    "Drag to move this pie \u{b7} click to add slices to it"
+                }
+                .into(),
+                note: String::new(),
+                warn: String::new(),
+            },
+        )),
+        _ => None,
+    };
+    hover_tip(
+        ctx,
+        canvas,
+        tip,
+        resp.hover_pos().unwrap_or(canvas.center()),
+    );
     out.geoms = geoms;
     out
 }
@@ -1620,7 +1813,12 @@ fn menu_list(
 /// same place as the list of the Flow canvas) or where the right button was pressed, and is no
 /// sheet: nothing is dimmed, and a press anywhere else, or Esc, closes it. `capsule` is where the bar
 /// was drawn (a press on it does not close the list: the **+** and the groups are in it).
-fn slice_menu(ctx: &egui::Context, ed: &mut Ed, capsule: Rect) -> Option<(Vec<usize>, Item)> {
+fn slice_menu(
+    ctx: &egui::Context,
+    ed: &mut Ed,
+    capsule: Rect,
+    flows: &[crate::config::flow::Flow],
+) -> Option<(Vec<usize>, Item)> {
     let mut m = ed.pie_menu.take()?;
     // a press outside the list and the bar closes it (and goes on to whatever is under it)
     let (press, pos) = ctx.input(|i| (i.pointer.any_pressed(), i.pointer.interact_pos()));
@@ -1637,7 +1835,7 @@ fn slice_menu(ctx: &egui::Context, ed: &mut Ed, capsule: Rect) -> Option<(Vec<us
     let can_nest = m.ring.len() + 1 < MAX_DEPTH;
     let catalog = match ed.add_catalog.take() {
         Some(c) if c.can_nest == can_nest => c,
-        _ => AddCatalog::new(can_nest),
+        _ => AddCatalog::new(can_nest, flows),
     };
     // keep the list inside the window: as wide as MENU_W and at most MENU_H tall, plus the search
     // box and the margins of its frame
@@ -2007,7 +2205,10 @@ impl App {
         }
 
         let pinch = platform::take_pinch(ctx);
-        let show_labels = edit.show_labels;
+        // The names are not drawn under the icons of the pie any more (the pill shows them, see
+        // `ui::pie::pill`), so the editor shows the pie as it is: icons only.
+        let show_labels = false;
+        let outline = edit.outline();
         let profile_name = edit.profiles[pi].name.clone();
         let nav = ed.nav.clone();
         let mine_sel = ed.sel.map(|i| (nav.clone(), i));
@@ -2051,6 +2252,7 @@ impl App {
                     select_mode: *select_mode,
                     fit_key: 0,
                     show_labels,
+                    outline,
                     accent,
                     pinch,
                     hint: "Drag a slice across, double click it, or use select mode to pick several. \u{26a0} marks a command.",
@@ -2081,6 +2283,7 @@ impl App {
                     select_mode: false,
                     fit_key: pi + 1,
                     show_labels,
+                    outline,
                     accent,
                     pinch,
                     hint: if tray {
@@ -2706,7 +2909,7 @@ impl App {
         }
         // the list of slices floats over the canvas (no sheet); a slice picked goes to the end of
         // the ring it was opened for
-        if let Some((ring_path, item)) = slice_menu(ctx, ed, capsule) {
+        if let Some((ring_path, item)) = slice_menu(ctx, ed, capsule, &edit.flows) {
             let idx = edit
                 .profiles
                 .get_mut(pi)
@@ -2820,6 +3023,7 @@ mod tests {
             c: pos2(100.0, 100.0),
             outer: 80.0,
             inner: 30.0,
+            outline: Outline::CIRCLE,
             len: 4,
             parent: None,
         };
@@ -2837,9 +3041,34 @@ mod tests {
             c: pos2(0.0, 0.0),
             outer: 80.0,
             inner: 30.0,
+            outline: Outline::CIRCLE,
             parent: None,
         }];
         assert!(matches!(hit_at(&empty, pos2(60.0, 0.0)), Hit::Center(0)));
+    }
+
+    #[test]
+    fn a_click_past_the_rim_of_a_polygon_pie_misses_it() {
+        let pie = |outline| {
+            [Geom {
+                path: vec![],
+                c: pos2(100.0, 100.0),
+                outer: 80.0,
+                inner: 30.0,
+                outline,
+                len: 4,
+                parent: None,
+            }]
+        };
+        // 70 px left of the middle: a circle (80 px) still has a slice there, but a sharp square
+        // only reaches 0.707 of the outer radius on its flat side (56.6 px), so it is outside
+        let p = pos2(30.0, 100.0);
+        assert!(matches!(hit_at(&pie(Outline::CIRCLE), p), Hit::Slice(0, 0)));
+        let square = Outline::from_settings(true, 4, 0, 0);
+        assert!(matches!(hit_at(&pie(square), p), Hit::None));
+        // the corner of the square still reaches the full radius
+        let corner = pos2(100.0 - 50.0, 100.0 - 50.0);
+        assert!(!matches!(hit_at(&pie(square), corner), Hit::None));
     }
 
     #[test]
@@ -2884,6 +3113,7 @@ mod tests {
             c,
             outer: 80.0,
             inner: 30.0,
+            outline: Outline::CIRCLE,
             len: 4,
             parent: None,
         };

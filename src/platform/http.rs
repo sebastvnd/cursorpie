@@ -1,8 +1,9 @@
 //! A plain HTTPS `GET` for the update check, the same on every OS.
 //!
 //! CursorPie has no HTTP library on purpose: the app is small and makes no network connections of its
-//! own, apart from the one look at the newest release (see [`update`](crate::update)). That request
-//! is made by the `curl` program that macOS, Windows 10 (1803 and later) and nearly every Linux
+//! own, apart from the one look at the newest release (see [`update`](crate::update)) and the website
+//! icon the user asks for in the icon picker (see [`webicon`](crate::ui::webicon)). Those requests
+//! are made by the `curl` program that macOS, Windows 10 (1803 and later) and nearly every Linux
 //! distribution ship with, or by `wget` where `curl` is missing. The program is started directly and
 //! never through a shell, so no part of the address can be read as a command.
 //!
@@ -80,7 +81,11 @@ impl Client {
     /// The arguments for a `GET` of `url` that gives up after `timeout_s` seconds. Only `https` is
     /// followed, also across redirects.
     fn args(self, url: &str, timeout_s: u64) -> Vec<String> {
-        let accept = "Accept: application/vnd.github+json";
+        self.args_accepting(url, timeout_s, "Accept: application/vnd.github+json")
+    }
+
+    /// [`Client::args`] with the `Accept` header (the whole line, `Accept: ...`) of the caller.
+    fn args_accepting(self, url: &str, timeout_s: u64, accept: &str) -> Vec<String> {
         let mut args = self.base_args(timeout_s);
         match self {
             Client::Curl => args.extend(["--header".into(), accept.into()]),
@@ -133,6 +138,88 @@ pub fn get_text(url: &str, timeout_s: u64, max_bytes: u64) -> Result<String, Htt
         }
     }
     Err(HttpError::NoClient)
+}
+
+/// Fetches the web page at `url` (it must start with `https://`) and returns its HTML as text. The
+/// same as [`get_text`], but it asks for `text/html` (the update check asks for GitHub's JSON), and
+/// it reads a page whole. The website icon lookup (see [`webicon`](crate::ui::webicon)) uses
+/// [`get_head`] instead, because the page it needs is only its start.
+///
+/// # Errors
+///
+/// See [`HttpError`]. A page that is not UTF-8 is [`HttpError::BadAnswer`].
+pub fn get_page(url: &str, timeout_s: u64, max_bytes: u64) -> Result<String, HttpError> {
+    if !url.starts_with("https://") {
+        return Err(HttpError::Failed);
+    }
+    for client in CLIENTS {
+        let args = client.args_accepting(url, timeout_s, "Accept: text/html,*/*;q=0.8");
+        match run(client.program(), &args, timeout_s, max_bytes) {
+            Err(HttpError::NoClient) => continue,
+            other => return other,
+        }
+    }
+    Err(HttpError::NoClient)
+}
+
+/// Fetches the web page at `url` (it must start with `https://`) and returns **the first
+/// `max_bytes` bytes** of it. Unlike [`get_page`] a page that is bigger is not an error: the request
+/// is stopped once enough was read. The `<link>` tags that name the icons of a site are in the head
+/// of the page, but a big home page (GitHub's is well over 500 KB) made [`get_page`] give up, and
+/// the lookup then never saw them.
+///
+/// # Errors
+///
+/// [`HttpError::NoClient`] without `curl` and `wget`; [`HttpError::Failed`] when the request failed
+/// or the answer was empty.
+pub fn get_head(url: &str, timeout_s: u64, max_bytes: u64) -> Result<Vec<u8>, HttpError> {
+    if !url.starts_with("https://") {
+        return Err(HttpError::Failed);
+    }
+    for client in CLIENTS {
+        let args = client.args_accepting(url, timeout_s, "Accept: text/html,*/*;q=0.8");
+        match run_head(client.program(), &args, timeout_s, max_bytes) {
+            Err(HttpError::NoClient) => continue,
+            other => return other,
+        }
+    }
+    Err(HttpError::NoClient)
+}
+
+/// Runs `program` and returns the first `max_bytes` bytes it writes, then stops it.
+fn run_head(
+    program: &str,
+    args: &[String],
+    timeout_s: u64,
+    max_bytes: u64,
+) -> Result<Vec<u8>, HttpError> {
+    let mut cmd = quiet_command(program, args, Stdio::piped());
+    let mut child = cmd.spawn().map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            HttpError::NoClient
+        } else {
+            HttpError::Failed
+        }
+    })?;
+    let Some(stdout) = child.stdout.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(HttpError::Failed);
+    };
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut body = Vec::new();
+        let read = stdout.take(max_bytes).read_to_end(&mut body);
+        let _ = tx.send(read.map(|_| body));
+    });
+    let answer = rx.recv_timeout(Duration::from_secs(timeout_s.saturating_add(2)));
+    // enough was read (or the time is up): the rest of the page is not wanted
+    let _ = child.kill();
+    let _ = child.wait();
+    match answer {
+        Ok(Ok(body)) if !body.is_empty() => Ok(body),
+        _ => Err(HttpError::Failed),
+    }
 }
 
 /// Downloads `url` (it must start with `https://`) into the file `dest`, which is replaced.

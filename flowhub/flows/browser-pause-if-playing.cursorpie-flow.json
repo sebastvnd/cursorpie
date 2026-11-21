@@ -1,0 +1,75 @@
+{
+  "cursorpie_flow": 2,
+  "flow": {
+    "id": "browser-pause-if-playing",
+    "name": "Pause the music only if it plays",
+    "nodes": [
+      {
+        "id": 1,
+        "x": 40.0,
+        "y": 60.0,
+        "kind": "Start",
+        "next": 2
+      },
+      {
+        "id": 2,
+        "x": 240.0,
+        "y": 60.0,
+        "kind": {
+          "Native": {
+            "op": "Browser",
+            "a": "media.state",
+            "b": "state"
+          }
+        },
+        "next": 3
+      },
+      {
+        "id": 3,
+        "x": 540.0,
+        "y": 60.0,
+        "kind": {
+          "Branch": {
+            "a": "state",
+            "op": "Eq",
+            "b": "playing"
+          }
+        },
+        "next": 4,
+        "alt": 5
+      },
+      {
+        "id": 4,
+        "x": 540.0,
+        "y": 260.0,
+        "kind": {
+          "Native": {
+            "op": "Browser",
+            "a": "media.pause",
+            "b": ""
+          }
+        },
+        "next": 6
+      },
+      {
+        "id": 5,
+        "x": 240.0,
+        "y": 260.0,
+        "kind": {
+          "Native": {
+            "op": "Notify",
+            "a": "Browser",
+            "b": "Nothing is playing"
+          }
+        },
+        "next": 6
+      },
+      {
+        "id": 6,
+        "x": 40.0,
+        "y": 260.0,
+        "kind": "End"
+      }
+    ]
+  }
+}

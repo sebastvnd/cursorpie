@@ -30,9 +30,11 @@ pub mod flow_kit;
 pub mod flow_list;
 pub mod flow_templates;
 mod model;
+pub mod persona;
 pub mod pie_edit;
 mod sanitize;
 pub mod share;
+mod smart;
 mod store;
 mod tree;
 
@@ -45,6 +47,7 @@ pub use flow::{
 pub use flow_check::{Issue, Severity, check_flow};
 pub use model::*;
 pub use share::image_path;
+pub use smart::*;
 pub use store::*;
 pub use tree::*;
 
@@ -148,6 +151,20 @@ mod tests {
         let off = parse_config(r#"{"version": 2, "panels": false, "extension_panels": true}"#)
             .expect("parses");
         assert!(!off.panels && off.extension_panels);
+    }
+
+    #[test]
+    fn flow_hub_installs_are_on_by_default_and_old_files_still_load() {
+        assert!(Config::default().flowhub_install);
+        let old = parse_config(r#"{"version": 2}"#).expect("parses");
+        assert!(old.flowhub_install);
+        let off = parse_config(r#"{"version": 2, "flowhub_install": false}"#).expect("parses");
+        assert!(!off.flowhub_install);
+        assert!(
+            serde_json::to_string(&off)
+                .unwrap()
+                .contains(r#""flowhub_install":false"#)
+        );
     }
 
     #[test]

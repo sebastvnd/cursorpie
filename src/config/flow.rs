@@ -1662,6 +1662,8 @@ pub fn each_action(items: &[Item], f: &mut dyn FnMut(&Action)) {
                 extra.values().for_each(&mut *f);
             }
             ItemKind::Submenu(children) => each_action(children, f),
+            // suggested when the pie opens: it holds no action of its own
+            ItemKind::Smart(_) => {}
         }
     }
 }
@@ -1681,6 +1683,7 @@ pub fn each_action_mut(items: &mut [Item], f: &mut dyn FnMut(&mut Action)) {
                 extra.values_mut().for_each(&mut *f);
             }
             ItemKind::Submenu(children) => each_action_mut(children, f),
+            ItemKind::Smart(_) => {}
         }
     }
 }

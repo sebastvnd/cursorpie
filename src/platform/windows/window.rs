@@ -217,6 +217,9 @@ pub fn clear_window_frame(handle: isize) {
     }
 }
 
+/// The window is `WS_EX_TOPMOST` (see `clear_window_frame`), which is drawn over a full-screen window.
+pub fn keep_over_full_screen(_over: bool) {}
+
 /// Windows keeps the position a hidden window was given.
 pub fn window_manager_may_recenter() -> bool {
     false

@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#fff8ec">
+  <meta name="description" content="Flow Hub: ready-made CursorPie flows. Tap Install and CursorPie wires the flow up for you, or download the file and import it yourself.">
+  <title>Flow Hub — ready-made flows for CursorPie</title>
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://sebastvnd.github.io/cursorpie/flowhub/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CursorPie">
+  <meta property="og:title" content="Flow Hub — ready-made flows for CursorPie">
+  <meta property="og:description" content="Pick a flow, tap Install, done. CursorPie wires it up for you.">
+  <meta property="og:url" content="https://sebastvnd.github.io/cursorpie/flowhub/">
+  <meta property="og:image" content="https://sebastvnd.github.io/cursorpie/assets/og-image.png">
+  <link rel="icon" href="../assets/cursorpie-mark.png">
+  <script>
+    /* Saved theme before first paint, same key as the main site. */
+    (function () {
+      var d = document.documentElement;
+      try {
+        var t = localStorage.getItem('cursorpie-theme');
+        if (t !== 'light' && t !== 'dark') t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        d.dataset.theme = t;
+        var m = document.querySelector('meta[name="theme-color"]');
+        if (m) m.setAttribute('content', t === 'dark' ? '#100f14' : '#fff8ec');
+      } catch (e) {}
+    })();
+  </script>
+  <link rel="stylesheet" href="../assets/site.css">
+  <link rel="stylesheet" href="../assets/flowhub.css">
+</head>
+<body class="hub">
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="topbar" id="topbar">
+  <div class="topbar-pill">
+    <a class="brand" href="../index.html" aria-label="CursorPie home"><img src="../assets/cursorpie-logo.png" alt="CursorPie"></a>
+    <nav class="nav" id="nav" aria-label="Main navigation">
+      <a href="../index.html#how-it-works">How it works</a>
+      <a href="../index.html#features">Features</a>
+      <a href="./" aria-current="page" class="is-here">Flow Hub</a>
+      <a href="../index.html#download">Download</a>
+      <a href="../index.html?doc=docs/README.md">Docs</a>
+    </nav>
+    <div class="topbar-tools">
+      <a class="icon-btn gh" href="https://github.com/sebastvnd/cursorpie" target="_blank" rel="noopener" aria-label="GitHub" data-tip="GitHub"><span class="icon" aria-hidden="true">&#xe576;</span></a>
+      <button class="icon-btn" type="button" data-theme-toggle aria-label="Switch to dark theme" data-tip="Dark theme"><span class="icon" aria-hidden="true">&#xe330;</span></button>
+      <a class="btn btn-sm btn-lime topbar-cta" href="../index.html#download">Get it <span class="icon" aria-hidden="true">&#xe20c;</span></a>
+      <button class="icon-btn menu-btn" type="button" id="menu-btn" aria-label="Open menu" aria-expanded="false" aria-controls="nav"><span class="burger"><i></i><i></i></span></button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+  <section class="hub-hero">
+    <div class="wrap">
+      <span class="sticker hub-sticker" style="--r:-6deg">author drops only · beta</span>
+      <p class="eyebrow">Flow Hub</p>
+      <h1>Flows that <em class="mark">just work</em>.<br>One tap to <em class="mark mark-pink">install</em>.</h1>
+      <p class="hub-lead">Ready-made CursorPie flows, made by the author. Hit <b>Install</b> and CursorPie wires it up for you. No extension? You get a normal download.</p>
+      <div class="hub-status" id="hub-status" data-state="checking" role="status" aria-live="polite">
+        <span class="dot" aria-hidden="true"></span>
+        <span id="hub-status-text">Checking for CursorPie…</span>
+        <a id="hub-status-help" href="../index.html?doc=docs/BROWSER_EXTENSION.md" hidden>How to connect it</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="wrap hub-tools" aria-label="Find a flow">
+    <label class="hub-search">
+      <span class="sr-only">Search flows</span>
+      <span class="icon hub-search-ic" aria-hidden="true">&#xe30c;</span>
+      <input id="hub-q" type="search" placeholder="Search flows: tabs, panels, notes…" autocomplete="off" spellcheck="false">
+    </label>
+    <div class="hub-chips" id="hub-chips" role="group" aria-label="Filter by tag"></div>
+    <label class="hub-os">
+      <span class="sr-only">Works on</span>
+      <select id="hub-os">
+        <option value="">Any system</option>
+        <option value="macos">macOS</option>
+        <option value="windows">Windows</option>
+        <option value="linux">Linux</option>
+      </select>
+    </label>
+  </section>
+
+  <section class="wrap" aria-label="Flows">
+    <p class="hub-count" id="hub-count" aria-live="polite"></p>
+    <div class="hub-grid" id="hub-grid"></div>
+    <p class="hub-empty" id="hub-empty" hidden>Nothing matches that. Try fewer words or clear the filters.</p>
+    <noscript><p class="hub-empty">Flow Hub needs JavaScript to list the flows. The files are in <a href="https://github.com/sebastvnd/cursorpie/tree/main/flowhub/flows">the repository</a>: download one and import it from Settings &gt; Flow.</p></noscript>
+  </section>
+
+  <section class="wrap hub-how" aria-labelledby="how-h">
+    <h2 id="how-h">How it works</h2>
+    <ol class="hub-steps">
+      <li><b>Pick</b><span>Open a card to see what the flow does and what it needs.</span></li>
+      <li><b>Install</b><span>With the extension and CursorPie running, one tap. CursorPie asks you first, then adds it as a new flow.</span></li>
+      <li><b>Or download</b><span>No extension, or CursorPie is closed? You get the <code>.json</code> file: Settings &gt; Flow &gt; Import.</span></li>
+    </ol>
+    <div class="hub-note">
+      <b>Submissions are closed for now.</b> Only the author adds flows while Flow Hub is in beta. Every flow is a plain, readable file, and a flow never runs by itself: it only runs when you give it to a slice.
+    </div>
+  </section>
+</main>
+
+<dialog class="hub-dialog" id="hub-dialog" aria-labelledby="hd-title">
+  <form method="dialog" class="hd-close"><button class="icon-btn" aria-label="Close" data-tip="Close"><span class="icon" aria-hidden="true">&#xe4f6;</span></button></form>
+  <div id="hd-body"></div>
+</dialog>
+
+<div class="hub-toasts" id="hub-toasts" role="status" aria-live="polite"></div>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="footer-grid">
+      <div class="footer-brand">
+        <a href="../index.html" aria-label="CursorPie home"><img src="../assets/cursorpie-logo.png" alt="CursorPie"></a>
+        <p>A simple pie menu that stays close to your cursor and feels natural to use every day.</p>
+        <div class="footer-social">
+          <a class="icon-btn" href="https://github.com/sebastvnd/cursorpie" target="_blank" rel="noopener" aria-label="GitHub" data-tip="GitHub"><span class="icon" aria-hidden="true">&#xe576;</span></a>
+          <a class="icon-btn" href="https://github.com/sebastvnd/cursorpie/issues" target="_blank" rel="noopener" aria-label="Report an issue" data-tip="Report an issue"><span class="icon" aria-hidden="true">&#xe5f4;</span></a>
+          <a class="icon-btn" href="../index.html#download" aria-label="Download" data-tip="Download"><span class="icon" aria-hidden="true">&#xe20c;</span></a>
+        </div>
+      </div>
+      <nav class="footer-col" aria-label="Learn">
+        <h4>Learn</h4>
+        <ul>
+          <li><a href="../index.html?doc=docs/README.md"><span class="icon" aria-hidden="true">&#xe0e6;</span>Documentation</a></li>
+          <li><a href="../index.html?doc=docs/user/install.md"><span class="icon" aria-hidden="true">&#xe20c;</span>Installation</a></li>
+          <li><a href="../index.html?doc=docs/user/README.md"><span class="icon" aria-hidden="true">&#xe2dc;</span>User guide</a></li>
+          <li><a href="../flowhub/"><span class="icon" aria-hidden="true">&#xe2dc;</span>Flow Hub</a></li>
+          <li><a href="../index.html?doc=docs/user/configuration.md"><span class="icon" aria-hidden="true">&#xe434;</span>Configuration</a></li>
+        </ul>
+      </nav>
+      <nav class="footer-col" aria-label="Project">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../index.html?doc=CHANGELOG.md"><span class="icon" aria-hidden="true">&#xe1a0;</span>Changelog</a></li>
+          <li><a href="../index.html?doc=docs/user/known-issues.md"><span class="icon" aria-hidden="true">&#xe4e0;</span>Known issues</a></li>
+          <li><a href="../index.html?doc=CONTRIBUTING.md"><span class="icon" aria-hidden="true">&#xe2a8;</span>Contributing</a></li>
+          <li><a href="https://github.com/sebastvnd/cursorpie/issues" target="_blank" rel="noopener"><span class="icon" aria-hidden="true">&#xe5f4;</span>Report an issue</a></li>
+        </ul>
+      </nav>
+    </div>
+    <div class="footer-bottom">
+      <span><i class="icon" aria-hidden="true">&#xe40c;</i><span>© <span data-year>2026</span> CursorPie · MIT License</span></span>
+      <span><i class="icon" aria-hidden="true">&#xe2a8;</i><span>Made with Rust and egui · Inspired by Kando</span></span>
+    </div>
+  </div>
+</footer>
+
+<script src="../assets/flowhub.js" defer></script>
+</body>
+</html>

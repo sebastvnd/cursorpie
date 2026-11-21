@@ -26,7 +26,7 @@ use eframe::egui::{self, Color32, Vec2};
 
 /// How to put the extension in the browser: the files are written by the button above. A browser
 /// only takes an extension that is signed by its store or that the person loads by hand.
-const BRIDGE_INSTALL_HELP: &str = "Add the extension once: in Chrome, Edge, Brave or Vivaldi open the extensions page, turn on Developer mode, choose Load unpacked and pick the 'chromium' folder. In Firefox open about:debugging, choose This Firefox, then Load Temporary Add-on and pick manifest.json in the 'firefox' folder (Firefox forgets a temporary add-on when it closes; a signed copy from the release page stays). It connects within a minute.";
+const BRIDGE_INSTALL_HELP: &str = "Press the button of your browser: it opens the store page or the extensions page of that browser for you, with the files already written. Add the extension once and it connects within a minute. An extension from a store is updated by the store; one loaded from the folder is kept up to date by CursorPie.";
 
 /// The line under the switch: which browsers are connected, or what is still missing.
 fn bridge_status_text(st: &crate::bridge::Status) -> String {
@@ -56,7 +56,7 @@ fn bridge_status_text(st: &crate::bridge::Status) -> String {
         }
         if !st.outdated.is_empty() {
             text += &format!(
-                " The extension in {} is from another version: show the extension files and reload it, or the newer commands will not work.",
+                " The extension in {} is older than this app: update it in the browser (an extension from a store updates by itself, which can take a day), or show the extension files and reload it. Until then the newer commands will not work.",
                 st.outdated.join(", ")
             );
         }
@@ -157,6 +157,7 @@ impl App {
             BehaviorPage::Look => self.behavior_look(ui, accent),
             BehaviorPage::Apps => self.behavior_apps(ui, accent),
             BehaviorPage::System => self.behavior_system(ui, accent),
+            BehaviorPage::Smart => self.behavior_smart(ui, accent),
         }
         // room under the last panel for the floating switch
         ui.add_space(100.0);
@@ -323,6 +324,7 @@ impl App {
     /// The "Look" page of the Behavior tab: the look of the pie and the notice on the screen.
     fn behavior_look(&mut self, ui: &mut egui::Ui, accent: Color32) {
         let cfg = &mut self.edit;
+        let session = self.ed.session;
         panel(ui, "Look & feel", |ui| {
             let look = demo::LookPie {
                 accent,
@@ -351,13 +353,7 @@ impl App {
                     cfg.appearance = modes[i].0;
                 }
             });
-            row_wide(
-                ui,
-                "Theme",
-                "The look of Settings. Make your own in the themes folder.",
-                400.0,
-                |ui| theme_picker(ui, &mut cfg.ui_theme, &mut cfg.accent, accent),
-            );
+            theme_picker(ui, session, &cfg.ui_theme, accent);
             theme_files(ui);
             slider_row(
                 ui,
@@ -408,8 +404,8 @@ impl App {
             toggle_row(
                 ui,
                 &mut cfg.show_labels,
-                "Show names under the icons",
-                "Off: the pie shows icons only.",
+                "Show the slice name in a pill",
+                "The pill shows the name and icon of the slice under the pointer. Off: icons only.",
                 accent,
             );
             toggle_row(
@@ -809,7 +805,48 @@ impl App {
                 accent,
             );
             if cfg.browser_bridge {
-                note(ui, &bridge_status_text(&crate::bridge::status()));
+                let st = crate::bridge::status();
+                note(ui, &bridge_status_text(&st));
+                // one button per installed browser that has no extension connected yet
+                let todo: Vec<&'static str> = st
+                    .registered
+                    .iter()
+                    .copied()
+                    .filter(|b| !st.browsers.iter().any(|(c, _)| c == b))
+                    .collect();
+                let said = egui::Id::new("bridge_setup_said");
+                if !todo.is_empty() {
+                    actions(ui, |ui| {
+                        for name in &todo {
+                            if button(
+                                ui,
+                                Look::Primary(accent),
+                                Some(symbols::FOLDER_OPEN),
+                                &crate::bridge::setup::button_label(name),
+                            )
+                            .clicked()
+                            {
+                                let text = match crate::bridge::setup::start(name) {
+                                    Ok(how) => crate::bridge::setup::started_text(name, &how),
+                                    Err(e) => {
+                                        let _ = tx.send(crate::msg::Msg::ExportFailed {
+                                            what: "Browser extension files".into(),
+                                            reason: crate::config::describe_io_error(&e),
+                                        });
+                                        String::new()
+                                    }
+                                };
+                                ui.ctx().data_mut(|d| d.insert_temp(said, text));
+                                ui.ctx().request_repaint();
+                            }
+                        }
+                    });
+                    let text: String = ui.ctx().data(|d| d.get_temp(said)).unwrap_or_default();
+                    if !text.is_empty() {
+                        note(ui, &text);
+                    }
+                    note(ui, BRIDGE_INSTALL_HELP);
+                }
                 actions(ui, |ui| {
                     if button(
                         ui,
@@ -828,12 +865,18 @@ impl App {
                         ui.ctx().request_repaint();
                     }
                 });
-                note(ui, BRIDGE_INSTALL_HELP);
                 toggle_row(
                     ui,
                     &mut cfg.extension_panels,
                     "Let the browser extension show panels",
                     "A panel is a small window of CursorPie with a list, a box or buttons. With this on, the extension's own commands (Panels: pick a tab from a list, ask for a word then go to that tab, a media menu...) and other code of the extension can ask you something on the desktop and get your answer. The panel shows what the extension wrote in it, such as the titles of your open tabs, only on screen and only for you; nothing is saved or sent anywhere. Off, those commands say that panels are switched off.",
+                    accent,
+                );
+                toggle_row(
+                    ui,
+                    &mut cfg.flowhub_install,
+                    "Let Flow Hub install flows",
+                    "The Flow Hub page of the CursorPie website has an Install button for each flow. With the extension, the button hands the flow to CursorPie, which shows what it can do and asks you first; only after you press Install is it added, as a new flow. Nothing runs by itself: a flow runs only when you give it to a slice. Off, the button just downloads the file and you import it from Settings > Flow.",
                     accent,
                 );
             } else {
@@ -1113,6 +1156,15 @@ fn trackpad_panel(
                 " ms",
                 accent,
             );
+            toggle_row(
+                ui,
+                &mut cfg.touch_lock,
+                "Lock with three fingers",
+                "While the pie is open, tap with two more fingers to lock CursorPie for the trackpad. \
+                 A hold then only shows a notice; hold with one finger and tap with two to unlock. \
+                 The mouse is not affected.",
+                accent,
+            );
             if os.has_haptics() {
                 toggle_row(
                     ui,
@@ -1198,7 +1250,7 @@ mod bridge_text_tests {
             "Connected: Firefox (1 tab), Chrome (12 tabs). Sound in 2 tabs. WhatsApp: 3 unread. Telegram is open."
         );
         st.outdated = vec!["Chrome".into()];
-        assert!(bridge_status_text(&st).contains("extension in Chrome is from another version"));
+        assert!(bridge_status_text(&st).contains("extension in Chrome is older than this app"));
         st.playing = 0;
         st.chats.clear();
         st.outdated.clear();

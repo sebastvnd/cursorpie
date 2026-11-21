@@ -1,0 +1,8 @@
+{
+  "name": "Mint Soda",
+  "extends": "genz",
+  "accent": "#2fd27a",
+  "light": { "bg": "#e1faec", "sidebar": "#d0f2e0", "text": "#0e2a1c" },
+  "dark": { "bg": "#0f1a14" },
+  "shape": { "control_radius": 14, "panel_radius": 20 }
+}

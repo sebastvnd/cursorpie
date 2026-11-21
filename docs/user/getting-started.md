@@ -13,6 +13,12 @@ Download the package for your system from the
 2. Move the pointer toward a slice. It highlights.
 3. Release to run it. Release in the center to cancel.
 
+<img src="../gifs/02-hold-flick-release.gif" width="720" alt="Hold the middle button, flick to a slice, release">
+
+Changed your mind? Release in the center of the pie:
+
+<img src="../gifs/03-cancel-in-the-middle.gif" width="720" alt="Cancel by releasing in the center">
+
 No middle button? Turn on *Open the pie with a trackpad hold* in **Settings > Behavior > Trackpad**, press Save, then touch
 and hold the trackpad. See [Trackpad hold](trackpad.md).
 
@@ -42,5 +48,5 @@ of the top ring, a progress arc fills around the center disc and Settings opens 
 - **Windows:** CursorPie lives in the system tray.
 - **Linux X11:** nothing to set up. **Linux Wayland:** install the udev rule, see [CursorPie on Linux](linux.md).
 
-A short welcome window opens on the first start; skip it with **Skip** or `Esc`. The file `welcome_shown` next to
+A short welcome window, drawn in the Gen Z style of the website, opens on the first start; skip it with **Skip** or `Esc`. The file `welcome_shown` next to
 `config.json` remembers that it was shown; delete it to see the window again.

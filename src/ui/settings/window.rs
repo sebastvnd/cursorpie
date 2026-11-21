@@ -571,6 +571,21 @@ impl App {
             },
         );
 
+        // the wave of a theme change, over everything but the sheets: it swaps the theme when it
+        // covers the window
+        super::theme_wave::drive(
+            &ctx,
+            self.ed.session,
+            card_rect,
+            if full_screen {
+                0.0
+            } else {
+                card_radius_pt() as f32
+            },
+            &mut self.edit.ui_theme,
+            &mut self.edit.accent,
+        );
+
         // a native file chooser is open beside the window: nothing here can be used meanwhile
         if super::picker::choosing() {
             super::picker::waiting_scrim(&ctx, card_rect);
@@ -759,6 +774,65 @@ mod tests {
         assert!(
             app.ed.tab == Tab::About,
             "drawing never changes the section"
+        );
+    }
+
+    #[test]
+    fn a_theme_wave_swaps_the_theme_once_the_window_is_covered_and_then_ends() {
+        use crate::ui::settings::state::BehaviorPage;
+        use crate::ui::settings::theme::registry;
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut app = App::new(rx, tx, 200.0, None);
+        app.settings_open = true;
+        app.edit = crate::config::Config::default();
+        app.ed.tab = Tab::Behavior;
+        app.ed.behavior_page = BehaviorPage::Look;
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        let size = Vec2::new(
+            CARD_SIZE[0] + 2.0 * WIN_MARGIN,
+            CARD_SIZE[1] + 2.0 * WIN_MARGIN,
+        );
+        let frame = |app: &mut App, time: f64| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                time: Some(time),
+                ..Default::default()
+            };
+            ctx.run_ui(input, |ui| app.settings_ui(ui))
+                .drop_without_applying_deltas();
+        };
+        let mut time = 0.0;
+        for _ in 0..5 {
+            frame(&mut app, time);
+            time += 0.016;
+        }
+        let from = app.edit.ui_theme.clone();
+        let to = registry::all()
+            .into_iter()
+            .map(|t| t.id)
+            .find(|id| *id != from)
+            .expect("there is a second theme");
+        crate::ui::settings::theme_wave::start(&ctx, app.ed.session, &to, egui::pos2(300.0, 300.0));
+        assert!(crate::ui::settings::theme_wave::active(&ctx));
+        // a quarter of a second in, the old theme is still the one in the config
+        for _ in 0..15 {
+            time += 0.016;
+            frame(&mut app, time);
+        }
+        assert_eq!(
+            app.edit.ui_theme, from,
+            "the swap waits for the window to be covered"
+        );
+        // then it is swapped, and a little later the wave is gone
+        for _ in 0..90 {
+            time += 0.016;
+            frame(&mut app, time);
+        }
+        assert_eq!(app.edit.ui_theme, to);
+        assert!(
+            !crate::ui::settings::theme_wave::active(&ctx),
+            "the wave ends"
         );
     }
 }

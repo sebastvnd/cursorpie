@@ -751,7 +751,7 @@ fn look_radius(size: f32) -> f32 {
 /// What the look demo says about the pie: its size and whether it has names.
 fn look_caption(size: f32, labels: bool) -> String {
     let what = if labels {
-        "icons and names"
+        "icons, names in a pill"
     } else {
         "icons only"
     };
@@ -787,7 +787,7 @@ fn look_pie(p: &egui::Painter, c: Pos2, r: f32, (open, f): (f32, LookFrame), loo
         (symbols::ARROW_U_UP_LEFT, "Undo"),
         (symbols::DOWNLOAD_SIMPLE, "Save"),
     ];
-    for (i, (icon, name)) in slices.into_iter().enumerate() {
+    for (i, (icon, _)) in slices.into_iter().enumerate() {
         let h = if i == f.slice { f.hover } else { 0.0 };
         let mid = -FRAC_PI_2 + quarter * i as f32;
         let (a0, a1) = (mid - quarter / 2.0 + 0.03, mid + quarter / 2.0 - 0.03);
@@ -804,28 +804,8 @@ fn look_pie(p: &egui::Painter, c: Pos2, r: f32, (open, f): (f32, LookFrame), loo
         }
         let ink = colors.ink.lerp_to_gamma(on_accent(accent), h * 0.95);
         let at = c + Vec2::angled(mid) * bend.radius(mid, (inner + r) / 2.0);
-        let (dy, icon_size) = if look.labels {
-            (-r * 0.12, r * 0.36)
-        } else {
-            (0.0, r * 0.44)
-        };
-        fonts::paint_icon(
-            p,
-            at + Vec2::new(0.0, dy),
-            icon,
-            icon_size,
-            ink.gamma_multiply(fade),
-            false,
-        );
-        if look.labels {
-            p.text(
-                at + Vec2::new(0.0, r * 0.2),
-                Align2::CENTER_CENTER,
-                name,
-                FontId::proportional((r * 0.17).max(9.0)),
-                ink.gamma_multiply(0.8 * fade),
-            );
-        }
+        // the name is not drawn on the slice: the real pie shows it in a pill (see `ui::pie::pill`)
+        fonts::paint_icon(p, at, icon, r * 0.44, ink.gamma_multiply(fade), false);
     }
     if look.material == Material::Solid {
         p.add(bend.rim(c, r, Stroke::new(1.0, pal().border.gamma_multiply(fade))));
@@ -2271,7 +2251,7 @@ mod tests {
 
     #[test]
     fn the_look_caption_says_the_size_and_whether_there_are_names() {
-        assert_eq!(look_caption(220.0, true), "220 px, icons and names");
+        assert_eq!(look_caption(220.0, true), "220 px, icons, names in a pill");
         assert_eq!(look_caption(220.4, false), "220 px, icons only");
     }
 

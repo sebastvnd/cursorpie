@@ -1,0 +1,305 @@
+{
+  "schema": 1,
+  "updated": "2026-11-20",
+  "authors": {
+    "sebastvnd": {
+      "name": "sebastvnd",
+      "url": "https://github.com/sebastvnd"
+    }
+  },
+  "flows": [
+    {
+      "slug": "open-app-and-new-note",
+      "title": "Open Notes, start a note",
+      "tagline": "One flick: Notes opens and a blank note is ready to type in.",
+      "icon": "note-pencil",
+      "color": "lime",
+      "author": "sebastvnd",
+      "tags": [
+        "productivity",
+        "apps"
+      ],
+      "os": [
+        "macos"
+      ],
+      "needs": [],
+      "warns": [],
+      "steps": [
+        "Opens the Notes app.",
+        "Waits 0.6 seconds so it can come up.",
+        "Presses Cmd+N for a new note."
+      ],
+      "notes": "A macOS shortcut (Cmd+N). On another system, record the shortcut again in the Flow editor.",
+      "file": "flows/open-app-and-new-note.cursorpie-flow.json",
+      "blocks": 5,
+      "added": "2026-11-20"
+    },
+    {
+      "slug": "copy-switch-paste",
+      "title": "Copy, switch window, paste",
+      "tagline": "Carry the selection to the other window in one gesture.",
+      "icon": "clipboard-text",
+      "color": "sky",
+      "author": "sebastvnd",
+      "tags": [
+        "productivity",
+        "shortcuts"
+      ],
+      "os": [
+        "macos"
+      ],
+      "needs": [],
+      "warns": [],
+      "steps": [
+        "Presses Cmd+C to copy what is selected.",
+        "Waits, then presses Cmd+Tab to switch to the other app.",
+        "Waits, then presses Cmd+V to paste."
+      ],
+      "notes": "Written with macOS shortcuts. On Windows or Linux change \"mods\": 8 to \"mods\": 2 in the Flow editor, or record the keys again.",
+      "file": "flows/copy-switch-paste.cursorpie-flow.json",
+      "blocks": 7,
+      "added": "2026-11-20"
+    },
+    {
+      "slug": "ask-and-loop",
+      "title": "Ask how many, ping that many times",
+      "tagline": "A tiny loop that shows how questions, variables and While blocks fit together.",
+      "icon": "arrows-clockwise",
+      "color": "orange",
+      "author": "sebastvnd",
+      "tags": [
+        "learn",
+        "loops"
+      ],
+      "os": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "needs": [],
+      "warns": [],
+      "steps": [
+        "Asks you a number (3 is pre-filled).",
+        "Counts up with a While block.",
+        "Shows one notification per round, then a final one."
+      ],
+      "notes": "On Linux it needs notify-send for the notifications, and zenity or kdialog for the question.",
+      "file": "flows/ask-and-loop.cursorpie-flow.json",
+      "blocks": 9,
+      "added": "2026-11-20"
+    },
+    {
+      "slug": "panel-form",
+      "title": "A form panel, then say the answer",
+      "tagline": "Text, slider and switch in one small window. Copy it and make it yours.",
+      "icon": "app-window",
+      "color": "pink",
+      "author": "sebastvnd",
+      "tags": [
+        "learn",
+        "panels"
+      ],
+      "os": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "needs": [
+        "panels"
+      ],
+      "warns": [],
+      "steps": [
+        "Shows a panel with a text box, a slider and a switch.",
+        "Reads what you entered into variables.",
+        "Tells you the answer in a notification."
+      ],
+      "notes": "Needs \"Let flows show panels\" (on by default).",
+      "file": "flows/panel-form.cursorpie-flow.json",
+      "blocks": 5,
+      "added": "2026-11-20"
+    },
+    {
+      "slug": "progress-panel",
+      "title": "Five rounds with a progress panel",
+      "tagline": "See a bar fill while a flow works, with a Stop button.",
+      "icon": "clock",
+      "color": "violet",
+      "author": "sebastvnd",
+      "tags": [
+        "learn",
+        "panels"
+      ],
+      "os": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "needs": [
+        "panels"
+      ],
+      "warns": [],
+      "steps": [
+        "Opens a progress panel.",
+        "Runs five rounds of pretend work, moving the bar each time.",
+        "Closes the panel when done."
+      ],
+      "notes": "Needs \"Let flows show panels\" (on by default).",
+      "file": "flows/progress-panel.cursorpie-flow.json",
+      "blocks": 10,
+      "added": "2026-11-20"
+    },
+    {
+      "slug": "browser-go-to-tab",
+      "title": "Jump to the tab that has a word",
+      "tagline": "Type a word, land on the tab whose title or address has it.",
+      "icon": "browser",
+      "color": "sky",
+      "author": "sebastvnd",
+      "tags": [
+        "browser",
+        "tabs"
+      ],
+      "os": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "needs": [
+        "extension"
+      ],
+      "warns": [],
+      "steps": [
+        "Asks for a word.",
+        "Asks the browser extension to go to the tab that matches.",
+        "Says so when there is none."
+      ],
+      "notes": "Needs the CursorPie Bridge browser extension.",
+      "file": "flows/browser-go-to-tab.cursorpie-flow.json",
+      "blocks": 7,
+      "added": "2026-11-20"
+    },
+    {
+      "slug": "browser-pause-if-playing",
+      "title": "Pause the music only if it plays",
+      "tagline": "No more accidental play: it pauses what plays and says so when nothing does.",
+      "icon": "headphones",
+      "color": "lime",
+      "author": "sebastvnd",
+      "tags": [
+        "browser",
+        "media"
+      ],
+      "os": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "needs": [
+        "extension"
+      ],
+      "warns": [],
+      "steps": [
+        "Asks the extension what the players in your browser are doing.",
+        "If something plays, pauses it.",
+        "Otherwise shows \"Nothing is playing\"."
+      ],
+      "notes": "Needs the CursorPie Bridge browser extension.",
+      "file": "flows/browser-pause-if-playing.cursorpie-flow.json",
+      "blocks": 6,
+      "added": "2026-11-20"
+    },
+    {
+      "slug": "browser-remote-panel",
+      "title": "Browser remote that stays open",
+      "tagline": "A little remote for your tabs and players. It stays up while you click.",
+      "icon": "sliders-horizontal",
+      "color": "pink",
+      "author": "sebastvnd",
+      "tags": [
+        "browser",
+        "media",
+        "panels"
+      ],
+      "os": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "needs": [
+        "extension",
+        "panels"
+      ],
+      "warns": [],
+      "steps": [
+        "Opens a panel with play, skip and tab buttons.",
+        "Each press runs a browser command and the panel stays on screen.",
+        "Closes with Cancel or when you are done."
+      ],
+      "notes": "Needs the CursorPie Bridge browser extension and \"Let flows show panels\".",
+      "file": "flows/browser-remote-panel.cursorpie-flow.json",
+      "blocks": 17,
+      "added": "2026-11-20"
+    },
+    {
+      "slug": "telegram-saved-reply",
+      "title": "Send a saved reply on Telegram or WhatsApp",
+      "tagline": "Pick a saved reply, pick a chat, confirm, sent.",
+      "icon": "envelope-simple",
+      "color": "violet",
+      "author": "sebastvnd",
+      "tags": [
+        "chat",
+        "browser"
+      ],
+      "os": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "needs": [
+        "extension"
+      ],
+      "warns": [
+        "messages"
+      ],
+      "steps": [
+        "Lists your saved replies (set in the extension's options).",
+        "Asks which reply and which chat (empty means the open chat).",
+        "Asks you to confirm, then sends it."
+      ],
+      "notes": "Sends a real message after you confirm. Needs the CursorPie Bridge extension with \"Allow sending messages\" on.",
+      "file": "flows/telegram-saved-reply.cursorpie-flow.json",
+      "blocks": 16,
+      "added": "2026-11-20"
+    },
+    {
+      "slug": "link-wait-command",
+      "title": "Open a page, wait, log the time",
+      "tagline": "A starter for chaining a link, a pause and a shell command.",
+      "icon": "terminal-window",
+      "color": "orange",
+      "author": "sebastvnd",
+      "tags": [
+        "learn",
+        "shell"
+      ],
+      "os": [
+        "macos",
+        "linux"
+      ],
+      "needs": [],
+      "warns": [
+        "commands"
+      ],
+      "steps": [
+        "Opens https://example.com.",
+        "Waits one second.",
+        "Appends the date to ~/cursorpie-flow.log with a shell command."
+      ],
+      "notes": "The command is POSIX shell, so it works on macOS and Linux.",
+      "file": "flows/link-wait-command.cursorpie-flow.json",
+      "blocks": 5,
+      "added": "2026-11-20"
+    }
+  ]
+}

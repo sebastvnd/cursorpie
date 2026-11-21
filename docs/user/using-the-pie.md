@@ -17,6 +17,10 @@ and mouse buttons read [Profiles and mouse buttons](profiles-and-buttons.md); fo
 2. **Move** toward a slice. It highlights as you hover.
 3. **Release** to run it. Release in the center dead zone to cancel.
 
+<img src="../gifs/02-hold-flick-release.gif" width="720" alt="Hold the middle button, flick to a slice, release">
+
+<img src="../gifs/03-cancel-in-the-middle.gif" width="720" alt="Cancel by releasing in the center">
+
 What else the trigger does:
 
 | You do this | CursorPie does this |
@@ -29,6 +33,7 @@ What else the trigger does:
 | **Release** over a slice | Runs that slice |
 | **Drag outward** across the rim of a submenu slice | Opens the submenu, re-centered on the cursor |
 | **Keep holding** in the center | After 1200 ms in total, opens Settings. A progress arc fills around the center disc. Can be switched off, see [Opening Settings from the pie](#opening-settings-from-the-pie) |
+| **Hold Space** while the pie is open | With the [intelligent pie](intelligent-pie.md) on: turns the pie into a pie of suggestions, and back |
 | **Press Space** while the pie is open | Opens Settings, if *Open settings with Space* is on (on by default). Works in any ring, in a submenu and in the pie of an app |
 
 In *classic* mode (see [Profiles](profiles-and-buttons.md#profiles)) there is no double-click: holding opens the app's own pie if it has
@@ -57,6 +62,8 @@ middle-drag pass-through in other apps. The trigger is the middle button on ever
 
 ## Slices and actions
 
+<img src="../gifs/04-any-action.gif" width="720" alt="Shortcuts, apps, shell, mouse modes, submenus, flows">
+
 A slice is one of three kinds:
 
 - **Run** does something when you release the button over it.
@@ -67,6 +74,8 @@ A slice is one of three kinds:
   [Your mouse and its extra buttons](profiles-and-buttons.md#your-mouse-and-its-extra-buttons).
 - **Submenu** opens a nested ring. A ring holds up to 8 slices and menus go up to 5 levels deep. A dot on the
   rim marks a submenu.
+
+<img src="../gifs/05-nested-submenus.gif" width="720" alt="Submenus up to 5 levels deep">
 
 Actions are available for Run slices and for each side button of a Mode:
 

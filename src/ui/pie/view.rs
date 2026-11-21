@@ -1,6 +1,6 @@
 //! The data one pie frame needs, copied out of the config.
 
-use crate::config::{AppIconStyle, Config, IconShadow, ItemKind, item_at, items_at};
+use crate::config::{AppIconStyle, Config, IconShadow, ItemKind, item_at};
 use crate::side;
 use crate::ui::appicon;
 
@@ -15,7 +15,7 @@ pub(super) struct PieView {
     /// index (in this ring) of the active side-button mode
     pub(super) active: Option<usize>,
     pub(super) center_icon: String,
-    /// draw each slice's name under its icon
+    /// show the name of the slice under the pointer in the pill (see [`pill`](super::pill))
     pub(super) labels: bool,
     pub(super) accent: [u8; 3],
     pub(super) settle_ms: f32,
@@ -52,6 +52,14 @@ impl CenterArt {
                 .map(|i| i.icon.clone())
         }
         .unwrap_or_default();
+        // the center of the intelligent pie, and of a ring an intelligent slice opened
+        let through_smart =
+            !path.is_empty() && prof.and_then(|p| item_at(&p.items, path)).is_none();
+        let icon = if icon.is_empty() && (crate::smart::is_smart(profile) || through_smart) {
+            "ico:sparkle".to_string()
+        } else {
+            icon
+        };
         // the center of an app's own pie shows that app's icon (top level only)
         let target = side::target();
         let app_icon = (path.is_empty() && c.center_app_icon)
@@ -72,14 +80,14 @@ impl PieView {
     /// Copies what is needed to draw ring `path` of `profile`. Call it with the config locked, then release the lock.
     pub(super) fn new(c: &Config, profile: usize, path: &[usize]) -> Self {
         let prof = c.profiles.get(profile);
-        let ring = prof.and_then(|p| items_at(&p.items, path)).unwrap_or(&[]);
+        let ring = crate::smart::ring(c, profile, path).unwrap_or_default();
         let items = ring
             .iter()
             .map(|i| {
                 (
                     i.icon.clone(),
                     i.name.clone(),
-                    matches!(i.kind, ItemKind::Submenu(_)),
+                    matches!(i.kind, ItemKind::Submenu(_) | ItemKind::Smart(_)),
                 )
             })
             .collect();

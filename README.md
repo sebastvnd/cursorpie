@@ -20,11 +20,15 @@ A configurable pie menu for your cursor — available on macOS, Windows and Linu
 
 [Installation](docs/user/install.md) · [User guide](docs/user/README.md) · [Configuration](docs/user/configuration.md) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md)
 
+<img src="docs/gifs/01-hero.gif" width="720" alt="CursorPie: your actions, one gesture away">
+
 </div>
 
 ---
 
 ## What is CursorPie?
+
+<img src="docs/gifs/14-problem-hook.gif" width="720" alt="Tired of hunting for that one shortcut?">
 
 CursorPie puts a radial menu right under your pointer. Hold the middle mouse button (or touch and hold a trackpad), move toward the action you need, then release. No hunting through menus and no need to remember a long list of shortcuts.
 
@@ -46,6 +50,56 @@ Built with **Rust** and [egui](https://github.com/emilk/egui), CursorPie is insp
 
 A clickable mouse wheel, or a trackpad, is enough to get started. Some features and button options vary by operating system; see [Platform support](#platform-support).
 
+## A quick tour
+
+### Any action
+
+A slice can send shortcuts, open apps, URLs and files, run shell commands, switch mouse modes, open submenus or run a flow. See [Using the pie](docs/user/using-the-pie.md#slices-and-actions).
+
+<img src="docs/gifs/04-any-action.gif" width="720" alt="Shortcuts, apps, shell, mouse modes, submenus, flows">
+
+### Nested submenus
+
+Up to 8 slices per ring and 5 levels of submenus.
+
+<img src="docs/gifs/05-nested-submenus.gif" width="720" alt="Submenus up to 5 levels deep">
+
+### A pie per app
+
+Keep a general pie and give the tools you use most their own. See [Profiles and mouse buttons](docs/user/profiles-and-buttons.md).
+
+<img src="docs/gifs/06-per-app-profiles.gif" width="720" alt="Per-app profiles">
+
+### Mouse side buttons
+
+Back and forward can act as undo and redo, or run any action you assign to a mode.
+
+<img src="docs/gifs/07-mouse-side-buttons.gif" width="720" alt="Back and forward as undo and redo">
+
+### Flows
+
+Chain shortcuts, apps, waits, conditions and loops into one slice. See [Flows](docs/user/flows.md).
+
+<img src="docs/gifs/09-flows.gif" width="720" alt="Chain actions into a flow">
+
+### The settings editor
+
+Build menus, tune the gesture and undo any edit. See [Settings and backups](docs/user/settings.md).
+
+<img src="docs/gifs/10-settings-editor.gif" width="720" alt="Settings editor">
+
+### Themes and sharing
+
+Pick a theme, then export a profile with its icons as a single JSON file. See [Themes](docs/user/themes.md).
+
+<img src="docs/gifs/11-themes-and-share.gif" width="720" alt="Themes and profile export">
+
+### Private and open source
+
+No account, no telemetry, MIT license, built in Rust.
+
+<img src="docs/gifs/12-private-and-open-source.gif" width="720" alt="No account, no telemetry, MIT">
+
 ## Download and install
 
 Get the latest ready-to-install build from [GitHub Releases](https://github.com/sebastvnd/cursorpie/releases/latest):
@@ -66,9 +120,17 @@ For step-by-step instructions, including the Linux `install.sh` script and macOS
 3. Move the pointer toward a slice.
 4. Release to run the action.
 
+<img src="docs/gifs/02-hold-flick-release.gif" width="720" alt="Hold the middle button, flick to a slice, release">
+
+Changed your mind? Release in the middle of the pie to cancel:
+
+<img src="docs/gifs/03-cancel-in-the-middle.gif" width="720" alt="Cancel by releasing in the center">
+
 No middle button? Turn on *Open the pie with a trackpad hold* in **Settings > Behavior > Trackpad** and touch and hold the trackpad instead. Press Space while the pie is open (or hold the trigger in the center of the pie, if you turned that on) to open Settings and customize your menus. The [user guide](docs/user/README.md) explains gestures, actions, profiles and settings in detail.
 
 ## Platform support
+
+<img src="docs/gifs/13-platforms.gif" width="720" alt="macOS, Windows, Linux">
 
 | Platform | Status | Notes |
 |---|---|---|
@@ -80,6 +142,8 @@ No middle button? Turn on *Open the pie with a trackpad hold* in **Settings > Be
 KDE Plasma 6.8 and GNOME 50 no longer offer an X11 session, so on those desktops you are on Wayland. Read [CursorPie on Linux](docs/user/linux.md) and [Known issues](docs/user/known-issues.md) before installing.
 
 ### Trackpad
+
+<img src="docs/gifs/08-trackpad.gif" width="720" alt="Touch and hold on a trackpad">
 
 Touch and hold opens the pie, moving the finger hovers a slice, lifting runs it, and one more finger that taps or clicks switches the mode. It is **off by default** and works on all three systems:
 

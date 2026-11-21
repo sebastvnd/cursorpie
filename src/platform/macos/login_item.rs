@@ -113,3 +113,13 @@ pub fn handle_command_line() -> bool {
 pub fn single_instance() -> bool {
     true
 }
+
+/// No administrator mode: Accessibility is a permission, not a privilege level.
+pub fn admin_mode() -> crate::platform::AdminMode {
+    crate::platform::AdminMode::default()
+}
+
+/// No administrator mode.
+pub fn reinstall_as_administrator() -> Result<(), crate::platform::ReinstallError> {
+    Err(crate::platform::ReinstallError::Unsupported)
+}

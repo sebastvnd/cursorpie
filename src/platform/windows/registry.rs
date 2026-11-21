@@ -44,15 +44,28 @@ fn open(path: &str, access: u32) -> io::Result<Option<Key>> {
     }
 }
 
+/// The root key of a [`Hive`].
+fn root_of(hive: Hive) -> HKEY {
+    match hive {
+        Hive::CurrentUser => HKEY_CURRENT_USER,
+        Hive::LocalMachine => HKEY_LOCAL_MACHINE,
+    }
+}
+
 /// Opens a key, creating it (and its parents) when it is missing.
 fn create(path: &str) -> io::Result<Key> {
+    create_in(Hive::CurrentUser, path)
+}
+
+/// [`create`] in any hive. Writing to `HKEY_LOCAL_MACHINE` needs administrator rights.
+fn create_in(hive: Hive, path: &str) -> io::Result<Key> {
     let mut key: HKEY = std::ptr::null_mut();
     let path = wide(path);
     // SAFETY: the out-pointers are valid, `path` is zero terminated, and null is allowed for the
     // class, the security attributes and the disposition.
     let code = unsafe {
         RegCreateKeyExW(
-            HKEY_CURRENT_USER,
+            root_of(hive),
             path.as_ptr(),
             0,
             std::ptr::null(),
@@ -68,7 +81,12 @@ fn create(path: &str) -> io::Result<Key> {
 
 /// Writes a string value, creating the key when needed.
 pub fn set_string(path: &str, name: &str, value: &str) -> io::Result<()> {
-    let key = create(path)?;
+    set_string_in(Hive::CurrentUser, path, name, value)
+}
+
+/// [`set_string`] in any hive (`HKEY_LOCAL_MACHINE` needs administrator rights).
+pub fn set_string_in(hive: Hive, path: &str, name: &str, value: &str) -> io::Result<()> {
+    let key = create_in(hive, path)?;
     let (name, value) = (wide(name), wide(value));
     // SAFETY: the data pointer and byte length describe `value`, which outlives the call.
     let code = unsafe {
@@ -86,7 +104,12 @@ pub fn set_string(path: &str, name: &str, value: &str) -> io::Result<()> {
 
 /// Writes a `DWORD` value, creating the key when needed.
 pub fn set_dword(path: &str, name: &str, value: u32) -> io::Result<()> {
-    let key = create(path)?;
+    set_dword_in(Hive::CurrentUser, path, name, value)
+}
+
+/// [`set_dword`] in any hive (`HKEY_LOCAL_MACHINE` needs administrator rights).
+pub fn set_dword_in(hive: Hive, path: &str, name: &str, value: u32) -> io::Result<()> {
+    let key = create_in(hive, path)?;
     let name = wide(name);
     // SAFETY: the data pointer and byte length describe the local `value`.
     let code = unsafe {
@@ -164,7 +187,14 @@ pub fn get_bytes(path: &str, name: &str) -> Option<Vec<u8>> {
     read_value(&key, name)
 }
 
-/// The registry hives that are read (never written) by the helpers below.
+/// The raw bytes of a value in any hive, or `None` when the key or the value does not exist.
+pub fn get_bytes_in(hive: Hive, path: &str, name: &str) -> Option<Vec<u8>> {
+    let key = open_hive(hive, path, KEY_QUERY_VALUE)?;
+    read_value(&key, name)
+}
+
+/// The registry hives: the helpers that list and read use both; the ones that write to
+/// `HKEY_LOCAL_MACHINE` are only for administrator mode (see `admin`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Hive {
     CurrentUser,
@@ -173,10 +203,7 @@ pub enum Hive {
 
 /// Opens an existing key of `hive` for reading. `None` when it does not exist or cannot be read.
 fn open_hive(hive: Hive, path: &str, access: u32) -> Option<Key> {
-    let root = match hive {
-        Hive::CurrentUser => HKEY_CURRENT_USER,
-        Hive::LocalMachine => HKEY_LOCAL_MACHINE,
-    };
+    let root = root_of(hive);
     let mut key: HKEY = std::ptr::null_mut();
     let path = wide(path);
     // SAFETY: `key` is a valid out-pointer and `path` is zero terminated.
@@ -247,9 +274,14 @@ pub fn delete_value(path: &str, name: &str) -> io::Result<()> {
 
 /// Deletes a key without subkeys. A key that is already gone counts as success.
 pub fn delete_key(path: &str) -> io::Result<()> {
+    delete_key_in(Hive::CurrentUser, path)
+}
+
+/// [`delete_key`] in any hive (`HKEY_LOCAL_MACHINE` needs administrator rights).
+pub fn delete_key_in(hive: Hive, path: &str) -> io::Result<()> {
     let path = wide(path);
     // SAFETY: `path` is zero terminated.
-    match unsafe { RegDeleteKeyW(HKEY_CURRENT_USER, path.as_ptr()) } {
+    match unsafe { RegDeleteKeyW(root_of(hive), path.as_ptr()) } {
         ERROR_FILE_NOT_FOUND => Ok(()),
         other => check(other),
     }

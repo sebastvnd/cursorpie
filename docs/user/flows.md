@@ -23,6 +23,8 @@ half a second, paste", and also variables, conditions, loops, questions to the p
 
 ## Building a flow
 
+<img src="../gifs/09-flows.gif" width="720" alt="Chain actions into a flow">
+
 1. **+** makes a new flow. Give it a name.
 2. **Add block** (top right) opens a list of every block, in groups. A flow always runs from **Start** to **End**: a
    block added this way is wired in after the selected one (before **End** when nothing is selected), and a block
@@ -176,3 +178,10 @@ arrow down) adds such a file as a **new** flow and never overwrites one of yours
 [Sharing a profile](settings.md#sharing-a-profile)) carries the flows its slices use. **Only import flows you trust:** a
 *Shell command* block runs whatever it says. CursorPie warns after importing one, and nothing runs until you Save
 and use the slice. If you delete a flow that a slice uses, that slice does nothing until you pick another flow.
+
+### Flow Hub
+
+The [Flow Hub](https://sebastvnd.github.io/cursorpie/flowhub/) page of the website has ready-made flows. With the
+[browser extension](../BROWSER_EXTENSION.md#flow-hub-installing-flows-from-the-website) and CursorPie running,
+**Install** asks you in CursorPie and then adds the flow as a new flow, no file needed; otherwise the button
+downloads the `.json` file for **Import**. The same advice applies: read a flow that runs commands before you use it.

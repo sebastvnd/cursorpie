@@ -5,7 +5,8 @@
 //! `App::ed`; it is an [`IconCache`] (bounded, kept across Settings sessions).
 
 use crate::config::backup::Backup;
-use crate::config::{Config, Item, blank_items, items_at, presets, quick_actions};
+use crate::config::flow::Flow;
+use crate::config::{Action, Config, Item, blank_items, items_at, presets, quick_actions};
 use crate::mouse::Scan;
 use crate::tap::RECORDING;
 use crate::ui::icons::{IconCache, IconState};
@@ -45,15 +46,18 @@ pub enum BehaviorPage {
     Apps,
     /// Startup and memory
     System,
+    /// Learning and the intelligent pie
+    Smart,
 }
 
 impl BehaviorPage {
     /// Every page, in the order of the switch.
-    pub const ALL: [BehaviorPage; 4] = [
+    pub const ALL: [BehaviorPage; 5] = [
         BehaviorPage::Input,
         BehaviorPage::Look,
         BehaviorPage::Apps,
         BehaviorPage::System,
+        BehaviorPage::Smart,
     ];
 
     /// The name on the switch.
@@ -63,6 +67,7 @@ impl BehaviorPage {
             BehaviorPage::Look => "Look",
             BehaviorPage::Apps => "Apps",
             BehaviorPage::System => "System",
+            BehaviorPage::Smart => "Intelligent",
         }
     }
 
@@ -73,6 +78,7 @@ impl BehaviorPage {
             BehaviorPage::Look => crate::ui::symbols::PAINT_BRUSH,
             BehaviorPage::Apps => crate::ui::symbols::APP_WINDOW,
             BehaviorPage::System => crate::ui::symbols::CPU,
+            BehaviorPage::Smart => crate::ui::symbols::SPARKLE,
         }
     }
 
@@ -83,6 +89,7 @@ impl BehaviorPage {
             BehaviorPage::Look => "How the pie looks, its middle and the notice on screen.",
             BehaviorPage::Apps => "Which pie each app gets, how apps are found, desktops.",
             BehaviorPage::System => "Startup and memory.",
+            BehaviorPage::Smart => "The intelligent pie: what it learns and suggests.",
         }
     }
 }
@@ -308,17 +315,34 @@ pub struct AddCatalog {
 }
 
 impl AddCatalog {
-    /// The groups of the panel; `can_nest` = the ring is not yet at the maximum depth.
-    pub fn new(can_nest: bool) -> Self {
+    /// The groups of the panel; `can_nest` = the ring is not yet at the maximum depth, `flows` are
+    /// the flows of the config (each one is offered as a slice that runs it).
+    pub fn new(can_nest: bool, flows: &[Flow]) -> Self {
         Self {
             can_nest,
             groups: vec![
                 ("Quick actions", quick_actions()),
                 ("Side buttons", presets()),
+                ("Flows", flow_items(flows)),
                 ("Custom", blank_items(can_nest)),
             ],
         }
     }
+}
+
+/// The slices of the "Flows" group: one that runs the flow the person picks in the editor (it starts
+/// without one), then one per flow of the config, named like it.
+fn flow_items(flows: &[Flow]) -> Vec<Item> {
+    let mut v = vec![Item::run("Flow", "ico:play", Action::Flow(String::new()))];
+    v.extend(flows.iter().map(|f| {
+        let name = f.name.trim();
+        Item::run(
+            if name.is_empty() { "Flow" } else { name },
+            "ico:play",
+            Action::Flow(f.id.clone()),
+        )
+    }));
+    v
 }
 
 /// The dialogs of the profile toolbar (Menu tab). Each one is a centered sheet over the window.
@@ -333,6 +357,9 @@ pub enum ProfileSheet {
     /// The list of installed apps, searchable; it comes from one of the two dialogs above and goes
     /// back to it.
     Pick(PickFor),
+    /// The list of sites CursorPie knows, searchable, for the sites the intelligent pie never
+    /// learns (Behavior > Intelligent; drawn by that page).
+    Site,
 }
 
 /// Which dialog the app list was opened from, and so where its answer goes.
@@ -346,6 +373,8 @@ pub enum PickFor {
     Action,
     /// The app of an "App" block of a flow (see [`Ed::flow_target`]); it goes back to the Flow tab.
     Flow,
+    /// One more app the intelligent pie never learns (Behavior > Intelligent).
+    Ignore,
 }
 
 /// The action field of a slice that the app list is answering (set by the **Pick...** button of the
@@ -380,6 +409,11 @@ pub struct Ed {
     pub(super) key_rec: super::wayland_keys::Recorder,
     pub icons: IconCache,
     pub new_app: String,
+    /// Behavior > Intelligent: what is typed in the list of sites to ignore (the sheet "Choose a
+    /// site")
+    pub smart_new_site: String,
+    /// Behavior > Intelligent: the pie the *Add* button of the intelligent slice adds it to
+    pub smart_add_to: usize,
     /// the "New profile" form: name and the app the profile belongs to
     pub new_profile_name: String,
     pub new_profile_app: String,
@@ -403,6 +437,8 @@ pub struct Ed {
     pub add_catalog: Option<AddCatalog>,
     /// the icon picker is open (it temporarily replaces the inspector)
     pub picking_icon: bool,
+    /// The sheet "Icon from a website" (see `web_icon`)
+    pub web_icon: super::web_icon::WebIcon,
     /// Counts the times Settings was opened. It salts the ids of everything drawn in Settings, so
     /// each opening starts with every scroll area at the top (egui keeps the scroll offset of an id
     /// for ever, even while the window is closed) instead of only the tab and the profile going
@@ -537,6 +573,9 @@ pub struct Ed {
     pub update_can_install: bool,
     /// Whether the swap asks for the administrator's password (Linux, a folder only root writes to)
     pub update_needs_password: bool,
+    /// Windows: whether CursorPie runs as administrator or is installed to, read when Settings
+    /// opens; the About tab's *Administrator mode* panel is drawn from it (nothing elsewhere)
+    pub admin_mode: crate::platform::AdminMode,
     /// The downloaded and checked update that waits for the restart
     pub update_staged: Option<install::Staged>,
     /// How the update that the last run handed to the swap ended, while the sheet that tells it is
@@ -580,6 +619,8 @@ impl Ed {
         Self {
             tab: Tab::Menu,
             behavior_page: BehaviorPage::default(),
+            smart_new_site: String::new(),
+            smart_add_to: 0,
             profile: 0,
             recording: None,
             key_rec: super::wayland_keys::Recorder::default(),
@@ -600,6 +641,7 @@ impl Ed {
             session: 0,
             add_catalog: None,
             picking_icon: false,
+            web_icon: super::web_icon::WebIcon::new(),
             icon_query: String::new(),
             icon_cat: 0,
             user_icons: Vec::new(),
@@ -656,6 +698,7 @@ impl Ed {
             update_offer: None,
             update_can_install: false,
             update_needs_password: false,
+            admin_mode: crate::platform::AdminMode::default(),
             update_staged: None,
             update_done: None,
             dialog_open: false,
@@ -689,6 +732,7 @@ impl Ed {
     fn own_sheet_open(&self) -> bool {
         self.adding
             || self.picking_icon
+            || self.web_icon.open
             || self.profile_sheet.is_some()
             || self.flow_new.is_some()
             || self.panel_design.is_some()
@@ -707,6 +751,7 @@ impl Ed {
         self.adding = false;
         self.add_catalog = None;
         self.picking_icon = false;
+        self.web_icon.close();
         self.flow_new = None;
         self.panel_design = None;
         self.update_offer = None;
@@ -906,9 +951,44 @@ mod tests {
 
     #[test]
     fn the_add_catalog_offers_a_submenu_only_when_nesting_is_allowed() {
+        // nesting adds two tiles: the Submenu and the Intelligent one (a submenu the program fills)
         assert_eq!(
-            tiles(&AddCatalog::new(true)),
-            tiles(&AddCatalog::new(false)) + 1
+            tiles(&AddCatalog::new(true, &[])),
+            tiles(&AddCatalog::new(false, &[])) + 2
+        );
+    }
+
+    #[test]
+    fn the_add_catalog_offers_every_flow_as_a_slice_that_runs_it() {
+        let flows = [Flow::new("f1", "Morning"), Flow::new("f2", "  ")];
+        let cat = AddCatalog::new(true, &flows);
+        let (_, items) = cat
+            .groups
+            .iter()
+            .find(|(title, _)| *title == "Flows")
+            .expect("a Flows group");
+        // the blank one to choose a flow for, then one per flow
+        assert_eq!(items.len(), 3);
+        let ids: Vec<&Action> = items
+            .iter()
+            .filter_map(|it| match &it.kind {
+                crate::config::ItemKind::Run(a) => Some(a),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ids[0], &Action::Flow(String::new()));
+        assert_eq!(ids[1], &Action::Flow("f1".into()));
+        assert_eq!(items[1].name, "Morning");
+        assert_eq!(
+            items[2].name, "Flow",
+            "a flow without a name still has a label"
+        );
+        // with no flows the group still holds the blank slice
+        let none = AddCatalog::new(true, &[]);
+        assert!(
+            none.groups
+                .iter()
+                .any(|(t, l)| *t == "Flows" && l.len() == 1)
         );
     }
 
@@ -970,7 +1050,7 @@ mod tests {
     fn leaving_the_ring_drops_the_add_catalog() {
         let mut ed = Ed::new();
         ed.adding = true;
-        ed.add_catalog = Some(AddCatalog::new(true));
+        ed.add_catalog = Some(AddCatalog::new(true, &[]));
         ed.reset_nav();
         assert!(!ed.adding && ed.add_catalog.is_none());
     }

@@ -2,6 +2,8 @@
 
 pub mod genz;
 pub mod glass;
+pub mod lock;
+pub mod pill;
 mod trail;
 mod view;
 
@@ -10,7 +12,7 @@ use crate::geometry::*;
 use crate::running::{self, Choice};
 use crate::ui::app::App;
 use crate::ui::draw::*;
-use eframe::egui::{self, Align2, Color32, FontId, Shape, Stroke, Vec2};
+use eframe::egui::{self, Color32, Shape, Stroke, Vec2};
 use std::f32::consts::{PI, TAU};
 use view::{CenterArt, PieView};
 
@@ -39,7 +41,7 @@ const OPEN_APP_GOLD_INK: Color32 = Color32::from_rgb(58, 50, 24);
 const OVERSHOOT_ROOM: f32 = 8.0;
 /// Points beyond half a window that a window manager may push the pie window from where it was
 /// asked to be and still count as keeping it on the screen (the menu bar of macOS is 24 to 38).
-const PIE_SHIFT_SLACK: f32 = 64.0;
+pub(crate) const PIE_SHIFT_SLACK: f32 = 64.0;
 
 /// What the slices of the pie are made of: opaque and following the appearance, frosted glass, or
 /// the thick-outlined Gen Z look.
@@ -187,6 +189,7 @@ impl App {
             // the web of a gesture that is over is not kept (the close animation has ended, so
             // nothing draws it any more)
             self.forget_trail();
+            self.slice_pill = None;
             if self.visible {
                 self.visible = false;
                 self.hide_root(&ctx);
@@ -275,6 +278,9 @@ impl App {
             .app_icon
             .as_ref()
             .and_then(|s| self.ed.icon_for(&ctx, s));
+
+        // the name of the slice under the pointer: the pill (see `pill`), painted after the pie
+        let pill = self.slice_pill_frame(&ctx, ui.painter(), &view);
 
         egui::CentralPanel::default()
             .frame(egui::Frame::new())
@@ -372,7 +378,7 @@ impl App {
                 let sl = TAU / total as f32;
                 let gap = if total > 1 { 0.05 } else { 0.0 };
 
-                for (i, (icon, name, is_sub)) in view.items.iter().enumerate().take(MAX_ITEMS) {
+                for (i, (icon, _, is_sub)) in view.items.iter().enumerate().take(MAX_ITEMS) {
                     let h = self.hover_anim[i];
                     let m = self.active_anim[i];
 
@@ -460,12 +466,9 @@ impl App {
                     let am = start + sl / 2.0;
                     let dir = Vec2::new(am.cos(), am.sin());
                     let tp = c + dir * bend.radius(am, (inner + rr) / 2.0);
-                    // with a name the icon sits a little high; alone it is centered and larger
-                    let (icon_dy, icon_size) = if view.labels {
-                        (-r * 0.04, r * 0.30)
-                    } else {
-                        (0.0, r * 0.36)
-                    };
+                    // the name of the slice is not drawn on it: the pill shows it (see `pill`), so
+                    // the icon is centered and large
+                    let (icon_dy, icon_size) = (0.0, r * 0.36);
                     draw_icon(
                         &painter,
                         tex[i].as_ref(),
@@ -474,15 +477,6 @@ impl App {
                         icon_size * (1.0 + 0.15 * h),
                         ink.gamma_multiply(lf),
                     );
-                    if view.labels {
-                        painter.text(
-                            tp + Vec2::new(0.0, r * 0.17),
-                            Align2::CENTER_CENTER,
-                            name,
-                            FontId::proportional((r * 0.09).max(9.0)),
-                            ink.gamma_multiply(lf * (0.78 + 0.22 * h)),
-                        );
-                    }
                     // An "Open app" slice whose app already runs shows two round badges outside
                     // the rim, in front of the slice, while it is hovered: a new window, or the
                     // app that is open. They grow out of the rim one after the other, and the one
@@ -640,6 +634,12 @@ impl App {
                         painter.add(Shape::line(pts, Stroke::new(3.0, accent)));
                     }
                 }
+
+                // the pill with the name and the icon of the slice under the pointer: in front of
+                // everything, outside the ring
+                if let Some(pill) = &pill {
+                    pill.paint(&painter, rect, c, self.pie_pos);
+                }
             });
     }
 }
@@ -667,7 +667,7 @@ struct BadgeMotion {
 
 /// What the badges take from the pie they sit next to, so they follow its theme.
 struct BadgeStyle {
-    /// The accent of the pie (sage by default): the new-window badge is this color.
+    /// The accent of the pie (lime by default): the new-window badge is this color.
     accent: Color32,
     /// The colors of the pie in the appearance it is drawn in.
     colors: PieColors,

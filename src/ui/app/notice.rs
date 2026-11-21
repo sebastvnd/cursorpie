@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 /// Where the center of the pill goes on a display `area`, with the pointer at `at`: the center of
 /// the bottom or top edge (`EDGE_GAP` in), or just below the pointer. Kept inside the display, so the
 /// whole window is on it. The gaps and the window grow with `scale` (1.0 = normal size).
-pub(super) fn pill_center(position: HudPosition, area: Rect, at: Pos2, scale: f32) -> Pos2 {
+pub(crate) fn pill_center(position: HudPosition, area: Rect, at: Pos2, scale: f32) -> Pos2 {
     let raw = match position {
         HudPosition::Bottom => Pos2::new(area.center().x, area.max.y - EDGE_GAP * scale),
         HudPosition::Top => Pos2::new(area.center().x, area.min.y + EDGE_GAP * scale),
@@ -41,7 +41,10 @@ impl App {
     /// A notice arrived from the actions worker.
     pub(super) fn hud_note(&mut self, ctx: &egui::Context, note: HudNote) {
         // a panel that waits for the window (see `yield_hud`) gets it without a new pill in between
-        if !cfg().hud || self.settings_open || self.panel.is_some() || !self.panel_queue.is_empty()
+        if (!cfg().hud && !note.kind.is_lock())
+            || self.settings_open
+            || self.panel.is_some()
+            || !self.panel_queue.is_empty()
         {
             return;
         }
@@ -83,7 +86,7 @@ impl App {
         };
         if self.settings_open
             || since.elapsed() > PENDING_MAX
-            || !cfg().hud
+            || (!cfg().hud && !note.kind.is_lock())
             || !self.panel_queue.is_empty()
         {
             return; // too late to be of any use (or a panel is next)
@@ -145,9 +148,31 @@ impl App {
         true
     }
 
+    /// A pie is asked for while a notice is on screen. The notice is not cut off (that looked
+    /// choppy): it finishes coming in and goes away with its usual animation, and the pie opens
+    /// when the window is free (see [`App::end_hud`]). Returns whether the pie was deferred; the
+    /// latest request replaces an earlier one that still waits, and `HidePie` cancels it.
+    pub(super) fn defer_pie_for_hud(
+        &mut self,
+        ctx: &egui::Context,
+        x: f64,
+        y: f64,
+        profile: usize,
+        path: &[usize],
+    ) -> bool {
+        if self.settings_open || self.hud.is_none() {
+            return false;
+        }
+        self.pie_pending = Some((x, y, profile, path.to_vec()));
+        self.yield_hud(ctx);
+        ctx.request_repaint();
+        true
+    }
+
     /// The pie or Settings wants the window: the notice (and one that was waiting) goes away at once.
     pub(super) fn drop_hud(&mut self, ctx: &egui::Context) {
         self.hud_pending = None;
+        self.pie_pending = None;
         if self.hud.take().is_some() {
             platform::set_window_passive(true);
             self.visible = false;
@@ -167,6 +192,13 @@ impl App {
     fn end_hud(&mut self, ctx: &egui::Context) {
         self.hud = None;
         self.want_pos = None;
+        // a pie that was asked for during the notice takes the mapped window over now
+        if let Some((x, y, profile, path)) = self.pie_pending.take()
+            && !self.settings_open
+        {
+            self.show_pie(ctx, x, y, profile, path);
+            return;
+        }
         if self.panel.is_none()
             && !self.pie_open
             && !self.settings_open

@@ -3,7 +3,7 @@
 
 use crate::actions;
 use crate::config::{
-    self, Action, AppGesture, Item, ItemKind, MAX_DEPTH, TargetApp, cfg, items_at,
+    self, Action, AppGesture, Item, ItemKind, MAX_DEPTH, TargetApp, cfg, is_web_url,
 };
 use crate::geometry::Point;
 use crate::geometry::{pie_inner, pie_outer, slice_at};
@@ -39,11 +39,7 @@ pub(super) fn eval(profile: usize, path: &[usize], center: Point, p: Point) -> H
     let p = in_pie_points(center, p, platform::window_scale(center.x, center.y));
     let c = cfg();
     let win = c.pie_size;
-    let Some(items) = c
-        .profiles
-        .get(profile)
-        .and_then(|pr| items_at(&pr.items, path))
-    else {
+    let Some(items) = crate::smart::ring(&c, profile, path) else {
         return Hit {
             hover: None,
             enter: false,
@@ -59,6 +55,15 @@ pub(super) fn eval(profile: usize, path: &[usize], center: Point, p: Point) -> H
             kind: ItemKind::Submenu(ch),
             ..
         }) => !ch.is_empty() && dx.hypot(dy) > rim && path.len() + 1 < MAX_DEPTH,
+        // an intelligent slice opens when it has something to suggest
+        Some(Item {
+            kind: ItemKind::Smart(s),
+            ..
+        }) => {
+            dx.hypot(dy) > rim
+                && path.len() + 1 < MAX_DEPTH
+                && !crate::smart::expand(&c, s).is_empty()
+        }
         _ => false,
     };
     // the cache is asked with the config locked: lock order is config, then running
@@ -88,13 +93,25 @@ pub(super) fn eval(profile: usize, path: &[usize], center: Point, p: Point) -> H
 /// Applies the slice the user released over. `choice` is what the pointer was on when the slice had
 /// two badges (see [`Hit::choice`]).
 pub(super) fn select(profile: usize, path: &[usize], index: usize, choice: Option<Choice>) {
-    let kind = {
+    let (kind, suggested) = {
         let c = cfg();
-        c.profiles
-            .get(profile)
-            .and_then(|pr| items_at(&pr.items, path))
-            .and_then(|items| items.get(index))
-            .map(|i| i.kind.clone())
+        // a ring that is made by the intelligent pie is owned, one of the config is borrowed
+        let (item, suggested) = match crate::smart::ring(&c, profile, path) {
+            Some(items) => (
+                items.get(index).cloned(),
+                matches!(items, std::borrow::Cow::Owned(_)),
+            ),
+            None => (None, false),
+        };
+        let (name, icon) = item
+            .as_ref()
+            .map(|i| (i.name.clone(), i.icon.clone()))
+            .unwrap_or_default();
+        // what is run from a pie is what the intelligent pie learns from (it never blocks)
+        if let Some(ItemKind::Run(action)) = item.as_ref().map(|i| &i.kind) {
+            crate::smart::note_action(&c, action, &name, &icon, side::target());
+        }
+        (item.map(|i| i.kind), suggested)
     };
     diag::log!(
         "tap",
@@ -111,7 +128,20 @@ pub(super) fn select(profile: usize, path: &[usize], index: usize, choice: Optio
     );
     match kind {
         Some(ItemKind::Mode { .. }) => pick_mode(profile, path, index),
-        Some(ItemKind::Run(action)) => run_action(action, side::target(), choice),
+        Some(ItemKind::Run(action)) => {
+            // A web page the intelligent pie suggests goes to its tab when the pointer chose
+            // nothing (the badges only appear once the answer of the running cache is in): the
+            // link is opened as usual when no connected browser has it, so this never hurts.
+            let choice = if choice.is_none()
+                && suggested
+                && matches!(&action, Action::OpenUrl(u) if is_web_url(u))
+            {
+                Some(Choice::Existing)
+            } else {
+                choice
+            };
+            run_action(action, side::target(), choice)
+        }
         _ => {}
     }
 }
@@ -134,11 +164,13 @@ pub(super) fn pick_mode(profile: usize, path: &[usize], index: usize) {
 /// Whether the slice at `path` + `index` of `profile` is a *Mode* slice.
 pub(super) fn is_mode(profile: usize, path: &[usize], index: usize) -> bool {
     let c = cfg();
-    c.profiles
-        .get(profile)
-        .and_then(|pr| items_at(&pr.items, path))
-        .and_then(|items| items.get(index))
-        .is_some_and(|i| matches!(i.kind, ItemKind::Mode { .. }))
+    crate::smart::ring(&c, profile, path)
+        .and_then(|items| {
+            items
+                .get(index)
+                .map(|i| matches!(i.kind, ItemKind::Mode { .. }))
+        })
+        .unwrap_or(false)
 }
 
 /// Runs an action. If the settings say so, the target app is brought to the front first, because

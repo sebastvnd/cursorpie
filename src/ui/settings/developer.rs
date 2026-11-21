@@ -207,30 +207,37 @@ fn draw_offer_content(ui: &mut egui::Ui, content: &OfferContent, max_height: f32
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
+            // The gaps are set here, one by one: with the spacing of the theme (GAP, 12 px) between
+            // every two lines on top of the gaps added below, the points stood 33 px apart for text
+            // that is 17 px tall and the sheet read as a scatter of lines, not as lists.
+            let sp = ui.spacing_mut();
+            sp.item_spacing.y = 0.0;
+            // a row is as tall as its text, not as tall as a button (CONTROL_H)
+            sp.interact_size.y = 0.0;
             ui.add(
                 egui::Label::new(RichText::new(&content.lead).size(14.0).color(pal().text)).wrap(),
             );
+            ui.add_space(6.0);
             for section in &content.sections {
-                ui.add_space(14.0);
+                // the title has more room above (it starts a topic) than under it (it belongs to
+                // the points below it)
+                ui.add_space(12.0);
                 ui.label(fonts::title(section.title, 13.0, pal().muted));
-                ui.add_space(4.0);
+                ui.add_space(6.0);
                 for point in &section.points {
                     ui.horizontal_top(|ui| {
-                        let sp = ui.spacing_mut();
-                        sp.item_spacing = Vec2::new(8.0, 0.0);
-                        // a row is as tall as its text, not as tall as a button (CONTROL_H)
-                        sp.interact_size.y = 0.0;
+                        ui.spacing_mut().item_spacing.x = 8.0;
                         ui.label(RichText::new("\u{2022}").size(14.0).color(pal().muted));
                         ui.add(
                             egui::Label::new(RichText::new(point).size(13.5).color(pal().text))
                                 .wrap(),
                         );
                     });
-                    ui.add_space(4.0);
+                    ui.add_space(6.0);
                 }
             }
             if let Some(notice) = &content.notice {
-                ui.add_space(14.0);
+                ui.add_space(10.0);
                 egui::Frame::new()
                     .fill(wash(pal().text, 0.06))
                     .corner_radius(10.0)
@@ -613,7 +620,7 @@ impl App {
             Vec2::new(
                 580.0,
                 if matches!(offer, Offer::LogBuild | Offer::TurnOff) {
-                    560.0
+                    510.0
                 } else {
                     400.0
                 },

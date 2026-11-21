@@ -101,7 +101,7 @@ fn token_is_elevated(token: HANDLE) -> bool {
 }
 
 /// Whether CursorPie itself runs as administrator (it then sees every window).
-fn own_process_elevated() -> bool {
+pub(super) fn own_process_elevated() -> bool {
     // SAFETY: the token handle is closed before returning.
     unsafe {
         let mut token: HANDLE = std::ptr::null_mut();

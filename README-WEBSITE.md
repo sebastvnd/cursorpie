@@ -10,6 +10,7 @@ This is a root-level, Markdown-driven website for the CursorPie repository.
 - `assets/js/marked.js` — the local Markdown parser used to render project `.md` files.
 - `assets/fonts/` — the project's Inter and Phosphor icon fonts, with their license files.
 - `assets/cursorpie-logo.png` and `assets/cursorpie-mark.png` — CursorPie logo assets.
+- `docs/gifs/` — the 720 x 405 demo animations. The README and the user guide link to them with relative paths (the viewer resolves them against the page's own file), and the landing page shows all of them in the *See it in motion* section (`#tour`), loaded lazily as they scroll into view. The workflow copies `docs/` into the site, so nothing else is needed to publish them. See `docs/gifs/README.md`.
 
 ## Documentation viewer features
 

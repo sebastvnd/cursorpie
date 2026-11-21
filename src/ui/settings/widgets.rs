@@ -540,11 +540,11 @@ pub(in crate::ui::settings) fn segmented(
 ) -> Option<usize> {
     const TRACK_PAD: f32 = 4.0;
     // measured in the bold weight, so choosing another option never changes any width
-    let widths = |with_icons: bool| -> Vec<f32> {
+    let widths = |with_icons: bool, pad: f32, size: f32| -> Vec<f32> {
         items
             .iter()
             .map(|(icon, label)| {
-                let text = galley(ui, label, text_font(13.5, true), pal().text)
+                let text = galley(ui, label, text_font(size, true), pal().text)
                     .size()
                     .x;
                 let glyph = icon.filter(|_| with_icons).map_or(0.0, |c| {
@@ -557,15 +557,34 @@ pub(in crate::ui::settings) fn segmented(
                     .size()
                     .x + 6.0
                 });
-                (text + glyph + 2.0 * SEG_PAD).ceil()
+                (text + glyph + 2.0 * pad).ceil()
             })
             .collect()
     };
+    let room = ui.available_width() - 2.0 * TRACK_PAD;
+    let fits = |w: &[f32]| w.iter().sum::<f32>() <= room;
+    // what gives way first: the icons, then the padding and a smaller type, and last of all the
+    // options themselves share the width left (their names are clipped, with the full name in a
+    // tooltip), so the control never makes its panel wider than it is
     let mut with_icons = true;
-    let mut w = widths(true);
-    if w.iter().sum::<f32>() + 2.0 * TRACK_PAD > ui.available_width() {
+    let mut pad = SEG_PAD;
+    let mut size = 13.5;
+    let mut w = widths(true, pad, size);
+    if !fits(&w) {
         with_icons = false;
-        w = widths(false);
+        w = widths(false, pad, size);
+    }
+    if !fits(&w) {
+        pad = 6.0;
+        size = 12.5;
+        w = widths(false, pad, size);
+    }
+    let mut squeezed = false;
+    if !fits(&w) && room.is_finite() && room > 0.0 {
+        let sum: f32 = w.iter().sum();
+        let k = room / sum;
+        w = w.iter().map(|x| (x * k).floor()).collect();
+        squeezed = true;
     }
     let total = w.iter().sum::<f32>() + 2.0 * TRACK_PAD;
     let (track, _) = ui.allocate_exact_size(Vec2::new(total, CONTROL_H), egui::Sense::hover());
@@ -590,6 +609,11 @@ pub(in crate::ui::settings) fn segmented(
         resp.widget_info(|| {
             egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, i == selected, *label)
         });
+        let resp = if squeezed {
+            resp.on_hover_text(*label)
+        } else {
+            resp
+        };
         let on = i == selected;
         if on {
             ui.painter().rect_filled(seg, PILL, raised);
@@ -604,22 +628,32 @@ pub(in crate::ui::settings) fn segmented(
         } else {
             pal().muted
         };
-        let text = galley(ui, label, text_font(13.5, on), fg);
+        let text = galley(ui, label, text_font(size, on), fg);
         let glyph = icon
             .filter(|_| with_icons)
             .map(|c| galley(ui, &c.to_string(), FontId::new(15.0, fonts::icons()), fg));
         let content = text.size().x + glyph.as_ref().map_or(0.0, |g| g.size().x + 6.0);
         let mut cx = seg.center().x - content / 2.0;
+        // in a squeezed control a long name is cut at the edges of its own option
+        let painter = if squeezed {
+            ui.painter()
+                .with_clip_rect(seg.shrink2(Vec2::new(2.0, 0.0)))
+        } else {
+            ui.painter().clone()
+        };
+        if squeezed {
+            cx = cx.max(seg.min.x + 3.0);
+        }
         if let Some(g) = glyph {
             let gw = g.size().x;
-            ui.painter().galley(
+            painter.galley(
                 Pos2::new(cx, seg.center().y - g.size().y / 2.0).round(),
                 g,
                 Color32::PLACEHOLDER,
             );
             cx += gw + 6.0;
         }
-        ui.painter().galley(
+        painter.galley(
             Pos2::new(cx, seg.center().y - text.size().y / 2.0).round(),
             text,
             Color32::PLACEHOLDER,

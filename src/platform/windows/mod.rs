@@ -19,6 +19,7 @@
 //! | `registry` | `HKCU` helpers shared by the two modules below |
 //! | `login_item` | "Launch at login" registry value |
 //! | `install` | per-user install, "Apps & features" entry, `--uninstall` |
+//! | `admin` | administrator mode: *Reinstall as administrator* moves the install to `%ProgramFiles%` and starts it elevated at login with a logon task |
 //! | `instance` | one running copy at a time |
 //! | `window` | makes the one native window truly frameless (no white box, border or shadow) |
 //! | `power` | no power throttling while hidden, a quicker hook thread, and freeing memory without evicting the working set |
@@ -30,6 +31,7 @@
 pub mod layout;
 pub mod util;
 
+mod admin;
 mod apppath;
 mod apps;
 mod desktops;
@@ -52,6 +54,7 @@ mod shellitem;
 mod tray;
 mod window;
 
+pub use admin::{admin_mode, reinstall_as_administrator};
 pub use apppath::{collect_installed_apps, installed_list};
 pub use apps::*;
 pub use desktops::*;

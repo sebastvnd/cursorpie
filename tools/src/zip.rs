@@ -1,9 +1,13 @@
 //! `cargo tools zip`: packs the project into one `.zip` file, without the build folder.
 //!
 //! Handy for sending the sources to someone, or for a backup: `target/` (gigabytes after a few
-//! builds) and `.git/` are left out. When the project is a Git clone, the files are the ones Git
-//! knows (tracked, plus new files that are not ignored), so `.gitignore` decides; otherwise the
-//! folder is walked and a fixed list of build and tool folders is skipped.
+//! builds) and `.git/` are left out. Individual files larger than 10 MiB (10,485,760 bytes) are
+//! skipped; a file exactly at the limit is kept. Common video formats and `.gif` files are also
+//! skipped regardless of size. Extension matching is case-insensitive. These filters also apply
+//! to `--list`, which only shows files that would actually be packed. When the project is a Git
+//! clone, the files are the ones Git knows (tracked, plus new files that are not ignored), so
+//! `.gitignore` decides; otherwise the folder is walked and a fixed list of
+//! build and tool folders is skipped.
 //!
 //! | Option | Meaning |
 //! |---|---|
@@ -16,8 +20,7 @@
 //!
 //! The archive is written by a small writer of this file (standard library only): files are
 //! stored without compression, which keeps it simple and the result readable by every unzip tool.
-//! A source tree is small, so the size does not matter. Names are UTF-8 and the executable bit of
-//! scripts is kept.
+//! Names are UTF-8 and the executable bit of scripts is kept.
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -66,6 +69,9 @@ pub fn parse_args(args: &[String]) -> Result<Options, String> {
 
 // ------------------------------------------------------------------------------ the file list
 
+/// Maximum size of an individual file that can be added to the archive: 10 MiB.
+const MAX_FILE_SIZE: u64 = 10 * 1024 * 1024;
+
 /// Whether a path of the project (relative, with `/`) is never packed.
 pub fn is_excluded(rel: &str) -> bool {
     let parts: Vec<&str> = rel.split('/').collect();
@@ -80,7 +86,78 @@ pub fn is_excluded(rel: &str) -> bool {
     })
 }
 
+/// Whether a file has a common video extension.
+/// The comparison is case-insensitive, so `.MP4` is treated like `.mp4`.
+fn is_video_file(rel: &str) -> bool {
+    let extension = Path::new(rel)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+
+    matches!(
+        extension.as_str(),
+        "3g2"
+            | "3gp"
+            | "gif"
+            | "3gpp"
+            | "amv"
+            | "asf"
+            | "avi"
+            | "divx"
+            | "f4v"
+            | "flv"
+            | "m1v"
+            | "m2t"
+            | "m2ts"
+            | "m2v"
+            | "m4v"
+            | "mkv"
+            | "mov"
+            | "mp2v"
+            | "mp4"
+            | "mpe"
+            | "mpeg"
+            | "mpg"
+            | "mpv"
+            | "mts"
+            | "mxf"
+            | "nsv"
+            | "ogv"
+            | "qt"
+            | "rm"
+            | "rmvb"
+            | "roq"
+            | "tod"
+            | "ts"
+            | "vob"
+            | "viv"
+            | "webm"
+            | "wmv"
+            | "yuv"
+    )
+}
+
+/// Whether the file size is within the configured limit.
+fn is_within_size_limit(size: u64) -> bool {
+    size <= MAX_FILE_SIZE
+}
+
+/// Whether a project file is eligible for the archive.
+fn should_pack_file(root: &Path, rel: &str) -> bool {
+    if is_excluded(rel) || is_video_file(rel) {
+        return false;
+    }
+
+    // Keep files whose metadata cannot be read in the list; the writer will report them as
+    // unreadable. This avoids silently hiding a file for a temporary metadata error.
+    std::fs::metadata(root.join(rel))
+        .map(|meta| is_within_size_limit(meta.len()))
+        .unwrap_or(true)
+}
+
 /// The files of the project, relative and with `/`, sorted.
+/// Video files and files larger than 10 MiB are omitted here, including from `--list`.
 fn collect(root: &Path, use_git: bool) -> Result<Vec<String>, String> {
     let mut files = match from_git(root, use_git) {
         Some(files) => files,
@@ -90,7 +167,7 @@ fn collect(root: &Path, use_git: bool) -> Result<Vec<String>, String> {
             files
         }
     };
-    files.retain(|f| !is_excluded(f));
+    files.retain(|f| should_pack_file(root, f));
     files.sort();
     files.dedup();
     Ok(files)
@@ -420,7 +497,7 @@ pub fn run(root: &Path, opts: &Options) -> Result<ExitCode, String> {
     match write_archive(root, &files, &stem, &output) {
         Ok((count, bytes)) => {
             println!(
-                "Wrote {} ({count} files, {}). Left out: target/, .git/ and what Git ignores.",
+                "Wrote {} ({count} files, {}). Left out: target/, .git/, ignored files, video files, and files larger than 10 MiB.",
                 output.display(),
                 human_bytes(bytes)
             );
@@ -456,10 +533,30 @@ fn write_archive(
     let mut count = 0;
     for rel in files {
         let path = root.join(rel);
-        let (Ok(data), Ok(meta)) = (std::fs::read(&path), std::fs::metadata(&path)) else {
+        let Ok(meta) = std::fs::metadata(&path) else {
+            eprintln!("skipped (cannot read metadata): {rel}");
+            continue;
+        };
+
+        // Re-check these conditions while writing in case a file changed after collection.
+        if is_video_file(rel) {
+            eprintln!("skipped (video file): {rel}");
+            continue;
+        }
+        if !is_within_size_limit(meta.len()) {
+            eprintln!("skipped (larger than 10 MiB): {rel}");
+            continue;
+        }
+
+        let Ok(data) = std::fs::read(&path) else {
             eprintln!("skipped (cannot be read): {rel}");
             continue;
         };
+        // Check the actual bytes as well, in case the file grew after metadata was read.
+        if !is_within_size_limit(data.len() as u64) {
+            eprintln!("skipped (larger than 10 MiB): {rel}");
+            continue;
+        }
         let secs = meta
             .modified()
             .ok()
@@ -524,6 +621,25 @@ mod tests {
             !is_excluded("docs/.DS_Store/x"),
             "a name is only a junk file when it is the file"
         );
+    }
+
+    #[test]
+    fn common_video_formats_are_left_out_case_insensitively() {
+        assert!(is_video_file("videos/demo.mp4"));
+        assert!(is_video_file("videos/demo.MOV"));
+        assert!(is_video_file("videos/demo.mkv"));
+        assert!(is_video_file("videos/demo.webm"));
+        assert!(!is_video_file("src/main.rs"));
+        assert!(!is_video_file("assets/logo.png"));
+        // `.ogg` is not listed because it is commonly used for audio-only files.
+        assert!(!is_video_file("audio/track.ogg"));
+    }
+
+    #[test]
+    fn the_file_size_limit_is_inclusive_at_10_mib() {
+        assert!(is_within_size_limit(0));
+        assert!(is_within_size_limit(MAX_FILE_SIZE));
+        assert!(!is_within_size_limit(MAX_FILE_SIZE + 1));
     }
 
     #[test]

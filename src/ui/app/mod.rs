@@ -14,11 +14,13 @@
 //! pie ([`pie_ui`](crate::ui::pie)) or Settings.
 
 mod lifecycle;
+mod lock;
 mod messages;
 mod notice;
 mod panel;
 mod updates;
 mod windows;
+pub(crate) use notice::pill_center;
 pub use windows::ShowWait;
 
 use crate::config::{Config, MAX_ITEMS, cfg};
@@ -52,9 +54,9 @@ pub fn card_size_for(area: Vec2) -> Vec2 {
 }
 
 /// Welcome window card size (the window adds [`WIN_MARGIN`] on each side for the shadow).
-pub const WELCOME_SIZE: [f32; 2] = [820.0, 580.0];
+pub const WELCOME_SIZE: [f32; 2] = [900.0, 640.0];
 /// Smallest the welcome card gets on a small display.
-pub const WELCOME_MIN: [f32; 2] = [660.0, 500.0];
+pub const WELCOME_MIN: [f32; 2] = [720.0, 540.0];
 
 /// The welcome card size for a display `area` points large: [`WELCOME_SIZE`], shrunk to fit with
 /// room for the shadow and the taskbar or menu bar, but never below [`WELCOME_MIN`].
@@ -130,6 +132,9 @@ pub struct App {
     /// How far the center of the ring on screen is from the center of the pie window (window
     /// points). Zero while the window is centered on the ring.
     pub pie_off: Vec2,
+    /// The pie window is as big as the display (*Show slice names* is on, see `App::show_pie`);
+    /// `hide_root` makes it small again.
+    pub pie_full: bool,
     pub opened_at: Instant,
     /// Where the pie window was last asked to be, and since when. `logic` keeps re-sending that
     /// position for a moment, because some window managers (KWin on X11) place a window that is
@@ -189,8 +194,18 @@ pub struct App {
     pub toast: Option<(String, Instant)>,
     /// Some while the window shows the notice of an action (see [`crate::ui::hud`]).
     pub hud: Option<crate::ui::hud::Hud>,
+    /// The pill with the name and the icon of the slice under the pointer, drawn in the window of the
+    /// pie next to the ring (see [`crate::ui::pie::pill`]). Some from the first slice the pointer
+    /// reaches until the pill has gone away; `None` while the pie is closed.
+    pub slice_pill: Option<crate::ui::pie::pill::SlicePill>,
     /// A notice that arrived while the pie was still on screen: shown as soon as the window is free.
     pub hud_pending: Option<(crate::ui::hud::HudNote, Instant)>,
+    /// A pie that was asked for while a notice was on screen: the notice finishes its animation
+    /// first and the pie opens when the window is free (see `App::defer_pie_for_hud`).
+    pub pie_pending: Option<(f64, f64, usize, Vec<usize>)>,
+    /// Some while the window shows the lock animation: the pie that turns into a padlock, or the
+    /// padlock that opens into the pie (see [`crate::ui::pie::lock`]).
+    pub lock_anim: Option<crate::ui::pie::lock::LockAnim>,
     /// Some while the window shows a panel (see [`crate::panel`]).
     pub panel: Option<panel::ActivePanel>,
     /// Panels that were asked for while the window was busy: shown one by one when it is free.
@@ -246,6 +261,7 @@ impl App {
             pie_origin: egui::pos2(0.0, 0.0),
             pie_anchor: egui::pos2(0.0, 0.0),
             pie_off: Vec2::ZERO,
+            pie_full: false,
             opened_at: Instant::now(),
             want_pos: None,
             last_tick: Instant::now(),
@@ -272,7 +288,10 @@ impl App {
             card_size: egui::vec2(CARD_SIZE[0], CARD_SIZE[1]),
             toast: None,
             hud: None,
+            slice_pill: None,
             hud_pending: None,
+            pie_pending: None,
+            lock_anim: None,
             panel: None,
             panel_queue: std::collections::VecDeque::new(),
             welcome: None,
@@ -332,6 +351,10 @@ impl eframe::App for App {
         if let Some(handle) = native_handle(frame) {
             platform::clear_window_frame(handle);
         }
+        // macOS: the pie of an app in full screen (a Space of its own) needs the window to join
+        // every Space; the toolkit rewrites the level each time it shows the window, so this runs
+        // every frame (no-op elsewhere, and nothing is sent when the window is already right)
+        platform::keep_over_full_screen(!self.settings_open);
         if self.x_window.is_none() {
             self.x_window = x11_window(frame);
         }
@@ -418,6 +441,8 @@ impl eframe::App for App {
             ui.push_id(("settings_session", session), |ui| self.settings_ui(ui));
         } else if self.panel.is_some() && !self.pie_open {
             self.panel_ui(ui);
+        } else if self.lock_anim.is_some() && !self.pie_open {
+            self.lock_ui(ui);
         } else if self.hud.is_some() && !self.pie_open {
             self.hud_ui(ui);
         } else {
@@ -446,8 +471,8 @@ mod tests {
             welcome_size_for(egui::vec2(2560.0, 1440.0)),
             egui::vec2(WELCOME_SIZE[0], WELCOME_SIZE[1])
         );
-        let s = welcome_size_for(egui::vec2(1024.0, 600.0));
-        assert!(s.x <= 1024.0 - 2.0 * WIN_MARGIN && s.y <= 600.0 - 2.0 * WIN_MARGIN);
+        let s = welcome_size_for(egui::vec2(1280.0, 720.0));
+        assert!(s.x <= 1280.0 - 2.0 * WIN_MARGIN && s.y <= 720.0 - 2.0 * WIN_MARGIN);
         assert_eq!(
             welcome_size_for(egui::vec2(300.0, 200.0)),
             egui::vec2(WELCOME_MIN[0], WELCOME_MIN[1])

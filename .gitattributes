@@ -2,5 +2,6 @@
 .githooks/* text eol=lf
 *.sh text eol=lf
 
-# Fonts are binary: never rewrite line endings.
+# Fonts and the demo animations are binary: never rewrite line endings.
 *.ttf binary
+*.gif binary

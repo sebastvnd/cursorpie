@@ -1,8 +1,0 @@
-{
-  "name": "Bubblegum",
-  "extends": "genz",
-  "accent": "#ff5ea8",
-  "light": { "bg": "#ffe3f1", "sidebar": "#ffd0e7", "text": "#2a1030" },
-  "dark": { "bg": "#1a0f1c" },
-  "shape": { "control_radius": 14, "panel_radius": 20 }
-}

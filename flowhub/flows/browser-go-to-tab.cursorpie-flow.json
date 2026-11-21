@@ -1,0 +1,90 @@
+{
+  "cursorpie_flow": 2,
+  "flow": {
+    "id": "browser-go-to-tab",
+    "name": "Go to the tab that has a word",
+    "nodes": [
+      {
+        "id": 1,
+        "x": 40.0,
+        "y": 60.0,
+        "kind": "Start",
+        "next": 2
+      },
+      {
+        "id": 2,
+        "x": 240.0,
+        "y": 60.0,
+        "kind": {
+          "Ask": {
+            "mode": "Text",
+            "message": "A word from the title or address of the tab",
+            "preset": "",
+            "out": "word"
+          }
+        },
+        "next": 3
+      },
+      {
+        "id": 3,
+        "x": 540.0,
+        "y": 60.0,
+        "kind": {
+          "Branch": {
+            "a": "ok",
+            "op": "IsTrue",
+            "b": ""
+          }
+        },
+        "next": 4,
+        "alt": 7
+      },
+      {
+        "id": 4,
+        "x": 840.0,
+        "y": 60.0,
+        "kind": {
+          "Native": {
+            "op": "Browser",
+            "a": "tab.find {{word}}",
+            "b": ""
+          }
+        },
+        "next": 5
+      },
+      {
+        "id": 5,
+        "x": 840.0,
+        "y": 260.0,
+        "kind": {
+          "Branch": {
+            "a": "ok",
+            "op": "IsTrue",
+            "b": ""
+          }
+        },
+        "next": 7,
+        "alt": 6
+      },
+      {
+        "id": 6,
+        "x": 540.0,
+        "y": 260.0,
+        "kind": {
+          "Native": {
+            "op": "Notify",
+            "a": "Browser",
+            "b": "No tab has {{word}}"
+          }
+        },
+        "next": 7
+      },
+      {
+        "id": 7,
+        "x": 240.0,
+        "y": 260.0,
+        "kind": "End"
+      }
+    ]
+  }
+}

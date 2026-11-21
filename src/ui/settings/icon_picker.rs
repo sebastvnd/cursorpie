@@ -21,6 +21,8 @@ use eframe::egui::{self, Align2, Color32, FontId, Vec2};
 pub(super) struct Picked {
     pub chosen: Option<String>,
     pub pick_file: bool,
+    /// "From a website…" was chosen in the "+" menu.
+    pub pick_web: bool,
     /// An image of "Mine" to delete from the icons folder: it was dragged onto the trash, or the
     /// Delete key was pressed over it.
     pub delete: Option<String>,
@@ -52,6 +54,7 @@ pub(super) fn icon_picker(
     let mut out = Picked {
         chosen: None,
         pick_file: false,
+        pick_web: false,
         delete: None,
     };
     let mine = CATEGORIES.len() + 1;
@@ -68,6 +71,9 @@ pub(super) fn icon_picker(
         menu_popup(&add, 232.0, |ui| {
             if menu_item(ui, symbols::IMAGE, "Choose an image\u{2026}").clicked() {
                 out.pick_file = true;
+            }
+            if menu_item(ui, symbols::GLOBE, "From a website\u{2026}").clicked() {
+                out.pick_web = true;
             }
             if menu_item(ui, symbols::FOLDER_OPEN, "Open the icons folder").clicked() {
                 icon_catalog::open_icons_folder();

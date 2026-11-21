@@ -4,6 +4,7 @@
 //! wherever the program happened to be started from: a download folder or an unzipped archive can
 //! be moved or emptied, and then nothing would start at the next login.
 
+use super::admin;
 use super::install::{same_file, startup_exe};
 use super::registry;
 use super::util::{
@@ -32,6 +33,10 @@ fn active_entry() -> Option<String> {
 /// Task Manager, and the program it names is still there. An entry that points at a file that was
 /// moved or deleted starts nothing, so it must not show a checked box.
 pub fn launch_at_login_enabled() -> bool {
+    // administrator mode starts the program with a task, not with this entry (see `admin`)
+    if admin::admin_install_present() {
+        return admin::admin_login_enabled();
+    }
     active_entry()
         .and_then(|v| exe_of_run_value(&v))
         .is_some_and(|exe| Path::new(&exe).is_file())
@@ -58,11 +63,26 @@ pub fn repair_launch_entry() {
     }
 }
 
+/// Whether the per-user startup entry exists, switched off in Task Manager or not.
+pub(super) fn user_entry_exists() -> bool {
+    registry::has_value(RUN_KEY, APP_NAME)
+}
+
+/// Removes the per-user startup entry and its Task Manager flag, whatever the entry names. Unlike
+/// `set_launch_at_login(false)` it never touches the task of administrator mode.
+pub(super) fn remove_user_entry() -> std::io::Result<()> {
+    registry::delete_value(RUN_KEY, APP_NAME)?;
+    registry::delete_value(APPROVED_KEY, APP_NAME)
+}
+
 /// Adds or removes the startup entry. It takes effect at the next login (no second copy is started now).
 ///
 /// Turning it on also clears a "disabled" flag left by Task Manager, otherwise the checkbox would
 /// say yes while Windows still skipped the entry.
 pub fn set_launch_at_login(on: bool) -> std::io::Result<()> {
+    if admin::admin_install_present() {
+        return admin::set_admin_login(on);
+    }
     if !on {
         return registry::delete_value(RUN_KEY, APP_NAME);
     }

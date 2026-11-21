@@ -29,6 +29,13 @@
 //!
 //! The pill follows the look of the pie: a card in the light or dark appearance, smoked graphite when
 //! the pie is set to Glass, a round badge in the accent color with the icon of the kind of action.
+//!
+//! The pill is also what shows the name of the slice under the pointer while the pie is open (see
+//! [`HudNote::slice`] and [`ui::pie::pill`](crate::ui::pie)): the badge then carries the icon of the
+//! slice instead of the glyph of a kind, and the [`Hud`] is *pinned* ([`Hud::follow`]) to the pointer: it
+//! stays while the pointer is on a slice, changes its text and icon with every slice (the usual swap
+//! animation) and goes away with its usual animation once the pointer has left them all
+//! ([`Hud::unpin`]).
 
 use crate::config::{Action, Config, HUD_SIZE_MAX, HUD_SIZE_MIN, PieStyle, is_web_url};
 use crate::platform::linux::roles::Role;
@@ -59,7 +66,7 @@ pub fn scale_of(cfg: &Config) -> f32 {
 }
 
 /// Height of the pill.
-const PILL_H: f32 = 56.0;
+pub const PILL_H: f32 = 56.0;
 /// Height of the pill when it shows a progress bar under its text. Only a little taller than the
 /// plain pill: the text and the bar are one column that is centered next to the badge.
 const PILL_H_BAR: f32 = 62.0;
@@ -72,7 +79,7 @@ const SWEEP_SECS: f32 = 1.4;
 /// the run for this long (the worker may have died before it could end the notice).
 pub const LIVE_STALL: Duration = Duration::from_secs(150);
 /// Narrowest and widest the pill gets.
-const PILL_MIN_W: f32 = 168.0;
+pub const PILL_MIN_W: f32 = 168.0;
 const PILL_MAX_W: f32 = 480.0;
 /// Diameter of the round badge with the icon.
 const BADGE: f32 = 38.0;
@@ -142,9 +149,22 @@ pub enum HudKind {
     Browser,
     Flow,
     Wait,
+    /// CursorPie is locked for the trackpad (see [`tap::touch::lock`](crate::tap)).
+    Locked,
+    /// CursorPie was unlocked again.
+    Unlocked,
+    /// The slice of the pie the pointer is on (see [`HudNote::slice`]). The badge shows the icon of
+    /// the slice; the glyph of the kind is only what is drawn where the icon cannot be (Settings).
+    Slice,
 }
 
 impl HudKind {
+    /// The notices of the lock are shown even when the notice of actions is switched off in
+    /// Settings: they are not about an action but about why a hold does nothing.
+    pub fn is_lock(self) -> bool {
+        matches!(self, HudKind::Locked | HudKind::Unlocked)
+    }
+
     /// The glyph of the badge.
     pub fn glyph(self) -> char {
         match self {
@@ -156,6 +176,9 @@ impl HudKind {
             HudKind::Browser => symbols::BROWSER,
             HudKind::Flow => symbols::LIGHTNING,
             HudKind::Wait => symbols::CLOCK,
+            HudKind::Locked => symbols::LOCK_SIMPLE,
+            HudKind::Unlocked => symbols::LOCK_SIMPLE_OPEN,
+            HudKind::Slice => symbols::CHART_PIE_SLICE,
         }
     }
 }
@@ -245,6 +268,9 @@ pub struct HudNote {
     /// The note belongs to a run that is still going on (a flow, a sequence with a wait): the pill
     /// stays on the screen until [`Msg::HudEnd`](crate::msg::Msg::HudEnd) says the run is over.
     pub live: bool,
+    /// The icon string (see [`draw_icon`](crate::ui::draw::draw_icon)) the badge shows instead of
+    /// the glyph of `kind`. Only drawn where the caller can paint it ([`paint_pill_icons`]).
+    pub icon: Option<String>,
 }
 
 impl HudNote {
@@ -255,7 +281,15 @@ impl HudNote {
             detail: detail.into(),
             progress: HudProgress::None,
             live: false,
+            icon: None,
         }
+    }
+
+    /// The name of a slice of the pie with its icon, for the pill that follows the pointer.
+    pub fn slice(icon: &str, name: &str) -> Self {
+        let mut note = Self::new(HudKind::Slice, name.trim(), "");
+        note.icon = Some(icon.to_string()).filter(|i| !i.trim().is_empty());
+        note
     }
 
     /// The same note with a progress.
@@ -268,6 +302,25 @@ impl HudNote {
     pub fn running(mut self, live: bool) -> Self {
         self.live = live;
         self
+    }
+
+    /// "CursorPie locked", for a hold on the trackpad while the lock is on (and for the moment the
+    /// lock is closed).
+    pub fn locked() -> Self {
+        Self::new(
+            HudKind::Locked,
+            "CursorPie locked",
+            "Hold + tap with 2 fingers to unlock",
+        )
+    }
+
+    /// "CursorPie unlocked", for the moment the lock is opened.
+    pub fn unlocked() -> Self {
+        Self::new(
+            HudKind::Unlocked,
+            "CursorPie unlocked",
+            "Hold to open the pie",
+        )
     }
 
     /// "Waiting" with a countdown of `ms` milliseconds, for a pause of a flow or a sequence.
@@ -483,6 +536,11 @@ pub struct Hud {
     /// A panel is waiting for the window: the pill finishes coming in, goes away with its usual
     /// animation and takes no new note (see [`dismiss`](Self::dismiss)).
     leaving: bool,
+    /// The pill follows the pointer over the slices of the pie: it stays as long as the pointer is
+    /// on one, whatever the time (see [`follow`](Self::follow) and [`unpin`](Self::unpin)).
+    pinned: bool,
+    /// How long a note is on screen before the next one replaces it (see [`MIN_DWELL`]).
+    dwell: Duration,
 }
 
 impl Hud {
@@ -507,6 +565,47 @@ impl Hud {
             recall: None,
             born: now,
             leaving: false,
+            pinned: false,
+            dwell: MIN_DWELL,
+        }
+    }
+
+    /// The same notice that gives a note this long before the next one replaces it, instead of
+    /// [`MIN_DWELL`]. A pill that follows the pointer changes with every slice, so it waits less.
+    pub fn with_dwell(mut self, dwell: Duration) -> Self {
+        self.dwell = dwell;
+        self
+    }
+
+    /// The same notice, pinned to the pointer from the start (see [`follow`](Self::follow)).
+    pub fn pinned(mut self) -> Self {
+        self.pinned = true;
+        self
+    }
+
+    /// Whether the pill is held for the pointer (see [`follow`](Self::follow)).
+    pub fn is_pinned(&self) -> bool {
+        self.pinned
+    }
+
+    /// Shows `note` and keeps the pill on screen until [`unpin`](Self::unpin): the pill of the slice
+    /// under the pointer. A pill that was already on its way out is called back smoothly.
+    pub fn follow(&mut self, note: HudNote, now: Instant) {
+        // (`update` first: it works out how far a pill that was leaving had gone)
+        self.update(note, now);
+        self.pinned = true;
+    }
+
+    /// The pointer left the slices: the pill stays for its `hold` and goes away with its usual
+    /// animation. A note that still waited for its turn is dropped, the pointer is not there any more.
+    pub fn unpin(&mut self, now: Instant) {
+        if !self.pinned {
+            return;
+        }
+        self.pinned = false;
+        self.queued = None;
+        if self.shown_at.is_some() {
+            self.until = Some(now + self.hold);
         }
     }
 
@@ -543,7 +642,7 @@ impl Hud {
             *at = now;
             return;
         }
-        let settled = now.saturating_duration_since(self.swapped_at) >= MIN_DWELL;
+        let settled = now.saturating_duration_since(self.swapped_at) >= self.dwell;
         if self.shown_at.is_none() || settled {
             self.queued = None;
             self.apply(note, now, now);
@@ -555,7 +654,7 @@ impl Hud {
     /// Shows the note that waited for its turn once the last change has been on screen long enough.
     /// Runs every frame.
     pub fn flush_queued(&mut self, now: Instant) {
-        if self.queued.is_none() || now.saturating_duration_since(self.swapped_at) < MIN_DWELL {
+        if self.queued.is_none() || now.saturating_duration_since(self.swapped_at) < self.dwell {
             return;
         }
         if let Some((note, arrived)) = self.queued.take() {
@@ -602,8 +701,8 @@ impl Hud {
             return 0.0;
         };
         let mut late = now.saturating_duration_since(until).as_secs_f32();
-        if self.live && !self.stalled(now) {
-            // the run goes on: the pill does not leave
+        if (self.live && !self.stalled(now)) || self.pinned {
+            // the run goes on (or the pointer is on a slice): the pill does not leave
             late = 0.0;
         }
         let mut going = (late / OUT_SECS).clamp(0.0, 1.0);
@@ -653,11 +752,16 @@ impl Hud {
         let base = if self.live {
             let quiet = now.saturating_duration_since(self.last_note);
             Some(LIVE_STALL.saturating_sub(quiet))
+        } else if self.pinned {
+            // nothing changes by itself while the pointer is on a slice
+            None
         } else {
             self.until.map(|u| u.saturating_duration_since(now))
         };
         if self.queued.is_some() {
-            let left = MIN_DWELL.saturating_sub(now.saturating_duration_since(self.swapped_at));
+            let left = self
+                .dwell
+                .saturating_sub(now.saturating_duration_since(self.swapped_at));
             return Some(base.map_or(left, |b| b.min(left)));
         }
         base
@@ -1032,6 +1136,24 @@ pub fn paint_pill_swap(
     prev: Option<&HudNote>,
     look: &PillLook,
 ) -> Rect {
+    paint_pill_icons(painter, center, note, prev, look, None)
+}
+
+/// How the badge of a pill paints the icon of a note that has one ([`HudNote::icon`]): the painter,
+/// the note whose icon it is (the new one or the old one while they swap), the center, the size and
+/// the color (already faded). The caller has the textures; this module has none.
+pub type BadgeArt<'a> = &'a dyn Fn(&Painter, &HudNote, Pos2, f32, Color32);
+
+/// [`paint_pill_swap`] where `art` paints the icon of a note that has one in the badge, in place of
+/// the glyph of its kind. Without `art` (or for a note without an icon) the glyph is drawn.
+pub fn paint_pill_icons(
+    painter: &Painter,
+    center: Pos2,
+    note: &HudNote,
+    prev: Option<&HudNote>,
+    look: &PillLook,
+    art: Option<BadgeArt<'_>>,
+) -> Rect {
     let PillLook {
         accent,
         smoked,
@@ -1104,27 +1226,39 @@ pub fn paint_pill_swap(
     painter.circle_filled(badge_c, d / 2.0, fade(accent));
     let glyph_size = 20.0 * scale * (d / badge);
     let on = fade(on_accent(accent));
-    match prev.filter(|p| p.kind != note.kind) {
-        Some(p) => {
-            // another kind of icon: the old one fades out, the new one fades in, in the same place
-            fonts::paint_icon(
-                painter,
-                badge_c,
-                p.kind.glyph(),
-                glyph_size,
-                on.gamma_multiply(old_k),
-                true,
-            );
-            fonts::paint_icon(
-                painter,
-                badge_c,
-                note.kind.glyph(),
-                glyph_size,
-                on.gamma_multiply(new_k),
-                true,
-            );
+    let art = art.filter(|_| note.icon.is_some());
+    if let Some(art) = art {
+        // the icon of what is announced: another icon fades out while the new one fades in
+        match prev.filter(|p| p.icon.is_some() && p.icon != note.icon) {
+            Some(p) => {
+                art(painter, p, badge_c, glyph_size, on.gamma_multiply(old_k));
+                art(painter, note, badge_c, glyph_size, on.gamma_multiply(new_k));
+            }
+            None => art(painter, note, badge_c, glyph_size, on),
         }
-        None => fonts::paint_icon(painter, badge_c, note.kind.glyph(), glyph_size, on, true),
+    } else {
+        match prev.filter(|p| p.kind != note.kind) {
+            Some(p) => {
+                // another kind of icon: the old one fades out, the new one fades in, in the same place
+                fonts::paint_icon(
+                    painter,
+                    badge_c,
+                    p.kind.glyph(),
+                    glyph_size,
+                    on.gamma_multiply(old_k),
+                    true,
+                );
+                fonts::paint_icon(
+                    painter,
+                    badge_c,
+                    note.kind.glyph(),
+                    glyph_size,
+                    on.gamma_multiply(new_k),
+                    true,
+                );
+            }
+            None => fonts::paint_icon(painter, badge_c, note.kind.glyph(), glyph_size, on, true),
+        }
     }
 
     // the text: one line is centered, two lines are stacked; the pill is the window it shows through

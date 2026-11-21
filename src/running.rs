@@ -193,6 +193,8 @@ struct Cache {
     running: HashMap<String, bool>,
     /// Apps of the latest request that cannot open another window (see [`crate::windowing`]).
     single: HashSet<String>,
+    /// The keys the latest request asked about, so more can be added to them (see [`warm_more`]).
+    asked: Vec<String>,
 }
 
 impl Cache {
@@ -211,7 +213,19 @@ impl Cache {
         // from here until the answer arrives nothing is known: an old answer must not be used
         self.ready = false;
         self.generation += 1;
+        self.asked = apps.to_vec();
         Some(self.generation)
+    }
+
+    /// What the latest request asked about, and `extra` besides, each key once.
+    fn merged(&self, extra: &[String]) -> Vec<String> {
+        let mut all = self.asked.clone();
+        for key in extra {
+            if !all.contains(key) {
+                all.push(key.clone());
+            }
+        }
+        all
     }
 
     /// Makes the latest answer count as old, so the next press asks again (see [`invalidate`]).
@@ -388,6 +402,26 @@ pub fn warm(profiles: &[usize]) {
         }
         open_apps_of(&c, profiles)
     };
+    let Some(generation) = with_cache(|c| c.begin(&apps, Instant::now())) else {
+        return;
+    };
+    if let Some(tx) = TX.get() {
+        let _ = tx.send(Request { generation, apps });
+    }
+}
+
+/// Adds `keys` to what the latest press asked about: the slices that the intelligent pie suggests
+/// are not in any profile, so [`warm`] cannot know them. They are found when the gesture's
+/// suggestions are made (see [`smart`](crate::smart)), after the press, so this asks again with
+/// what was asked before **and** these (the answer of a request replaces the one before, and the
+/// slices of the pie that opened must keep theirs). The answer wakes the UI, which then draws the
+/// badges. The caller has checked that the setting is on (it may hold the config lock, which this
+/// must not take). Never blocks.
+pub fn warm_more(keys: &[String]) {
+    if keys.is_empty() {
+        return;
+    }
+    let apps = with_cache(|c| c.merged(keys));
     let Some(generation) = with_cache(|c| c.begin(&apps, Instant::now())) else {
         return;
     };
@@ -599,6 +633,26 @@ mod tests {
         // later: ask again, and the old answer is not used while the new one is on its way
         assert!(c.begin(&a, t0 + TTL * 2).is_some());
         assert_eq!(c.get("Safari"), None);
+    }
+
+    #[test]
+    fn keys_added_later_keep_what_the_press_asked_and_ask_again() {
+        let mut c = Cache::default();
+        let t0 = Instant::now();
+        let a = apps(&["Safari"]);
+        let g = c.begin(&a, t0).unwrap();
+        c.finish(g, &a, &[true], t0);
+        let all = c.merged(&apps(&["url:https://a.example", "Safari"]));
+        assert_eq!(all, apps(&["Safari", "url:https://a.example"]), "once each");
+        assert!(c.begin(&all, t0).is_some(), "the new key is not covered");
+        let g = c.generation;
+        c.finish(g, &all, &[true, false], t0);
+        assert_eq!(
+            c.get("Safari"),
+            Some(true),
+            "the slices of the pie keep their answer"
+        );
+        assert_eq!(c.get("url:https://a.example"), Some(false));
     }
 
     #[test]

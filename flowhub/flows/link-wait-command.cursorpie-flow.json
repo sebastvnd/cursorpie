@@ -1,0 +1,14 @@
+{
+  "cursorpie_flow": 1,
+  "flow": {
+    "id": "link-wait-command",
+    "name": "Open a page, wait, log the time",
+    "nodes": [
+      { "id": 1, "x": 40.0,  "y": 60.0,  "kind": "Start", "next": 2 },
+      { "id": 2, "x": 240.0, "y": 60.0,  "kind": { "OpenUrl": "https://example.com" }, "next": 3 },
+      { "id": 3, "x": 540.0, "y": 60.0,  "kind": { "Wait": 1000 }, "next": 4 },
+      { "id": 4, "x": 40.0,  "y": 190.0, "kind": { "Command": "date >> \"$HOME/cursorpie-flow.log\"" }, "next": 5 },
+      { "id": 5, "x": 340.0, "y": 190.0, "kind": "End", "next": null }
+    ]
+  }
+}

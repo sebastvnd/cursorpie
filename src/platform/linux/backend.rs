@@ -190,6 +190,9 @@ pub fn clear_window_frame(_handle: isize) {}
 /// action is for. Nothing to ask here: the window manager decides who gets the focus, and the pie window is shown the same way.
 pub fn set_window_passive(_on: bool) {}
 
+/// The window manager decides what is drawn over a full-screen window; nothing to ask here.
+pub fn keep_over_full_screen(_over: bool) {}
+
 /// X11 window managers (KWin, ...) may place a window that is mapped again at the center of the
 /// screen, ignoring the position it was given while hidden, so the pie asks for it again.
 pub fn window_manager_may_recenter() -> bool {
@@ -1004,6 +1007,16 @@ pub fn set_launch_at_login(on: bool) -> std::io::Result<()> {
 /// Distributions install the program; there is no self-install.
 pub fn ensure_installed() -> Option<PathBuf> {
     None
+}
+
+/// No administrator mode: input comes from the X server or evdev, not from a privilege level.
+pub fn admin_mode() -> crate::platform::AdminMode {
+    crate::platform::AdminMode::default()
+}
+
+/// No administrator mode.
+pub fn reinstall_as_administrator() -> Result<(), crate::platform::ReinstallError> {
+    Err(crate::platform::ReinstallError::Unsupported)
 }
 
 /// The one command-line switch: `--touchpad-debug` (the app does not start).

@@ -34,6 +34,8 @@ pub fn set_accessory_policy() {}
 pub fn clear_window_frame(_handle: isize) {}
 /// There is no window.
 pub fn set_window_passive(_on: bool) {}
+/// There is no window.
+pub fn keep_over_full_screen(_over: bool) {}
 /// Nothing moves the window.
 pub fn window_manager_may_recenter() -> bool {
     false
@@ -163,6 +165,14 @@ pub fn handle_command_line() -> bool {
 /// Always the only one.
 pub fn single_instance() -> bool {
     true
+}
+/// No administrator mode.
+pub fn admin_mode() -> crate::platform::AdminMode {
+    crate::platform::AdminMode::default()
+}
+/// No administrator mode.
+pub fn reinstall_as_administrator() -> Result<(), crate::platform::ReinstallError> {
+    Err(crate::platform::ReinstallError::Unsupported)
 }
 /// Nothing throttles it.
 pub fn stay_responsive() {}

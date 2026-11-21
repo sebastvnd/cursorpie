@@ -35,3 +35,4 @@ pub mod sleep;
 pub mod symbols;
 pub mod tray;
 pub mod trim;
+pub mod webicon;

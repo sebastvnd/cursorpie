@@ -62,6 +62,8 @@ fn items_run_commands(v: &[Item]) -> bool {
         }
         ItemKind::Run(a) => action_runs_command(a),
         ItemKind::Submenu(c) => items_run_commands(c),
+        // what it suggests is made on this computer from its own habits, not carried by the file
+        ItemKind::Smart(_) => false,
     })
 }
 
@@ -76,7 +78,7 @@ fn collect_extra_buttons(items: &[Item], out: &mut BTreeSet<i64>) {
                     .map(|(b, _)| *b),
             ),
             ItemKind::Submenu(children) => collect_extra_buttons(children, out),
-            ItemKind::Run(_) => {}
+            ItemKind::Run(_) | ItemKind::Smart(_) => {}
         }
     }
 }
@@ -95,7 +97,7 @@ fn collect_open_apps(items: &[Item], web: bool, out: &mut Vec<String>) {
                 }
             }
             ItemKind::Submenu(children) => collect_open_apps(children, web, out),
-            ItemKind::Mode { .. } => {}
+            ItemKind::Mode { .. } | ItemKind::Smart(_) => {}
         }
     }
 }
