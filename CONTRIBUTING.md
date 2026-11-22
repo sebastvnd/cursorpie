@@ -424,8 +424,16 @@ cargo publish
 ```
 
 `cursorpie-diag` has its own version (`diag/Cargo.toml`). The release tool never changes it: raise it by hand
-when `diag/` changes, publish it, and then require that version in the `diag = { ... version = "..." }` line of
-the root `Cargo.toml`. A published version cannot be replaced, only yanked.
+when `diag/` changes (a new module or function the app uses is a minor raise), publish it, and then require that
+version in the `diag = { ... version = "..." }` line of the root `Cargo.toml` (and in `Cargo.lock`). A published
+version cannot be replaced, only yanked. Forgetting the raise is what `error[E0432]: unresolved import` during the
+`Verifying` step of `cargo publish` means: crates.io still has the old `diag` under that version, and the app's
+package is built against it, not against `diag/`.
+
+After `cargo publish -p cursorpie-diag`, run `cargo tools diag-seal` and commit `diag/.published`. It records the
+version and a SHA-256 of every file of `diag/`; from then on `cargo tools check` (so `cargo tools ci`) fails when
+`diag/` differs from the seal while its version is still the sealed one, which is the mistake above, found in
+seconds instead of at the end of the packaging.
 
 ## Reporting bugs
 

@@ -29,6 +29,7 @@ mod ci;
 mod clean;
 mod commit_msg;
 mod diag;
+mod diagseal;
 mod git;
 mod hooks;
 mod info;
@@ -66,6 +67,8 @@ Commands:
       --any-branch   allow --commit on a branch other than main
       --since REV    take the changelog from the commits after REV (default: the last v* tag)
 
+  diag-seal                    after `cargo publish -p cursorpie-diag`: record what was published, so
+                               `check` notices a change to diag/ that still has the published version
   hooks <install|uninstall>    turn the Git hooks of .githooks/ on or off for this clone
   commit-msg <FILE>            check a commit message file (the commit-msg hook calls this)
   diag [FILE]                  read a debug log of the app (start it with CURSORPIE_DEBUG=1) and say
@@ -103,6 +106,8 @@ enum Task {
     Check { tag: Option<String> },
     /// Raise the version.
     Bump(bump::Level, bump::Options),
+    /// Record the published state of `diag/`.
+    DiagSeal,
     /// Turn the Git hooks on or off.
     Hooks(hooks::Action),
     /// Check the commit message in a file.
@@ -134,6 +139,7 @@ fn parse_command<I: IntoIterator<Item = String>>(args: I) -> Result<Task, String
         "help" => Ok(Task::Help),
         "ci" => parse_ci(rest),
         "check" => parse_check(rest),
+        "diag-seal" if rest.is_empty() => Ok(Task::DiagSeal),
         "bump" => bump::parse_args(rest.iter().cloned())
             .map(|(level, options)| Task::Bump(level, options)),
         "hooks" => hooks::parse_args(rest).map(Task::Hooks),
@@ -232,6 +238,7 @@ fn run(root: &Path, task: Task) -> Result<ExitCode, String> {
         Task::Ci { quick, force } => Ok(ci::run(root, quick, force)),
         Task::Check { tag } => bump::run_check(root, tag.as_deref()),
         Task::Bump(level, options) => bump::run(root, level, options),
+        Task::DiagSeal => diagseal::seal(root).map(|()| ExitCode::SUCCESS),
         Task::Hooks(action) => hooks::run(root, action),
         Task::CommitMsg(file) => commit_msg::run(&file),
         Task::Diag(file) => diag::run(file.as_deref()),
@@ -331,6 +338,7 @@ mod tests {
     fn wrong_arguments_are_errors() {
         assert!(parse(&["deploy"]).is_err());
         assert!(parse(&["ci", "--slow"]).is_err());
+        assert!(parse(&["diag-seal", "now"]).is_err());
         assert!(parse(&["check", "--tag"]).is_err());
         assert!(parse(&["check", "v0.4.0"]).is_err());
         assert!(parse(&["bump"]).is_err(), "a level is needed");

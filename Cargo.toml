@@ -64,7 +64,7 @@ debug-log = ["diag/force"]
 
 # The diagnostic log (`CURSORPIE_DEBUG=1`, docs/DEBUGGING.md). It is a crate of its own with no
 # dependencies, so the code that writes the log is not part of the app's sources.
-diag = { package = "cursorpie-diag", version = "0.1.0", path = "diag" }
+diag = { package = "cursorpie-diag", version = "0.2.0", path = "diag" }
 
 # Reads the multi-page TIFF macOS hands out for app icons. Only the codecs macOS uses are enabled.
 # Kept for every target because the decoder is plain Rust and its tests run everywhere.

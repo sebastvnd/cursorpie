@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Fixed: `cargo publish` could not build the package of the app** (`unresolved import diag::problems`). `diag/` had
+  gained a module while its version stayed `0.1.0`, the one crates.io already had, and `cargo publish` builds the app
+  against the published crate. `cursorpie-diag` is now `0.2.0` and has to be published first. New `cargo tools
+diag-seal` records what was published, and `cargo tools check` fails when `diag/` changes under a published version.
+
 ## 0.9.2
 
 - **New: `cargo tools ci` does not run a step again that already passed on the same files.** It made a SHA-256 of the
@@ -17,7 +22,7 @@
   protection is now `CI result`. The caches are written by `main` only, so pull requests no longer push them out,
   and the Fedora jobs keep the compiled dependencies and the npm downloads are cached too.
 
-- **Fixed: *Install* on the Flow Hub page froze CursorPie.** The question that asks you to confirm never appeared and
+- **Fixed: _Install_ on the Flow Hub page froze CursorPie.** The question that asks you to confirm never appeared and
   the program stopped answering ("Not responding") until it was closed. Asking for the question read the settings
   while the same thread already held them, and a thread that waits for a lock it holds itself never goes on; every
   other thread that read the settings, the window first of all, waited behind it. The settings are now copied out in
@@ -32,25 +37,25 @@
 
 ## 0.9.1
 
-- **Fixed: *Learn now* (and *Forget everything*) showed nothing.** The answer was one line in the status bar, under
+- **Fixed: _Learn now_ (and _Forget everything_) showed nothing.** The answer was one line in the status bar, under
   the floating page switch and gone after six seconds, and the notice pill is never shown while Settings is open. Now a
   sheet opens at the click, says that CursorPie is working (it reads the list of installed apps, which takes a moment)
   and then tells what was learned. If the sheet was closed meanwhile, the answer goes to the status bar as before.
 
-- **Changed: the *Intelligent* page is no longer the last one of the Behavior switch.** The switch now reads Input,
+- **Changed: the _Intelligent_ page is no longer the last one of the Behavior switch.** The switch now reads Input,
   Look, Apps, Intelligent, System: the far end is System (startup and memory), as the other settings pages end with
   the system ones.
 
-- **Changed: Developer mode (About) is written for people, not only for developers.** The panels are *Developer
-  tools* (the switch and the three steps of a bug report), *Diagnostic build*, *What went wrong* (each problem in a
+- **Changed: Developer mode (About) is written for people, not only for developers.** The panels are _Developer
+  tools_ (the switch and the three steps of a bug report), _Diagnostic build_, _What went wrong_ (each problem in a
   sentence that says whether it matters, with the log's own words small under it; counts as "3 times", not
-  `x3 · 11764.8 s`), *Technical log* (the raw lines, folded away until asked for) and *Terminal command (cpd)*.
-  *What to record* moved under *Advanced*.
+  `x3 · 11764.8 s`), _Technical log_ (the raw lines, folded away until asked for) and _Terminal command (cpd)_.
+  _What to record_ moved under _Advanced_.
 
-- **New: `cpd` is installed and removed from Settings.** *Install cpd* downloads the program of the newest release for
+- **New: `cpd` is installed and removed from Settings.** _Install cpd_ downloads the program of the newest release for
   this system, checks it against the release's checksum, makes sure it starts and puts it in the `bin` folder next to
-  `config.json` (on macOS and Linux also a link `~/.local/bin/cpd`, where nothing is). *Copy command* puts the command
-  with its whole path on the clipboard, so it runs before anything is in `PATH`; *Remove cpd* deletes it again and the
+  `config.json` (on macOS and Linux also a link `~/.local/bin/cpd`, where nothing is). _Copy command_ puts the command
+  with its whole path on the clipboard, so it runs before anything is in `PATH`; _Remove cpd_ deletes it again and the
   link with it. Nothing else on the computer is touched (no `PATH`, no registry, no administrator). The release
   workflow now attaches `cpd-*.sha256` files. Developer mode shows the terminal panel in the standard build too.
 
@@ -83,19 +88,19 @@
 
 - **New: lock the pie with Esc, for the mouse, the keyboard and the trackpad.** With a pie open (a mouse hold or a
   trackpad hold), pressing Esc closes it without running anything and locks CursorPie: the pie turns into the padlock,
-  and a notice says *CursorPie locked*. While it is locked a press of the mouse trigger opens no pie (the click goes to
+  and a notice says _CursorPie locked_. While it is locked a press of the mouse trigger opens no pie (the click goes to
   the app as if CursorPie were not there) and a trackpad hold opens none either; after the hold time the notice says
   why. To unlock, hold the trigger (mouse button or trackpad) and press Esc again: the padlock opens and the next hold
   opens the pie. Esc is taken only in those two moments and passes through to your apps at every other time, and with a
   modifier it is never taken. The lock is the one the three-finger tap of the trackpad already had, now shared: either
   way locks and unlocks it, and it stops the mouse trigger too. It is still kept in memory only (restarting CursorPie
-  unlocks it). New setting *Lock with Esc* (Behavior > Trigger, on by default; `esc_lock`). Like Space, Esc is
+  unlocks it). New setting _Lock with Esc_ (Behavior > Trigger, on by default; `esc_lock`). Like Space, Esc is
   taken on macOS and Windows; on Linux with X11 the lock works but the key also reaches the app, and on Wayland
   CursorPie does not see the keyboard, so Esc does not lock there (the three-finger tap still does).
 
 - **Fixed (root cause): the pie still did not appear over an app in full screen (macOS).** The pie worked (its
   slices were picked and ran) but nothing was drawn, because the 0.9.0 fix was not enough on current macOS. The window
-  of one app is shown in the full-screen Space of *another* app only with `CanJoinAllApplications` (macOS 13+) next to
+  of one app is shown in the full-screen Space of _another_ app only with `CanJoinAllApplications` (macOS 13+) next to
   `CanJoinAllSpaces` and `FullScreenAuxiliary`, and above the level that Space draws: the status level it was raised to
   is below it, the screen saver level is not. On top of that the toolkit wrote its own "always on top" (the floating
   level) every time the pie was shown, so the window was ordered in at the wrong level and only a frame later was
@@ -104,7 +109,6 @@
   The real reason the 0.9.0 fix never worked: the window is observed with KVO, so its class is
   `NSKVONotifying_WinitWindow`, and the test `starts_with("Winit")` never matched. The window is now found by that name.
   New in the diagnostic log (macOS): `ui:mac_window_class` and `ui:mac_window_state`, see `docs/DEBUGGING.md`.
-
 
 ## 0.9.0
 
@@ -118,27 +122,27 @@
   pill, so the Menu tab and the pie editor now draw icons only, like the real pie.
 
 - **Fixed: the pill with the name of the slice no longer moves with the pie.** It sat at the bottom of the pie
-  window, so it changed place with every place the pie was called. While *Show the slice name in a pill* is on, the
+  window, so it changed place with every place the pie was called. While _Show the slice name in a pill_ is on, the
   pie window is now as big as the display for as long as the pie is open (still one window, with the same
-  click-through, always-on-top and focus handling), so the pill stays at the bottom center like a notice (*Notice
-  position* is followed). With the setting off nothing changes: the window is the small one. The big window is made
+  click-through, always-on-top and focus handling), so the pill stays at the bottom center like a notice (_Notice
+  position_ is followed). With the setting off nothing changes: the window is the small one. The big window is made
   small again as soon as the pie is gone, so no display-sized surface is kept in memory.
 
-- **Changed: the name of a slice is shown in the pill, not under its icon.** *Show the slice name in a pill*
-  (Behavior > Look & feel; it was *Show names under the icons*) no longer writes the name under the icon, which
-  crowded it. The pie and the pill are now on screen together: the pill sits where the notices of actions appear (*Notice position*;
+- **Changed: the name of a slice is shown in the pill, not under its icon.** _Show the slice name in a pill_
+  (Behavior > Look & feel; it was _Show names under the icons_) no longer writes the name under the icon, which
+  crowded it. The pie and the pill are now on screen together: the pill sits where the notices of actions appear (_Notice position_;
   kept inside the pie window when that is out of reach) and, with every slice the pointer reaches, swaps its text for the name of that slice and its
   badge for the icon of that slice, with the animation of the other pills (it comes in on the first slice, the badge
   bounces on each change, the pill glides to the new width and goes away when the pointer leaves the slices). Icons are
   centered and a little larger in every case. The pill follows the pie's look (smoked on Glass) and the size set for
   notices.
 
-- **New: *Reinstall as administrator* on Windows (Settings > About > Administrator mode).** An install for your user
+- **New: _Reinstall as administrator_ on Windows (Settings > About > Administrator mode).** An install for your user
   cannot send input to windows of programs that run as administrator (Task Manager, an elevated terminal), because
   Windows blocks it. The new button asks for UAC once, copies CursorPie to `C:\Program Files\CursorPie` (where only
-  administrators can write, so nothing can swap what runs with full rights), adds a machine-wide *Apps & features*
+  administrators can write, so nothing can swap what runs with full rights), adds a machine-wide _Apps & features_
   entry and a logon task that starts it with administrator rights at every sign-in, and removes the per-user startup
-  entry and folder. *Launch at login* now switches that task's trigger. A copy started without the rights hands over to
+  entry and folder. _Launch at login_ now switches that task's trigger. A copy started without the rights hands over to
   the installed one instead of running limited next to it, a newer download offers to update the installed copy, and
   uninstalling asks for UAC and removes the task. If the elevated step fails, a message says why and CursorPie starts
   again as it was. The notice about a window that runs as administrator now points to this button.
@@ -148,19 +152,19 @@
   gesture fired twice. Access denied now counts as "already running".
 
 - **Fixed and improved: the intelligent pie.**
-  - *Kept until you switch it off.* Holding Space now keeps the intelligent pie: closing the pie no longer
-    ends it, and the next presses open it again, until Space is held once more. (Not saved: a restart starts with
-    the normal pie.)
-  - *Sorted into submenus.* The intelligent pie is now grouped by default into **Apps**, **Sites**, **Actions** and
-    **Flows**, each a submenu of suggestions. *Mixed* is still there in Behavior > Intelligent.
-  - *The right icons.* A suggested site shows its own logo (fetched in the background with the lookup of *Icon from
-    a website*, kept as `icons/site-<host>.png`, deleted by *Forget everything*; switch off with *Show the icon of a
-    site*), and the icons of suggested apps are loaded ahead like the ones of any other pie, so the first frame no
-    longer shows placeholders.
-  - *Intelligent slice, easy to add.* New **Intelligent slice** panel (add it to the general pie or to the pie of
-    one app), the same slice under *Add a slice > Custom*, and switching the feature on adds one to the general pie.
-  - *Settings.* *Forget everything* was drawn over its description; the ignore lists now use the app list and a
-    new site list (with icons) instead of a text field.
+    - _Kept until you switch it off._ Holding Space now keeps the intelligent pie: closing the pie no longer
+      ends it, and the next presses open it again, until Space is held once more. (Not saved: a restart starts with
+      the normal pie.)
+    - _Sorted into submenus._ The intelligent pie is now grouped by default into **Apps**, **Sites**, **Actions** and
+      **Flows**, each a submenu of suggestions. _Mixed_ is still there in Behavior > Intelligent.
+    - _The right icons._ A suggested site shows its own logo (fetched in the background with the lookup of _Icon from
+      a website_, kept as `icons/site-<host>.png`, deleted by _Forget everything_; switch off with _Show the icon of a
+      site_), and the icons of suggested apps are loaded ahead like the ones of any other pie, so the first frame no
+      longer shows placeholders.
+    - _Intelligent slice, easy to add._ New **Intelligent slice** panel (add it to the general pie or to the pie of
+      one app), the same slice under _Add a slice > Custom_, and switching the feature on adds one to the general pie.
+    - _Settings._ _Forget everything_ was drawn over its description; the ignore lists now use the app list and a
+      new site list (with icons) instead of a text field.
 
 - **New: intelligent pie and intelligent slices.** Hold Space for about a second in an open pie and it turns into a pie
   of suggestions made from what you use: the apps you open most and the ones that are open now, the sites you visit
@@ -168,51 +172,51 @@
   and your flows. Hold Space again to come back. A quick press of Space still opens Settings, but on the key-up while
   the feature is on. A new **Smart** slice kind puts the same suggestions in a submenu of any pie. CursorPie learns
   from the app in front, the page in view and the actions you run, fades what you stop doing, and tidies and saves
-  while you are idle (or at once with *Learn now*). It is **off until switched on** in Behavior > Intelligent, keeps
+  while you are idle (or at once with _Learn now_). It is **off until switched on** in Behavior > Intelligent, keeps
   only sites (never titles or contents) unless you allow paths, has ignore lists, and stores everything in one local
   file, `smart-habits.json`. See [Intelligent pie](docs/user/intelligent-pie.md).
 
 - **Changed: the loading animation of the website icon sheet sits in the middle.** It was stuck under the address
   field with the rest of the sheet empty; it now takes the room that is left and centres tile, ring and text in it.
 
-- **Fixed: *Round a square icon* did nothing for claude.ai's icon.** The test for "a full square" wanted every pixel
+- **Fixed: _Round a square icon_ did nothing for claude.ai's icon.** The test for "a full square" wanted every pixel
   opaque, and the site's picture has a few that are not (its corners). A picture whose pixels are 97% or more opaque is
   now a tile and gets the rounded corners.
 
 - **Fixed: a website icon that is a full square (claude.ai's orange tile) stayed a sharp square.** Such a picture, with
-  nothing transparent in it, now gets rounded corners like the other icons and no plate around it (*Round a square icon*,
-  on by default, with the Roundness slider). *Trim* no longer cuts a plain background that was not removed, which
+  nothing transparent in it, now gets rounded corners like the other icons and no plate around it (_Round a square icon_,
+  on by default, with the Roundness slider). _Trim_ no longer cuts a plain background that was not removed, which
   had cropped a tile down to the logo inside it.
 
-- **Fixed: a website icon on a black square came out as a cropped square.** *Remove plain background* turned itself
+- **Fixed: a website icon on a black square came out as a cropped square.** _Remove plain background_ turned itself
   on for a white square only, so GitHub's icon (a white circle on black) kept its black corners, and trimming then cut
   the picture right at the circle. It now turns on for a white **or black** square, and removes only the background that
   reaches the border, so the black cat inside the circle stays.
 
 - **Fixed: "Use website icon" gave nothing, and could blank the icon it had.** The old lookup read the home page
   whole and gave up on a page bigger than 512 KB (GitHub's is), so it never saw the icon links, and it deleted the
-  site's earlier icon file *before* looking, leaving the slice with a **?** when the lookup failed. The page is now read
-  only as far as its head, nothing is deleted, and the **Use website icon** button opens the *Icon from a website*
+  site's earlier icon file _before_ looking, leaving the slice with a **?** when the lookup failed. The page is now read
+  only as far as its head, nothing is deleted, and the **Use website icon** button opens the _Icon from a website_
   sheet, with its loading animation and the tools that make site icons look alike. The old `ui::favicon` module is gone.
 
 - **New: icon from a website, with a loading animation and a tidy-up step.** In the icon picker, **+ > From a website…**
   asks for an address (a slice that opens a link starts with its site, and the fetching starts at once). While CursorPie
-  looks for the icon, the sheet shows a breathing tile with a comet circling it, what is being done (*Reading
-  github.com*, *Downloading the icon (2 of 5)*) and a Cancel button. It reads the home page for `apple-touch-icon` and
+  looks for the icon, the sheet shows a breathing tile with a comet circling it, what is being done (_Reading
+  github.com_, _Downloading the icon (2 of 5)_) and a Cancel button. It reads the home page for `apple-touch-icon` and
   `rel="icon"` links and tries the biggest first, then `/favicon.ico`; only if the site gives nothing usable does it ask
   Google's favicon service (the host name is all it is told). The picture is then shown as the site serves it and as it
-  will look on the pie, with controls that make every site icon look alike: *Remove plain background* (turned on by
-  itself for a white square), *Trim the empty border*, *Colour* (original, white or black), *Plate* (none, light or
-  dark rounded square) with *Roundness*, and *Margin*. The look is remembered in `web-icon-style.json`, so the next
-  site starts with it. The result is a 256 px PNG in the icons folder (*Mine*). The request is made by the system's
+  will look on the pie, with controls that make every site icon look alike: _Remove plain background_ (turned on by
+  itself for a white square), _Trim the empty border_, _Colour_ (original, white or black), _Plate_ (none, light or
+  dark rounded square) with _Roundness_, and _Margin_. The look is remembered in `web-icon-style.json`, so the next
+  site starts with it. The result is a 256 px PNG in the icons folder (_Mine_). The request is made by the system's
   `curl` (or `wget`) like the update check; only `https` is used.
 
 - **New: lock CursorPie with three fingers on the trackpad.** While the pie of a trackpad hold is open, tap with two more
   fingers together (three on the trackpad in all): the pie turns into a padlock that snaps shut, then a pill says
-  *CursorPie locked*. While locked, a hold opens no pie and shows the same pill instead (after the hold time), so it is
+  _CursorPie locked_. While locked, a hold opens no pie and shows the same pill instead (after the hold time), so it is
   clear why. Hold with one finger and tap with two more to unlock: the padlock opens into the pie and the pill says
-  *CursorPie unlocked*. The lock covers the trackpad hold only (the mouse is unaffected), is kept in memory (restarting
-  unlocks), and the click some systems make of a two-finger tap is swallowed. *Lock with three fingers* (Settings >
+  _CursorPie unlocked_. The lock covers the trackpad hold only (the mouse is unaffected), is kept in memory (restarting
+  unlocks), and the click some systems make of a two-finger tap is swallowed. _Lock with three fingers_ (Settings >
   Behavior, on by default; `touch_lock`) turns it off, and two more fingers then close the pie as before. The lock
   pills show even with the action notice (`hud`) switched off.
 
@@ -222,28 +226,28 @@
   the app reads it exactly like **Import**, shows a panel that names the flow and what it can do (shell commands,
   files, messages) and, only after you press **Install**, adds it as a new flow. Without the extension, or with
   CursorPie closed or the new setting off, the same button downloads the `.json` file. The extension gets one content
-  script that runs on the Flow Hub page only. *Let Flow Hub install flows* (Settings > Behavior, on by default, needs the
+  script that runs on the Flow Hub page only. _Let Flow Hub install flows_ (Settings > Behavior, on by default, needs the
   browser link) turns it off. `scripts/flowhub-check.py` checks the catalog before a commit.
-  The **New flow** dialog gets a wide *Flow Hub* tile under the three choices: it opens the page and shows whether the
+  The **New flow** dialog gets a wide _Flow Hub_ tile under the three choices: it opens the page and shows whether the
   extension is connected (so Install will work) or not (the page will download the file).
 
-- **Changed: the theme choice slides, and a change of theme spreads over the window.** In *Behavior > Look & feel* the
+- **Changed: the theme choice slides, and a change of theme spreads over the window.** In _Behavior > Look & feel_ the
   themes are no longer tiles that wrap into a second row: they are larger cards in one row that fills the panel and
   slides sideways (drag it, use the trackpad or Shift + wheel, or the two arrows next to the title), with a soft edge
   where more cards wait and one dot for each theme under it. The chosen card glides to the middle and wears a check.
   Choosing a theme starts a wave: a disc in the colors of the new theme grows from the card until it fills the
   window, the theme is swapped under it, and a round hole opens from the same point to uncover the new look. The
   wave is clipped to the rounded corners of the window.
-- **Changed: the Welcome guide has six pages and asks what you do most.** The guide is now *Welcome*, *How it works*
-  (the gesture next to a small pie that plays it), *About you*, *Your pie*, *Setup* and *All set*. On *About you* a
-  person picks one or several of Everyday, Student, Developer, Designer, Writer and Creator; *Your pie* shows the pie
+- **Changed: the Welcome guide has six pages and asks what you do most.** The guide is now _Welcome_, _How it works_
+  (the gesture next to a small pie that plays it), _About you_, _Your pie_, _Setup_ and _All set_. On _About you_ a
+  person picks one or several of Everyday, Student, Developer, Designer, Writer and Creator; _Your pie_ shows the pie
   that follows from it. With "Get started" or "Open Settings" the general pie takes those slices and a pie for the
   apps of the pick (Design, Writing, Editing) is added next to the profiles that exist; Skip and Esc change nothing.
   The card is larger (900 x 640, at least 720 x 540), the sticker shadows are no longer cut off at the right and
   bottom edges of a page, and the gaps between cards, rows and buttons are wider.
 - **Changed: Gen Z is the default theme, and Bubblegum ships with the app.** A fresh configuration (and a file that does
   not name a theme) now starts in **Gen Z**, the look of the website, with its lime accent. **Sage** is still one click
-  away in *Behavior > Look & feel > Theme*, and so is the new built-in **Bubblegum**: Gen Z in candy pink (cotton-candy
+  away in _Behavior > Look & feel > Theme_, and so is the new built-in **Bubblegum**: Gen Z in candy pink (cotton-candy
   page, plum outlines, rounder corners, pink accent, a berry-tinted dark appearance). A theme file named `bubblegum.json`
   (the old docs example) is now skipped with a note, since the name belongs to the built-in theme; the example of the docs
   is `mint-soda.json` now. A saved choice (`ui_theme`) and a saved accent are kept as they are.
@@ -254,8 +258,8 @@
 
 - **New: the demo GIFs are in the README, the guides and the website.** Fourteen 720 x 405 animations now live in
   `docs/gifs/` (see its `README.md` for what each shows and where it is used): the problem hook and the intro at the top
-  of the README, the gesture and its cancel in the README, *Getting started* and *Using the pie*, any action and nested
-  submenus in *Using the pie*, per-app pies and side buttons in *Profiles and mouse buttons*, the trackpad, flows,
+  of the README, the gesture and its cancel in the README, _Getting started_ and _Using the pie_, any action and nested
+  submenus in _Using the pie_, per-app pies and side buttons in _Profiles and mouse buttons_, the trackpad, flows,
   Settings, themes and sharing, and the platforms in the page each belongs to, and a **See it in motion** section on the
   landing page that loads each one only when you scroll to it. The folder is excluded from the crate (`Cargo.toml`) and
   `*.gif` is binary in `.gitattributes`.
@@ -278,8 +282,8 @@
   Start menu, the program folders) and the program is started by its full path. Anything that is a path or a link, or
   that cannot be found, is opened as before.
 
-- **Changed: Space is the way into Settings by default, the hold is off.** *Open settings with Space* is now on and
-  *Open settings by holding* is off in a fresh configuration (and in a file that does not name them). Space opens
+- **Changed: Space is the way into Settings by default, the hold is off.** _Open settings with Space_ is now on and
+  _Open settings by holding_ is off in a fresh configuration (and in a file that does not name them). Space opens
   Settings in any pie that is open: the top ring, a submenu at any depth and the pie of an app. The hold keeps behaving
   exactly as before when it is switched on (only the untouched top ring of the pie that a hold opened). A saved choice
   is kept as it is.
@@ -290,49 +294,49 @@
   is open the pointer is now also read every 16 ms and aims the pie like a move of the hook does, so a missed move
   never leaves the pie dead.
 
-- **New: themes.** *Behavior > Look & feel > Theme* now picks the look of Settings and of the Solid pie. **Sage** is the
+- **New: themes.** _Behavior > Look & feel > Theme_ now picks the look of Settings and of the Solid pie. **Sage** is the
   look it always had (and the default, so nothing changes until you choose); **Gen Z** is the look of the website: cream or
   violet-black, 2-point ink outlines, pill controls, hard shadows and a lime accent. Choosing a theme moves the accent to
-  its own unless you picked one. Your own colors (*Colors of the light/dark appearance*) are laid over any theme.
-  - **Make your own:** a theme is a small `.json` file in the new `themes/` folder (button *Open themes folder*) that
-    extends Sage, Gen Z or another file and lists only what it changes (colors, radii, outlines, shadows). The text is kept
-    readable whatever it says, a bad file is skipped with the reason shown, and *Reload themes* picks up edits without a
-    restart. See [Themes](docs/user/themes.md) and `docs/examples/themes/mint-soda.json`.
-  - **For developers:** a theme is data (`ui/settings/theme/`: `Theme`, `Shape`, palettes), not drawing code. Widgets
-    read colors from `pal()` and radii, outlines and shadows from `shape()`, so a new look needs no copy of any widget.
-    `CONTROL_R`, `PANEL_R` and `CARD_RADIUS` (and their `_PT` forms) became the functions `control_r()`, `panel_r()` and
-    `card_radius()` (`_pt()` for the number); `PAGES`, `PANELS`, `SIDEBARS`, `TEXTS` and `ACCENTS` became
-    `theme::swatches()`; `Palette` has a new `line` color.
+  its own unless you picked one. Your own colors (_Colors of the light/dark appearance_) are laid over any theme.
+    - **Make your own:** a theme is a small `.json` file in the new `themes/` folder (button _Open themes folder_) that
+      extends Sage, Gen Z or another file and lists only what it changes (colors, radii, outlines, shadows). The text is kept
+      readable whatever it says, a bad file is skipped with the reason shown, and _Reload themes_ picks up edits without a
+      restart. See [Themes](docs/user/themes.md) and `docs/examples/themes/mint-soda.json`.
+    - **For developers:** a theme is data (`ui/settings/theme/`: `Theme`, `Shape`, palettes), not drawing code. Widgets
+      read colors from `pal()` and radii, outlines and shadows from `shape()`, so a new look needs no copy of any widget.
+      `CONTROL_R`, `PANEL_R` and `CARD_RADIUS` (and their `_PT` forms) became the functions `control_r()`, `panel_r()` and
+      `card_radius()` (`_pt()` for the number); `PAGES`, `PANELS`, `SIDEBARS`, `TEXTS` and `ACCENTS` became
+      `theme::swatches()`; `Palette` has a new `line` color.
 
 ## 0.8.21
 
-- **Fixed: the Solid pie could not be chosen in Behavior, Pie material.** The pies of *Pie material* and the one of
-  *Pie shape* are drawn by the same demo, and each tile took its id from the id of the panel it was in, which two panels
-  of one page can share: the tile of *Pie shape* took the clicks of the first tile of *Pie material*. Glass and Gen Z
+- **Fixed: the Solid pie could not be chosen in Behavior, Pie material.** The pies of _Pie material_ and the one of
+  _Pie shape_ are drawn by the same demo, and each tile took its id from the id of the panel it was in, which two panels
+  of one page can share: the tile of _Pie shape_ took the clicks of the first tile of _Pie material_. Glass and Gen Z
   worked, Solid did not. Every demo now gives its tiles ids of its own.
 
 - **New: bring a whole pie in without dragging slice by slice (import tray).** The tray that opens beside your pie
   when you import a profile file used to take one slice at a time (a drag or a double click), or the whole file as a
   new pie, which failed for a file that lists no apps. Now:
-  - **Select mode** (cursor button of the bar; Shift or Ctrl/Cmd + click does the same without it): a click picks or
-    unpicks a slice and nothing is dragged, so a click can never move one by accident. Clicking the middle of a pie
-    picks every slice of that ring, **Pick all** (or Ctrl/Cmd + A) picks the whole top ring, and a picked submenu
-    goes with everything in it. **Add selected** (the arrow) then adds everything picked at once.
-  - **Add every slice**, **As a submenu** and **Use as this pie** (new buttons of the tray bar) bring the file in with
-    one press: to the end of the lit ring, as one submenu of it (it fits whenever the ring has one free place), or as
-    the slices of the pie you are editing (its name and apps stay; Undo brings the old slices back).
-  - A group is added whole or not at all: when it does not fit (ring of 8, 5 rings deep) nothing is changed, no
-    image is written, and the notice says how many slices still fit. Images and flows come along, and slices that
-    can run commands are reported, as for a single slice.
-  - A profile file dropped on the window (pie editor, slice editor closed) opens in the tray, and so does a profile
-    file copied as text and pasted with Ctrl/Cmd + V in the pie editor.
-  - Logic lives in `config::pie_edit` (`insert_many`, `group_item`, `replace_items`, `top_paths`, `ring_paths`,
-    `first_mode_path`) and is unit tested.
+    - **Select mode** (cursor button of the bar; Shift or Ctrl/Cmd + click does the same without it): a click picks or
+      unpicks a slice and nothing is dragged, so a click can never move one by accident. Clicking the middle of a pie
+      picks every slice of that ring, **Pick all** (or Ctrl/Cmd + A) picks the whole top ring, and a picked submenu
+      goes with everything in it. **Add selected** (the arrow) then adds everything picked at once.
+    - **Add every slice**, **As a submenu** and **Use as this pie** (new buttons of the tray bar) bring the file in with
+      one press: to the end of the lit ring, as one submenu of it (it fits whenever the ring has one free place), or as
+      the slices of the pie you are editing (its name and apps stay; Undo brings the old slices back).
+    - A group is added whole or not at all: when it does not fit (ring of 8, 5 rings deep) nothing is changed, no
+      image is written, and the notice says how many slices still fit. Images and flows come along, and slices that
+      can run commands are reported, as for a single slice.
+    - A profile file dropped on the window (pie editor, slice editor closed) opens in the tray, and so does a profile
+      file copied as text and pasted with Ctrl/Cmd + V in the pie editor.
+    - Logic lives in `config::pie_edit` (`insert_many`, `group_item`, `replace_items`, `top_paths`, `ring_paths`,
+      `first_mode_path`) and is unit tested.
 
 - **Added: Settings can be opened with Space while the pie is open, and the hold can be switched off (Behavior, Trigger).**
-  *Open settings by holding* (on by default, as before) decides whether keeping the trigger in the center opens Settings;
-  off, the pie never turns into Settings by itself and the progress arc is not drawn. *Open settings with Space* (off by
-  default) opens Settings when Space is pressed while a pie is open, after one or two presses (*Presses of Space*; two
+  _Open settings by holding_ (on by default, as before) decides whether keeping the trigger in the center opens Settings;
+  off, the pie never turns into Settings by itself and the progress arc is not drawn. _Open settings with Space_ (off by
+  default) opens Settings when Space is pressed while a pie is open, after one or two presses (_Presses of Space_; two
   must come within half a second). Space is swallowed, with its repeat and release, so it never reaches the app under the
   pie. The two work independently: whichever comes first opens Settings. Space works on macOS and Windows; on Linux X11 the
   key also reaches the app, and on Wayland CursorPie sees no keys. New settings `settings_by_hold`, `settings_by_space` and
@@ -343,7 +347,7 @@
 
 - **Changed: a trackpad that is found switches the trackpad hold on, at any start.** It used to happen only at the very
   first start of a new user. Now the first start that finds a trackpad switches `touch_trigger` on once and sets the new
-  `touch_auto_done`; turning the switch off (or on) in Settings, or pressing *Scan for trackpad*, sets it too, so a choice
+  `touch_auto_done`; turning the switch off (or on) in Settings, or pressing _Scan for trackpad_, sets it too, so a choice
   made in Settings is never undone. Someone who had turned the hold off before this version sees it on once more.
 
 - **Fixed: on Windows the Windows key could not be recorded in a shortcut; it opened the Start menu instead.** While a
@@ -357,13 +361,13 @@
   never affected). A shortcut that is exactly Win+L, the default slice, one saved in `config.json` or one inside a
   flow, now locks the PC through `LockWorkStation`. Nothing has to be changed in an existing configuration.
 
-- **Added: a Gen Z pie style (Behavior, Look & feel, Pie material).** Besides *Solid* and *Glass*, the pie can be drawn
+- **Added: a Gen Z pie style (Behavior, Look & feel, Pie material).** Besides _Solid_ and _Glass_, the pie can be drawn
   like the one on the website: white slices with thick dark outlines, hard offset shadows that grow under the slice
   the pointer is on, and the accent as its fill. It looks the same in the light and the dark appearance, and the
   center disc and the badges of an "Open app" slice follow it. The setting is `pie_style: "GenZ"`; a file without it
   keeps the style it had.
 
-- **Added: the pie can be given another shape (Behavior, Look & feel, Pie shape).** *Custom* turns the circle into a
+- **Added: the pie can be given another shape (Behavior, Look & feel, Pie shape).** _Custom_ turns the circle into a
   regular polygon with rounded corners: how many sides (3 to 12), how round the corners are (from sharp to a circle)
   and how far it is turned. All three materials follow it, and so does the point where a drag over a submenu slice
   opens the submenu. The default is still the circle, and a file without the new settings keeps it.
@@ -382,11 +386,11 @@
   `cpd d`, `cpd s|t|g|sl|df|f|r`, `cpd on|off|path|clean`. The ordinary release is unchanged and has none of the log
   code. See `docs/DEBUGGING.md`, "Developer mode and `cpd`".
 
-  Turning Developer mode **off** in the log build asks first, because the way back to the ordinary build is among the
-  tools that go away with the mode: **Install standard build** replaces this copy with the ordinary one of the same
-  version and switches developer mode and the log off once that swap has started (a download or a check that fails
-  leaves everything as it was); **Keep log build** only hides the tools and stops the log at the next start; **Cancel**
-  changes nothing.
+    Turning Developer mode **off** in the log build asks first, because the way back to the ordinary build is among the
+    tools that go away with the mode: **Install standard build** replaces this copy with the ordinary one of the same
+    version and switches developer mode and the log off once that swap has started (a download or a check that fails
+    leaves everything as it was); **Keep log build** only hides the tools and stops the log at the next start; **Cancel**
+    changes nothing.
 
 - **Fixed: on Windows with a mouse, the pie did not come up after a panel of a flow had been closed, and the held
   trigger opened Settings instead.** A panel makes the shared window take the pointer, and nothing gave that back
@@ -408,7 +412,7 @@
   removed.
 
 - **Fixed: an update gave no sign of life and CursorPie just vanished for minutes (Windows, macOS, Linux).** After
-  *Install update* the window disappeared while the new version was swapped in, with nothing to say whether it was
+  _Install update_ the window disappeared while the new version was swapped in, with nothing to say whether it was
   still working or finished. Now a progress sheet stays over Settings while the update downloads and says what
   follows (CursorPie closes by itself, the new version is put in place and starts again, which can take a few
   minutes). On Windows, Setup now runs with its small progress window (`/SILENT` instead of `/VERYSILENT`), so the
@@ -510,7 +514,7 @@
   window (several levels in one direction) moves it, as before.
 
 - **New: a "web" mode for submenus, with a way back.** Until now a submenu replaced the pie and the only way out was to
-  release. With the new *Submenus keep a trail* switch (Behavior tab, `submenu_trail` in `config.json`, off by default) the
+  release. With the new _Submenus keep a trail_ switch (Behavior tab, `submenu_trail` in `config.json`, off by default) the
   pie you came from shrinks to a small node showing the center of that pie, on a thread to the submenu. Every level you
   left stays as a node on an arc around it, in the order they were opened (the nearest is the last one, each older one
   smaller and paler, joined by a thread whose arrows point toward where you are), and moving the pointer onto one
@@ -538,7 +542,7 @@
   every pie), a click on the middle of a pie selects it (Shift or Ctrl/Cmd + click adds or removes it), and dragging the
   middle of a pie moves it and the other selected pies. The top pie stays where it is; the others are placed around it.
   Where a pie was put is saved with its slice (`at` in `config.json`, left out for a pie that was never moved), and the new
-  *Tidy up* button of the bar puts every pie back. The **+** of the bar no longer opens the "Add a
+  _Tidy up_ button of the bar puts every pie back. The **+** of the bar no longer opens the "Add a
   slice" sheet: the three groups unfold in the bar and a searchable list opens over it, and the right button opens the same
   list where it is pressed, like the Flow canvas. Ctrl/Cmd + C, X and V copy, cut and paste the selected slice or pies
   (with everything in them) through the system clipboard, like the blocks of a flow, so a copy can go to another pie or
@@ -554,36 +558,36 @@
   variable named by its `id` (what it always wrote), and toggles without `bind` use their `id`. A bound toggle no longer
   takes the look of the panel it replaces, the variable wins. Also fixed: `on_label` of a button of the row at the
   bottom did not fill in `{{variables}}`, and the flow checks know the variables that toggles write. Nothing changes for
-  a panel that uses neither setting. The panel designer has both: *Remember values* under *Behavior* of the panel, and *Remember in variable* (card *Kept by the flow*) for a button that changes when pressed. New example flow `browser-remote-panel-state`. See *State kept by the flow* in
+  a panel that uses neither setting. The panel designer has both: _Remember values_ under _Behavior_ of the panel, and _Remember in variable_ (card _Kept by the flow_) for a button that changes when pressed. New example flow `browser-remote-panel-state`. See _State kept by the flow_ in
   `PANELS.md`.
 - **New: a flow can remember things between runs, also after CursorPie was closed.** Until now every run began with no
   variables and ended by forgetting them. Now a variable whose name starts with `keep_` is saved when the run ends and is
   back in the next run of that flow (a run that was stopped or cancelled is saved too). Every run also starts with
   `run_count`, `last_run` and `last_ending`, so a flow can tell its first run from the others and see how the last one
-  ended. Three new *System* blocks, *Save data*, *Load data* and *Remove data*, keep names with a text that every flow
+  ended. Three new _System_ blocks, _Save data_, _Load data_ and _Remove data_, keep names with a text that every flow
   shares, so one flow can leave something for another. Loading a name nobody saved is not reported as a problem: the
   variable is empty and `ok` is 0. All of it is plain JSON in the new folder `flow-state` of the support directory
   (`<flow id>.state.json` per flow and `data.json` for the shared data), written through a temporary file so a crash
   leaves no half file; a file that cannot be read is moved aside (`data.corrupt.json`) instead of overwritten. Existing
-  flows are not changed: they have no `keep_` variables and the new variables only add names. See *Remembering things
-  between runs* in `FLOWS_FOR_AI.md`.
+  flows are not changed: they have no `keep_` variables and the new variables only add names. See _Remembering things
+  between runs_ in `FLOWS_FOR_AI.md`.
 - **Changed: the inspector of the panel in the panel designer is calmer and follows the Settings look.** The long
-  column of small labels is now four cards (*Header*, *Look*, *Size and place*, *Behavior*) of rows with the name on the
+  column of small labels is now four cards (_Header_, _Look_, _Size and place_, _Behavior_) of rows with the name on the
   left and one control on the right, so each line is one thing to decide. The look of the title, the subtitle and the
   field labels, and the space inside the card, are one step in: a row with a summary ("Bold, 22 pt") opens a page with a
   back arrow, instead of the three folding headers. There the letters are four toggles on one line, the size shows its
-  number and a *Reset*, the colors are round swatches that include "the usual" (so one click goes back to it), and the
+  number and a _Reset_, the colors are round swatches that include "the usual" (so one click goes back to it), and the
   nudge is two number boxes (X and Y) with one note. The inspector is 24 points wider. The same format controls are
   used for a selected text, so they look the same there. Nothing in the panel's JSON changes.
 - **New: every panel has an X at the top right, and the buttons at the bottom are optional.** The X closes a panel like
-  Esc does (it presses the button that cancels, or answers as cancelled). So a panel no longer needs a *Cancel* or
-  *Close* button of its own: `"no_buttons": true` leaves out the row at the bottom, together with its room and gap
+  Esc does (it presses the button that cancels, or answers as cancelled). So a panel no longer needs a _Cancel_ or
+  _Close_ button of its own: `"no_buttons": true` leaves out the row at the bottom, together with its room and gap
   (a panel that says nothing about its buttons still gets Cancel and OK, so existing flows work as before), and
-  `"hide_close": true` leaves out the X. In the designer, *No buttons* in the panel's inspector does the same, taking
-  away the last button now leaves none (instead of bringing Cancel and OK back), and *Close button* is a switch under
-  *Behavior*. The *Button pad* template uses the X instead of a *Close* button.
+  `"hide_close": true` leaves out the X. In the designer, _No buttons_ in the panel's inspector does the same, taking
+  away the last button now leaves none (instead of bringing Cancel and OK back), and _Close button_ is a switch under
+  _Behavior_. The _Button pad_ template uses the X instead of a _Close_ button.
 - **Changed: the inspectors of a button and of every widget follow the same look.** What a button or a widget has is
-  now in cards too (*Button*, *After a press*, *Size and shape*; *Input*, *Size of the box*, *Options*, *Visibility*, ...)
+  now in cards too (_Button_, _After a press_, _Size and shape_; _Input_, _Size of the box_, _Options_, _Visibility_, ...)
   with a name above each box instead of one long column of labels. Corners are a list instead of five squeezed choices,
   the color of a color widget is a row of round swatches, and the look of the text inside an input box is a page one
   step in (like the title of the panel) instead of a folding header.
@@ -593,26 +597,26 @@
   `underline`, `strike`, `size`, `color`) and `valign` (`top`, `middle`, `bottom`: where the text sits in the height
   of the box, so the display of a calculator can sit in the middle). `title_fmt`, `subtitle_fmt` and `value_fmt` also take
   `dx` and `dy`, a nudge in points (to the right and down; negative goes left and up, at most 60 either way) applied
-  after `align`. The title and the subtitle share the header with the round badge, so their *Center* was a little to
-  the right of the middle of the card: the designer has a *Center on the whole card* button (`center` with `dx` -23).
-  A bigger text makes its box taller. The designer shows *Look of the text inside the box* for a selected input and
-  *Nudge* under every look of the header. A password box shows dots, so slant and lines do not apply to it. Panels
+  after `align`. The title and the subtitle share the header with the round badge, so their _Center_ was a little to
+  the right of the middle of the card: the designer has a _Center on the whole card_ button (`center` with `dx` -23).
+  A bigger text makes its box taller. The designer shows _Look of the text inside the box_ for a selected input and
+  _Nudge_ under every look of the header. A password box shows dots, so slant and lines do not apply to it. Panels
   written before look the same. See `docs/PANELS.md`.
   An `input` box also takes `width`, `height` and `text_padding` (the space between its edge and its text, per side),
-  under *Size of the box* in the designer.
+  under _Size of the box_ in the designer.
 
 - **Added: text format in panels and in the panel designer.** A `text` widget takes `fmt`, and the panel takes
   `title_fmt`, `subtitle_fmt` and `label_fmt` (the labels above the fields), each with `align` (`left`, `center`,
   `right`), `bold`, `italic`, `underline`, `strike`, `size` (8 to 48 points) and `color` (`#rrggbb`). Everything is
   optional and what is left out keeps the look it had, so a panel written before still looks the same and a panel
   without formats writes none. The designer shows the controls for a selected text and, in the panel's own fields,
-  *Title look*, *Subtitle look* and *Look of the labels above the fields*. The height of a text widget and of the header
+  _Title look_, _Subtitle look_ and _Look of the labels above the fields_. The height of a text widget and of the header
   follows the size. See `docs/PANELS.md`.
 
 - **Added: copy and paste in the Flow canvas and in the panel designer, and several widgets selected at once in the
   designer.** On the canvas, Ctrl/Cmd + C copies the selected blocks, Ctrl/Cmd + X cuts them and Ctrl/Cmd + V pastes
   them where the pointer is (a little down and to the right of the originals when it is off the canvas). The wires
-  between the copied blocks stay, with ids of their own; *Start* and *End* are never copied, and a group that does not fit
+  between the copied blocks stay, with ids of their own; _Start_ and _End_ are never copied, and a group that does not fit
   in the flow is not pasted at all. In the panel designer the widgets of the list or of the panel can be picked together
   (Ctrl/Cmd + click adds or removes one, Shift + click picks a range, Ctrl/Cmd + A picks all) and then removed,
   duplicated, moved up or down, cut, copied and pasted as a group; a pasted widget gets an id of its own and its
@@ -626,41 +630,41 @@
 
 - **Fixed: the progress panel of a run opened over the question the run was asking.** A flow that asks again and again
   (a calculator in a panel) counted the time the person spent in the questions as work, so after two seconds the
-  progress panel ("Step 30/68") came up and competed with the question for the window. Time spent answering an *Ask*
+  progress panel ("Step 30/68") came up and competed with the question for the window. Time spent answering an _Ask_
   (text, yes/no or panel) no longer counts towards the two seconds, and the progress panel does not open while a
   question is open.
 
 ## 0.8.17
 
-- **Added: the colors of Settings can be chosen, not only the accent.** *Look & feel* in *Behavior* has *Page
-  background*, *Panels*, *Sidebar* and *Text*, each with a row of suggested sage-tinted colors, like the accent, and a
+- **Added: the colors of Settings can be chosen, not only the accent.** _Look & feel_ in _Behavior_ has _Page
+  background_, _Panels_, _Sidebar_ and _Text_, each with a row of suggested sage-tinted colors, like the accent, and a
   color picker for any other. The first suggestion is the color the appearance comes with and puts it back. The light and
   the dark appearance have colors of their own, so changing one never changes the other; the rows are those of the
   appearance in use. What depends on a color (the controls, the hairlines, the secondary text) follows it, and the text
   is always moved just far enough to read on every surface. The choice is previewed before it is saved and is kept in
   `config.json` as `"theme": { "dark": { "page": [r, g, b] } }`; a color left out keeps the one of the appearance.
 
-- **Added: the space around the content of a panel can be set, on all four sides, two, or just one.** The *Panel*
-  inspector of the designer has *Space between the edge and the content*: *All* is one number, *H and V* is two (left and
-  right, top and bottom) and *Each side* is four, so a single side can be changed (`"padding": { "bottom": 6 }` in the
-  description; a side left out keeps the usual 18 points, the most is 60). *Usual space* puts it back. The line under
+- **Added: the space around the content of a panel can be set, on all four sides, two, or just one.** The _Panel_
+  inspector of the designer has _Space between the edge and the content_: _All_ is one number, _H and V_ is two (left and
+  right, top and bottom) and _Each side_ is four, so a single side can be changed (`"padding": { "bottom": 6 }` in the
+  description; a side left out keeps the usual 18 points, the most is 60). _Usual space_ puts it back. The line under
   the buttons that is kept for a notice ("Fill in ... first") is now only there when the panel has a required box, so a
   panel without one no longer has a gap under its buttons on top of the padding.
 
 - **Fixed: the panel designer needed a scroll to remove an element, and widgets could not be dragged.** Removing a
-  button of a grid meant scrolling the inspector to its bottom. Now *Delete* or *Backspace* removes what is selected
+  button of a grid meant scrolling the inspector to its bottom. Now _Delete_ or _Backspace_ removes what is selected
   (unless a field is being typed in or a list is open), like on the canvas of a flow: the widget, the button at the
-  bottom, or the button of a grid that was clicked on its own. The bar at the bottom of the preview has an *Add
-  element* button and a trash: a click on the trash removes the selection, and a row of the list (or the widget being
+  bottom, or the button of a grid that was clicked on its own. The bar at the bottom of the preview has an _Add
+  element_ button and a trash: a click on the trash removes the selection, and a row of the list (or the widget being
   dragged by its grip) is removed when it is let go over the trash. The grip beside the selected widget stays inside the
   preview however far the panel is zoomed or scrolled, so it can always be reached.
 
-- **Added: two more ways to tidy the Flow canvas, from a list on the tidy button.** *Across* is the layout there was
-  (columns, left to right). *Down* puts a run of blocks one under the other; a block that decides (*If / else*, a loop)
-  has the blocks of its first output (*then*, the body) beside it, to the right, and what its second output leads to
-  (*else*, what follows) goes on below, so a ladder of *If / else* is one column with its actions in the next. *Mixed*
+- **Added: two more ways to tidy the Flow canvas, from a list on the tidy button.** _Across_ is the layout there was
+  (columns, left to right). _Down_ puts a run of blocks one under the other; a block that decides (_If / else_, a loop)
+  has the blocks of its first output (_then_, the body) beside it, to the right, and what its second output leads to
+  (_else_, what follows) goes on below, so a ladder of _If / else_ is one column with its actions in the next. _Mixed_
   does the same for the blocks that decide, but a plain run of blocks goes left to right. No block covers another;
-  *End* goes after the last column; blocks no wire reaches go below everything. The ways are three round cells (a
+  _End_ goes after the last column; blocks no wire reaches go below everything. The ways are three round cells (a
   glyph each, the name is the tooltip) that unfold from the tidy button and widen the capsule, as the categories do
   after the "+", and fold back after a click.
 
@@ -791,7 +795,7 @@
 
 - **Fixed: the browser extension did not know the open tabs until a tab was clicked.** When CursorPie started after the
   browser, the native messaging host ended at once (the app was not there yet) and the extension only tried again a
-  minute later or at the next tab event, so *Open URL* slices showed no badges until the person clicked a tab. The
+  minute later or at the next tab event, so _Open URL_ slices showed no badges until the person clicked a tab. The
   host now waits for the app (and again after the app restarts) and keeps the browser's port open; the app greets each
   new connection with a `sync` message and the extension answers with `hello` and the full list of tabs at once. An
   extension from before this change ignores `sync` and behaves as before until it is reloaded.
@@ -837,14 +841,14 @@
 ## 0.8.12
 
 - **New: the notice follows a run from its start to its end.** A flow, a pause or a sequence with a pause in it
-  used to show its notice for a moment at the start and then went quiet: while a *Wait* block, a *Run and wait*
+  used to show its notice for a moment at the start and then went quiet: while a _Wait_ block, a _Run and wait_
   command or a long flow was still busy nothing was on the screen, and then something appeared out of nowhere.
   Now the pill stays until the run is over and says what it is doing and how far it has come: a thin bar along the
-  bottom edge and a small label at the right end. A *Wait* shows a countdown (`Waiting`, `3.2 s`), a *Run and wait*
+  bottom edge and a small label at the right end. A _Wait_ shows a countdown (`Waiting`, `3.2 s`), a _Run and wait_
   block shows a moving bar and the seconds it has taken (`Running command`, `12 s`, the command itself is still never
-  shown), a flow that goes straight through shows `3/8`, a *Repeat* or *For each* loop shows its round (`2/10`), a
-  flow with a *While* or a call shows `step 4`, and a sequence shows its step. When the run ends the bar fills and the
-  pill goes away after its usual time (*Behavior > Notice*). A run that is hidden with *Hide notices*, or with the
+  shown), a flow that goes straight through shows `3/8`, a _Repeat_ or _For each_ loop shows its round (`2/10`), a
+  flow with a _While_ or a call shows `step 4`, and a sequence shows its step. When the run ends the bar fills and the
+  pill goes away after its usual time (_Behavior > Notice_). A run that is hidden with _Hide notices_, or with the
   notice switched off, stays quiet as before, and a pill whose run is never reported as ended leaves by itself after
   150 seconds. New: `Host::progress` and `Host::wait` in `flowrun` (both have a default, so a host that does not
   care changes nothing), `HudProgress` and `Msg::HudEnd` in the notice.
@@ -860,30 +864,30 @@
   (a pause still counts its time from when its note arrived). The bounce of the badge is softer and does not start
   again while the last one is still ringing. The text is also laid out once per frame instead of three times.
 
-- **New: a progress panel with a Stop button for long runs, and an *Update panel* block.** On top of the small
+- **New: a progress panel with a Stop button for long runs, and an _Update panel_ block.** On top of the small
   notice, a flow, a pause or a sequence that lasts more than about two seconds now opens a small panel with a bar,
   the step that is running (`Waiting`, `Running command`, `Open app: Safari`), how far it has come (`3.2 s`, `12 s`,
-  `Round 2/10`, `Step 3/8`) and a **Stop** button. Stop ends the run at the next block and cuts a *Wait* or a *Run
-  and wait* short (the command is ended); stopping is not reported as a problem and the notice says `Stopped`. The
+  `Round 2/10`, `Step 3/8`) and a **Stop** button. Stop ends the run at the next block and cuts a _Wait_ or a _Run
+  and wait_ short (the command is ended); stopping is not reported as a problem and the notice says `Stopped`. The
   panel never takes the keyboard on Windows, so the keys a flow sends still reach their app; on macOS and Linux a run
-  that presses keys keeps the small notice instead. Another panel or the pie takes the window from it at once. *Behavior >
-  Show a progress panel for long runs* (`progress_panel`, on by default) switches it off. The new flow block **Update
-  panel** (`PanelUpdate`: *Open*, *Update*, *Close*) lets a flow open its own progress panel and set its title,
+  that presses keys keeps the small notice instead. Another panel or the pie takes the window from it at once. _Behavior >
+  Show a progress panel for long runs_ (`progress_panel`, on by default) switches it off. The new flow block **Update
+  panel** (`PanelUpdate`: _Open_, _Update_, _Close_) lets a flow open its own progress panel and set its title,
   label and bar (a fraction, `40%` or `busy`) while it works, with an optional Stop button; nothing waits for it and
   it goes away when the run ends. New: `Ending::Cancelled`, `Host::cancelled`, `Host::panel_command` and
   `parse_panel_value` in `flowrun`, `PanelSpec::passive`, the `runpanel` module, `platform::native::exec_until`,
   `docs/examples/flows/progress-panel.cursorpie-flow.json`.
 
-- **New: building flows for the browser extension is much easier.** The *Browser command* block used to be a text
+- **New: building flows for the browser extension is much easier.** The _Browser command_ block used to be a text
   field in which the person had to type the exact name of a command (`media.seek_fwd 30`) from the documentation, and
   a mistake only showed when the flow ran. Now the block has the same list of commands as a slice (`Media: Next
-  track`, `Tabs: Go to a tab with this text`...) with a field beside it for the text the command takes, marked
+track`, `Tabs: Go to a tab with this text`...) with a field beside it for the text the command takes, marked
   required or optional; in the list view it also says whether a browser can be reached right now (extension off, no
   browser connected, extension from another version). The add-block menus have a **Browser** group with ready
   commands (play / pause, next track, is the music playing?, address of the tab...). **New flow > Start from a
-  template** adds a complete working flow to learn from: a *Browser remote* (a panel with play, next, previous and
-  volume that stays open, one Branch and one command per button), *Pause the music only if it plays* and *Go to the
-  tab that has a word*. A command name that is a `{{variable}}` is still typed. New: `config::flow_templates`,
+  template** adds a complete working flow to learn from: a _Browser remote_ (a panel with play, next, previous and
+  volume that stays open, one Branch and one command per button), _Pause the music only if it plays_ and _Go to the
+  tab that has a word_. A command name that is a `{{variable}}` is still typed. New: `config::flow_templates`,
   `docs/examples/flows/browser-*.cursorpie-flow.json`.
 
 ## 0.8.11
@@ -893,13 +897,13 @@
   lose against it, leaving Settings covered and flickering. CursorPie now activates itself through the system's own
   call, asks again a moment later if the focus still is not back, and leaves a window that already has the focus alone.
 
-- **Fixed: the app list missed apps that exist.** *macOS:* Finder, Screen Sharing and the other apps in
+- **Fixed: the app list missed apps that exist.** _macOS:_ Finder, Screen Sharing and the other apps in
   `/System/Library/CoreServices`, apps one folder down (Adobe, Setapp, Chrome apps, `~/Applications/...`) and
   iPhone/iPad apps were not listed; an app was named by `CFBundleName` (`Code`) instead of what Finder shows
   (`Visual Studio Code`), so searching `visual` found nothing, and the name in the system language (`Kalkulator`) was
-  unknown. *Windows:* the Start menu was read once and kept until CursorPie quit, so an app installed later never
+  unknown. _Windows:_ the Start menu was read once and kept until CursorPie quit, so an app installed later never
   appeared, and a program that was once not found was never looked for again; apps that start through an
-  `Update.exe` (Discord, GitHub Desktop, Slack, Postman) were dropped as updaters. *Linux:* desktop entries in
+  `Update.exe` (Discord, GitHub Desktop, Slack, Postman) were dropped as updaters. _Linux:_ desktop entries in
   folders below `applications/` (`kde4/`, `wine/Programs/`) and entries with a byte that is not UTF-8 were skipped, the
   names in the language of the desktop were not searchable, and the Nix directories were not read. The search now
   also looks at the other names of an app and ignores spaces and punctuation (`vs code`, `whats app`).
@@ -915,18 +919,18 @@
 
 - **New: Telegram folders, mentions and a way to skip muted chats.** Three new commands for Telegram Web: `chat.folder`
   (go to a folder tab by name or number, so `chat.next_unread` then walks that folder), `chat.folders` (the folder names,
-  for a flow; it reads names, so it needs *Allow reading messages* and is flagged like `chat.unread_names`) and
+  for a flow; it reads names, so it needs _Allow reading messages_ and is flagged like `chat.unread_names`) and
   `chat.next_mention` (the next chat where somebody mentioned you, muted ones included). They always act on a Telegram tab,
   also when WhatsApp is the one in front, and refuse `@whatsapp`. The new option **Skip muted chats** (on by default) makes
   `chat.next_unread`, `chat.prev_unread`, `chat.unread_names` and the count read from the chat list leave out muted chats;
   the number in the page title is not changed. Turn it off for the old behaviour.
-- **New: saved replies.** Write short texts in the options (*Saved replies*, JSON: `{"omw": "On my way, back at {time}"}`)
+- **New: saved replies.** Write short texts in the options (_Saved replies_, JSON: `{"omw": "On my way, back at {time}"}`)
   and use `chat.template omw` in the open chat or `chat.template omw :: Anna` to send it to a chat (checked like
   `chat.send_to`). `{time}` and `{date}` are filled in, and `{name}` / `{first}` with the chat's name: the one after `::`,
-  else the open chat's, which needs *Allow reading messages*. It sends only with *Allow sending messages* on, else it only
+  else the open chat's, which needs _Allow reading messages_. It sends only with _Allow sending messages_ on, else it only
   types it, and an imported flow that has it is flagged like `chat.send`. `chat.templates` gives the names, not the texts.
 - **New: open a Telegram chat by @username.** `chat.open @durov`, `chat.draft_to @durov :: hi` and `chat.template omw ::
-  @durov` go by address, so they do not depend on the language of the page or on the search box. The chat that opened shows
+@durov` go by address, so they do not depend on the language of the page or on the search box. The chat that opened shows
   the person's name, not the @username, so it cannot be checked: these type the message but `chat.send_to @user` and a saved
   reply to an @username **never send** (they say so). Nothing is typed when the open chat did not change.
 - **New: two example flows for Telegram**, `telegram-folder-triage` (ask for a folder, show its unread chats, offer to open
@@ -936,7 +940,7 @@
   and `is_sensitive` has `chat.template`. New tests in `tests/browser-extension/chat-telegram.test.js` (no jsdom) and
   `bridge::commands`. The selectors for muted chats, mentions and folders (`muted`, `mention`, `folders`, with the usual
   overrides) were written from how Telegram Web looks and are not checked against the live site: if a command does not find
-  its tab, put a working selector first in *Selector overrides*.
+  its tab, put a working selector first in _Selector overrides_.
 - **New: a flow can read a chat and wait for the answer.** Six new browser commands for WhatsApp Web and Telegram Web:
   `chat.unread` (how many chats wait, a plain number), `chat.who` (which chat is open), `chat.unread_names` (the names of
   the chats that wait), `chat.last` (the last message that came), `chat.read` (the last messages, `them:` / `me:`) and
@@ -952,29 +956,29 @@
 - **Changed: a command that reads a chat is flagged like one that sends.** An imported flow or profile that has
   `chat.who`, `chat.unread_names`, `chat.last`, `chat.read` or `chat.wait` is flagged, and its block is red.
 - **Changed: the privacy page of the extension no longer says that it never reads a message.** It says what is read, by
-  which commands, and only with *Allow reading messages* on. `docs/BROWSER_EXTENSION.md` lists the new commands and
+  which commands, and only with _Allow reading messages_ on. `docs/BROWSER_EXTENSION.md` lists the new commands and
   options (and 87 commands, and 10 minutes where it said 2 by mistake).
 - **New: two example flows for chats**, `quick-reply-unread-chats` (an unread chat at a time, a person types and confirms
   each reply, then `chat.send_to`) and `send-then-wait-for-answer`, in `docs/examples/flows/`, in the AI kit and in the
   tests, which run both against a scripted host.
 - **Flow canvas: an inspector for the selected block, and a way to follow a variable.** Clicking a block now opens a
-  panel at the right of the canvas (a press anywhere in the block selects it, not only its header). Its *Block* page
-  edits the block's settings, lists its problems in words, and shows what it *reads* (is it set before this block? which
-  blocks can the value come from?) and *writes* (which blocks read it afterwards?), each block a button that jumps to
-  it. Its *Variables* page lists every variable of the flow with who sets and who reads it, and marks one that is read
+  panel at the right of the canvas (a press anywhere in the block selects it, not only its header). Its _Block_ page
+  edits the block's settings, lists its problems in words, and shows what it _reads_ (is it set before this block? which
+  blocks can the value come from?) and _writes_ (which blocks read it afterwards?), each block a button that jumps to
+  it. Its _Variables_ page lists every variable of the flow with who sets and who reads it, and marks one that is read
   where nothing sets it. Following a variable rings the blocks that set it in green and the ones that read it in blue
   on the canvas and draws dashed lines along which its value travels. The analysis is public in
   `config::flow_check` (`variables`, `data_edges`, `is_set_before`, `block_reads`, `block_writes`).
 - **A panel's height can be set, not only its width.** A panel used to be as tall as its content needed, with no way to
   change it. The panel description has a new optional `height` (200 to 900 points; without it nothing changes), and the
-  panel designer has a *Height* control under *Width*: *Auto* keeps fitting the content, *Fixed* gives a slider. With a
+  panel designer has a _Height_ control under _Width_: _Auto_ keeps fitting the content, _Fixed_ gives a slider. With a
   fixed height a taller content scrolls in the body and the buttons stay at the bottom; a shorter one leaves room above
   the buttons. A panel is still never taller than the display leaves room for.
 - **An update now brings the program's other files along, and the browser extension reloads itself.** An update used to
   replace only the executable, so everything CursorPie had written outside it stayed as the old release left it, and after
   every update the browser extension had to be exported again and reloaded by hand. The first start of a new version now
   writes those files again (`src/refresh.rs`): the browser extension folder (when it was exported before), the login entry
-  (when *Launch at login* is on, from an ordinary install only), and on Linux the desktop entry (when it is still
+  (when _Launch at login_ is on, from an ordinary install only), and on Linux the desktop entry (when it is still
   CursorPie's own) and the GNOME Shell extension (when installed). The app then asks the extension in the browser to
   reload itself, once per version, so nobody goes to the extensions page. `config.json`, its backups and everything else
   that is yours are never touched. It works the same however the new version got there (the update button, Setup, a disk
@@ -986,22 +990,22 @@
   which is why the zoom stopped at 125% (150% in the designer). The text is now laid out again at the zoomed size, so
   it is as crisp as a vector drawing at any zoom, and both go up to 400% (the Flow canvas from 30%, the designer from
   50%). Lines, dots and boxes were already sharp.
-- **New: a flow can call the browser extension and wait for it.** The *System* block has a new operation, **Browser
-  command** (*Do something > Browser command*): the command line (`media.next`, `tab.find {{word}}`...) goes to the
+- **New: a flow can call the browser extension and wait for it.** The _System_ block has a new operation, **Browser
+  command** (_Do something > Browser command_): the command line (`media.next`, `tab.find {{word}}`...) goes to the
   extension, the block waits for the answer, `ok` says whether it worked and a variable gets the browser's words (`tab.url`,
   `tab.count`, `media.state` and the other questions answer there, and a failure says why). A command that sends a message
   or closes a window makes the block red. The checker reads a command that is written out (`bad-browser-command`). New
   questions for flows: `tab.url`, `tab.count`, `media.state` (`playing`, `paused` or `none`). See
-  `docs/BROWSER_EXTENSION.md`, *Using the commands in a flow*.
+  `docs/BROWSER_EXTENSION.md`, _Using the commands in a flow_.
 - **Fixed: the answer of a browser command was thrown away.** The extension said how a command went, but the app only showed
   it as a notification, so nothing could wait for it. The bridge now keeps who waits for which command and gives the answer
   to that one (and only to the browser the command went to); a browser that goes away ends the wait at once.
 - **Fixed: "Starting one player pauses the others" woke the wrong player.** Pausing the others made the extension remember
-  the paused tab as the one that played last, so *Play* after a *Pause* resumed the player that had just been silenced.
+  the paused tab as the one that played last, so _Play_ after a _Pause_ resumed the player that had just been silenced.
 - **Fixed: `ui.video` was missing from `docs/BROWSER_EXTENSION.md`**, which made the test that every command is documented
   fail; the count of commands in that page was out of date too.
 - **Fixed: two bridge log lines used the field names `cmd` and `command`**, which `cargo tools diag-lint` refuses.
-- **Fixed: `docs/flow.schema.json` listed only 16 of the *System* operations**, so a flow that used any later one (folders,
+- **Fixed: `docs/flow.schema.json` listed only 16 of the _System_ operations**, so a flow that used any later one (folders,
   copy, volume...) did not validate. It lists all of them now.
 
 - **New: the Flow tab can fill the whole display.** The capsule that floats at the bottom of the Flow tab (the round
@@ -1014,7 +1018,7 @@
   being cut off; numbers (smallest / largest, starts at / step) sit side by side; the sheet is as big as the window
   allows (more in full screen).
 
-- **New: a visual panel designer.** The *Ask* block in Panel mode has a **Design...** button that opens a sheet: add
+- **New: a visual panel designer.** The _Ask_ block in Panel mode has a **Design...** button that opens a sheet: add
   widgets with a click, start from a template, see the real panel (the same drawing a flow uses) and click a widget to
   edit it in the inspector. No JSON to type; every change is written to the block at once and can be undone. The rules
   (new widgets, moving, copying, renaming without breaking a condition, options as lines of text, templates) are in the
@@ -1024,7 +1028,7 @@
   so a form can show a field only when another one says so. What the designer writes is short JSON (defaults left out,
   plain options as texts). See `docs/PANELS.md`.
 
-- **New: panels, a base for interactive windows.** Until now CursorPie could only *announce* (the pill) or ask through
+- **New: panels, a base for interactive windows.** Until now CursorPie could only _announce_ (the pill) or ask through
   a window of the system (a text, yes or no). A **panel** is a small window of CursorPie's own with a title, widgets
   (text, boxes, switches, sliders, single and multiple choice lists with search, a progress bar) and up to four buttons,
   in the look of Settings, that hands back what the person entered. It is plain data (JSON, `docs/PANELS.md`), so flows,
@@ -1034,15 +1038,15 @@
   the first frame, and `panel::ask` for any thread. It is a fourth mode of the one window: not click-through, takes the
   keyboard, placed next to the pointer, centered or at an edge; the pie and Settings take it over (the panel is answered
   as cancelled), and a panel asked for while the window is busy waits in a short queue.
-- **New: the *Ask* block has a Panel mode.** The block's text is the JSON of a panel; every field sets the variable
+- **New: the _Ask_ block has a Panel mode.** The block's text is the JSON of a panel; every field sets the variable
   named by its `id`, `out` gets the button that was pressed, `ok` says whether a confirming button was. Variables are
-  filled into the *texts* of the panel after the JSON is read, so a value cannot add a widget. The editor's checks know
+  filled into the _texts_ of the panel after the JSON is read, so a value cannot add a widget. The editor's checks know
   the variables of the fields. Example: `docs/examples/flows/panel-form.cursorpie-flow.json`. New `Host::ask_panel`
   (default: cannot).
 - **New: the browser extension can show panels.** Bridge messages `panel`, `panel_update`, `panel_close` and
   `panel_result`; `CP.ui` in the extension (`show`, `update`, `close`, `confirm`, `prompt`, `pick`) in new `ui.js`; a new
   group of commands, **Panels**: `ui.tabs` (searchable list of open tabs), `ui.find_tab`, `ui.confirm_close_others`,
-  `ui.media`. Off by default: Settings, Behavior, *Let the browser extension show panels* (`extension_panels`; needs
+  `ui.media`. Off by default: Settings, Behavior, _Let the browser extension show panels_ (`extension_panels`; needs
   the bridge). The app checks every description, allows 4 waiting panels and 5 minutes each, and lets an extension
   change only its own panels. New config fields `panels` (flows, default on) and `extension_panels` (default off).
   Not compiled or run on a machine here: see "Known limits" in `docs/PANELS.md`; the JavaScript tests
@@ -1093,7 +1097,7 @@
 
 - **Fix: the pie did not show (or the press was lost) after starting or a long idle time, and Settings opened instead.**
   A held trigger opens the pie and, if the pie is still untouched after `settings_hold_ms`, Settings in its place. That
-  second step was judged by the clock alone, counted from the moment the tap *asked* for the pie. When the window was
+  second step was judged by the clock alone, counted from the moment the tap _asked_ for the pie. When the window was
   slow to show it (first press after the program started or after a long idle time) the person saw nothing, kept
   holding, and Settings opened over the missing pie; releasing early looked like a lost press that had to be repeated.
   Now the UI tells the tap when the pie has really been drawn (`tap::pie_painted`, on the second drawn frame, so the
@@ -1130,7 +1134,7 @@
   removes duplicates, shuffles and adds up; the new **For each item** block goes through a list one item at a time. A
   list is a variable that holds a JSON array like `["a","b"]`, so it can be shown, saved or handed to a command.
   `{{name}}` takes **filters** that can be chained (`{{name|trim|upper}}`): `trim upper lower title reverse len int
-  round abs num bool json url basename dirname ext count first last join item default replace` besides `sh`. The
+round abs num bool json url basename dirname ext count first last join item default replace` besides `sh`. The
   **System** block has twelve more operations: list a folder, make a folder, copy, move or rename, delete a file (never
   a folder), a file's size and change time, facts about this computer, speak a text, save a screenshot, read and set the
   volume. The red-wire check and the failure report know all of it (a list that was never made, a body that does not
@@ -1402,7 +1406,7 @@
   pointer speed (`CURSORPIE_PAD_GAIN` changes it). Without write access to `/dev/uinput` the pad is not grabbed at all,
   so the cursor keeps moving and only the swallowing of the extra click and scroll is lost.
 - **Linux, Wayland session: the app starts again instead of failing with `Glutin(NotSupported("provided native
-  window is not supported"))`.** The window was meant to run through XWayland (only eframe's `x11` feature is asked
+window is not supported"))`.** The window was meant to run through XWayland (only eframe's `x11` feature is asked
   for), but eframe's `accesskit` feature pulls in `accesskit_winit`, whose default features switch on `winit/wayland`;
   winit prefers Wayland whenever `WAYLAND_DISPLAY` is set, so the pie got a native Wayland window that glutin could not
   make an EGL surface for. `run()` now forces winit's X11 backend when `DISPLAY` is set (`force_x11`).
@@ -1424,7 +1428,7 @@
 - **The first press after a long idle time is no longer slow, and the listeners keep listening (macOS, Windows).**
   After minutes of doing nothing the pie sometimes took long to appear, or the press seemed lost and had to be
   repeated. These are the causes found by reading the code (not yet reproduced on a machine), each addressed:
-  *Windows* trimmed the whole working set when the UI went to sleep (`SetProcessWorkingSetSize(-1, -1)`), which also
+  _Windows_ trimmed the whole working set when the UI went to sleep (`SetProcessWorkingSetSize(-1, -1)`), which also
   evicted the code of the mouse hooks and the UI, so the next press page-faulted it all back in; a low-level hook
   that answers too slowly is dropped by Windows. Sleep now compacts the heap (`HeapCompact`), which gives back freed
   memory and leaves what is in use alone. Windows can also remove low-level hooks silently (it is known to after a slow
@@ -1434,13 +1438,13 @@
   15 s); a watchdog tick that arrives more than 10 s late means the machine slept, and the hooks are then
   reinstalled before the first press. The hook thread runs a little above normal priority, and the process opts out of power throttling (EcoQoS)
   and of the timer-resolution rule for hidden programs, which Windows 11 applies to a program with no window.
-  *macOS* can put the hidden accessory app into App Nap, which stretches timers (the hold timer, the trackpad thread) and
+  _macOS_ can put the hidden accessory app into App Nap, which stretches timers (the hold timer, the trackpad thread) and
   lowers thread priority; the process now declares a user-initiated activity that still lets the Mac sleep. The event
   tap is now looked at every 2 s and turned on again when macOS switched it off while nothing was calling the
   callback. The trackpad source decided "the Mac slept" with `Instant`, which does not count sleep, so a real sleep
   went unnoticed (the trackpad stayed dead until a restart) while a throttled thread was taken for one and restarted
   a healthy source; it now also compares the wall clock.
-  *Both:* sleep emptied the whole icon cache, which saved a few KiB and made the first pie decode its icons (a
+  _Both:_ sleep emptied the whole icon cache, which saved a few KiB and made the first pie decode its icons (a
   multi-size TIFF each on macOS) while the hold timer ran. The icons of the general pie now stay decoded
   (`icons_to_keep_asleep`, at most 32 strings). New: `platform::stay_responsive`, `IconCache::keep_only`,
   `platform/windows/power.rs`, `platform/macos/activity.rs`. Not yet run on Windows or on a Mac: check with

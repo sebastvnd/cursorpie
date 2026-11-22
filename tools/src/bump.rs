@@ -601,6 +601,7 @@ pub fn check(root: &Path, tag: Option<&str>) -> Result<Vec<String>, String> {
     let lock = read(CARGO_LOCK).ok();
     let changelog = read(CHANGELOG)?;
     let mut problems = disagreements(version, lock.as_deref(), &changelog);
+    problems.extend(crate::diagseal::problems(root)?);
     if let Some(tag) = tag {
         problems.extend(tag_problems(version, tag, &changelog));
     }
