@@ -23,8 +23,9 @@ use crate::ui::app::App;
 use crate::ui::settings::theme::*;
 use crate::ui::settings::widgets::*;
 use crate::ui::symbols;
+use crate::update::install::{self, Progress, Step};
 use crate::update::{Outcome, Status};
-use eframe::egui::{self, Vec2};
+use eframe::egui::{self, Color32, Pos2, Rect, Vec2};
 
 /// What the sheet asked for this frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,6 +87,80 @@ fn progress_text(needs_password: bool) -> String {
     text
 }
 
+/// What the progress sheet says over the bar, and the numbers at its right.
+fn progress_label(p: Progress) -> (&'static str, String) {
+    match p.step {
+        Step::Looking => ("Looking for the package\u{2026}", String::new()),
+        Step::Downloading => {
+            let numbers = match p.fraction() {
+                Some(f) => format!("{:.0} %", (f * 100.0).floor()),
+                None => String::new(),
+            };
+            ("Downloading\u{2026}", numbers)
+        }
+        Step::Checking => ("Checking the download\u{2026}", "100 %".to_string()),
+        Step::Preparing => ("Getting it ready\u{2026}", "100 %".to_string()),
+    }
+}
+
+/// "12.4 of 31.0 MB" under the bar while the size is known.
+fn progress_sizes(p: Progress) -> String {
+    let mb = |b: u64| b as f64 / (1024.0 * 1024.0);
+    if p.step == Step::Downloading && p.total > 0 {
+        format!("{:.1} of {:.1} MB", mb(p.done), mb(p.total))
+    } else {
+        String::new()
+    }
+}
+
+/// An animated progress bar. With `Some(fraction)` the fill glides to it and a soft shine runs
+/// along the fill; with `None` a short piece runs back and forth on the track.
+fn progress_bar(ui: &mut egui::Ui, ctx: &egui::Context, fraction: Option<f32>, accent: Color32) {
+    const H: f32 = 12.0;
+    let (rect, _) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), H), egui::Sense::hover());
+    let t = ctx.input(|i| i.time) as f32;
+    let painter = ui.painter();
+    let r = H / 2.0;
+    painter.rect_filled(rect, r, pal().idle);
+    let track = painter.with_clip_rect(rect);
+    match fraction {
+        Some(target) => {
+            let shown = ctx.animate_value_with_time(ui.id().with("bar"), target, 0.3);
+            let fill = Rect::from_min_size(
+                rect.min,
+                Vec2::new((rect.width() * shown).max(H.min(rect.width())), H),
+            );
+            if shown > 0.0 {
+                track.rect_filled(fill, r, accent);
+                // a soft band of light that runs along the fill again and again
+                let band = 70.0_f32;
+                let x = fill.min.x - band + (t * 0.55 % 1.0) * (fill.width() + band);
+                let glint = Rect::from_min_max(
+                    Pos2::new(x.max(fill.min.x), fill.min.y),
+                    Pos2::new((x + band).min(fill.max.x), fill.max.y),
+                );
+                if glint.width() > 0.0 {
+                    track
+                        .with_clip_rect(fill)
+                        .rect_filled(glint, r, Color32::from_white_alpha(70));
+                }
+            }
+        }
+        None => {
+            let piece = rect.width() * 0.3;
+            // 0 -> 1 -> 0: back and forth, slowing down at the ends
+            let k = 0.5 - 0.5 * (t * 1.6).cos();
+            let x = rect.min.x + (rect.width() - piece) * k;
+            track.rect_filled(
+                Rect::from_min_size(Pos2::new(x, rect.min.y), Vec2::new(piece, H)),
+                r,
+                accent,
+            );
+        }
+    }
+}
+
 /// What the result sheet says: its title, the text under it and whether it is good news.
 fn done_text(outcome: Outcome) -> (String, String, bool) {
     match outcome {
@@ -118,7 +193,8 @@ impl App {
             return;
         };
         let needs_password = self.ed.update_needs_password;
-        let height = if needs_password { 330.0 } else { 300.0 };
+        let height = if needs_password { 400.0 } else { 370.0 };
+        let progress = install::progress();
         // the close button and a click outside mean nothing here: the download goes on
         let (_floating, ()) = sheet(
             ctx,
@@ -127,19 +203,29 @@ impl App {
             Vec2::new(560.0, height),
             "Updating CursorPie",
             |ui| {
+                sheet_heading(
+                    ui,
+                    symbols::DOWNLOAD_SIMPLE,
+                    accent,
+                    &format!("Downloading CursorPie {version}"),
+                );
+                let (what, percent) = progress_label(progress);
                 ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 10.0;
-                    ui.add(egui::Spinner::new().size(18.0).color(accent));
-                    ui.label(crate::ui::fonts::title(
-                        format!("Downloading CursorPie {version}\u{2026}"),
-                        15.0,
-                        pal().text,
-                    ));
+                    ui.label(egui::RichText::new(what).size(13.5).color(pal().text));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(crate::ui::fonts::title(percent, 14.0, pal().text));
+                    });
                 });
                 ui.add_space(6.0);
+                progress_bar(ui, ctx, progress.fraction(), accent);
+                ui.add_space(4.0);
+                muted(ui, &progress_sizes(progress));
+                ui.add_space(GAP);
                 sheet_text(ui, &progress_text(needs_password));
             },
         );
+        // the bar moves with the file: look again soon
+        ctx.request_repaint_after(std::time::Duration::from_millis(50));
     }
 
     /// Draws the result sheet while `Ed::update_done` is set; any way of closing it ends it.
@@ -288,6 +374,21 @@ mod tests {
         let text = progress_text(false);
         assert!(text.contains("closes by itself") && text.contains("starts again"));
         assert!(progress_text(true).contains("password"));
+    }
+
+    #[test]
+    fn the_progress_sheet_names_the_step_and_the_size() {
+        let at = |step, done, total| Progress { step, done, total };
+        let (what, pct) = progress_label(at(Step::Downloading, 50, 200));
+        assert!(what.starts_with("Downloading") && pct == "25 %");
+        assert_eq!(progress_label(at(Step::Looking, 0, 0)).1, "");
+        assert_eq!(progress_label(at(Step::Checking, 9, 9)).1, "100 %");
+        let mib = 1024 * 1024;
+        assert_eq!(
+            progress_sizes(at(Step::Downloading, 5 * mib, 20 * mib)),
+            "5.0 of 20.0 MB"
+        );
+        assert_eq!(progress_sizes(at(Step::Checking, 20 * mib, 20 * mib)), "");
     }
 
     #[test]

@@ -224,7 +224,9 @@
       active = i;
       slides.forEach((slide, n) => slide.classList.toggle('is-active', n === i));
       dots.forEach((dot, n) => dot.setAttribute('aria-current', String(n === i)));
-      if (count) count.textContent = (i + 1) + ' / ' + slides.length;
+      if (count) count.textContent = String(i + 1).padStart(2, '0') + ' / ' + String(slides.length).padStart(2, '0');
+      const stage = track.parentElement;
+      if (stage) stage.style.setProperty('--tour-glow', getComputedStyle(slides[i]).getPropertyValue('--accent').trim());
       if (prev) prev.disabled = i === 0;
       if (next) next.disabled = i === slides.length - 1;
     }
@@ -254,6 +256,42 @@
         if (best !== active) paint(best);
       });
     }, { passive: true });
+
+    // a clip that is not in the middle is brought there by a click on it
+    let dragged = false;
+    slides.forEach((slide, n) => slide.addEventListener('click', () => {
+      if (!dragged && n !== active) go(n);
+    }));
+    // the loading shimmer stops when the picture is there
+    slides.forEach((slide) => {
+      const img = $('img', slide);
+      const box = $('.tour-media', slide);
+      if (!img || !box) return;
+      const done = () => box.classList.add('is-loaded');
+      if (img.complete && img.naturalWidth) done();
+      else { img.addEventListener('load', done, { once: true }); img.addEventListener('error', done, { once: true }); }
+    });
+    // drag with the mouse (touch and trackpads already scroll by themselves)
+    let drag = null;
+    track.addEventListener('pointerdown', (e) => {
+      if (e.pointerType !== 'mouse' || e.button !== 0) return;
+      drag = { x: e.clientX, left: track.scrollLeft, moved: false };
+    });
+    window.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      const dx = e.clientX - drag.x;
+      if (!drag.moved && Math.abs(dx) > 5) { drag.moved = true; track.classList.add('is-drag'); }
+      if (drag.moved) track.scrollLeft = drag.left - dx;
+    });
+    const endDrag = () => {
+      if (!drag) return;
+      const moved = drag.moved;
+      drag = null;
+      track.classList.remove('is-drag');
+      if (moved) { dragged = true; setTimeout(() => { dragged = false; }, 0); go(active); }
+    };
+    window.addEventListener('pointerup', endDrag);
+    window.addEventListener('pointercancel', endDrag);
 
     if (prev) prev.addEventListener('click', () => go(active - 1));
     if (next) next.addEventListener('click', () => go(active + 1));

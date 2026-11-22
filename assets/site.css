@@ -534,22 +534,41 @@ a.bcard:focus-visible{outline-offset:4px}
 /* See it in motion: the demo GIFs (docs/gifs) in one sideways slider (CSS scroll-snap, so it also works without
    JavaScript). Every slide keeps the clips' 16:9 shape while it loads. The track has padding so the hard shadows
    are not cut off by its overflow. */
-.tour-slider{margin-top:36px}
-.tour{display:flex;gap:24px;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding:6px 6px 14px;margin:0 -6px}
+.tour-slider{--tour-w:min(760px,78vw);margin-top:44px;width:100vw;margin-left:calc(50% - 50vw);position:relative}
+/* a soft colour wash behind the stage, so the clips sit on something instead of on the bare page */
+.tour-slider::before{content:"";position:absolute;inset:6% 12% 18%;z-index:-1;border-radius:50%;filter:blur(90px);opacity:.38;pointer-events:none;background:radial-gradient(closest-side,var(--tour-glow,var(--violet)),transparent);transition:background .6s}
+.tour{display:flex;gap:28px;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding:34px 0 120px;counter-reset:clip;cursor:grab;
+  -webkit-mask-image:linear-gradient(90deg,transparent,#000 14%,#000 86%,transparent);mask-image:linear-gradient(90deg,transparent,#000 14%,#000 86%,transparent)}
 .tour::-webkit-scrollbar{display:none}
-.tour:focus-visible{outline:3px solid var(--sky);outline-offset:4px;border-radius:24px}
-.tour-item{flex:0 0 min(720px,88%);margin:0;scroll-snap-align:center;border:2px solid var(--ink);border-radius:24px;background:var(--card);box-shadow:var(--hard);overflow:hidden;opacity:.55;transition:opacity .3s,transform .3s var(--ease)}
-.tour-item.is-active{opacity:1}
-.tour-item:first-child{margin-left:max(0px,calc((100% - min(720px,88%)) / 2))}
-.tour-item:last-child{margin-right:max(0px,calc((100% - min(720px,88%)) / 2))}
-.tour-item img{display:block;width:100%;height:auto;aspect-ratio:16/9;background:var(--bg-2)}
-.tour-item figcaption{padding:14px 18px 16px;border-top:2px solid var(--ink);font-weight:800;line-height:1.4}
-.tour-controls{display:flex;align-items:center;justify-content:center;gap:16px;margin-top:18px}
-.tour-btn:disabled{opacity:.35;cursor:default;transform:none}
-.tour-dots{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;max-width:360px}
-.tour-dot{width:12px;height:12px;padding:0;border:2px solid var(--ink);border-radius:50%;background:var(--card);cursor:pointer;transition:transform .18s var(--ease),background .2s}
-.tour-dot:hover{transform:scale(1.2)}
-.tour-dot[aria-current="true"]{background:var(--lime);transform:scale(1.25)}
-.tour-count{min-width:3.6em;text-align:center;font-weight:800;font-variant-numeric:tabular-nums}
-@media (max-width:760px){.tour{gap:16px}.tour-item{flex-basis:90%}.tour-dots{display:none}}
-@media (prefers-reduced-motion:reduce){.tour{scroll-behavior:auto}.tour-item{transition:none}}
+.tour.is-drag{scroll-snap-type:none;cursor:grabbing;user-select:none}
+.tour:focus-visible{outline:3px solid var(--violet);outline-offset:-6px;border-radius:32px}
+.tour-item{--accent:var(--violet);counter-increment:clip;position:relative;flex:0 0 var(--tour-w);margin:0;scroll-snap-align:center;border:1px solid color-mix(in srgb,var(--ink) 16%,transparent);border-radius:28px;background:var(--card);overflow:hidden;
+  opacity:.45;transform:scale(.9);filter:saturate(.65);transform-origin:50% 60%;transition:opacity .45s var(--ease),transform .55s var(--ease),filter .45s,box-shadow .45s var(--ease);
+  box-shadow:0 10px 30px -14px rgba(20,17,15,.25)}
+.tour-item:first-child{margin-left:max(0px,calc((100% - var(--tour-w)) / 2))}
+.tour-item:last-child{margin-right:max(0px,calc((100% - var(--tour-w)) / 2))}
+.tour-item.is-active{opacity:1;transform:none;filter:none;cursor:default;
+  box-shadow:0 0 0 1.5px var(--ink),0 36px 70px -24px color-mix(in srgb,var(--accent) 70%,transparent),0 18px 40px -18px rgba(20,17,15,.35)}
+.tour-item:not(.is-active):hover{opacity:.75;transform:scale(.92)}
+/* the title bar of a little window: three dots at the left, what the clip is about at the right */
+.tour-bar{display:flex;align-items:center;gap:7px;height:44px;padding:0 18px;background:color-mix(in srgb,var(--ink) 4%,var(--card));border-bottom:1px solid color-mix(in srgb,var(--ink) 10%,transparent)}
+.tour-bar i{width:11px;height:11px;border-radius:50%;background:color-mix(in srgb,var(--ink) 18%,transparent);transition:background .3s}
+.tour-item.is-active .tour-bar i:nth-child(1){background:var(--pink)}
+.tour-item.is-active .tour-bar i:nth-child(2){background:var(--orange)}
+.tour-item.is-active .tour-bar i:nth-child(3){background:var(--green)}
+.tour-bar::after{content:attr(data-tag);margin-left:auto;padding:4px 12px;border-radius:999px;background:color-mix(in srgb,var(--accent) 24%,var(--card));box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 60%,transparent);font-size:.72rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;line-height:1.5}
+.tour-media{position:relative;aspect-ratio:16/9;overflow:hidden;background:linear-gradient(100deg,var(--bg-2) 30%,color-mix(in srgb,var(--ink) 9%,var(--bg-2)) 50%,var(--bg-2) 70%) 0 0/220% 100%;animation:tourShimmer 1.4s linear infinite}
+.tour-media.is-loaded{animation:none;background:var(--bg-2)}
+.tour-media img{display:block;width:100%;height:100%;object-fit:cover;-webkit-user-drag:none;user-select:none}
+@keyframes tourShimmer{to{background-position:-220% 0}}
+.tour-item figcaption{display:flex;align-items:center;gap:14px;padding:16px 20px 18px;font-weight:800;font-size:1.02rem;line-height:1.35;letter-spacing:-.01em}
+.tour-item figcaption::before{content:counter(clip,decimal-leading-zero);flex:none;display:grid;place-items:center;min-width:2.3em;height:2.3em;border-radius:12px;background:var(--accent);color:#14110f;font:800 .8rem/1 var(--mono);letter-spacing:0}
+.tour-controls{display:flex;align-items:center;justify-content:center;gap:18px;margin:-82px auto 0;position:relative;z-index:1;width:fit-content;max-width:calc(100% - 32px);padding:8px;border:1px solid color-mix(in srgb,var(--ink) 14%,transparent);border-radius:999px;background:color-mix(in srgb,var(--card) 78%,transparent);-webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);box-shadow:var(--soft)}
+.tour-btn:disabled{opacity:.3;cursor:default;transform:none;background:var(--card);color:var(--ink)}
+.tour-dots{display:flex;align-items:center;gap:5px;width:min(380px,44vw)}
+.tour-dot{flex:1 1 0;min-width:0;height:22px;padding:0;border:0;background:color-mix(in srgb,var(--ink) 16%,transparent);background-clip:content-box;border-top:8px solid transparent;border-bottom:8px solid transparent;border-radius:999px;cursor:pointer;transition:flex-grow .45s var(--ease),background-color .3s}
+.tour-dot:hover{background-color:color-mix(in srgb,var(--ink) 34%,transparent)}
+.tour-dot[aria-current="true"]{flex-grow:3.4;background-image:linear-gradient(90deg,var(--pink),var(--violet),var(--sky));background-color:transparent}
+.tour-count{min-width:4.6em;padding-right:10px;text-align:right;font:800 .9rem/1 var(--mono);font-variant-numeric:tabular-nums;color:var(--muted)}
+@media (max-width:760px){.tour{gap:16px;padding-bottom:100px;-webkit-mask-image:linear-gradient(90deg,transparent,#000 4%,#000 96%,transparent);mask-image:linear-gradient(90deg,transparent,#000 4%,#000 96%,transparent)}.tour-slider{--tour-w:86vw}.tour-dots{display:none}.tour-controls{gap:14px}.tour-bar{height:38px}.tour-item figcaption{font-size:.95rem;padding:14px 16px 16px}}
+@media (prefers-reduced-motion:reduce){.tour{scroll-behavior:auto}.tour-item,.tour-dot{transition:none}.tour-media{animation:none}}

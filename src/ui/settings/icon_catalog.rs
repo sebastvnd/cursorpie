@@ -416,7 +416,7 @@ mod tests {
         let names: Vec<String> = got
             .icons
             .iter()
-            .map(|i| i.rsplit('/').next().unwrap().to_string())
+            .map(|i| i.rsplit(['/', '\\']).next().unwrap().to_string())
             .collect();
         assert_eq!(
             names,

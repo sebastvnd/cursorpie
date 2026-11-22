@@ -4,6 +4,16 @@
 
 ## 0.9.3
 
+- **New: the download of an update shows a progress bar.** The sheet _Updating CursorPie_ now has a bar that fills as the
+  package comes in, with the percentage and "12.4 of 31.0 MB" under it, and a soft shine that runs along the fill. While
+  CursorPie looks for the package the bar is a piece that runs back and forth, and it is full while the download is
+  checked and prepared. The size is read from the file on disk, so it works the same with `curl` and with `wget`.
+
+- **Improved: the video cards of the website.** The clips of _Watch it work_ are now little windows (title bar, a tag
+  for what the clip is about, a numbered caption) on a full-width stage. The clip in the middle is lifted and glows in
+  the colour of its tag, the others sit smaller and faded, and the edges of the stage fade out. A click on a card brings
+  it to the middle, the mouse can drag the row, and a thin progress rail replaces the dots.
+
 - **Fixed: the sheet _Icon from a website_ grew wider when the icon arrived.** The address row kept 112 points for its
   button, but _Fetch again_ is wider, so the row overflowed and pushed the sheet out by about 30 points. The button now
   keeps its own width and the field takes what is left, so the sheet has the same width while loading and after.

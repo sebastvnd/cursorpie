@@ -30,6 +30,8 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
+use std::time::Duration;
 
 /// Longest a download takes before it is given up, in seconds.
 const DOWNLOAD_TIMEOUT_S: u64 = 600;
@@ -764,6 +766,7 @@ pub fn prepare() -> Result<Staged, InstallError> {
 ///
 /// See [`prepare`].
 pub fn prepare_with(want: Want) -> Result<Staged, InstallError> {
+    reset_progress();
     let os = platform::OS;
     let InstallPlan {
         target,
@@ -825,11 +828,13 @@ pub fn prepare_with(want: Want) -> Result<Staged, InstallError> {
             e
         }
     };
-    if let Err(e) = http::download(&url, &package, DOWNLOAD_TIMEOUT_S, MAX_PACKAGE_BYTES) {
+    if let Err(e) = download_watched(&url, &package, asset.size) {
         return Err(failed(InstallError::from(e)));
     }
+    set_step(Step::Checking);
     verify(&package, asset.size, &expected)
         .and_then(|()| {
+            set_step(Step::Preparing);
             stage(
                 release.version,
                 build,
@@ -841,6 +846,109 @@ pub fn prepare_with(want: Want) -> Result<Staged, InstallError> {
             )
         })
         .map_err(failed)
+}
+
+// ---------------------------------------------------------------------------- progress
+
+/// Where [`prepare_with`] is in its work.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Step {
+    /// Asking GitHub which release and which package.
+    Looking,
+    /// Downloading the package.
+    Downloading,
+    /// Checking the package against the checksum of the release.
+    Checking,
+    /// Unpacking the package and making the copy that will be swapped in.
+    Preparing,
+}
+
+/// A look at the progress of [`prepare_with`], for the sheet that shows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Progress {
+    pub step: Step,
+    /// Bytes of the package on disk so far.
+    pub done: u64,
+    /// Bytes of the package, as the release says (0 until it is known).
+    pub total: u64,
+}
+
+impl Progress {
+    /// How much of the download is done, from 0.0 to 1.0, or `None` when it is not known (the
+    /// size is not known yet, or the step is not the download).
+    pub fn fraction(self) -> Option<f32> {
+        match self.step {
+            Step::Downloading if self.total > 0 => {
+                Some((self.done as f64 / self.total as f64).clamp(0.0, 1.0) as f32)
+            }
+            Step::Checking | Step::Preparing => Some(1.0),
+            _ => None,
+        }
+    }
+}
+
+// One update runs at a time (the UI refuses a second one while the first is busy), so the state
+// of the running one is kept in plain atomics that the worker writes and the UI reads.
+static STEP: AtomicU8 = AtomicU8::new(0);
+static DONE: AtomicU64 = AtomicU64::new(0);
+static TOTAL: AtomicU64 = AtomicU64::new(0);
+
+fn set_step(step: Step) {
+    STEP.store(step as u8, Ordering::Relaxed);
+}
+
+/// The progress of the update that is being prepared (the last one, when none is).
+pub fn progress() -> Progress {
+    let step = match STEP.load(Ordering::Relaxed) {
+        1 => Step::Downloading,
+        2 => Step::Checking,
+        3 => Step::Preparing,
+        _ => Step::Looking,
+    };
+    Progress {
+        step,
+        done: DONE.load(Ordering::Relaxed),
+        total: TOTAL.load(Ordering::Relaxed),
+    }
+}
+
+/// Forgets the progress of the last update.
+fn reset_progress() {
+    set_step(Step::Looking);
+    DONE.store(0, Ordering::Relaxed);
+    TOTAL.store(0, Ordering::Relaxed);
+}
+
+/// [`http::download`] while a second thread reads how big the file on disk has grown, which is
+/// what [`progress`] reports. `curl` and `wget` write into the file as the bytes come in, so this
+/// needs nothing from them.
+fn download_watched(url: &str, package: &Path, total: u64) -> Result<(), HttpError> {
+    TOTAL.store(total, Ordering::Relaxed);
+    DONE.store(0, Ordering::Relaxed);
+    set_step(Step::Downloading);
+    let stop = AtomicBool::new(false);
+    let result = std::thread::scope(|scope| {
+        scope.spawn(|| {
+            while !stop.load(Ordering::Relaxed) {
+                if let Ok(meta) = fs::metadata(package) {
+                    let got = if total > 0 {
+                        meta.len().min(total)
+                    } else {
+                        meta.len()
+                    };
+                    DONE.store(got, Ordering::Relaxed);
+                }
+                std::thread::sleep(Duration::from_millis(80));
+            }
+        });
+        let result = http::download(url, package, DOWNLOAD_TIMEOUT_S, MAX_PACKAGE_BYTES);
+        stop.store(true, Ordering::Relaxed);
+        result
+    });
+    if result.is_ok() {
+        DONE.store(total, Ordering::Relaxed);
+    }
+    result
 }
 
 /// The folder the installed copy lives in (the new copy is made next to it).
@@ -1369,6 +1477,18 @@ mod tests {
         assert!(platform::is_disk_full(&io::Error::from_raw_os_error(full)));
         assert!(!platform::is_disk_full(&io::Error::from_raw_os_error(2)));
         assert!(!platform::is_disk_full(&io::Error::other("x")));
+    }
+
+    #[test]
+    fn the_download_is_a_fraction_only_when_the_size_is_known() {
+        let at = |step, done, total| Progress { step, done, total }.fraction();
+        assert_eq!(at(Step::Looking, 0, 0), None);
+        assert_eq!(at(Step::Downloading, 5, 0), None);
+        assert_eq!(at(Step::Downloading, 0, 200), Some(0.0));
+        assert_eq!(at(Step::Downloading, 50, 200), Some(0.25));
+        assert_eq!(at(Step::Downloading, 900, 200), Some(1.0));
+        assert_eq!(at(Step::Checking, 200, 200), Some(1.0));
+        assert_eq!(at(Step::Preparing, 0, 0), Some(1.0));
     }
 
     #[test]
