@@ -37,7 +37,9 @@ pub const DEFAULT_SPEC: &str = "all";
 #[cfg(any(debug_assertions, feature = "debug-log"))]
 const READ_BYTES: u64 = 2 * 1024 * 1024;
 /// How many of the last lines the panel lists under *Recent events*.
-pub const RECENT: usize = 60;
+pub const RECENT: usize = 300;
+/// How many slices the activity chart of the log is cut into.
+pub const BUCKETS: usize = 60;
 
 fn mode_path() -> PathBuf {
     app_support_dir().join(MODE_FILE)
@@ -107,12 +109,67 @@ pub struct ProblemRow {
     pub first_t: f64,
 }
 
+/// How serious one line of the log is: what the viewer paints it with.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Level {
+    /// An ordinary event.
+    #[default]
+    Info,
+    /// Something worked badly, or was refused.
+    Warning,
+    /// Something did not work.
+    Error,
+}
+
 /// One of the last lines of the log.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RecentRow {
     pub t: f64,
     pub cat: String,
+    /// The event (`press_blocked`), without its category.
+    pub ev: String,
+    /// The other fields as `name=value` text.
+    pub detail: String,
+    pub level: Level,
     pub text: String,
+}
+
+/// How many lines of each level there are (in the whole log, or in one slice of time).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Tally {
+    pub info: u32,
+    pub warnings: u32,
+    pub errors: u32,
+}
+
+impl Tally {
+    /// Counts one line.
+    pub fn add(&mut self, level: Level) {
+        match level {
+            Level::Info => self.info += 1,
+            Level::Warning => self.warnings += 1,
+            Level::Error => self.errors += 1,
+        }
+    }
+
+    /// All the lines.
+    pub fn total(&self) -> u32 {
+        self.info + self.warnings + self.errors
+    }
+}
+
+/// Cuts `points` (the time in seconds and the level of each line) into `n` equal slices of
+/// `0..=seconds`, counting the lines of each level in each slice: the data of the activity chart.
+#[cfg_attr(not(any(debug_assertions, feature = "debug-log")), allow(dead_code))]
+pub fn bucketize(points: &[(f64, Level)], seconds: f64, n: usize) -> Vec<Tally> {
+    let n = n.max(1);
+    let mut out = vec![Tally::default(); n];
+    let span = seconds.max(1e-6);
+    for (t, level) in points {
+        let i = ((t.max(0.0) / span) * n as f64) as usize;
+        out[i.min(n - 1)].add(*level);
+    }
+    out
 }
 
 /// What the newest log says, in plain data (nothing of `diag` leaks into the drawing code, and the
@@ -129,6 +186,10 @@ pub struct Snapshot {
     pub recent: Vec<RecentRow>,
     /// The categories of the log, most lines first.
     pub categories: Vec<(String, usize)>,
+    /// Lines of each level in the whole record.
+    pub levels: Tally,
+    /// The record cut into [`BUCKETS`] slices of time, oldest first (the activity chart).
+    pub timeline: Vec<Tally>,
     /// The report as text, to copy into a bug report.
     pub text: String,
 }
@@ -148,14 +209,38 @@ pub fn snapshot() -> io::Result<Option<Snapshot>> {
     };
     let lines = problems::read_lines(&path, READ_BYTES)?;
     let report = problems::scan(&lines);
-    let recent = problems::tail(&lines, RECENT, None)
-        .into_iter()
-        .map(|e| RecentRow {
-            t: e.t,
-            cat: e.cat.clone(),
-            text: format!("{} {}", e.ev, e.detail()).trim().to_string(),
-        })
+    let entries: Vec<_> = lines
+        .iter()
+        .filter_map(|l| problems::parse_line(l))
         .collect();
+    let level_of = |e: &problems::Entry| match problems::judge(e) {
+        Some((Severity::Error, _)) => Level::Error,
+        Some((Severity::Warning, _)) => Level::Warning,
+        None => Level::Info,
+    };
+    let mut levels = Tally::default();
+    let mut points = Vec::with_capacity(entries.len());
+    let mut rows = Vec::with_capacity(entries.len().min(RECENT));
+    let first_recent = entries.len().saturating_sub(RECENT);
+    for (i, e) in entries.iter().enumerate() {
+        let level = level_of(e);
+        levels.add(level);
+        points.push((e.t, level));
+        if i >= first_recent {
+            let detail = e.detail();
+            rows.push(RecentRow {
+                t: e.t,
+                cat: e.cat.clone(),
+                ev: e.ev.clone(),
+                text: format!("{} {}", e.ev, detail).trim().to_string(),
+                detail,
+                level,
+            });
+        }
+    }
+    let recent = rows;
+    let last_t = entries.last().map_or(0.0, |e| e.t);
+    let timeline = bucketize(&points, report.seconds.max(last_t), BUCKETS);
     let mut text = format!(
         "CursorPie {} ({} build)\nlog: {}\n\n",
         crate::about::VERSION,
@@ -184,6 +269,8 @@ pub fn snapshot() -> io::Result<Option<Snapshot>> {
             .collect(),
         recent,
         categories: problems::categories(&lines),
+        levels,
+        timeline,
         text,
     }))
 }
@@ -202,6 +289,25 @@ mod tests {
     fn the_log_build_is_known_at_compile_time() {
         // tests run as a debug build, which has the log
         const { assert!(LOG_BUILD) };
+    }
+
+    #[test]
+    fn the_timeline_counts_every_line_once_in_its_slice() {
+        let points = [
+            (0.0, Level::Info),
+            (4.9, Level::Warning),
+            (5.0, Level::Error),
+            (10.0, Level::Info),
+            (99.0, Level::Info),
+        ];
+        let t = bucketize(&points, 10.0, 2);
+        assert_eq!(t.len(), 2);
+        assert_eq!((t[0].info, t[0].warnings, t[0].errors), (1, 1, 0));
+        // the last line, and anything past the end, land in the last slice
+        assert_eq!((t[1].info, t[1].errors), (2, 1));
+        assert_eq!(t.iter().map(Tally::total).sum::<u32>(), 5);
+        // an empty record still has the slices
+        assert_eq!(bucketize(&[], 0.0, 4).len(), 4);
     }
 
     #[test]

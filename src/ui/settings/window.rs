@@ -605,6 +605,8 @@ impl App {
         self.update_dialog(&ctx, accent);
         // the sheet of developer mode: install the build with the log, or go back
         self.developer_dialog(&ctx, accent);
+        // the sheet that answers Learn now / Forget everything
+        self.smart_sheet_dialog(&ctx, accent);
         // the sheet that tells what the update that was handed to the swap came to
         self.update_done_dialog(&ctx, accent);
         // the sheet that stays while the update downloads, and says what follows (CursorPie quits)

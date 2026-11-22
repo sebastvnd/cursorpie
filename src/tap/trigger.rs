@@ -61,6 +61,8 @@ pub(super) fn handle(
 /// Resets the gesture to `Idle` (consumes the guard, releasing the lock).
 fn release_to_idle(mut g: MutexGuard<'_, Gesture>) {
     *g = Gesture::Idle;
+    // the button that was held on a lock is up: Esc no longer unlocks (see `esc_lock`)
+    super::touch::lock::set_held(false);
     crate::smart::end_gesture();
 }
 
@@ -115,6 +117,15 @@ fn on_press<'a>(
             touch: source == Source::Touch,
         });
         return Verdict::Drop;
+    }
+    // Locked (by Esc, or by three fingers on a trackpad): the press opens no pie. It goes to the app
+    // as if CursorPie were not there; holding it says why, and Esc then unlocks (see `esc_lock`).
+    if source == Source::Mouse && super::touch::lock::in_force() {
+        *g = Gesture::Passthrough;
+        drop(g);
+        diag::log!("tap", "press_locked", x = p.x, y = p.y);
+        super::esc_lock::locked_hold(notifier);
+        return Verdict::Keep;
     }
     let (hold_profile, app) = resolve_profiles(p);
     diag::log!(
@@ -636,7 +647,7 @@ const POLL_POINTER: bool = cfg!(windows) || cfg!(test);
 /// positions must not hear the real pointer of the machine it runs on (on a CI runner it sits
 /// wherever the desktop left it, and the timer would aim the pie at it), so there it is whatever
 /// the test put in `TEST_POINTER`, and nowhere by default.
-fn read_pointer() -> Option<(f64, f64)> {
+pub(super) fn read_pointer() -> Option<(f64, f64)> {
     #[cfg(test)]
     {
         *TEST_POINTER.lock().unwrap_or_else(|e| e.into_inner())
@@ -1074,6 +1085,65 @@ pub(super) fn touch_lock(state: &Arc<Mutex<Gesture>>, notifier: &Notifier) -> Op
         }
         None => None,
     }
+}
+
+/// The lock was opened (Esc, or a click of the left button) while the mouse trigger is still held
+/// (see [`esc_lock`](super::esc_lock)): the pie opens at once under the pointer, as if the hold had
+/// just lasted long enough, and the padlock opens in its middle. Returns whether it was started;
+/// when it was not (no locked hold, Settings open), the caller says so with the padlock alone.
+///
+/// The press that began the hold went to the app as if CursorPie were not there, and the release of
+/// this pie belongs to the pie, so the app would be left with a button that never came up. It gets
+/// the release now: the app sees the same press and release it would have seen from a locked hold.
+pub(super) fn open_after_unlock(
+    state: &Arc<Mutex<Gesture>>,
+    notifier: &Notifier,
+    p: Point,
+) -> bool {
+    if settings_open() || PAUSED.load(Ordering::SeqCst) {
+        return false;
+    }
+    let button = cfg().trigger_button;
+    if !matches!(&*lock(state), Gesture::Passthrough) {
+        return false;
+    }
+    // not while locked: the guard of the state is let go before anything is posted
+    post_mouse(p, Kind::Up, button);
+    super::touch::lock::mark_reveal();
+    let g = lock(state);
+    if !matches!(&*g, Gesture::Passthrough) {
+        super::touch::lock::clear_reveal();
+        return false; // the button came up while the release was posted: nothing is held any more
+    }
+    let press = Press {
+        source: Source::Mouse,
+        already: Duration::from_millis(cfg().pie_hold_ms),
+        double: false,
+    };
+    on_press(state, notifier, g, p, button, press);
+    true
+}
+
+/// Esc while a pie is open (see [`esc_lock`](super::esc_lock)): the pie closes without running
+/// anything, like [`touch_lock`], but for a pie of any source. Returns where the pie was, so the
+/// animation of the lock plays there; `None` when no pie is open (nothing is changed then).
+///
+/// A mouse pie has its button still down: the gesture goes to `InSettings`, which swallows the
+/// rest of it (its drags and its release) so no stray button event reaches the app. A trackpad hold
+/// goes to `Idle`, as in [`touch_lock`]; the touch source ends the hold when the fingers lift.
+pub(super) fn esc_lock(state: &Arc<Mutex<Gesture>>, notifier: &Notifier) -> Option<Point> {
+    let mut g = lock(state);
+    let (center, source) = match &*g {
+        Gesture::ActivePie { center, source, .. } => (*center, *source),
+        _ => return None,
+    };
+    *g = match source {
+        Source::Mouse => Gesture::InSettings(Source::Mouse),
+        Source::Touch => Gesture::Idle,
+    };
+    drop(g);
+    notifier.send(Msg::HidePie);
+    Some(center)
 }
 
 #[cfg(test)]

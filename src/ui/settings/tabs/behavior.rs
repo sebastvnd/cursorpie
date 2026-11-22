@@ -238,6 +238,14 @@ impl App {
             });
             toggle_row(
                 ui,
+                &mut cfg.esc_lock,
+                "Lock with Esc",
+                "Press Esc while a pie is open to lock CursorPie: the pie closes and, for the mouse trigger and the trackpad alike, a press opens no pie (the click goes to the app). \
+                 While it is locked, hold the trigger and press Esc to unlock. The key is only taken in those two moments. Kept in memory: restarting CursorPie unlocks it.",
+                accent,
+            );
+            toggle_row(
+                ui,
                 &mut cfg.flick,
                 "Open the pie instantly when I drag",
                 "Disables middle-drag in apps.",
@@ -1160,9 +1168,9 @@ fn trackpad_panel(
                 ui,
                 &mut cfg.touch_lock,
                 "Lock with three fingers",
-                "While the pie is open, tap with two more fingers to lock CursorPie for the trackpad. \
+                "While the pie is open, tap with two more fingers to lock CursorPie. \
                  A hold then only shows a notice; hold with one finger and tap with two to unlock. \
-                 The mouse is not affected.",
+                 The lock is the same one as Lock with Esc, so it also stops the mouse trigger.",
                 accent,
             );
             if os.has_haptics() {
@@ -1220,7 +1228,9 @@ fn hud_preview(ui: &mut egui::Ui, cfg: &Config) {
     );
     let painter = ui.painter().with_clip_rect(rect);
     painter.rect_filled(rect, control_r(), pal().bg);
-    let note = HudNote::new(HudKind::App, "Open app", "Safari");
+    // what a slice named "GitHub" that opens a link shows: the name of the slice and what it does
+    let link = HudNote::new(HudKind::Link, "Open link", "github.com");
+    let note = link.in_slice("", "GitHub");
     hud::paint_pill(&painter, rect.center(), &note, &hud::PillLook::at_rest(cfg));
 }
 

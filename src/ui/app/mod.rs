@@ -5,6 +5,7 @@
 //! | `messages` | `App::handle_msg`: applies each [`Msg`] |
 //! | `windows` | showing the pie, opening/closing Settings, quitting, menu bar actions |
 //! | `notice` | the notice of what CursorPie is doing (`ui::hud`): showing the window as a small pill and drawing it |
+//! | `standby` | keeping the window mapped for the next pie (Windows) and showing a pie again that never reached the screen |
 //! | `lifecycle` | idle sleep, freeing the Settings copy, warming up icons before the pie opens |
 //! | `updates` | the daily look for a newer release: what Settings does when it opens, and with the answer |
 //!
@@ -18,6 +19,7 @@ mod lock;
 mod messages;
 mod notice;
 mod panel;
+mod standby;
 mod updates;
 mod windows;
 pub(crate) use notice::pill_center;
@@ -206,6 +208,12 @@ pub struct App {
     /// Some while the window shows the lock animation: the pie that turns into a padlock, or the
     /// padlock that opens into the pie (see [`crate::ui::pie::lock`]).
     pub lock_anim: Option<crate::ui::pie::lock::LockAnim>,
+    /// The lock animation that runs is drawn over the pie that was open (its own slices and icons
+    /// collapse into the padlock) and not as a plain stand-in; see `App::lock_anim_start`.
+    pub lock_over_pie: bool,
+    /// Since when the pie that opened out of an unlock carries the opening padlock in its middle
+    /// (`Some` for [`crate::ui::pie::lock::REVEAL_SECS`]); see [`crate::ui::pie::lock::reveal_scene`].
+    pub lock_reveal: Option<Instant>,
     /// Some while the window shows a panel (see [`crate::panel`]).
     pub panel: Option<panel::ActivePanel>,
     /// Panels that were asked for while the window was busy: shown one by one when it is free.
@@ -222,6 +230,13 @@ pub struct App {
     /// pass and paints nothing, so what Settings freed (textures, the old font atlas) is only given
     /// back by a pass that really paints (see `App::begin_close_flush`).
     pub close_flush: Option<(u8, Instant)>,
+
+    /// The window is mapped, empty and parked off screen, waiting for a pie (see `standby`).
+    pub standby: Option<standby::Standby>,
+    /// The startup prime was done (or skipped): see `App::prime_window`.
+    pub primed: bool,
+    /// A pie was asked for and has not been drawn yet (see `App::step_pie_watch`).
+    pub pie_watch: Option<standby::PieWatch>,
 
     pub tray: Option<TrayHandles>,
 }
@@ -292,11 +307,16 @@ impl App {
             hud_pending: None,
             pie_pending: None,
             lock_anim: None,
+            lock_over_pie: false,
+            lock_reveal: None,
             panel: None,
             panel_queue: std::collections::VecDeque::new(),
             welcome: None,
             sleeper: Sleeper::new(Instant::now()),
             close_flush: None,
+            standby: None,
+            primed: false,
+            pie_watch: None,
             tray,
         }
     }
@@ -383,6 +403,9 @@ impl eframe::App for App {
         self.step_hud(ctx);
         self.step_panel(ctx);
         self.panel_close_requested(ctx);
+        self.step_pie_watch(ctx);
+        self.prime_window(ctx);
+        self.step_standby(ctx);
 
         // end of a preview (see Msg::Preview)
         if let Some(until) = self.preview_until {
@@ -445,6 +468,9 @@ impl eframe::App for App {
             self.lock_ui(ui);
         } else if self.hud.is_some() && !self.pie_open {
             self.hud_ui(ui);
+        } else if self.standby_active() {
+            // mapped and parked, waiting for a pie: draw nothing
+            self.standby_ui(&ui.ctx().clone());
         } else {
             self.pie_ui(ui);
         }

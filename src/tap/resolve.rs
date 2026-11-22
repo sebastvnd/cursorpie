@@ -93,7 +93,7 @@ pub(super) fn eval(profile: usize, path: &[usize], center: Point, p: Point) -> H
 /// Applies the slice the user released over. `choice` is what the pointer was on when the slice had
 /// two badges (see [`Hit::choice`]).
 pub(super) fn select(profile: usize, path: &[usize], index: usize, choice: Option<Choice>) {
-    let (kind, suggested) = {
+    let (kind, suggested, name, icon) = {
         let c = cfg();
         // a ring that is made by the intelligent pie is owned, one of the config is borrowed
         let (item, suggested) = match crate::smart::ring(&c, profile, path) {
@@ -111,7 +111,7 @@ pub(super) fn select(profile: usize, path: &[usize], index: usize, choice: Optio
         if let Some(ItemKind::Run(action)) = item.as_ref().map(|i| &i.kind) {
             crate::smart::note_action(&c, action, &name, &icon, side::target());
         }
-        (item.map(|i| i.kind), suggested)
+        (item.map(|i| i.kind), suggested, name, icon)
     };
     diag::log!(
         "tap",
@@ -140,7 +140,7 @@ pub(super) fn select(profile: usize, path: &[usize], index: usize, choice: Optio
             } else {
                 choice
             };
-            run_action(action, side::target(), choice)
+            run_action(action, side::target(), choice, &icon, &name)
         }
         _ => {}
     }
@@ -175,9 +175,18 @@ pub(super) fn is_mode(profile: usize, path: &[usize], index: usize) -> bool {
 
 /// Runs an action. If the settings say so, the target app is brought to the front first, because
 /// shortcuts always go to the app in front.
-pub(super) fn run_action(action: Action, target: Option<String>, choice: Option<Choice>) {
+///
+/// `icon` and `name` are those of the slice the action comes from: the notice on the screen goes on
+/// from the pill of that slice (see [`actions::run_in_slice`]).
+pub(super) fn run_action(
+    action: Action,
+    target: Option<String>,
+    choice: Option<Choice>,
+    icon: &str,
+    name: &str,
+) {
     let focus = focus_for(target);
-    actions::run_in_with(focus, action, choice);
+    actions::run_in_slice(focus, action, choice, icon, name);
 }
 
 /// [`run_action`] for the back and forward buttons: the notice on the screen stays quiet, they are

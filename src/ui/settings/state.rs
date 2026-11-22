@@ -44,10 +44,10 @@ pub enum BehaviorPage {
     Look,
     /// Which pie each app gets and how apps are found
     Apps,
-    /// Startup and memory
-    System,
     /// Learning and the intelligent pie
     Smart,
+    /// Startup and memory (always the last page: it is the far end of the switch)
+    System,
 }
 
 impl BehaviorPage {
@@ -56,8 +56,8 @@ impl BehaviorPage {
         BehaviorPage::Input,
         BehaviorPage::Look,
         BehaviorPage::Apps,
-        BehaviorPage::System,
         BehaviorPage::Smart,
+        BehaviorPage::System,
     ];
 
     /// The name on the switch.
@@ -598,6 +598,12 @@ pub struct Ed {
     pub dev_read_at: Option<std::time::Instant>,
     /// The category the list of recent events is cut to
     pub dev_category: Option<String>,
+    /// The least serious level the list of recent events shows (`None`: all of them)
+    pub dev_level: Option<crate::devmode::Level>,
+    /// Only the recent events that contain this text
+    pub dev_search: String,
+    /// The list of recent events is drawn tall (the whole window) instead of compact
+    pub dev_log_big: bool,
     /// The switch of the log being edited (what to record)
     pub dev_spec: String,
     /// What the last button of the Developer panels did
@@ -605,6 +611,37 @@ pub struct Ed {
     /// The standard build that is being installed also turns developer mode off (set when it was
     /// asked for from "Turn off developer mode", done once the swap has started)
     pub dev_leaving: bool,
+    /// Developer mode: the download of the `cpd` command is running
+    pub cpd_busy: bool,
+    /// What the last install or removal of `cpd` came to, shown in its panel
+    pub cpd_note: Option<String>,
+    /// Developer mode: the technical list of recent log lines is unfolded
+    pub dev_tech_open: bool,
+    /// The sheet that answers *Learn now* and *Forget everything* (Behavior > Intelligent): it
+    /// opens at the click, says that CursorPie is working, and tells what came of it
+    pub smart_sheet: Option<SmartSheet>,
+}
+
+/// What the sheet of *Learn now* / *Forget everything* shows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SmartSheet {
+    /// `true`: Forget everything; `false`: Learn now
+    pub forget: bool,
+    /// Still working (the lines are not there yet)
+    pub busy: bool,
+    /// What the work found, one point per line
+    pub lines: Vec<String>,
+}
+
+impl SmartSheet {
+    /// The sheet as it opens, while the worker is still busy.
+    pub fn working(forget: bool) -> Self {
+        Self {
+            forget,
+            busy: true,
+            lines: Vec::new(),
+        }
+    }
 }
 
 impl Default for Ed {
@@ -708,9 +745,16 @@ impl Ed {
             dev_error: None,
             dev_read_at: None,
             dev_category: None,
+            dev_level: None,
+            dev_search: String::new(),
+            dev_log_big: false,
             dev_spec: String::new(),
             dev_note: None,
             dev_leaving: false,
+            cpd_busy: false,
+            cpd_note: None,
+            dev_tech_open: true,
+            smart_sheet: None,
         }
     }
 
@@ -739,6 +783,7 @@ impl Ed {
             || self.update_offer.is_some()
             || self.update_done.is_some()
             || self.dev_offer.is_some()
+            || self.smart_sheet.is_some()
             || matches!(self.update, Status::Downloading(_))
     }
 
@@ -757,6 +802,7 @@ impl Ed {
         self.update_offer = None;
         self.update_done = None;
         self.dev_offer = None;
+        self.smart_sheet = None;
         was
     }
 

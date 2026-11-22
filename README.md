@@ -20,8 +20,6 @@ A configurable pie menu for your cursor — available on macOS, Windows and Linu
 
 [Installation](docs/user/install.md) · [User guide](docs/user/README.md) · [Configuration](docs/user/configuration.md) · [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md)
 
-<img src="docs/gifs/01-hero.gif" width="720" alt="CursorPie: your actions, one gesture away">
-
 </div>
 
 ---
@@ -104,12 +102,12 @@ No account, no telemetry, MIT license, built in Rust.
 
 Get the latest ready-to-install build from [GitHub Releases](https://github.com/sebastvnd/cursorpie/releases/latest):
 
-| Platform | Package |
-|---|---|
-| **macOS 11+** (Intel and Apple silicon) | [Universal DMG](https://github.com/sebastvnd/cursorpie/releases/latest/download/CursorPie-macos-universal.dmg) |
-| **Windows 10/11** (recommended) | [Setup installer](https://github.com/sebastvnd/cursorpie/releases/latest/download/CursorPie-windows-setup.exe) · [ZIP bundle](https://github.com/sebastvnd/cursorpie/releases/latest/download/CursorPie-windows.zip) |
-| **Ubuntu 24.04+** (x86_64) | [Ubuntu package](https://github.com/sebastvnd/cursorpie/releases/latest/download/CursorPie-ubuntu-24.04-x86_64.tar.gz) |
-| **Fedora 44** (x86_64) | [Fedora package](https://github.com/sebastvnd/cursorpie/releases/latest/download/CursorPie-fedora-44-x86_64.tar.gz) |
+| Platform                                | Package                                                                                                                                                                                                              |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **macOS 11+** (Intel and Apple silicon) | [Universal DMG](https://github.com/sebastvnd/cursorpie/releases/latest/download/CursorPie-macos-universal.dmg)                                                                                                       |
+| **Windows 10/11** (recommended)         | [Setup installer](https://github.com/sebastvnd/cursorpie/releases/latest/download/CursorPie-windows-setup.exe) · [ZIP bundle](https://github.com/sebastvnd/cursorpie/releases/latest/download/CursorPie-windows.zip) |
+| **Ubuntu 24.04+** (x86_64)              | [Ubuntu package](https://github.com/sebastvnd/cursorpie/releases/latest/download/CursorPie-ubuntu-24.04-x86_64.tar.gz)                                                                                               |
+| **Fedora 44** (x86_64)                  | [Fedora package](https://github.com/sebastvnd/cursorpie/releases/latest/download/CursorPie-fedora-44-x86_64.tar.gz)                                                                                                  |
 
 For step-by-step instructions, including the Linux `install.sh` script and macOS permissions, read the [installation guide](docs/user/install.md). Build artifacts from individual CI runs are temporary; public downloads are published with GitHub Releases when a version tag is pushed.
 
@@ -126,18 +124,18 @@ Changed your mind? Release in the middle of the pie to cancel:
 
 <img src="docs/gifs/03-cancel-in-the-middle.gif" width="720" alt="Cancel by releasing in the center">
 
-No middle button? Turn on *Open the pie with a trackpad hold* in **Settings > Behavior > Trackpad** and touch and hold the trackpad instead. Press Space while the pie is open (or hold the trigger in the center of the pie, if you turned that on) to open Settings and customize your menus. The [user guide](docs/user/README.md) explains gestures, actions, profiles and settings in detail.
+No middle button? Turn on _Open the pie with a trackpad hold_ in **Settings > Behavior > Trackpad** and touch and hold the trackpad instead. Press Space while the pie is open (or hold the trigger in the center of the pie, if you turned that on) to open Settings and customize your menus. The [user guide](docs/user/README.md) explains gestures, actions, profiles and settings in detail.
 
 ## Platform support
 
 <img src="docs/gifs/13-platforms.gif" width="720" alt="macOS, Windows, Linux">
 
-| Platform | Status | Notes |
-|---|---|---|
-| **macOS 11+** | Supported | Requires the Accessibility permission. The trigger can be the middle button or one of three extra mouse buttons. Any trackpad works; Force Touch trackpads also give haptic ticks. |
-| **Windows 10 (1809) / 11** | Supported · stable | No special permission required. The middle button is the only trigger; Windows exposes the back and forward buttons as extra buttons. Trackpad hold needs a precision touchpad. |
-| **Linux, X11 session** | Supported · pre-stable | x86_64 packages for Ubuntu 24.04+ and Fedora 44. Nothing to set up and no permission needed. The whole feature set works; the manual checklist on real desktops is still being completed. There is no tray icon yet. Trackpad hold needs your user in the `input` group. |
-| **Linux, Wayland session** | Experimental | Works on any compositor for mouse capture and shortcuts, and needs the udev rule `70-cursorpie.rules`. Per-app profiles work on KDE Plasma, Hyprland, GNOME (with the extension) and, mostly, Sway; COSMIC and niri have none. Written and tested, but not yet run on real Plasma 6.8, GNOME, Hyprland or Sway machines ([status](docs/developer/WAYLAND_SUPPORT.md#implementation-status)). Trackpad hold works through the udev rule. |
+| Platform                   | Status                 | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| -------------------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **macOS 11+**              | Supported              | Requires the Accessibility permission. The trigger can be the middle button or one of three extra mouse buttons. Any trackpad works; Force Touch trackpads also give haptic ticks.                                                                                                                                                                                                                                                      |
+| **Windows 10 (1809) / 11** | Supported · stable     | No special permission required. The middle button is the only trigger; Windows exposes the back and forward buttons as extra buttons. Trackpad hold needs a precision touchpad.                                                                                                                                                                                                                                                         |
+| **Linux, X11 session**     | Supported · pre-stable | x86_64 packages for Ubuntu 24.04+ and Fedora 44. Nothing to set up and no permission needed. The whole feature set works; the manual checklist on real desktops is still being completed. There is no tray icon yet. Trackpad hold needs your user in the `input` group.                                                                                                                                                                |
+| **Linux, Wayland session** | Experimental           | Works on any compositor for mouse capture and shortcuts, and needs the udev rule `70-cursorpie.rules`. Per-app profiles work on KDE Plasma, Hyprland, GNOME (with the extension) and, mostly, Sway; COSMIC and niri have none. Written and tested, but not yet run on real Plasma 6.8, GNOME, Hyprland or Sway machines ([status](docs/developer/WAYLAND_SUPPORT.md#implementation-status)). Trackpad hold works through the udev rule. |
 
 KDE Plasma 6.8 and GNOME 50 no longer offer an X11 session, so on those desktops you are on Wayland. Read [CursorPie on Linux](docs/user/linux.md) and [Known issues](docs/user/known-issues.md) before installing.
 
@@ -147,29 +145,29 @@ KDE Plasma 6.8 and GNOME 50 no longer offer an X11 session, so on those desktops
 
 Touch and hold opens the pie, moving the finger hovers a slice, lifting runs it, and one more finger that taps or clicks switches the mode. It is **off by default** and works on all three systems:
 
-| System | What is read | Needs |
-|---|---|---|
-| **macOS** | any trackpad, through Apple's private `MultitouchSupport` framework (loaded only while the feature is on) | the Accessibility permission; haptic ticks on a Force Touch trackpad |
-| **Windows** | a *precision* touchpad, through Raw Input | nothing extra; no haptics |
-| **Linux (X11: pre-stable, Wayland: experimental)** | a touchpad, from `/dev/input/event*` | your user in the `input` group (`sudo usermod -aG input $USER`, then log out and in), or on Wayland the udev rule `70-cursorpie.rules`; no haptics |
+| System                                             | What is read                                                                                              | Needs                                                                                                                                              |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **macOS**                                          | any trackpad, through Apple's private `MultitouchSupport` framework (loaded only while the feature is on) | the Accessibility permission; haptic ticks on a Force Touch trackpad                                                                               |
+| **Windows**                                        | a _precision_ touchpad, through Raw Input                                                                 | nothing extra; no haptics                                                                                                                          |
+| **Linux (X11: pre-stable, Wayland: experimental)** | a touchpad, from `/dev/input/event*`                                                                      | your user in the `input` group (`sudo usermod -aG input $USER`, then log out and in), or on Wayland the udev rule `70-cursorpie.rules`; no haptics |
 
 The trackpad paths are new and have not been verified on every device yet; see [Known issues](docs/user/known-issues.md) and the [user guide](docs/user/trackpad.md). On Linux, `cursorpie --touchpad-debug` shows which step fails.
 
 ## Documentation
 
-| Topic | Guide |
-|---|---|
-| Install a release or build from source | [Installation](docs/user/install.md) |
-| Learn the basics in five minutes | [Getting started](docs/user/getting-started.md) |
-| Use Linux (X11 or Wayland) | [CursorPie on Linux](docs/user/linux.md) |
-| Learn gestures, slices, profiles and settings | [User guide](docs/user/README.md) |
-| Read or edit `config.json` | [Configuration](docs/user/configuration.md) |
-| Check current limitations | [Known issues](docs/user/known-issues.md) |
-| Debug a problem | [Debugging](docs/DEBUGGING.md) |
-| Contribute or build the project | [Contributing](CONTRIBUTING.md) |
-| Browse developer notes and design records | [Developer guide](docs/developer/README.md) |
-| Everything, by audience | [Documentation index](docs/README.md) |
-| See what changed between versions | [Changelog](CHANGELOG.md) |
+| Topic                                         | Guide                                           |
+| --------------------------------------------- | ----------------------------------------------- |
+| Install a release or build from source        | [Installation](docs/user/install.md)            |
+| Learn the basics in five minutes              | [Getting started](docs/user/getting-started.md) |
+| Use Linux (X11 or Wayland)                    | [CursorPie on Linux](docs/user/linux.md)        |
+| Learn gestures, slices, profiles and settings | [User guide](docs/user/README.md)               |
+| Read or edit `config.json`                    | [Configuration](docs/user/configuration.md)     |
+| Check current limitations                     | [Known issues](docs/user/known-issues.md)       |
+| Debug a problem                               | [Debugging](docs/DEBUGGING.md)                  |
+| Contribute or build the project               | [Contributing](CONTRIBUTING.md)                 |
+| Browse developer notes and design records     | [Developer guide](docs/developer/README.md)     |
+| Everything, by audience                       | [Documentation index](docs/README.md)           |
+| See what changed between versions             | [Changelog](CHANGELOG.md)                       |
 
 The same guides are available in the [CursorPie website](https://sebastvnd.github.io/cursorpie/), which renders the Markdown files directly from the repository.
 

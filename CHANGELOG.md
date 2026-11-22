@@ -2,6 +2,82 @@
 
 ## Unreleased
 
+## 0.9.1
+
+- **Fixed: *Learn now* (and *Forget everything*) showed nothing.** The answer was one line in the status bar, under
+  the floating page switch and gone after six seconds, and the notice pill is never shown while Settings is open. Now a
+  sheet opens at the click, says that CursorPie is working (it reads the list of installed apps, which takes a moment)
+  and then tells what was learned. If the sheet was closed meanwhile, the answer goes to the status bar as before.
+
+- **Changed: the *Intelligent* page is no longer the last one of the Behavior switch.** The switch now reads Input,
+  Look, Apps, Intelligent, System: the far end is System (startup and memory), as the other settings pages end with
+  the system ones.
+
+- **Changed: Developer mode (About) is written for people, not only for developers.** The panels are *Developer
+  tools* (the switch and the three steps of a bug report), *Diagnostic build*, *What went wrong* (each problem in a
+  sentence that says whether it matters, with the log's own words small under it; counts as "3 times", not
+  `x3 · 11764.8 s`), *Technical log* (the raw lines, folded away until asked for) and *Terminal command (cpd)*.
+  *What to record* moved under *Advanced*.
+
+- **New: `cpd` is installed and removed from Settings.** *Install cpd* downloads the program of the newest release for
+  this system, checks it against the release's checksum, makes sure it starts and puts it in the `bin` folder next to
+  `config.json` (on macOS and Linux also a link `~/.local/bin/cpd`, where nothing is). *Copy command* puts the command
+  with its whole path on the clipboard, so it runs before anything is in `PATH`; *Remove cpd* deletes it again and the
+  link with it. Nothing else on the computer is touched (no `PATH`, no registry, no administrator). The release
+  workflow now attaches `cpd-*.sha256` files. Developer mode shows the terminal panel in the standard build too.
+
+- **Changed: the notice of an action now goes on from the pill of the slice you chose.** While the pie is open the
+  pill shows the icon and the name of the slice under the pointer; after you release, the notice used to switch to a
+  plain gray glyph and "Open app" / "Open link". Now the badge keeps the icon of the slice (the app icon, the site
+  icon, the symbol you picked) and the title keeps its name, with a short line under it for what happens (`github.com`,
+  `Safari`, `Cmd + C`), left out when it would only repeat the name. A slice that runs a flow keeps its icon and name
+  for the whole run and the line under it follows the blocks. A slice without a name, the side buttons and the lock
+  notices look as before.
+
+- **Fixed: the pie sometimes was not drawn although its action ran, and the first pies after a login were not
+  drawn until Settings had been opened and closed once.** The toolkit (eframe 0.36) runs only `App::logic` for a hidden
+  window, and at most once per 100 ms, so `ShowPie` was carried out late (a quick flick ended first), and the first
+  frame that really paints (shaders, font atlas, surface) was paid by the first pie, not before it. On Windows the
+  window is now mapped, empty and parked off screen when the trigger is pressed (and once at startup to draw the first
+  frames unseen), so the pie is shown in the next frame. On every system a pie that was asked for and has not painted
+  two frames after 0.7 s is shown again (up to three times; `pie_revive` in the debug log), which is what opening and
+  closing Settings did by hand.
+
+- **Fixed: unlocking while the trigger is still held now opens the pie at once, and the lock animation keeps your
+  pie.** Before, opening the lock (two more fingers on the trackpad, or Esc with the mouse trigger) only played an
+  animation, and the trigger had to be released and held again to get the pie. Now the hold that unlocks is the hold of
+  the pie: it blooms under your finger or pointer with the padlock opening in its middle, and you can choose a slice
+  and release as usual. With the mouse trigger a click of the left button also unlocks (like Esc), for a hand that is
+  not on the keyboard; the click does not reach the app, and the app gets the release of the trigger that it was
+  missing. Locking no longer swaps the pie for a plain ring of bare slices: your own pie (slices, icons, glass or
+  Gen Z look) squeezes, turns and fades into the padlock in one continuous movement, with smoother easing; the icons
+  and slices no longer vanish and come back plain.
+
+- **New: lock the pie with Esc, for the mouse, the keyboard and the trackpad.** With a pie open (a mouse hold or a
+  trackpad hold), pressing Esc closes it without running anything and locks CursorPie: the pie turns into the padlock,
+  and a notice says *CursorPie locked*. While it is locked a press of the mouse trigger opens no pie (the click goes to
+  the app as if CursorPie were not there) and a trackpad hold opens none either; after the hold time the notice says
+  why. To unlock, hold the trigger (mouse button or trackpad) and press Esc again: the padlock opens and the next hold
+  opens the pie. Esc is taken only in those two moments and passes through to your apps at every other time, and with a
+  modifier it is never taken. The lock is the one the three-finger tap of the trackpad already had, now shared: either
+  way locks and unlocks it, and it stops the mouse trigger too. It is still kept in memory only (restarting CursorPie
+  unlocks it). New setting *Lock with Esc* (Behavior > Trigger, on by default; `esc_lock`). Like Space, Esc is
+  taken on macOS and Windows; on Linux with X11 the lock works but the key also reaches the app, and on Wayland
+  CursorPie does not see the keyboard, so Esc does not lock there (the three-finger tap still does).
+
+- **Fixed (root cause): the pie still did not appear over an app in full screen (macOS).** The pie worked (its
+  slices were picked and ran) but nothing was drawn, because the 0.9.0 fix was not enough on current macOS. The window
+  of one app is shown in the full-screen Space of *another* app only with `CanJoinAllApplications` (macOS 13+) next to
+  `CanJoinAllSpaces` and `FullScreenAuxiliary`, and above the level that Space draws: the status level it was raised to
+  is below it, the screen saver level is not. On top of that the toolkit wrote its own "always on top" (the floating
+  level) every time the pie was shown, so the window was ordered in at the wrong level and only a frame later was
+  raised. Now the window gets the full set of bits, the screen saver level, and on macOS CursorPie no longer sends the
+  toolkit's level at all (`keep_over_full_screen` owns it). Settings and the welcome window keep their normal level.
+  The real reason the 0.9.0 fix never worked: the window is observed with KVO, so its class is
+  `NSKVONotifying_WinitWindow`, and the test `starts_with("Winit")` never matched. The window is now found by that name.
+  New in the diagnostic log (macOS): `ui:mac_window_class` and `ui:mac_window_state`, see `docs/DEBUGGING.md`.
+
+
 ## 0.9.0
 
 - **Fixed: the pie did not appear over an app in full screen (macOS).** An app in full screen lives in a Space of its

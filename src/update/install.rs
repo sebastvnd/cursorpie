@@ -674,7 +674,7 @@ fn fresh_updates_dir() -> io::Result<PathBuf> {
 }
 
 /// The checksum of `name`: the one in the release's answer, else the one in its `name.sha256` file.
-fn expected_checksum(release: &Release, asset: &Asset) -> Result<String, InstallError> {
+pub(crate) fn expected_checksum(release: &Release, asset: &Asset) -> Result<String, InstallError> {
     if let Some(digest) = &asset.digest {
         return Ok(digest.clone());
     }

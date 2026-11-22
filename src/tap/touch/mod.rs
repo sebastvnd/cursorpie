@@ -261,6 +261,7 @@ impl Bridge {
         extra::clear();
         scroll::clear();
         lock::set(false);
+        lock::set_held(false);
     }
 
     fn apply(&mut self, env: &Env<'_>, events: &[TouchEvent]) {
@@ -272,6 +273,8 @@ impl Bridge {
                         self.ours = false;
                         self.opened = false;
                         ACTIVE.store(false, Ordering::SeqCst);
+                        // Esc unlocks while this hold lasts (see `esc_lock`)
+                        lock::set_held(true);
                         diag::log!("touch", "arm_locked");
                         continue;
                     }
@@ -363,11 +366,15 @@ impl Bridge {
             return;
         }
         if lock::in_force() {
-            // locked: hold + tap with two fingers opens the lock. The hold that is going on began
-            // while locked, so it opened no pie and opens none now.
+            // locked: hold + tap with two fingers opens the lock. The fingers are still holding, so
+            // the pie opens at once, under them: the person does not have to trigger it again.
             lock::set(false);
             extra::swallow_lock_tap_click();
             diag::log!("touch", "unlock");
+            if self.open_held_pie(env) {
+                return;
+            }
+            // the pie could not open (paused, Settings, no pointer): the padlock says it opened
             match (env.fresh)() {
                 Some(p) => env.notifier.send(Msg::LockAnim {
                     x: p.x,
@@ -399,10 +406,36 @@ impl Bridge {
         self.end_gesture(true);
     }
 
+    /// The lock was just opened by two fingers that tapped while one still holds: the hold becomes
+    /// the hold of a pie that is already open, as if its time had just passed. Returns whether the
+    /// pie was started (the padlock then opens in its middle, see `lock::mark_reveal`).
+    fn open_held_pie(&mut self, env: &Env<'_>) -> bool {
+        let Some(p) = (env.fresh)() else {
+            return false;
+        };
+        // said before the pie is asked for: the UI looks at it when the pie arrives
+        lock::mark_reveal();
+        let already = Duration::from_millis(cfg().pie_hold_ms);
+        if !trigger::touch_press(env.state, env.notifier, p, already, false) {
+            lock::clear_reveal();
+            return false;
+        }
+        self.ours = true;
+        self.opened = true;
+        (env.hot)(true);
+        // the wheel is ours from now on, like for any pie of a hold
+        scroll::on_next_gesture();
+        ACTIVE.store(true, Ordering::SeqCst);
+        watch_pointer(env.state, env.notifier);
+        diag::log!("touch", "unlock_open", x = p.x, y = p.y);
+        true
+    }
+
     /// The gesture is over (a release or a cancel). The wheel stops being swallowed at once only
     /// when nothing was scrolled away: after a pie that opened, the scroll its fingers started is
     /// swallowed to its end ([`scroll`]).
     fn end_gesture(&mut self, scrolling_may_follow: bool) {
+        lock::set_held(false);
         let tail = self.ours && self.opened && scrolling_may_follow;
         // the tail is armed before the flag drops, so no wheel event falls between the two
         if tail {
@@ -542,6 +575,7 @@ mod tests {
             FINGERS.store(0, Ordering::SeqCst);
             extra::clear();
             lock::set(false);
+            lock::set_held(false);
             scroll::clear();
             crate::tap::pie_clicks::clear();
             Self {
@@ -558,6 +592,7 @@ mod tests {
             FINGERS.store(0, Ordering::SeqCst);
             extra::clear();
             lock::set(false);
+            lock::set_held(false);
             scroll::clear();
             crate::tap::pie_clicks::clear();
         }
@@ -816,14 +851,38 @@ mod tests {
         );
         assert_eq!(lock_messages(&rig.rx), ["pill Locked"]);
 
-        // the same hold and tap unlock it, and the hold that unlocked does not open a pie
+        // the same hold and tap unlock it, and the pie opens at once under the fingers that still
+        // hold: nothing has to be triggered again
         rig.frames(60, &[finger(0.5), second(0.7), third(0.8)]);
         rig.frames(20, &[finger(0.5)]);
         assert!(!lock::is_locked());
-        assert_eq!(lock_messages(&rig.rx), ["unlock 500 500"]);
+        wait_for_pie(&rig);
+        assert!(matches!(
+            *crate::config::lock(&rig.state),
+            Gesture::ActivePie {
+                source: Source::Touch,
+                ..
+            }
+        ));
+        assert!(
+            ACTIVE.load(Ordering::SeqCst),
+            "the hold goes on as the hold of this pie"
+        );
+        assert!(
+            lock::take_reveal(),
+            "the pie that opened carries the opening padlock"
+        );
+        assert!(
+            !lock_messages(&rig.rx)
+                .iter()
+                .any(|m| m.starts_with("unlock")),
+            "no plain animation: the pie is the picture"
+        );
+        // lifting the finger closes it (nothing under the pointer: nothing runs)
         rig.frames(30, &[]);
+        assert!(matches!(*crate::config::lock(&rig.state), Gesture::Idle));
 
-        // and the next hold opens the pie again
+        // and the next hold opens the pie as always
         rig.frames(300, &[finger(0.5)]);
         wait_for_pie(&rig);
         assert!(matches!(
@@ -853,8 +912,11 @@ mod tests {
     }
 
     #[test]
-    fn a_lock_that_outlives_the_setting_is_forgotten() {
-        let _c = Cfg::set(|c| c.touch_lock = false);
+    fn a_lock_that_outlives_the_settings_is_forgotten() {
+        let _c = Cfg::set(|c| {
+            c.touch_lock = false;
+            c.esc_lock = false;
+        });
         lock::set(true);
         assert!(!lock::in_force());
         assert!(

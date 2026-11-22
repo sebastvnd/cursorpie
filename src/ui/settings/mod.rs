@@ -47,6 +47,7 @@ mod picker;
 mod pie_designer;
 mod quit_dialog;
 mod run_report;
+mod smart_sheet;
 mod state;
 mod tabs;
 pub mod theme;
@@ -63,7 +64,7 @@ mod window;
 pub use picker::choosing;
 pub use state::{
     AppScan, BehaviorPage, Ed, FlowFull, FlowNew, FlowView, KitStatus, MenuView, PieDrag,
-    PieImport, PieView, Slot, Tab,
+    PieImport, PieView, Slot, SmartSheet, Tab,
 };
 pub use welcome::Welcome;
 

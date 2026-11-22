@@ -32,6 +32,12 @@ CursorPie, the trigger button and the output of `cargo run --release` from a ter
 
 - CursorPie cannot list the mice on a Mac: scan the mouse in **Settings > General > Mouse** to tell it which extra
   buttons it has, and it will not notice that you changed mouse.
+- **The pie over an app in full screen.** An app in full screen is a Space of its own. CursorPie's window joins every
+  Space and the Space of every app (`CanJoinAllApplications`, macOS 13 and later) and is raised above what a full-screen
+  Space draws, so the pie, the notices and the panels show over a full-screen browser, editor or video. Settings is a
+  normal window and stays in its own Space. If the pie works but is not seen over a full-screen app, send the log of a
+  log build ([Debugging](../DEBUGGING.md)): the `mac_window_state` lines say which part is wrong. Exclusive full screen
+  of some games (the display is taken over) cannot be drawn over by any app.
 - Ad-hoc signed builds may need the Accessibility permission again after each rebuild. Sign with a stable
   identity (`SIGN_ID`) to avoid that.
 - **Trackpad** (off by default): it uses Apple's private `MultitouchSupport` framework, which Apple may change in any

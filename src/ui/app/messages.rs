@@ -27,6 +27,7 @@ impl App {
                 // a real gesture takes over from any preview, and from the lock animation
                 self.preview_until = None;
                 self.lock_anim = None;
+                self.lock_over_pie = false;
                 diag::log!(
                     "ui",
                     "msg_show_pie",
@@ -35,9 +36,14 @@ impl App {
                     profile = profile,
                     depth = path.len()
                 );
-                if self.defer_pie_for_hud(ctx, x, y, profile, &path) {
+                // A pie that opens because the lock was opened while the trigger is still held
+                // comes at once, with the padlock opening in its middle: it does not wait for the
+                // "locked" pill that is on screen (that pill is the reason the person unlocks).
+                let from_unlock = path.is_empty() && crate::tap::touch::lock::take_reveal();
+                if !from_unlock && self.defer_pie_for_hud(ctx, x, y, profile, &path) {
                     return;
                 }
+                self.lock_reveal = from_unlock.then(Instant::now);
                 self.show_pie(ctx, x, y, profile, path);
             }
             Msg::PieBlocked { x, y, touch } => self.pie_blocked(ctx, x, y, touch),
@@ -86,6 +92,8 @@ impl App {
             Msg::FlowImportPicked(file) => self.import_flow(&file),
             Msg::FlowHubInstall { flow, reply } => self.flow_hub_install(*flow, &reply),
             Msg::Notice(text) => self.say(text),
+            Msg::SmartDone { forget, lines } => self.smart_done(forget, lines),
+            Msg::CpdDone { installed, result } => self.cpd_done(installed, result),
             Msg::ExportFailed { what, reason } => self.export_failed(&what, reason),
             Msg::FlowKit(status) => {
                 self.say(status.notice());
@@ -103,7 +111,12 @@ impl App {
                     scan.press(button);
                 }
             }
-            Msg::Warm { general, app } => self.warm(ctx, general, app),
+            Msg::Warm { general, app } => {
+                self.warm(ctx, general, app);
+                // the pie may open in `pie_hold_ms`: have the window mapped by then
+                let hold = std::time::Duration::from_millis(cfg().pie_hold_ms);
+                self.enter_standby(ctx, hold + super::standby::STANDBY_EXTRA, false);
+            }
             Msg::Refocus => {
                 // The chooser is gone and the system hands the focus back by itself, often to the
                 // window that was below Settings. Raise only if Settings really does not have it:
@@ -131,6 +144,7 @@ impl App {
                 self.hover = None;
                 // a pie that still waited for the notice to leave is not wanted any more
                 self.pie_pending = None;
+                self.lock_reveal = None;
                 self.pie_open = false;
                 self.preview_until = None;
                 // the pie that took the pointer for a trackpad hold lets it through again while it

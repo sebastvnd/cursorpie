@@ -1,9 +1,12 @@
-//! The lock animation of the trackpad gesture (see [`crate::ui::pie::lock`]): the window that shows
-//! the pie shows a pie that turns into a padlock, or a padlock that opens into the pie, and when it
-//! is over the pill says what happened ([`HudNote::locked`], [`HudNote::unlocked`]).
+//! The lock animation (see [`crate::ui::pie::lock`]): the pie that was open collapses, slices and
+//! icons included, into a padlock, and when it is over the pill says what happened
+//! ([`HudNote::locked`], [`HudNote::unlocked`]).
 //!
-//! The animation takes the window over exactly as a pie does ([`App::show_pie`] places it), but it is
-//! click-through and never takes the pointer: the fingers are still on the trackpad.
+//! An unlock that opens a pie at once (the trigger is still held) is not played here: the pie
+//! blooms and the padlock opens in its middle ([`App::lock_reveal`], drawn by `pie_ui`). What is
+//! left here is the plain stand-in for a window that has no pie to start from.
+//!
+//! The animation is click-through and never takes the pointer: the fingers are still on the trackpad.
 
 use super::App;
 use crate::geometry::{pie_inner, pie_outer};
@@ -34,7 +37,24 @@ impl App {
             return;
         }
         self.preview_until = None;
-        // The window is placed, sized and shown as for a pie (and takes over from a notice) ...
+        // Locking a pie that is on screen: that very pie collapses into the padlock. Its window
+        // stays as it is (position, size, slices, icons), so nothing is swapped for a plain ring
+        // half way and the change is one continuous movement. `HidePie` has already been handled
+        // (the pie is no longer "open" and lets the pointer through); its bloom stays at full size
+        // until the animation is over (see `pie_ui`).
+        if locked && self.visible && self.anim > 0.15 && self.hud.is_none() {
+            self.pie_open = false;
+            self.hover = None;
+            self.lock_over_pie = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(true));
+            self.lock_anim = Some(LockAnim::new(true));
+            diag::log!("ui", "lock_anim_over_pie", x = x, y = y);
+            ctx.request_repaint();
+            return;
+        }
+        self.lock_over_pie = false;
+        // Otherwise (an unlock that opened no pie, or a window that shows nothing): the plain
+        // stand-in. The window is placed, sized and shown as for a pie (and takes over from a notice) ...
         self.show_pie(ctx, x, y, self.profile, Vec::new());
         // ... but nothing of the pie is open, and the window lets everything through.
         self.pie_open = false;
@@ -46,23 +66,34 @@ impl App {
         ctx.request_repaint();
     }
 
-    /// Draws the animation (while no pie is open) and ends it: the window is hidden and the pill
-    /// that follows is queued for it.
+    /// The animation is over: the window is hidden and the pill that follows is queued for it.
+    pub(crate) fn lock_finish(&mut self, ctx: &egui::Context, anim: LockAnim) {
+        self.lock_anim = None;
+        self.lock_over_pie = false;
+        self.anim = 0.0;
+        self.visible = false;
+        self.forget_trail();
+        self.hide_root(ctx);
+        if anim.started.elapsed() < Duration::from_secs_f32(LOCK_SECS) + STALE_AFTER {
+            self.hud_pending = Some((note_for(anim.locked), Instant::now()));
+        }
+        ctx.request_repaint();
+    }
+
+    /// Draws the animation (while no pie is open) and ends it.
     pub fn lock_ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         let Some(anim) = self.lock_anim else {
             return;
         };
+        if self.lock_over_pie {
+            // the pie that was open is the picture (see `lock_anim_start`)
+            self.pie_ui(ui);
+            return;
+        }
         let t = anim.started.elapsed().as_secs_f32();
         if t >= LOCK_SECS {
-            self.lock_anim = None;
-            self.visible = false;
-            self.forget_trail();
-            self.hide_root(&ctx);
-            if anim.started.elapsed() < Duration::from_secs_f32(LOCK_SECS) + STALE_AFTER {
-                self.hud_pending = Some((note_for(anim.locked), Instant::now()));
-            }
-            ctx.request_repaint();
+            self.lock_finish(&ctx, anim);
             return;
         }
         let sc = scene(t, anim.locked);

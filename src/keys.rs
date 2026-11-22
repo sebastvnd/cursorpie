@@ -36,6 +36,8 @@ pub mod key {
     pub const PAGE_DOWN: u16 = 121;
     /// Tab.
     pub const TAB: u16 = 48;
+    /// Esc.
+    pub const ESCAPE: u16 = 53;
     /// Arrow left.
     pub const LEFT: u16 = 123;
     /// Arrow right.

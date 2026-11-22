@@ -34,6 +34,8 @@ What else the trigger does:
 | **Drag outward** across the rim of a submenu slice | Opens the submenu, re-centered on the cursor |
 | **Keep holding** in the center | After 1200 ms in total, opens Settings. A progress arc fills around the center disc. Can be switched off, see [Opening Settings from the pie](#opening-settings-from-the-pie) |
 | **Hold Space** while the pie is open | With the [intelligent pie](intelligent-pie.md) on: turns the pie into a pie of suggestions, and back |
+| **Press Esc** while the pie is open | Locks CursorPie (on by default, *Lock with Esc*): the pie closes and nothing runs. Works with the mouse trigger and with a trackpad hold |
+| **Hold the trigger, then press Esc** (or **click the left button**, mouse trigger) while CursorPie is locked | Unlocks it and **opens the pie at once**, with the padlock opening in its middle: no need to trigger it again. A press of the trigger while locked opens no pie and goes to the app as if CursorPie were not there; after the hold time a notice says *CursorPie locked* |
 | **Press Space** while the pie is open | Opens Settings, if *Open settings with Space* is on (on by default). Works in any ring, in a submenu and in the pie of an app |
 
 In *classic* mode (see [Profiles](profiles-and-buttons.md#profiles)) there is no double-click: holding opens the app's own pie if it has
@@ -49,6 +51,7 @@ independent, so either, both or neither can be on:
 | *Open settings by holding* | Keep the trigger held in the center of the pie until *Hold to open settings* (1200 ms in total) has passed. Only the untouched top ring counts. Off: the pie never turns into Settings by itself and the progress arc is not drawn | Off |
 | *Open settings with Space* | Press Space while the pie is open. Space is taken by CursorPie, so it does not reach the app under the pie | On |
 | *Presses of Space* | One press, or two in quick succession (the second within half a second). Two is the most | One press |
+| *Lock with Esc* | Esc while the pie is open locks CursorPie; Esc while a locked trigger is held unlocks it. Esc is taken only in those two moments, so it keeps working in your apps | On |
 
 With both on, whichever comes first opens Settings; the other then does nothing. Turning the hold off is for people
 who sometimes keep the pie open for a long time and get Settings they did not ask for; Space is the deliberate way in.
@@ -56,6 +59,10 @@ With both off, Settings is still in the tray or menu bar icon.
 
 Space works on macOS and Windows. On Linux with X11 it works, but the key also reaches the app under the pie (the keyboard
 is only watched there, not taken). On Wayland CursorPie does not see keys, so the setting has no effect.
+
+Esc follows the same limits as Space: it is taken on macOS and Windows; on Linux with X11 the lock works but the Esc key also
+reaches the app under the pie; on Wayland CursorPie does not see keys, so Esc does not lock (the three-finger tap of the
+trackpad still does).
 
 **Instant flick** is an option: drag right after pressing to open the pie with no hold delay. It disables
 middle-drag pass-through in other apps. The trigger is the middle button on every system. Only on macOS can it also be one of three extra mouse buttons.

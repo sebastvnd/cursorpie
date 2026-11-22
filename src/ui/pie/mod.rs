@@ -19,6 +19,9 @@ use view::{CenterArt, PieView};
 /// Seconds the pie takes to bloom open. One easing curve is applied on top of this linear clock
 /// (see [`step_linear`]).
 const OPEN_SECS: f32 = 0.22;
+/// Seconds the pie takes to bloom open when it comes out of an unlock (see [`lock`]): a little
+/// slower than an ordinary open, so the padlock in its middle can be followed.
+const REVEAL_OPEN_SECS: f32 = 0.34;
 /// Seconds the pie takes to fade away. Closing is quicker than opening: the action already ran.
 const CLOSE_SECS: f32 = 0.12;
 /// Seconds the badges of an "Open app" slice take to come out, and to go back.
@@ -122,13 +125,54 @@ impl App {
             pie_colors_for(smoked)
         };
 
+        // The lock animation (see `lock`): while a pie collapses into the padlock it is still this
+        // pie that is drawn, with its own slices and icons, squeezed and turned by `lock_sc`; and a
+        // pie that opened out of an unlock carries the opening padlock in its middle for a moment.
+        let lock_t = self
+            .lock_anim
+            .filter(|a| a.locked && self.lock_over_pie)
+            .map(|a| a.started.elapsed().as_secs_f32());
+        if let Some(t) = lock_t
+            && t >= lock::LOCK_SECS
+        {
+            if let Some(done) = self.lock_anim {
+                self.lock_finish(&ctx, done);
+            }
+            return;
+        }
+        let lock_sc = lock_t.map(|t| lock::scene(t, true));
+        let reveal_t = self
+            .lock_reveal
+            .map(|t0| t0.elapsed().as_secs_f32())
+            .filter(|t| *t < lock::REVEAL_SECS);
+        if reveal_t.is_none() {
+            self.lock_reveal = None;
+        }
+        let look = (lock_sc.is_some() || reveal_t.is_some()).then(lock::Look::current);
+        // how far the ring has collapsed (0 = the pie as it was, 1 = gone into the padlock) and what
+        // that does to the parts of it: the icons go first, then the center, then the slices
+        let squeeze = lock_sc.map_or(0.0, |s| 1.0 - s.ring);
+        let ring_a = 1.0 - lock::smooth(squeeze, 0.62, 1.0);
+        let icon_k = 1.0 - lock::smooth(squeeze, 0.0, 0.5);
+        let core_k = 1.0 - lock::smooth(squeeze, 0.0, 0.4);
+        let want_open = self.pie_open || lock_sc.is_some();
+
         let (anim, mut moving) = step_linear(
             self.anim,
-            if self.pie_open { 1.0 } else { 0.0 },
+            if want_open { 1.0 } else { 0.0 },
             dt,
-            if self.pie_open { OPEN_SECS } else { CLOSE_SECS },
+            if want_open {
+                if reveal_t.is_some() {
+                    REVEAL_OPEN_SECS
+                } else {
+                    OPEN_SECS
+                }
+            } else {
+                CLOSE_SECS
+            },
         );
         self.anim = anim;
+        moving |= lock_sc.is_some() || reveal_t.is_some();
         for i in 0..MAX_ITEMS {
             moving |= smooth_approach(
                 &mut self.hover_anim[i],
@@ -303,10 +347,11 @@ impl App {
                     )
                     + self.pie_off;
 
-                let fade = ease_out_cubic(self.anim);
+                let fade = ease_out_cubic(self.anim) * ring_a;
                 let pop = ease_out_back(self.anim);
-                let r = pie_outer(self.win) * (0.80 + 0.20 * pop);
-                let inner = pie_inner(self.win) * (0.75 + 0.25 * pop);
+                // (a pie that collapses into the padlock shrinks toward it: `squeeze`)
+                let r = pie_outer(self.win) * (0.80 + 0.20 * pop) * (1.0 - 0.42 * squeeze);
+                let inner = pie_inner(self.win) * (0.75 + 0.25 * pop) * (1.0 - 0.45 * squeeze);
                 let room = pie_outer(self.win) + OVERSHOOT_ROOM;
                 // the ring is made round and bent to the outline of the pie (a circle by default)
                 let bend = Bend::new(outline, inner, r);
@@ -376,7 +421,11 @@ impl App {
                 }
 
                 let sl = TAU / total as f32;
-                let gap = if total > 1 { 0.05 } else { 0.0 };
+                let gap = if total > 1 {
+                    0.05 + 0.32 * squeeze
+                } else {
+                    0.0
+                };
 
                 for (i, (icon, _, is_sub)) in view.items.iter().enumerate().take(MAX_ITEMS) {
                     let h = self.hover_anim[i];
@@ -385,8 +434,8 @@ impl App {
                     // slices appear one after another (stagger) while rotating slightly
                     let lp = (self.anim * 1.6 - 0.6 * i as f32 / total as f32).clamp(0.0, 1.0);
                     let lpe = ease_out_back(lp).max(0.0);
-                    let lf = ease_out_cubic(lp);
-                    let start = slice_start(i, total) - (1.0 - lp) * 0.35;
+                    let lf = ease_out_cubic(lp) * ring_a;
+                    let start = slice_start(i, total) - (1.0 - lp) * 0.35 + 1.2 * squeeze;
                     let rr = (inner + (r + 5.0 * h - inner) * lpe).min(room);
 
                     let t = (h * 0.95 + m * 0.4).min(1.0);
@@ -475,7 +524,7 @@ impl App {
                         icon,
                         tp + Vec2::new(0.0, icon_dy),
                         icon_size * (1.0 + 0.15 * h),
-                        ink.gamma_multiply(lf),
+                        ink.gamma_multiply(lf * icon_k),
                     );
                     // An "Open app" slice whose app already runs shows two round badges outside
                     // the rim, in front of the slice, while it is hovered: a new window, or the
@@ -522,7 +571,7 @@ impl App {
                         painter.circle_filled(
                             c + dir * bend.radius(am, rr - 7.0),
                             2.5,
-                            ink.gamma_multiply(lf * 0.8),
+                            ink.gamma_multiply(lf * 0.8 * icon_k),
                         );
                     }
                 }
@@ -545,6 +594,8 @@ impl App {
                 painter.add(bend.rim(c, r, Stroke::new(ring_w, ring_col)));
 
                 // center disc: active mode (or the parent submenu icon) + "hold for settings" progress
+                // (it leaves first when the pie collapses into the padlock)
+                let fade = fade * core_k;
                 let core = inner * 0.86;
                 let disc = if live {
                     colors.core
@@ -633,6 +684,21 @@ impl App {
                         let pts = arc_points(c, core + 3.0, -PI / 2.0, -PI / 2.0 + TAU * prog);
                         painter.add(Shape::line(pts, Stroke::new(3.0, accent)));
                     }
+                }
+
+                // the padlock of the lock animation, over the middle of the pie
+                if let (Some(look), Some(sc)) = (look, lock_sc) {
+                    lock::paint_padlock(&painter, c, pie_outer(self.win), sc, &look);
+                }
+                // ... or the one that opens as the pie comes out of an unlock
+                if let (Some(look), Some(t)) = (look, reveal_t) {
+                    lock::paint_padlock(
+                        &painter,
+                        c,
+                        pie_outer(self.win) * 0.62 * lock::reveal_grow(t),
+                        lock::reveal_scene(t),
+                        &look,
+                    );
                 }
 
                 // the pill with the name and the icon of the slice under the pointer: in front of

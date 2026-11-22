@@ -8,9 +8,12 @@
 use super::App;
 use crate::config::{HudPosition, cfg};
 use crate::platform;
+use crate::ui::appicon::is_app_icon;
+use crate::ui::draw::{draw_icon, icon_path};
+use crate::ui::fonts;
 use crate::ui::hud::{self, CURSOR_GAP, EDGE_GAP, Hud, HudNote, PENDING_MAX, window_size};
 use crate::ui::screen::screen_rect_at;
-use eframe::egui::{self, Pos2, Rect};
+use eframe::egui::{self, Color32, Pos2, Rect};
 use std::time::{Duration, Instant};
 
 /// Where the center of the pill goes on a display `area`, with the pointer at `at`: the center of
@@ -258,6 +261,15 @@ impl App {
             ctx.request_repaint_after(wait);
         }
 
+        // the icon of a slice that was run (see `HudNote::in_slice`); the icon of an app is read in
+        // the background and shows up as soon as it is ready
+        let ed = &mut self.ed;
+        let tex = note.icon.as_deref().and_then(|s| ed.icon_for(&ctx, s));
+        let prev_tex = prev
+            .as_ref()
+            .and_then(|n| n.icon.as_deref())
+            .and_then(|s| ed.icon_for(&ctx, s));
+
         let win = hud::window_size(scale);
         let center = Pos2::new(win.x / 2.0, win.y / 2.0);
         let look = hud::PillLook {
@@ -276,7 +288,22 @@ impl App {
             sweep,
             bar,
         };
-        hud::paint_pill_swap(painter, center, &note, prev.as_ref(), &look);
+        let art = |p: &egui::Painter, n: &HudNote, at: Pos2, size: f32, ink: Color32| {
+            let tex = if n.icon == note.icon {
+                tex.as_ref()
+            } else {
+                prev_tex.as_ref()
+            };
+            match (tex, n.icon.as_deref()) {
+                // a picture that is not there yet shows the glyph of the kind, never a "?"
+                (None, Some(icon)) if is_app_icon(icon) || icon_path(icon).is_some() => {
+                    fonts::paint_icon(p, at, n.kind.glyph(), size, ink, true);
+                }
+                (tex, icon) => draw_icon(p, tex, icon.unwrap_or(""), at, size, ink),
+            }
+        };
+        let art: hud::BadgeArt<'_> = &art;
+        hud::paint_pill_icons(painter, center, &note, prev.as_ref(), &look, Some(art));
     }
 }
 

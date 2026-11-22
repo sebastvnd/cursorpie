@@ -8,9 +8,10 @@ This is a root-level, Markdown-driven website for the CursorPie repository.
 - `assets/site.css` — design tokens (light and dark), the Gen Z look (neon palette, thick outlines, hard shadows), animations, documentation layout and responsive rules. Motion is switched off for `prefers-reduced-motion`.
 - `assets/site.js` — theme, scroll animations, the interactive pie demo, OS detection and download links, the in-page router and the Markdown documentation engine.
 - `assets/js/marked.js` — the local Markdown parser used to render project `.md` files.
+- `flowhub/` and `assets/flowhub.js`, `assets/flowhub.css` — the Flow Hub page (`/flowhub/`), its `catalog.json` and the flow files. The deploy workflow (`.github/workflows/static.yml`) copies `flowhub/` into the site and fails if it is missing.
 - `assets/fonts/` — the project's Inter and Phosphor icon fonts, with their license files.
 - `assets/cursorpie-logo.png` and `assets/cursorpie-mark.png` — CursorPie logo assets.
-- `docs/gifs/` — the 720 x 405 demo animations. The README and the user guide link to them with relative paths (the viewer resolves them against the page's own file), and the landing page shows all of them in the *See it in motion* section (`#tour`), loaded lazily as they scroll into view. The workflow copies `docs/` into the site, so nothing else is needed to publish them. See `docs/gifs/README.md`.
+- `docs/gifs/` — the 720 x 405 demo animations. The README and the user guide link to them with relative paths (the viewer resolves them against the page's own file), and the landing page shows all of them in the *See it in motion* section (`#tour`) as one sideways slider (swipe, arrows, dots, or the left/right keys), loaded lazily as they come close. The workflow copies `docs/` into the site, so nothing else is needed to publish them. See `docs/gifs/README.md`.
 
 ## Documentation viewer features
 

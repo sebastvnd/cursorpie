@@ -29,6 +29,22 @@ const VEIL_MIN: Duration = Duration::from_millis(60);
 /// never leave the pie invisible.
 const VEIL_MAX: Duration = Duration::from_millis(300);
 
+/// Asks the toolkit to keep the window above the others (the pie, a notice or a panel is shown).
+///
+/// Not on macOS: there the toolkit's "always on top" is the *floating* level, and it is written
+/// again every time the pie is shown, so the window was put on screen at a level that a full-screen
+/// app's Space draws over, and only a frame later did `platform::keep_over_full_screen` raise it
+/// (that runs in `App::logic`, before the toolkit's commands of the same frame). A window that is
+/// ordered in at the wrong level was not drawn over a full-screen app. The level is owned by
+/// `keep_over_full_screen` alone on that system.
+fn pin_on_top(ctx: &egui::Context) {
+    if platform::OS != platform::Os::Mac {
+        ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
+            egui::WindowLevel::AlwaysOnTop,
+        ));
+    }
+}
+
 /// A window that was asked to appear on Linux and is still being prepared (see `App::show_window`).
 pub struct ShowWait {
     /// The window size it was asked for.
@@ -131,9 +147,7 @@ impl App {
         self.visible = false;
 
         ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(true));
-        ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
-            egui::WindowLevel::AlwaysOnTop,
-        ));
+        pin_on_top(ctx);
         // The window is not hidden yet: a hidden window runs no egui pass and paints nothing, so
         // the textures and the font atlas freed above would stay allocated until the next time
         // the pie shows (the RAM of Settings stayed for as long as nobody pressed the trigger).
@@ -172,9 +186,7 @@ impl App {
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(win));
         ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
         ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(click_through));
-        ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
-            egui::WindowLevel::AlwaysOnTop,
-        ));
+        pin_on_top(ctx);
         ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(top_left));
         self.visible = true;
         self.show_window(ctx, win);
@@ -683,7 +695,11 @@ impl App {
         // it does not count the frames for the tap again.
         if !relevel {
             self.pie_frames = 0;
+            // from now on somebody checks that this pie really reaches the screen
+            self.pie_watch = Some(super::standby::PieWatch::new());
         }
+        // the pie takes the window over from a stand-by (and shows it itself below)
+        self.standby = None;
         // Every ring blooms: the pie that opens the gesture, a submenu, and the ring that comes back
         // when a submenu is left, at any level and with or without the trail mode. The bloom is
         // what CursorPie looks like, so a change of level starts the clock again like the first
@@ -790,9 +806,7 @@ impl App {
         diag::log!("ui", "pie_input", takes_pointer = takes_pointer);
         if !reuse {
             ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(!takes_pointer));
-            ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
-                egui::WindowLevel::AlwaysOnTop,
-            ));
+            pin_on_top(ctx);
         }
         // whole points: a window on a half-point offset is resampled by the compositor on
         // standard-density screens, which softens everything drawn in it

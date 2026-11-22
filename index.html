@@ -215,65 +215,73 @@
         <div class="section-heading rv">
           <span class="eyebrow">See it in motion</span>
           <h2>Watch it <em class="mark mark-sky">work.</em></h2>
-          <p class="lead">Short clips of the gesture, the actions and Settings. Each one loads when you scroll to it.</p>
+          <p class="lead">Short clips of the gesture, the actions and Settings. Swipe or use the arrows; each clip loads when it comes close.</p>
         </div>
-        <div class="tour">
-          <figure class="tour-item rv">
+        <div class="tour-slider rv" id="tour-slider" role="region" aria-roledescription="carousel" aria-label="Demo clips">
+        <div class="tour" id="tour-track" tabindex="0" aria-label="Demo clips, scroll sideways">
+          <figure class="tour-item" role="group" aria-roledescription="slide">
             <img src="./docs/gifs/14-problem-hook.gif" width="720" height="405" loading="lazy" decoding="async" alt="Tired of hunting for that one shortcut?">
             <figcaption>The problem: too many shortcuts to remember.</figcaption>
           </figure>
-          <figure class="tour-item rv">
+          <figure class="tour-item" role="group" aria-roledescription="slide">
             <img src="./docs/gifs/01-hero.gif" width="720" height="405" loading="lazy" decoding="async" alt="CursorPie: your actions, one gesture away">
             <figcaption>CursorPie in a few seconds.</figcaption>
           </figure>
-          <figure class="tour-item rv">
+          <figure class="tour-item" role="group" aria-roledescription="slide">
             <img src="./docs/gifs/02-hold-flick-release.gif" width="720" height="405" loading="lazy" decoding="async" alt="Hold the middle button, flick to a slice, release">
             <figcaption>Hold, flick, release.</figcaption>
           </figure>
-          <figure class="tour-item rv">
+          <figure class="tour-item" role="group" aria-roledescription="slide">
             <img src="./docs/gifs/03-cancel-in-the-middle.gif" width="720" height="405" loading="lazy" decoding="async" alt="Cancel by releasing in the center">
             <figcaption>Changed your mind? Release in the middle.</figcaption>
           </figure>
-          <figure class="tour-item rv">
+          <figure class="tour-item" role="group" aria-roledescription="slide">
             <img src="./docs/gifs/04-any-action.gif" width="720" height="405" loading="lazy" decoding="async" alt="Shortcuts, apps, shell, mouse modes, submenus, flows">
             <figcaption>Any action: shortcuts, apps, URLs, files, commands, flows.</figcaption>
           </figure>
-          <figure class="tour-item rv">
+          <figure class="tour-item" role="group" aria-roledescription="slide">
             <img src="./docs/gifs/05-nested-submenus.gif" width="720" height="405" loading="lazy" decoding="async" alt="Submenus up to 5 levels deep">
             <figcaption>Nested submenus, up to 5 levels deep.</figcaption>
           </figure>
-          <figure class="tour-item rv">
+          <figure class="tour-item" role="group" aria-roledescription="slide">
             <img src="./docs/gifs/06-per-app-profiles.gif" width="720" height="405" loading="lazy" decoding="async" alt="Per-app profiles">
             <figcaption>A different pie for every app.</figcaption>
           </figure>
-          <figure class="tour-item rv">
+          <figure class="tour-item" role="group" aria-roledescription="slide">
             <img src="./docs/gifs/07-mouse-side-buttons.gif" width="720" height="405" loading="lazy" decoding="async" alt="Back and forward as undo and redo">
             <figcaption>Mouse side buttons as undo and redo.</figcaption>
           </figure>
-          <figure class="tour-item rv">
+          <figure class="tour-item" role="group" aria-roledescription="slide">
             <img src="./docs/gifs/08-trackpad.gif" width="720" height="405" loading="lazy" decoding="async" alt="Touch and hold on a trackpad">
             <figcaption>No middle button? Touch and hold the trackpad.</figcaption>
           </figure>
-          <figure class="tour-item rv">
+          <figure class="tour-item" role="group" aria-roledescription="slide">
             <img src="./docs/gifs/09-flows.gif" width="720" height="405" loading="lazy" decoding="async" alt="Chain actions into a flow">
             <figcaption>Flows: chain actions into one slice.</figcaption>
           </figure>
-          <figure class="tour-item rv">
+          <figure class="tour-item" role="group" aria-roledescription="slide">
             <img src="./docs/gifs/10-settings-editor.gif" width="720" height="405" loading="lazy" decoding="async" alt="Settings editor">
             <figcaption>The Settings editor.</figcaption>
           </figure>
-          <figure class="tour-item rv">
+          <figure class="tour-item" role="group" aria-roledescription="slide">
             <img src="./docs/gifs/11-themes-and-share.gif" width="720" height="405" loading="lazy" decoding="async" alt="Themes and profile export">
             <figcaption>Themes, and profiles you can share.</figcaption>
           </figure>
-          <figure class="tour-item rv">
+          <figure class="tour-item" role="group" aria-roledescription="slide">
             <img src="./docs/gifs/12-private-and-open-source.gif" width="720" height="405" loading="lazy" decoding="async" alt="No account, no telemetry, MIT">
             <figcaption>No account, no telemetry, MIT license.</figcaption>
           </figure>
-          <figure class="tour-item rv">
+          <figure class="tour-item" role="group" aria-roledescription="slide">
             <img src="./docs/gifs/13-platforms.gif" width="720" height="405" loading="lazy" decoding="async" alt="macOS, Windows, Linux">
             <figcaption>macOS, Windows and Linux.</figcaption>
           </figure>
+        </div>
+        <div class="tour-controls" aria-label="Slide controls">
+          <button class="icon-btn tour-btn" type="button" id="tour-prev" aria-label="Previous clip" data-tip="Previous"><span class="icon" aria-hidden="true">&#xe138;</span></button>
+          <div class="tour-dots" id="tour-dots" aria-hidden="true"></div>
+          <span class="tour-count" id="tour-count" aria-live="polite">1 / 14</span>
+          <button class="icon-btn tour-btn" type="button" id="tour-next" aria-label="Next clip" data-tip="Next"><span class="icon" aria-hidden="true">&#xe13a;</span></button>
+        </div>
         </div>
       </div>
     </section>

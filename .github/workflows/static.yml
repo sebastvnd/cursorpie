@@ -50,6 +50,12 @@ jobs:
             cp -R docs _site/
           fi
 
+          # Flow Hub (https://sebastvnd.github.io/cursorpie/flowhub/): its page, catalog.json and the
+          # flow files must be published too, or the URL answers "404 File not found".
+          if [ -d flowhub ]; then
+            cp -R flowhub _site/
+          fi
+
           if [ -f diag/README.md ]; then
             mkdir -p _site/diag
             cp diag/README.md _site/diag/
@@ -63,6 +69,13 @@ jobs:
           done
 
           touch _site/.nojekyll
+
+      - name: Check that Flow Hub is in the site
+        run: |
+          test -f _site/flowhub/index.html
+          test -f _site/flowhub/catalog.json
+          test -f _site/assets/flowhub.js
+          test -f _site/assets/flowhub.css
 
       - name: Upload website artifact
         uses: actions/upload-pages-artifact@v4

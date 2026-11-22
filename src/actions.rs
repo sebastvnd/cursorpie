@@ -48,8 +48,29 @@ struct Job {
     choice: Option<Choice>,
     /// Whether the notice on the screen announces it. The side buttons do not: they fire all day.
     announce: bool,
+    /// The slice of the pie the job comes from: its notices carry the icon and the name of the slice
+    /// (see [`HudNote::in_slice`]). `None` for what does not come from a slice.
+    slice: Option<SliceTag>,
     /// When the job was queued, so the diagnostic log can say how long it waited for the worker.
     queued: Instant,
+}
+
+/// The icon and the name of the slice a job comes from, for its notices on the screen.
+#[derive(Clone, Debug)]
+struct SliceTag {
+    icon: String,
+    name: String,
+}
+
+impl SliceTag {
+    /// `None` for a slice without a name: its notices say what the action does, as they always did.
+    fn new(icon: &str, name: &str) -> Option<Self> {
+        let name = name.trim();
+        (!name.is_empty()).then(|| Self {
+            icon: icon.trim().to_string(),
+            name: name.to_string(),
+        })
+    }
 }
 
 /// Sender side of the worker queue; set once by [`init`].
@@ -72,6 +93,18 @@ static ANNOUNCING: AtomicBool = AtomicBool::new(true);
 /// Whether the job the worker is running now takes a while (see `takes_time`): its notices stay
 /// on the screen until the job is over. Only the worker thread writes it.
 static LIVE: AtomicBool = AtomicBool::new(false);
+
+/// The slice the job the worker is running now comes from, if any (see [`announce`]). Only the worker
+/// thread writes it, and it clears it when the job is over.
+static SLICE: Mutex<Option<SliceTag>> = Mutex::new(None);
+
+fn set_slice(tag: Option<SliceTag>) {
+    *SLICE.lock().unwrap_or_else(PoisonError::into_inner) = tag;
+}
+
+fn current_slice() -> Option<SliceTag> {
+    SLICE.lock().unwrap_or_else(PoisonError::into_inner).clone()
+}
 
 /// How far that job has come: the step of a sequence, the block of a flow (or the round of its
 /// loop) that runs, and how many there are (`0` when that is not known). Only the worker thread
@@ -109,6 +142,11 @@ fn announce(note: Option<HudNote>) {
     if !crate::config::cfg().hud {
         return;
     }
+    // a slice keeps its icon and its name on the pill (the panel above keeps saying what the step is)
+    let note = match current_slice() {
+        Some(slice) => note.in_slice(&slice.icon, &slice.name),
+        None => note,
+    };
     if let Some(n) = NOTIFIER.get() {
         n.send(Msg::Hud(note));
     }
@@ -146,6 +184,7 @@ pub fn init() {
                     platform::activate_app(app);
                 }
                 ANNOUNCING.store(job.announce, Ordering::Relaxed);
+                set_slice(job.slice.clone());
                 execute(&job.action, job.choice);
             }
         })
@@ -162,16 +201,35 @@ pub fn run_in(focus: Option<String>, action: Action) {
 /// Like [`run_in`], for a slice that offered the choice between a new window and the app that is
 /// open (see [`running`]): `choice` says which one was picked. `None` is the plain behavior.
 pub fn run_in_with(focus: Option<String>, action: Action, choice: Option<Choice>) {
-    queue(focus, action, choice, true);
+    queue(focus, action, choice, true, None);
+}
+
+/// Like [`run_in_with`], for an action that comes from a slice of the pie: the notices of the run
+/// carry the icon and the name of the slice instead of the plain "Open app" and "Open link", so the
+/// pill goes on from what it said while the pointer was on the slice.
+pub fn run_in_slice(
+    focus: Option<String>,
+    action: Action,
+    choice: Option<Choice>,
+    icon: &str,
+    name: &str,
+) {
+    queue(focus, action, choice, true, SliceTag::new(icon, name));
 }
 
 /// Like [`run_in`], but the notice on the screen stays quiet: for what is repeated all day, such as
 /// the back and forward buttons.
 pub fn run_in_quiet(focus: Option<String>, action: Action) {
-    queue(focus, action, None, false);
+    queue(focus, action, None, false, None);
 }
 
-fn queue(focus: Option<String>, action: Action, choice: Option<Choice>, announce: bool) {
+fn queue(
+    focus: Option<String>,
+    action: Action,
+    choice: Option<Choice>,
+    announce: bool,
+    slice: Option<SliceTag>,
+) {
     if matches!(action, Action::Nothing) {
         return;
     }
@@ -181,6 +239,7 @@ fn queue(focus: Option<String>, action: Action, choice: Option<Choice>, announce
             action,
             choice,
             announce,
+            slice,
             queued: Instant::now(),
         });
     }
@@ -250,6 +309,8 @@ fn execute(action: &Action, choice: Option<Choice>) {
         runpanel::begin(&run_name(action), panel_may_open(action));
     }
     execute_step(action, &mut choice);
+    // what comes after (the "Stopped" notice) is about the run, not about the slice
+    set_slice(None);
     if long {
         LIVE.store(false, Ordering::Relaxed);
         STEP_DONE.store(0, Ordering::Relaxed);

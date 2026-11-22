@@ -157,6 +157,16 @@ pub enum Msg {
     /// The package of a newer release was downloaded, checked and made ready (or could not be): see
     /// [`update::install`](crate::update::install).
     UpdateStaged(Result<crate::update::install::Staged, crate::update::install::InstallError>),
+    /// *Learn now* or *Forget everything* (Behavior > Intelligent) is done. `lines` say what came of
+    /// it, one point each; Settings shows them in a sheet (a line in the status bar was too easy to
+    /// miss, and the notice pill never shows while Settings is open).
+    SmartDone { forget: bool, lines: Vec<String> },
+    /// The `cpd` command was installed (`installed`) or removed (see [`crate::cpdtool`]). The result
+    /// is where it is now, or what went wrong in plain words.
+    CpdDone {
+        installed: bool,
+        result: Result<std::path::PathBuf, String>,
+    },
 }
 
 /// A channel sender plus the egui context needed to wake the UI. Cheap to clone.

@@ -168,11 +168,14 @@ impl App {
                 |ui| {
                     ui.horizontal(|ui| {
                         if button(ui, Look::Soft, Some(symbols::SPARKLE), "Learn now").clicked() {
+                            // the sheet opens at the click and the worker's answer fills it
+                            ed.smart_sheet = Some(crate::ui::settings::SmartSheet::working(false));
                             crate::smart::learn_now();
                         }
                         if button(ui, Look::Danger, Some(symbols::TRASH), "Forget everything")
                             .clicked()
                         {
+                            ed.smart_sheet = Some(crate::ui::settings::SmartSheet::working(true));
                             crate::smart::forget_all();
                         }
                     });

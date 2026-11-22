@@ -654,6 +654,10 @@ pub struct Config {
     /// lock CursorPie for the trackpad; hold with one finger and tap with two to unlock it. See
     /// [`tap::touch::lock`](crate::tap). Off: two more fingers just close the pie, as before.
     pub touch_lock: bool,
+    /// Esc locks CursorPie while a pie is open, for every trigger (the mouse button, the trackpad
+    /// hold); holding the trigger while it is locked and pressing Esc unlocks it. See
+    /// [`tap::touch::lock`](crate::tap). The lock is one flag in memory: a restart unlocks it.
+    pub esc_lock: bool,
     /// Haptic ticks on a trackpad (macOS), when the pie opens, the slice changes and the mode switches.
     pub haptics: bool,
     /// With `haptics`: also a tick when the hovered slice changes.

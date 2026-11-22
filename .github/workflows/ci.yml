@@ -486,6 +486,14 @@ jobs:
                       cpd-macos-universal cpd-windows-x86_64.exe cpd-linux-x86_64; do
             test -f "release-assets/$name" || { echo "missing $name"; exit 1; }
           done
+      # Settings (About > Developer tools > Terminal command) checks the cpd it downloads against
+      # these (src/cpdtool.rs), the same way an update checks its package.
+      - name: Checksums of cpd
+        run: |
+          cd release-assets
+          for name in cpd-macos-universal cpd-windows-x86_64.exe cpd-linux-x86_64; do
+            sha256sum "$name" > "$name.sha256"
+          done
       - name: Publish release assets
         uses: softprops/action-gh-release@v2
         with:

@@ -30,6 +30,12 @@
 //! The pill follows the look of the pie: a card in the light or dark appearance, smoked graphite when
 //! the pie is set to Glass, a round badge in the accent color with the icon of the kind of action.
 //!
+//! When the action comes from a slice, the notice goes on from the pill of that slice: the badge keeps
+//! the icon of the slice and the title keeps its name ("GitHub", not "Open link"), and the line under it
+//! says what happens (`github.com`, `Safari`, `Cmd + C`), or nothing when that would only repeat the name
+//! ([`HudNote::in_slice`]). A slice that is a flow keeps its icon and name for the whole run, and the
+//! line under it follows the blocks.
+//!
 //! The pill is also what shows the name of the slice under the pointer while the pie is open (see
 //! [`HudNote::slice`] and [`ui::pie::pill`](crate::ui::pie)): the badge then carries the icon of the
 //! slice instead of the glyph of a kind, and the [`Hud`] is *pinned* ([`Hud::follow`]) to the pointer: it
@@ -292,6 +298,33 @@ impl HudNote {
         note
     }
 
+    /// This note as the pill of the slice that was run: the badge carries the icon of the slice and
+    /// the title is its name, so the notice goes on from what the pill said while the pointer was on
+    /// the slice (see [`HudNote::slice`]). The line under the name says what happens now (the app, the
+    /// host of the link, the shortcut) and is left out when it would only repeat the name. The kind
+    /// stays, so a slice without an icon still gets the glyph of what it does.
+    ///
+    /// A slice without a name leaves the note as it is, and so do the notices of the lock.
+    pub fn in_slice(mut self, icon: &str, name: &str) -> Self {
+        let name = name.trim();
+        if name.is_empty() || self.kind.is_lock() {
+            return self;
+        }
+        let what = if self.detail.trim().is_empty() {
+            std::mem::take(&mut self.title)
+        } else {
+            std::mem::take(&mut self.detail)
+        };
+        self.detail = if what.trim().to_lowercase() == name.to_lowercase() {
+            String::new()
+        } else {
+            what
+        };
+        self.title = name.to_string();
+        self.icon = Some(icon.to_string()).filter(|i| !i.trim().is_empty());
+        self
+    }
+
     /// The same note with a progress.
     pub fn with_progress(mut self, progress: HudProgress) -> Self {
         self.progress = progress;
@@ -304,14 +337,20 @@ impl HudNote {
         self
     }
 
-    /// "CursorPie locked", for a hold on the trackpad while the lock is on (and for the moment the
-    /// lock is closed).
+    /// "CursorPie locked", for a hold on the trigger (the mouse button or the trackpad) while the
+    /// lock is on (and for the moment the lock is closed). The line under it says how to unlock,
+    /// for the ways that are switched on.
     pub fn locked() -> Self {
-        Self::new(
-            HudKind::Locked,
-            "CursorPie locked",
-            "Hold + tap with 2 fingers to unlock",
-        )
+        let (esc, touch) = {
+            let c = crate::config::cfg();
+            (c.esc_lock, c.touch_lock)
+        };
+        let how = match (esc, touch) {
+            (true, true) => "Hold + Esc (or tap with 2 fingers) to unlock",
+            (true, false) => "Hold the trigger and press Esc to unlock",
+            _ => "Hold + tap with 2 fingers to unlock",
+        };
+        Self::new(HudKind::Locked, "CursorPie locked", how)
     }
 
     /// "CursorPie unlocked", for the moment the lock is opened.
@@ -1436,6 +1475,46 @@ mod tests {
         assert_eq!(app_display("Google Chrome"), "Google Chrome");
         assert_eq!(app_display("@browser"), "Browser");
         assert_eq!(app_display("@Files"), "Files");
+    }
+
+    #[test]
+    fn a_slice_that_was_run_keeps_its_icon_and_name_in_the_pill() {
+        let link = HudNote::open_target("https://www.github.com/a/b")
+            .unwrap()
+            .in_slice("ico:github", "  Repos ");
+        assert_eq!(
+            (link.title.as_str(), link.detail.as_str()),
+            ("Repos", "github.com")
+        );
+        assert_eq!(link.icon.as_deref(), Some("ico:github"));
+        // (the glyph of what it does stays, for a slice that has no icon)
+        assert_eq!(link.kind, HudKind::Link);
+        // the line under the name is left out when it would only repeat it
+        let app = HudNote::open_app("/Applications/Safari.app")
+            .unwrap()
+            .in_slice("", "safari");
+        assert_eq!(app.title, "safari");
+        assert!(app.detail.is_empty() && app.icon.is_none());
+        // a note without a line of its own says what it is
+        let cmd = note_for(&Action::Command("make".into()), none)
+            .unwrap()
+            .in_slice("ico:x", "Deploy");
+        assert_eq!(
+            (cmd.title.as_str(), cmd.detail.as_str()),
+            ("Deploy", "Run command")
+        );
+        // the progress of a run is not touched
+        let step = HudNote::new(HudKind::Flow, "Run flow", "Morning")
+            .with_progress(HudProgress::Steps { done: 1, total: 3 })
+            .running(true)
+            .in_slice("ico:sun", "Start day");
+        assert_eq!(step.progress, HudProgress::Steps { done: 1, total: 3 });
+        assert!(step.live && step.detail == "Morning");
+        // a slice without a name and the lock stay as they were
+        let plain = HudNote::open_app("Mail").unwrap();
+        assert_eq!(plain.clone().in_slice("ico:x", "  "), plain);
+        let locked = HudNote::unlocked();
+        assert_eq!(locked.clone().in_slice("ico:x", "Name"), locked);
     }
 
     #[test]

@@ -376,10 +376,26 @@ fn run_cmd(cmd: Cmd, c: &SmartConfig, notifier: &Notifier) {
                 tidy(&mut rt, c, Some(names));
                 rt.habits.counts()
             };
-            notifier.send(Msg::Notice(format!(
-                "Learned so far: {} apps, {} pages, {} actions.",
+            let mut lines = Vec::new();
+            if c.enabled {
+                lines.push(
+                    "CursorPie looked at what is open now, tidied what it knows and saved it."
+                        .to_string(),
+                );
+            } else {
+                lines.push("The intelligent pie is off, so nothing new was learned. Turn it on above to let CursorPie learn.".to_string());
+            }
+            lines.push(format!(
+                "Learned so far: {} apps, {} web pages, {} actions.",
                 counts.apps, counts.pages, counts.actions
-            )));
+            ));
+            if counts.apps + counts.pages + counts.actions == 0 {
+                lines.push("Nothing yet. Use your apps and the pie for a while, and the suggestions appear.".to_string());
+            }
+            notifier.send(Msg::SmartDone {
+                forget: false,
+                lines,
+            });
         }
         Cmd::Forget => {
             {
@@ -390,9 +406,13 @@ fn run_cmd(cmd: Cmd, c: &SmartConfig, notifier: &Notifier) {
             }
             let _ = std::fs::remove_file(file_path());
             super::siteicon::forget_all();
-            notifier.send(Msg::Notice(
-                "CursorPie forgot everything it learned.".into(),
-            ));
+            notifier.send(Msg::SmartDone {
+                forget: true,
+                lines: vec![
+                    "Every habit and the icons of the suggested sites were deleted.".to_string(),
+                    "CursorPie starts learning again from now, if learning is on.".to_string(),
+                ],
+            });
         }
     }
 }

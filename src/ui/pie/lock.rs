@@ -1,15 +1,25 @@
 //! The animation of the lock (see [`tap::touch::lock`](crate::tap)): locking turns the pie into a
-//! padlock that snaps shut, unlocking opens the padlock and turns it back into the pie.
+//! padlock that snaps shut, unlocking opens the padlock and the pie comes out of it.
 //!
-//! It is drawn in the window of the pie, where the pie was, with plain shapes (a ring of slices, a
-//! rounded body, a shackle): no image and no font are needed, and the colors are the pie's own (the
-//! slices of the appearance, the accent the person chose). The timeline is a pure function of the
-//! time ([`scene`]) so it can be tested; [`paint`] only turns a [`Scene`] into shapes.
+//! **Locking** keeps the pie that was open: its own slices, icons and material (solid, glass, Gen Z)
+//! are drawn by `pie_ui` as always, only squeezed, turned and faded by the numbers of [`scene`],
+//! while [`paint_padlock`] draws the padlock over its middle. Nothing of the pie is swapped for a
+//! plain stand-in, so the slices and their icons do not vanish into bare shapes half way.
+//!
+//! **Unlocking** with a trigger that is still held opens a real pie at once (see
+//! [`reveal_scene`]): the padlock sits in the middle, its shackle lifts and it fades while the pie
+//! blooms around it, so the person never has to trigger the pie again.
+//!
+//! [`paint`] (plain ring + padlock) is only the fallback for a window with no pie to start from,
+//! for example an unlock that could not open a pie. The timeline is a pure function of the time
+//! ([`scene`]) so it can be tested; the paint functions only turn a [`Scene`] into shapes.
 //!
 //! ```text
-//! locking     pie ring ──► ring shrinks and spins, slices close up ──► padlock pops in, shackle
-//!             comes down, a small pulse when it snaps shut ──► fades away (a pill follows)
-//! unlocking   the same, backwards: the shackle lifts, the padlock opens into the pie ring
+//! locking     pie (slices + icons) ──► icons fade, ring squeezes and turns, slices close up ──►
+//!             padlock grows in, shackle comes down, a small pulse when it snaps shut ──► fades
+//!             away (a pill follows)
+//! unlocking   padlock in the middle ──► shackle lifts, padlock fades and grows a little while
+//!             the pie blooms around it ──► the pie is open and live
 //! ```
 
 use super::{genz, glass};
@@ -22,11 +32,15 @@ use std::f32::consts::{PI, TAU};
 use std::time::Instant;
 
 /// Seconds the whole animation takes, from the first frame to the last.
-pub const LOCK_SECS: f32 = 1.1;
+pub const LOCK_SECS: f32 = 1.15;
 /// The pie and the padlock change into each other during this much of it.
-const MORPH_END: f32 = 0.72;
+const MORPH_END: f32 = 0.78;
 /// From here the picture fades away.
-const FADE_START: f32 = 0.86;
+const FADE_START: f32 = 0.92;
+/// When the shackle has just snapped shut and the padlock gives its little pulse.
+const BUMP_AT: f32 = 0.74;
+/// Seconds the padlock stays over a pie that opened out of an unlock.
+pub const REVEAL_SECS: f32 = 0.55;
 /// How many slices the ring that stands for the pie has.
 const SLICES: usize = 6;
 
@@ -62,9 +76,11 @@ pub struct Scene {
     pub bump: f32,
 }
 
-fn smooth(x: f32, a: f32, b: f32) -> f32 {
+/// Smootherstep: zero speed and zero acceleration at both ends, so each part of the animation
+/// starts and stops without a visible kink (the plain smoothstep has a speed jump there).
+pub fn smooth(x: f32, a: f32, b: f32) -> f32 {
     let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
+    t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
 }
 
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
@@ -79,7 +95,7 @@ pub fn scene(t: f32, locked: bool) -> Scene {
     let fade_in = if locked { 1.0 } else { smooth(t, 0.0, 0.08) };
     let fade_out = 1.0 - smooth(t, FADE_START, LOCK_SECS);
     let bump = if locked {
-        (1.0 - ((t - 0.69) / 0.09).abs()).max(0.0)
+        (1.0 - ((t - BUMP_AT) / 0.10).abs()).max(0.0)
     } else {
         0.0
     };
@@ -90,6 +106,25 @@ pub fn scene(t: f32, locked: bool) -> Scene {
         alpha: fade_in * fade_out,
         bump,
     }
+}
+
+/// The padlock over a pie that has just opened out of an unlock, `t` seconds after it began: the
+/// shackle lifts first, then the padlock fades while it grows a little (the caller scales it with
+/// [`reveal_grow`]). `ring` and `bump` are not used.
+pub fn reveal_scene(t: f32) -> Scene {
+    let k = (t / REVEAL_SECS).clamp(0.0, 1.0);
+    Scene {
+        ring: 1.0,
+        body: 1.0,
+        close: 1.0 - smooth(k, 0.0, 0.55),
+        alpha: 1.0 - smooth(k, 0.35, 1.0),
+        bump: 0.0,
+    }
+}
+
+/// How much bigger than its start the padlock of [`reveal_scene`] is `t` seconds in (1.0 to 1.3).
+pub fn reveal_grow(t: f32) -> f32 {
+    1.0 + 0.3 * smooth(t / REVEAL_SECS, 0.2, 1.0)
 }
 
 /// The colors of the picture.
@@ -156,6 +191,18 @@ pub fn paint(painter: &egui::Painter, c: Pos2, outer: f32, inner: f32, sc: Scene
                 Stroke::new(width, col),
             ));
         }
+    }
+
+    paint_padlock(painter, c, outer, sc, look);
+}
+
+/// Draws the padlock of `sc` centered on `c`; `outer` is the radius of the pie it belongs to (the
+/// padlock is half that wide). It is drawn over whatever is there, so it can sit on the real pie.
+pub fn paint_padlock(painter: &egui::Painter, c: Pos2, outer: f32, sc: Scene, look: &Look) {
+    let s = outer * 0.5; // the unit of the padlock
+    let a = sc.alpha.clamp(0.0, 1.0);
+    if a <= 0.0 {
+        return;
     }
 
     // the padlock: pops in, the shackle comes down (or lifts), a pulse when it snaps shut
@@ -244,8 +291,37 @@ mod tests {
     fn the_picture_fades_out_completely_and_the_pulse_is_for_locking_only() {
         assert!(near(scene(LOCK_SECS, true).alpha, 0.0));
         assert!(near(scene(LOCK_SECS, false).alpha, 0.0));
-        assert!(scene(0.69, true).bump > 0.9);
-        assert!(near(scene(0.69, false).bump, 0.0));
+        assert!(scene(BUMP_AT, true).bump > 0.9);
+        assert!(near(scene(BUMP_AT, false).bump, 0.0));
+    }
+
+    #[test]
+    fn the_padlock_over_an_unlocked_pie_opens_then_fades_and_grows() {
+        let start = reveal_scene(0.0);
+        assert!(near(start.close, 1.0) && near(start.alpha, 1.0) && near(start.body, 1.0));
+        let end = reveal_scene(REVEAL_SECS);
+        assert!(near(end.close, 0.0) && near(end.alpha, 0.0));
+        assert!(near(reveal_grow(0.0), 1.0) && reveal_grow(REVEAL_SECS) > 1.2);
+        for i in 0..=70 {
+            let s = reveal_scene(i as f32 / 100.0);
+            for v in [s.ring, s.body, s.close, s.alpha, s.bump] {
+                assert!((0.0..=1.0).contains(&v), "{i}: {s:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_curve_is_flat_at_both_ends_and_never_leaves_zero_to_one() {
+        assert!(near(smooth(0.0, 0.0, 1.0), 0.0) && near(smooth(1.0, 0.0, 1.0), 1.0));
+        assert!(near(smooth(0.5, 0.0, 1.0), 0.5));
+        // flat at the ends: a tenth of the way in has moved far less than a tenth
+        assert!(smooth(0.1, 0.0, 1.0) < 0.01);
+        let mut last = 0.0;
+        for i in 0..=100 {
+            let v = smooth(i as f32 / 100.0, 0.0, 1.0);
+            assert!((0.0..=1.0).contains(&v) && v >= last);
+            last = v;
+        }
     }
 
     #[test]

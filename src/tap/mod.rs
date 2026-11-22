@@ -8,6 +8,7 @@
 //! | Event | Handled by |
 //! |---|---|
 //! | pause | the top of `dispatch` |
+//! | Esc while a pie is open, or while a locked trigger is held | `esc_lock`: locks or unlocks CursorPie |
 //! | Space while a pie is open | `space`: opens Settings, if the setting is on |
 //! | key down / up | `keyboard`: only used to record a shortcut in Settings |
 //! | a click while a trackpad pie is open | `touch::extra`: one more finger clicks (macOS trackpad, Windows precision touchpad) |
@@ -24,6 +25,7 @@
 //! unsure. The full list is in
 //! [`guides::architecture`](crate::guides::architecture#rules-for-the-event-tap-callback).
 
+mod esc_lock;
 pub(crate) mod gesture;
 mod keyboard;
 mod modorder;
@@ -270,6 +272,10 @@ pub(crate) fn dispatch(
             if down {
                 touch::note_key(); // the typing guard of the trackpad hold
             }
+            // Esc while a pie is open locks CursorPie; Esc while a locked trigger is held unlocks it
+            if let Some(verdict) = esc_lock::handle(state, notifier, down, code, mods) {
+                return verdict;
+            }
             // Space while a pie is open may open Settings (Behavior > Trigger)
             if let Some(verdict) = space::handle(state, notifier, down, code, mods) {
                 return verdict;
@@ -277,6 +283,10 @@ pub(crate) fn dispatch(
             keyboard::handle_key(notifier, down, code, mods)
         }
         Ev::Mouse { kind, button, pos } => {
+            // a click of the left button while a locked trigger is held opens the lock (and the pie)
+            if esc_lock::click_unlock(state, notifier, kind, button, pos) {
+                return Verdict::Drop;
+            }
             let verdict = mouse_verdict(state, notifier, kind, button, pos, replay_drag);
             // the last word: while a pie is open nothing it did not take reaches the app under it
             pie_clicks::filter(state, kind, button, verdict)
@@ -371,6 +381,7 @@ pub(crate) fn reset(state: &Arc<Mutex<Gesture>>, notifier: &Notifier) {
     *lock(state) = Gesture::Idle;
     touch::extra::clear();
     pie_clicks::clear();
+    touch::lock::set_held(false);
     touch::ACTIVE.store(false, Ordering::SeqCst);
     SWALLOW_KEY.store(-1, Ordering::SeqCst);
     notifier.send(Msg::HidePie);

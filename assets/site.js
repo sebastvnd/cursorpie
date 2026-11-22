@@ -196,6 +196,77 @@
     $$('.rv, .section-heading').forEach((el) => el.classList.add('in', 'done'));
   }
 
+  // ---------------------------------------------------------------
+  // Demo clips: sideways slider (arrows, dots, keyboard, swipe through native scrolling)
+  // ---------------------------------------------------------------
+  (function tourSlider() {
+    const track = $('#tour-track');
+    if (!track) return;
+    const slides = $$('.tour-item', track);
+    if (!slides.length) return;
+    const prev = $('#tour-prev');
+    const next = $('#tour-next');
+    const count = $('#tour-count');
+    const dotsBox = $('#tour-dots');
+    let active = 0;
+
+    const dots = slides.map((slide, i) => {
+      const dot = document.createElement('button');
+      dot.type = 'button';
+      dot.className = 'tour-dot';
+      dot.setAttribute('aria-label', 'Show clip ' + (i + 1));
+      dot.addEventListener('click', () => go(i));
+      if (dotsBox) dotsBox.appendChild(dot);
+      return dot;
+    });
+
+    function paint(i) {
+      active = i;
+      slides.forEach((slide, n) => slide.classList.toggle('is-active', n === i));
+      dots.forEach((dot, n) => dot.setAttribute('aria-current', String(n === i)));
+      if (count) count.textContent = (i + 1) + ' / ' + slides.length;
+      if (prev) prev.disabled = i === 0;
+      if (next) next.disabled = i === slides.length - 1;
+    }
+
+    function go(i) {
+      const n = Math.max(0, Math.min(slides.length - 1, i));
+      const slide = slides[n];
+      const left = slide.offsetLeft - (track.clientWidth - slide.clientWidth) / 2;
+      track.scrollTo({ left, behavior: reduceMotion ? 'auto' : 'smooth' });
+      paint(n);
+    }
+
+    // The slide closest to the middle of the track is the current one (works for swipe, wheel and keys).
+    let ticking = false;
+    track.addEventListener('scroll', () => {
+      if (ticking) return;
+      ticking = true;
+      requestAnimationFrame(() => {
+        ticking = false;
+        const mid = track.scrollLeft + track.clientWidth / 2;
+        let best = 0;
+        let bestDist = Infinity;
+        slides.forEach((slide, n) => {
+          const dist = Math.abs(slide.offsetLeft + slide.clientWidth / 2 - mid);
+          if (dist < bestDist) { bestDist = dist; best = n; }
+        });
+        if (best !== active) paint(best);
+      });
+    }, { passive: true });
+
+    if (prev) prev.addEventListener('click', () => go(active - 1));
+    if (next) next.addEventListener('click', () => go(active + 1));
+    track.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowLeft') { e.preventDefault(); go(active - 1); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); go(active + 1); }
+      else if (e.key === 'Home') { e.preventDefault(); go(0); }
+      else if (e.key === 'End') { e.preventDefault(); go(slides.length - 1); }
+    });
+    window.addEventListener('resize', () => go(active), { passive: true });
+    paint(0);
+  })();
+
   // Highlight the current section in the nav while scrolling the landing page
   const spyLinks = $$('[data-spy]');
   if ('IntersectionObserver' in window && spyLinks.length) {

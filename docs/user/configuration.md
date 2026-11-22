@@ -147,6 +147,7 @@ Every field with its default value, and a small menu. A field you leave out take
   "touch_click_action": "SwitchPie",
   "touch_typing_guard_ms": 400,
   "touch_lock": true,
+  "esc_lock": true,
   "haptics": true,
   "haptic_hover": true,
   "profiles": [
@@ -243,7 +244,8 @@ Every field with its default value, and a small menu. A field you leave out take
 | `touch_still_mm` | 0.5 to 6.0 (default `2.0`): how far, in millimeters on the trackpad, the holding finger may move before the hold counts |
 | `touch_click_action` | `"SwitchPie"` (default, like the right-click), `"PickHovered"` (the hovered Mode slice becomes the active mode) or `"Nothing"`: what the extra click does |
 | `touch_typing_guard_ms` | 0 to 2000 (default `400`, `0` = off): no hold is armed this soon after a key press |
-| `touch_lock` | `true` (default) or `false`: with the pie of a trackpad hold open, tapping with two more fingers (three in all) locks CursorPie for the trackpad, and the same tap during a hold unlocks it. `false`: two more fingers close the pie. The lock is not saved: restarting CursorPie unlocks it. See [Trackpad hold](trackpad.md) |
+| `touch_lock` | `true` (default) or `false`: with the pie of a trackpad hold open, tapping with two more fingers (three in all) locks CursorPie, and the same tap during a hold unlocks it. `false`: two more fingers close the pie. The lock is not saved: restarting CursorPie unlocks it. See [Trackpad hold](trackpad.md) |
+| `esc_lock` | `true` (default) or `false`: Esc while a pie is open (mouse trigger or trackpad hold) locks CursorPie: the pie closes, nothing runs, and a press of the mouse trigger or a hold on the trackpad opens no pie (the click goes to the app). While it is locked, holding the trigger and pressing Esc unlocks it. Esc is only taken in those two moments. The lock is the same one as `touch_lock`, it is not saved, and restarting CursorPie unlocks it. See [Using the pie](using-the-pie.md) |
 | `haptics`, `haptic_hover` | macOS only (ignored on Windows and Linux): trackpad ticks when the pie opens and the mode switches (default on), and when the hovered slice changes (default on, needs `haptics`) |
 | `hud` | `true` (default, also for a file that lacks the field): a small notice on the screen says what CursorPie does when an action runs: "Open app Safari", "Open link github.com", "Shortcut Cmd + C", "Run flow Morning". A shell command is announced as "Run command" and never with its text. The back and forward buttons stay quiet. `false` turns it off |
 | `hud_position` | `"Bottom"` (default, above the dock or taskbar), `"Top"` or `"Cursor"` (just below the pointer): where the notice appears, on the display the pointer is on |

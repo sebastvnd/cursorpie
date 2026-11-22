@@ -90,6 +90,15 @@ pub(super) fn filter(
     }
 }
 
+/// A press of `button` was taken by another path of the tap (the click that opens the lock, see
+/// `esc_lock::click_unlock`): its drags and its release are swallowed too, like those of any click
+/// that a pie takes.
+pub(super) fn swallow(button: i64) {
+    if let Some(b) = bit(button) {
+        HELD.fetch_or(b, Ordering::SeqCst);
+    }
+}
+
 /// Forgets every swallowed press (the tap was disabled by the system, or the source stopped).
 pub(crate) fn clear() {
     HELD.store(0, Ordering::SeqCst);

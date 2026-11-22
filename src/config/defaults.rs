@@ -393,6 +393,7 @@ impl Config {
             touch_click_action: TouchClickAction::SwitchPie,
             touch_typing_guard_ms: 400,
             touch_lock: true,
+            esc_lock: true,
             haptics: true,
             haptic_hover: true,
             flows: Vec::new(),

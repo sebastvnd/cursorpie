@@ -66,6 +66,7 @@ pub mod actions;
 pub mod bridge;
 pub mod cache;
 pub mod config;
+pub mod cpdtool;
 pub mod debug;
 pub mod devmode;
 pub mod flowhub;

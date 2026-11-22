@@ -531,9 +531,25 @@ details p b,details p em{color:var(--ink)}
 a.bcard{display:block;text-decoration:none}
 a.bcard:focus-visible{outline-offset:4px}
 
-/* See it in motion: the demo GIFs (docs/gifs). The box keeps the clips' 16:9 shape while they load. */
-.tour{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:28px;margin-top:44px}
-.tour-item{margin:0;border:2px solid var(--ink);border-radius:24px;background:var(--card);box-shadow:var(--hard);overflow:hidden}
+/* See it in motion: the demo GIFs (docs/gifs) in one sideways slider (CSS scroll-snap, so it also works without
+   JavaScript). Every slide keeps the clips' 16:9 shape while it loads. The track has padding so the hard shadows
+   are not cut off by its overflow. */
+.tour-slider{margin-top:36px}
+.tour{display:flex;gap:24px;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;scrollbar-width:none;padding:6px 6px 14px;margin:0 -6px}
+.tour::-webkit-scrollbar{display:none}
+.tour:focus-visible{outline:3px solid var(--sky);outline-offset:4px;border-radius:24px}
+.tour-item{flex:0 0 min(720px,88%);margin:0;scroll-snap-align:center;border:2px solid var(--ink);border-radius:24px;background:var(--card);box-shadow:var(--hard);overflow:hidden;opacity:.55;transition:opacity .3s,transform .3s var(--ease)}
+.tour-item.is-active{opacity:1}
+.tour-item:first-child{margin-left:max(0px,calc((100% - min(720px,88%)) / 2))}
+.tour-item:last-child{margin-right:max(0px,calc((100% - min(720px,88%)) / 2))}
 .tour-item img{display:block;width:100%;height:auto;aspect-ratio:16/9;background:var(--bg-2)}
 .tour-item figcaption{padding:14px 18px 16px;border-top:2px solid var(--ink);font-weight:800;line-height:1.4}
-@media (max-width:760px){.tour{grid-template-columns:1fr;gap:22px}}
+.tour-controls{display:flex;align-items:center;justify-content:center;gap:16px;margin-top:18px}
+.tour-btn:disabled{opacity:.35;cursor:default;transform:none}
+.tour-dots{display:flex;flex-wrap:wrap;justify-content:center;gap:8px;max-width:360px}
+.tour-dot{width:12px;height:12px;padding:0;border:2px solid var(--ink);border-radius:50%;background:var(--card);cursor:pointer;transition:transform .18s var(--ease),background .2s}
+.tour-dot:hover{transform:scale(1.2)}
+.tour-dot[aria-current="true"]{background:var(--lime);transform:scale(1.25)}
+.tour-count{min-width:3.6em;text-align:center;font-weight:800;font-variant-numeric:tabular-nums}
+@media (max-width:760px){.tour{gap:16px}.tour-item{flex-basis:90%}.tour-dots{display:none}}
+@media (prefers-reduced-motion:reduce){.tour{scroll-behavior:auto}.tour-item{transition:none}}
