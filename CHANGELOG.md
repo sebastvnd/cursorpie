@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+## 0.9.2
+
+- **New: `cargo tools ci` does not run a step again that already passed on the same files.** It made a SHA-256 of the
+  content of the working tree (saved edits count, the website does not) and kept a stamp per step in
+  `target/cargo-tools-ci/`, so a second run, the pre-push hook after a manual run, or a run after a `touch` or a
+  commit of what is already there takes no time. `--force` runs everything; the stamps hold for one compiler and
+  one OS and are deleted after two weeks. On GitHub Actions nothing is skipped by it.
+
+- **New: CI no longer repeats work that already passed on the same files.** A pull request whose files are, for a
+  group of jobs, the very ones that passed before (found by a SHA-256 of their content, from any branch or earlier
+  run) skips that group: the tests when only the website changed, the packages when only tests, tools or the
+  changelog changed. `main`, version tags and manual runs always run everything. The check to require in the branch
+  protection is now `CI result`. The caches are written by `main` only, so pull requests no longer push them out,
+  and the Fedora jobs keep the compiled dependencies and the npm downloads are cached too.
+
+- **Fixed: *Install* on the Flow Hub page froze CursorPie.** The question that asks you to confirm never appeared and
+  the program stopped answering ("Not responding") until it was closed. Asking for the question read the settings
+  while the same thread already held them, and a thread that waits for a lock it holds itself never goes on; every
+  other thread that read the settings, the window first of all, waited behind it. The settings are now copied out in
+  one short lock before the rule is applied.
+
+- **Fixed: a failing test of the browser extension.** The test that checks the names of the commands did not know the
+  `ui.*` commands (panels on the desktop) that the extension has had since they were added.
+
+- **New: the tests of the browser extension (jsdom) are part of `cargo tools ci` and of the CI workflow.** They ran
+  by hand only, so a failure could stay unseen. The step installs jsdom on its first run and needs Node.js 18 or
+  later; the workflow sets Node 22 up on all three systems.
+
 ## 0.9.1
 
 - **Fixed: *Learn now* (and *Forget everything*) showed nothing.** The answer was one line in the status bar, under

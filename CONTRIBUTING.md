@@ -31,6 +31,8 @@ are under [Development workflow](#development-workflow).
 - **macOS 11 or later, Windows 10 (1809) / 11, or Linux with an X11 or Wayland session.** Other Unixes build a do-nothing
   stub, enough to run `cargo test`.
 - **Rust 1.88 or later** (edition 2024), installed with [rustup](https://rustup.rs).
+- **Node.js 18 or later** ([nodejs.org](https://nodejs.org)), only for the tests of the browser extension that
+  `cargo tools ci` runs on jsdom (`tests/browser-extension`). The step runs `npm install` there the first time.
 - **macOS:** Xcode Command Line Tools (`xcode-select --install`) for the linker and `codesign`.
 - **Windows:** the MSVC build tools (Visual Studio Build Tools, "Desktop development with C++").
 - **Linux:** a C linker and the development files of libx11, libxi, libxtst and libxrandr.
@@ -108,7 +110,7 @@ package (standard library only, never part of the app) and behave the same on ma
 | Command | What it does |
 |---|---|
 | `cargo tools hooks install` | once per clone: turns on the Git hooks of `.githooks/` |
-| `cargo tools ci` | every check CI runs, in order, stopping at the first failure |
+| `cargo tools ci` | every check CI runs, in order, stopping at the first failure; a step that already passed on exactly these files is not run again (`--force` runs all) |
 | `cargo tools ci --quick` | only the checks that take seconds (formatting, version files, log lines) |
 | `cargo tools check` | `Cargo.toml`, `Cargo.lock` and `CHANGELOG.md` agree on the version |
 | `cargo tools bump LEVEL` | raises the version and prepares the changelog (see [Releasing](#releasing)) |
@@ -154,6 +156,7 @@ one definition of "the checks pass".
 | clippy | `cargo clippy --workspace --all-targets -- -D warnings` | everywhere |
 | tests | `cargo test --workspace --all-targets` | everywhere |
 | doc tests | `cargo test --doc` | everywhere |
+| browser extension tests (jsdom) | `npm install` (first run only) and `npm test` in `tests/browser-extension` | everywhere (needs Node.js 18 or later) |
 | docs | `cargo doc --workspace --no-deps --document-private-items` with `RUSTDOCFLAGS="-D warnings"` | macOS only: docs.rs builds for macOS, and only there the links to the macOS backend resolve |
 | Windows backend | `cargo clippy --all-targets --features check-windows -- -D warnings` and `cargo test --features check-windows` | macOS and Linux (on Windows the backend is the build itself) |
 
@@ -162,14 +165,54 @@ from `.cargo/config.toml`) builds the docs and opens them. Because this page is 
 URLs in `<...>` or link syntax, wrap anything with angle brackets in backticks, and point at repository files with
 backticks instead of Markdown links.
 
+Your own computer does not repeat a step either: `cargo tools ci` fingerprints the files first (SHA-256 of the
+content of every file of the working tree that Git knows or would add, saved edits included, the website left
+out) and keeps a stamp for each step that passed in `target/cargo-tools-ci/`. Run it again on the same files, from
+the pre-push hook after a manual run for instance, and the steps say `reused` and take no time. Touching a file,
+switching branches back to the same files or committing what is already there changes nothing; saving an edit
+does. `cargo tools ci --force` runs every step anyway, `cargo clean` removes the stamps, and the quick steps of
+the pre-commit hook share their stamps with the full run. A stamp holds for one compiler and one OS, and stamps
+older than two weeks are deleted. On GitHub nothing is skipped by this: CI has its own fingerprint, below.
+
+### What CI does not repeat
+
+CI does not run again what already passed on the same files. `scripts/ci-fingerprint.sh` makes a SHA-256 of
+the content of the tracked files that a group of jobs depends on (`git ls-files -s`: mode, blob hash and path).
+It does not look at the commit, the branch or the time, so a squash merge, a rebase, a re-run and a pull
+request that touches other files all give the same fingerprint as before.
+
+| Group | Covers | Jobs it can skip |
+|---|---|---|
+| `check` | every tracked file except the website (`index.html`, `sitemap.xml`, `robots.txt`, `flowhub/`, the Pages workflow, ...) | the three `test` jobs |
+| `build` | `check` without `tests/`, `tools/`, `CHANGELOG.md` and the editor and hook files | the four `package-*` jobs |
+
+- The first job, `Fingerprint`, computes both and asks the GitHub API for an artifact named `ci-ok-` plus the group and the
+  fingerprint. It counts only when the run that wrote it belongs to this repository (a fork cannot vouch for
+  content) and has not expired.
+- Only a pull request skips. `main`, a version tag and a manual run always run everything: `main` keeps the caches
+  warm, and a release needs the packages of its own run. The label `ci-full` on a pull request runs everything once more.
+- The last job, `CI result`, writes the artifacts after a green run (14 days: the same content is checked again with
+  the newest compiler and runner image at least every two weeks). It is also the check to require in the branch
+  protection.
+- `scripts/ci-fingerprint.sh --verify` runs first in CI and fails when a Rust file embeds (`include_str!`,
+  `include_bytes!`) a file that the fingerprint of its group leaves out. If a new step of `cargo tools ci` starts
+  to read a file that a group excludes, remove the exclusion from the lists in that script.
+- To make every earlier result useless at once, change the repository variable `CI_SALT`. To see what a
+  group covers: `scripts/ci-fingerprint.sh --list check`.
+
+The compiled dependencies are cached too, and only `main` writes the caches (a cache written by every pull request
+pushes the one of `main` out of the 10 GB the repository has, and then every run starts from zero): the Rust
+cache of each job, the npm downloads of the jsdom tests, and `target/release` with the Rust toolchain of the Fedora job.
+
 ## Project rules
 
 These rules keep the project maintainable by more than one person over a long time. Each one exists because the
 alternative costs more later.
 
 - **`main` is always releasable.** Nothing is pushed to it directly: every change arrives in a pull request with
-  green CI. Maintainers: switch on branch protection in the GitHub settings (require a pull request and the three
-  `test` jobs).
+  green CI. Maintainers: switch on branch protection in the GitHub settings (require a pull request and the one
+  check `CI result`, which fails when any job failed; the matrix jobs by themselves cannot be required, because
+  a skipped one has no name to wait for, see "What CI does not repeat").
 - **One concern per pull request.** Formatting-only changes and drive-by cleanups go in their own pull request,
   so a review shows what changed and `git blame` stays useful.
 - **Zero warnings.** rustfmt, clippy and rustdoc run with warnings as errors. Fix the cause; add an
@@ -296,7 +339,7 @@ tools/         the repository tools, run as `cargo tools ...`: ci, check, bump, 
 diag/          the diagnostic log (`CURSORPIE_DEBUG=1`): a crate of its own, no dependencies, see docs/DEBUGGING.md
 .githooks/     Git hooks that call the tools (turned on with `cargo tools hooks install`)
 .github/       the CI workflow and the pull request template
-scripts/       packaging: bundle.sh and make-dmg.sh (macOS), package-windows.ps1, package-linux.sh
+scripts/       packaging: bundle.sh and make-dmg.sh (macOS), package-windows.ps1, package-linux.sh; ci-fingerprint.sh (what CI may skip)
 installer/     Inno Setup script of the Windows Setup wizard
 packaging/     Linux desktop entry
 assets/       app icons for macOS, Windows and Linux; logos, fonts and the editable brand artwork

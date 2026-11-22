@@ -57,21 +57,48 @@ pub fn set_notifier(n: Notifier) {
     let _ = NOTIFIER.set(n);
 }
 
+/// The settings that decide who may show a panel, copied out of the config in one go.
+#[derive(Clone, Copy, Debug)]
+struct Switches {
+    panels: bool,
+    browser_bridge: bool,
+    extension_panels: bool,
+    flowhub_install: bool,
+}
+
 /// Whether `source` may show a panel now; the reason when it may not.
 pub fn allowed(source: &Source) -> Result<(), String> {
-    let c = crate::config::cfg();
+    // The settings are locked only long enough to copy four switches, and the lock is gone before
+    // anything else runs. The config is one `std::sync::Mutex`: a thread that locks it again while
+    // it still holds it waits for itself forever, and then every thread that reads the settings
+    // (the window included) waits behind it and the app stops answering. Reading the Flow Hub's
+    // switches through `flowhub::allowed` from inside this lock did exactly that.
+    let switches = {
+        let c = crate::config::cfg();
+        Switches {
+            panels: c.panels,
+            browser_bridge: c.browser_bridge,
+            extension_panels: c.extension_panels,
+            flowhub_install: c.flowhub_install,
+        }
+    };
+    rule(source, switches)
+}
+
+/// The rule of [`allowed`] for the switches it reads. It takes no lock, so it cannot wait for one.
+fn rule(source: &Source, s: Switches) -> Result<(), String> {
     match source {
-        Source::Flow if c.panels => Ok(()),
+        Source::Flow if s.panels => Ok(()),
         Source::Flow => Err("Panels are switched off: turn them on in Settings > Behavior".into()),
-        Source::Extension(_) if !c.browser_bridge => {
+        Source::Extension(_) if !s.browser_bridge => {
             Err("The browser extension is switched off in Settings > Behavior".into())
         }
-        Source::Extension(_) if !c.extension_panels => Err(
+        Source::Extension(_) if !s.extension_panels => Err(
             "Panels from the browser extension are switched off: turn them on in Settings > Behavior"
                 .into(),
         ),
         Source::Extension(_) => Ok(()),
-        Source::Hub => crate::flowhub::allowed(),
+        Source::Hub => crate::flowhub::check(s.browser_bridge, s.flowhub_install),
     }
 }
 
@@ -193,5 +220,49 @@ mod tests {
         assert!(Place::take().is_none(), "one too many");
         drop(held);
         assert!(Place::take().is_some(), "free again");
+    }
+
+    fn switches(panels: bool, bridge: bool, extension_panels: bool, hub: bool) -> Switches {
+        Switches {
+            panels,
+            browser_bridge: bridge,
+            extension_panels,
+            flowhub_install: hub,
+        }
+    }
+
+    #[test]
+    fn a_flow_needs_the_panels_switch_only() {
+        assert!(rule(&Source::Flow, switches(true, false, false, false)).is_ok());
+        assert!(rule(&Source::Flow, switches(false, true, true, true)).is_err());
+    }
+
+    #[test]
+    fn the_extension_needs_the_link_and_its_own_switch() {
+        let ext = Source::Extension("chrome".into());
+        assert!(rule(&ext, switches(false, true, true, false)).is_ok());
+        let Err(link) = rule(&ext, switches(true, false, true, true)) else {
+            panic!("the link is off")
+        };
+        assert!(link.contains("browser extension"));
+        let Err(panels) = rule(&ext, switches(true, true, false, true)) else {
+            panic!("the panels of the extension are off")
+        };
+        assert!(panels.contains("Panels from the browser extension"));
+    }
+
+    #[test]
+    fn the_flow_hub_needs_the_link_and_its_install_switch_not_the_panel_switches() {
+        // the question of the Flow Hub is written by the app: Panels and the extension's panels
+        // being off must not keep it from being asked
+        assert!(rule(&Source::Hub, switches(false, true, false, true)).is_ok());
+        let Err(link) = rule(&Source::Hub, switches(true, false, true, true)) else {
+            panic!("the link is off")
+        };
+        assert!(link.contains("browser extension"));
+        let Err(hub) = rule(&Source::Hub, switches(true, true, true, false)) else {
+            panic!("installs are off")
+        };
+        assert!(hub.contains("Flow Hub"));
     }
 }

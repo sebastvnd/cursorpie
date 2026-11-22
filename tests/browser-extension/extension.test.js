@@ -757,7 +757,7 @@ test("every registered command has a group the options can switch, and a name of
   const ids = Object.keys(e.CP.commands);
   assert.ok(ids.length >= 60, "expected a big set, got " + ids.length);
   for (const id of ids) {
-    assert.match(id, /^(media|tab|window|page|chat)\.[a-z_]+$/);
+    assert.match(id, /^(media|tab|window|page|chat|ui)\.[a-z_]+$/);
     assert.equal(e.CP.commands[id].group, id.split(".")[0]);
   }
 });

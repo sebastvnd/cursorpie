@@ -140,8 +140,10 @@ pub fn allowed() -> Result<(), String> {
     check(c.browser_bridge, c.flowhub_install)
 }
 
-/// The rule of [`allowed`], for the two settings it reads.
-fn check(browser_bridge: bool, flowhub_install: bool) -> Result<(), String> {
+/// The rule of [`allowed`], for the two settings it reads. It takes no lock: the panel broker calls
+/// it with settings it has already copied, because asking for the config again while holding it
+/// would never return (see `panel::broker::allowed`).
+pub(crate) fn check(browser_bridge: bool, flowhub_install: bool) -> Result<(), String> {
     if !browser_bridge {
         Err("The browser extension is switched off in CursorPie (Settings > Behavior).".into())
     } else if !flowhub_install {

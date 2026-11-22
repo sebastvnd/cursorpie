@@ -4,11 +4,18 @@
 //!
 //! - `cargo tools ci` runs everything and stops at the first failure.
 //! - `cargo tools ci --quick` runs only the steps that take seconds (the `pre-commit` hook).
+//! - A step that already passed on exactly these files is not run again (`stamp.rs`: a SHA-256 of
+//!   the content of the working tree, kept in `target/cargo-tools-ci/`). `--force` runs it anyway.
+//!   On GitHub Actions nothing is skipped here: the workflow has its own fingerprint.
 //!
 //! Some steps depend on the OS you run on, because Rust only compiles the code of its own OS
 //! (see `CONTRIBUTING.md`, "What each OS can check"): the Windows backend is type-checked with
 //! `--features check-windows` everywhere except on Windows, and the docs are built on macOS
 //! only, the target docs.rs uses, where the intra-doc links to the macOS backend resolve.
+//!
+//! The browser extension has its own tests, written in JavaScript and run on jsdom
+//! (`tests/browser-extension`): they need Node.js 18 or newer, and the step installs jsdom there
+//! the first time.
 //!
 //! On GitHub Actions every step is wrapped in a log group, so a failure is easy to find.
 
@@ -16,6 +23,8 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::process::{Command, ExitCode};
 use std::time::Instant;
+
+use crate::stamp::Stamps;
 
 /// What one step does.
 enum Action {
@@ -28,7 +37,17 @@ enum Action {
     Versions,
     /// The rules for the log lines in `src/` and what the analyzer reads (`cargo tools diag-lint`).
     DiagLint,
+    /// The tests of the browser extension (`tests/browser-extension`): jsdom is installed there when
+    /// it is missing, then `npm test` runs them with Node's own test runner.
+    BrowserTests,
 }
+
+/// Where the tests of the browser extension live, from the root of the repository.
+const BROWSER_TESTS: &str = "tests/browser-extension";
+
+/// What to say when npm cannot be started.
+const NEEDS_NODE: &str =
+    "the tests of the browser extension need Node.js 18 or newer, from https://nodejs.org";
 
 /// One line of the checklist.
 struct Step {
@@ -77,6 +96,11 @@ fn steps() -> Vec<Step> {
         ),
         cargo_step("tests", false, &["test", "--workspace", "--all-targets"]),
         cargo_step("doc tests", false, &["test", "--doc"]),
+        Step {
+            name: "browser extension tests (jsdom)",
+            quick: false,
+            action: Action::BrowserTests,
+        },
     ];
     // docs.rs builds for macOS, and only there do the links to the macOS backend resolve
     if cfg!(target_os = "macos") {
@@ -123,6 +147,37 @@ fn cargo() -> OsString {
     std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into())
 }
 
+/// The program that starts npm: on Windows it is a script (`npm.cmd`), which `Command` does not find
+/// under the plain name.
+fn npm() -> &'static str {
+    if cfg!(windows) { "npm.cmd" } else { "npm" }
+}
+
+/// Runs `npm` with `args` in `dir`.
+fn run_npm(dir: &Path, args: &[&str]) -> Result<(), String> {
+    println!("      $ npm {}", args.join(" "));
+    let status = Command::new(npm())
+        .args(args)
+        .current_dir(dir)
+        .status()
+        .map_err(|e| format!("could not start npm ({e}); {NEEDS_NODE}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("npm ended with {status}"))
+    }
+}
+
+/// Runs the tests of the browser extension. jsdom is installed on the first run (and again if the
+/// folder `node_modules` is deleted); the later runs go straight to the tests.
+fn browser_tests(root: &Path) -> Result<(), String> {
+    let dir = root.join(BROWSER_TESTS);
+    if !dir.join("node_modules").join("jsdom").is_dir() {
+        run_npm(&dir, &["install", "--no-audit", "--no-fund"])?;
+    }
+    run_npm(&dir, &["test"])
+}
+
 /// Runs one step.
 fn execute(root: &Path, action: &Action) -> Result<(), String> {
     match action {
@@ -148,6 +203,7 @@ fn execute(root: &Path, action: &Action) -> Result<(), String> {
                 Err(problems.join("; "))
             }
         }
+        Action::BrowserTests => browser_tests(root),
         Action::DiagLint => {
             let problems = crate::lint::problems(root)?;
             if problems.is_empty() {
@@ -166,8 +222,27 @@ fn execute(root: &Path, action: &Action) -> Result<(), String> {
 /// Runs the checklist (only the quick steps when `quick`) and returns the exit code: success when
 /// every step passed. The first failure stops the run, because the steps after it would only
 /// repeat the same problem.
-pub fn run(root: &Path, quick: bool) -> ExitCode {
+pub fn run(root: &Path, quick: bool, force: bool) -> ExitCode {
     let on_github = std::env::var_os("GITHUB_ACTIONS").is_some();
+    // stamps only on a computer of a person; a problem with them costs the saving, never the check
+    let stamps = if on_github || force {
+        None
+    } else {
+        match Stamps::open(root) {
+            Ok(stamps) => {
+                println!(
+                    "Files fingerprint {} (a step that passed on them is not run again; --force runs all)",
+                    stamps.short()
+                );
+                Some(stamps)
+            }
+            Err(why) => {
+                println!("No stamps ({why}): every step runs.");
+                None
+            }
+        }
+    };
+    let mut reused = 0;
     let steps: Vec<Step> = steps().into_iter().filter(|s| s.quick || !quick).collect();
     let total = steps.len();
     let started = Instant::now();
@@ -179,7 +254,21 @@ pub fn run(root: &Path, quick: bool) -> ExitCode {
             println!("{label}");
         }
         let begun = Instant::now();
-        let outcome = execute(root, &step.action);
+        let outcome = if stamps.as_ref().is_some_and(|s| s.passed(step.name)) {
+            reused += 1;
+            println!(
+                "      reused: it passed on these same files (`cargo tools ci --force` runs it again)"
+            );
+            Ok(())
+        } else {
+            let outcome = execute(root, &step.action);
+            if outcome.is_ok()
+                && let Some(stamps) = &stamps
+            {
+                stamps.record(step.name);
+            }
+            outcome
+        };
         if on_github {
             println!("::endgroup::");
         }
@@ -200,8 +289,13 @@ pub fn run(root: &Path, quick: bool) -> ExitCode {
             }
         }
     }
+    let reuse = if reused > 0 {
+        format!(", {reused} of them reused from a run on the same files")
+    } else {
+        String::new()
+    };
     println!(
-        "\nAll {total} steps passed in {:.0}s.",
+        "\nAll {total} steps passed in {:.0}s{reuse}.",
         started.elapsed().as_secs_f32()
     );
     ExitCode::SUCCESS
@@ -253,6 +347,30 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_browser_extension_tests_are_part_of_the_full_run_only() {
+        let all = steps();
+        let step = all
+            .iter()
+            .find(|s| matches!(s.action, Action::BrowserTests))
+            .expect("the jsdom tests are a step of the checklist");
+        assert!(!step.quick, "installing jsdom is not a matter of seconds");
+        assert!(step.name.contains("jsdom"));
+    }
+
+    #[test]
+    fn the_browser_extension_tests_are_where_the_step_looks_for_them() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join(BROWSER_TESTS);
+        assert!(dir.join("package.json").is_file(), "{}", dir.display());
+    }
+
+    #[test]
+    fn npm_is_started_by_the_name_the_system_knows() {
+        assert_eq!(npm().ends_with(".cmd"), cfg!(windows));
     }
 
     #[test]

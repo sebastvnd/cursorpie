@@ -34,6 +34,8 @@ mod hooks;
 mod info;
 mod lint;
 mod logview;
+mod sha256;
+mod stamp;
 mod zip;
 
 use std::ffi::OsString;
@@ -44,8 +46,11 @@ use std::process::ExitCode;
 const USAGE: &str = r#"CursorPie developer tools. Run them as `cargo tools <command>`.
 
 Commands:
-  ci [--quick]                 run the checks CI runs (format, clippy, tests, docs, Windows backend,
-                               version files); --quick runs only the ones that take seconds
+  ci [--quick] [--force]       run the checks CI runs (format, clippy, tests, docs, Windows backend,
+                               version files, browser extension tests on jsdom); --quick runs only
+                               the ones that take seconds. A step that already passed on exactly
+                               these files (SHA-256 of their content) is not run again; --force
+                               runs every step anyway
   check [--tag vX.Y.Z]         verify that Cargo.toml, Cargo.lock and CHANGELOG.md agree
                                (with --tag: and that the tag is the release they describe)
   bump <patch|minor|major> [--dry-run] [--commit] [--any-branch] [--since REV]
@@ -92,8 +97,8 @@ Rules and workflow: CONTRIBUTING.md, sections "Development workflow" and "Releas
 enum Task {
     /// Print the usage.
     Help,
-    /// Run the CI checks, or only the quick ones.
-    Ci { quick: bool },
+    /// Run the CI checks, or only the quick ones; `force` runs the steps that already passed too.
+    Ci { quick: bool, force: bool },
     /// Verify that the version files agree, and optionally that a tag matches them.
     Check { tag: Option<String> },
     /// Raise the version.
@@ -155,13 +160,15 @@ fn parse_command<I: IntoIterator<Item = String>>(args: I) -> Result<Task, String
 /// The arguments of `ci`.
 fn parse_ci(args: &[String]) -> Result<Task, String> {
     let mut quick = false;
+    let mut force = false;
     for arg in args {
         match arg.as_str() {
             "--quick" => quick = true,
+            "--force" => force = true,
             other => return Err(format!("unknown option '{other}' for ci")),
         }
     }
-    Ok(Task::Ci { quick })
+    Ok(Task::Ci { quick, force })
 }
 
 /// The arguments of `check`.
@@ -222,7 +229,7 @@ fn run(root: &Path, task: Task) -> Result<ExitCode, String> {
             println!("{USAGE}");
             Ok(ExitCode::SUCCESS)
         }
-        Task::Ci { quick } => Ok(ci::run(root, quick)),
+        Task::Ci { quick, force } => Ok(ci::run(root, quick, force)),
         Task::Check { tag } => bump::run_check(root, tag.as_deref()),
         Task::Bump(level, options) => bump::run(root, level, options),
         Task::Hooks(action) => hooks::run(root, action),
@@ -263,8 +270,27 @@ mod tests {
             Ok(Task::Help),
             "help works anywhere"
         );
-        assert_eq!(parse(&["ci"]), Ok(Task::Ci { quick: false }));
-        assert_eq!(parse(&["ci", "--quick"]), Ok(Task::Ci { quick: true }));
+        assert_eq!(
+            parse(&["ci"]),
+            Ok(Task::Ci {
+                quick: false,
+                force: false
+            })
+        );
+        assert_eq!(
+            parse(&["ci", "--quick"]),
+            Ok(Task::Ci {
+                quick: true,
+                force: false
+            })
+        );
+        assert_eq!(
+            parse(&["ci", "--force", "--quick"]),
+            Ok(Task::Ci {
+                quick: true,
+                force: true
+            })
+        );
         assert_eq!(parse(&["check"]), Ok(Task::Check { tag: None }));
         assert_eq!(
             parse(&["check", "--tag", "v0.4.0"]),
