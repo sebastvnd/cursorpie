@@ -360,6 +360,18 @@ pub enum ProfileSheet {
     /// The list of sites CursorPie knows, searchable, for the sites the intelligent pie never
     /// learns (Behavior > Intelligent; drawn by that page).
     Site,
+    /// The same list of sites, choosing one for a slice (see [`SiteFor`]); the slice is
+    /// [`Ed::action_target`].
+    SitePick(SiteFor),
+}
+
+/// What a site chosen from the list of sites is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SiteFor {
+    /// The address of a "URL / file" action of a slice.
+    Url,
+    /// One more slice added by hand to an Intelligent slice.
+    Pin,
 }
 
 /// Which dialog the app list was opened from, and so where its answer goes.
@@ -375,6 +387,8 @@ pub enum PickFor {
     Flow,
     /// One more app the intelligent pie never learns (Behavior > Intelligent).
     Ignore,
+    /// One more slice added by hand to an Intelligent slice (see [`Ed::action_target`]).
+    Pin,
 }
 
 /// The action field of a slice that the app list is answering (set by the **Pick...** button of the

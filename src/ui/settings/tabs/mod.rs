@@ -12,4 +12,4 @@ mod mouse;
 pub(super) mod pie_editor;
 pub(super) mod profile_toolbar;
 mod smart;
-mod smart_site;
+pub(in crate::ui::settings) mod smart_site;

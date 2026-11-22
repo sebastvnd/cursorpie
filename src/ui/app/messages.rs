@@ -295,6 +295,61 @@ impl App {
                     }
                 }
             }
+            Msg::ActionUrlPicked {
+                profile,
+                path,
+                slot,
+                url,
+            } => {
+                if let Some(p) = self.edit.profiles.get_mut(profile)
+                    && let Some(item) = item_at_mut(&mut p.items, &path)
+                {
+                    match (&mut item.kind, slot) {
+                        (ItemKind::Mode { extra, .. }, Slot::Extra(b)) => {
+                            extra.insert(b, Action::OpenUrl(url));
+                        }
+                        (ItemKind::Run(a), Slot::Run) => *a = Action::OpenUrl(url),
+                        (ItemKind::Mode { back, .. }, Slot::Back) => *back = Action::OpenUrl(url),
+                        (ItemKind::Mode { forward, .. }, Slot::Forward) => {
+                            *forward = Action::OpenUrl(url)
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Msg::SmartPinPicked {
+                profile,
+                path,
+                name,
+                target,
+                site,
+            } => {
+                // an app wears its own icon; a site is left empty, so the icon that was fetched
+                // for it is used
+                let icon = if site {
+                    String::new()
+                } else {
+                    appicon::app_id_for_action(&target, &self.ed.installed)
+                        .map(|id| appicon::slice_icon_string(appicon::SliceTone::Color, &id))
+                        .unwrap_or_else(|| "ico:app-window".to_string())
+                };
+                if let Some(p) = self.edit.profiles.get_mut(profile)
+                    && let Some(item) = item_at_mut(&mut p.items, &path)
+                    && let ItemKind::Smart(s) = &mut item.kind
+                    && s.pinned.len() < crate::config::MAX_ITEMS
+                    && !s
+                        .pinned
+                        .iter()
+                        .any(|x| x.site == site && x.target == target)
+                {
+                    s.pinned.push(crate::config::SmartPin {
+                        name,
+                        icon,
+                        target,
+                        site,
+                    });
+                }
+            }
             Msg::ActionAppPicked {
                 profile,
                 path,

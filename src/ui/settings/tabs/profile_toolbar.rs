@@ -20,6 +20,7 @@
 //! There is exactly one general profile (no apps, cannot be deleted). Every other profile belongs
 //! to at least one app: the "New profile" sheet asks for it, and the last app cannot be removed.
 
+use super::smart_site::site_pick_sheet;
 use crate::config::*;
 use crate::msg::Msg;
 use crate::platform;
@@ -473,6 +474,7 @@ pub(super) fn profile_toolbar(
         Some(ProfileSheet::Apps) => apps_sheet(ctx, edit, ed, tx, accent),
         // these two belong to the Intelligent page, which draws them
         Some(ProfileSheet::Pick(PickFor::Ignore) | ProfileSheet::Site) => {}
+        Some(ProfileSheet::SitePick(for_)) => site_pick_sheet(ctx, ed, tx, accent, for_),
         Some(ProfileSheet::Pick(for_)) => pick_app_sheet(ctx, edit, ed, tx, accent, for_),
         None => {}
     }
@@ -515,7 +517,7 @@ fn pick_app_sheet(
     let back = match for_ {
         PickFor::New => Some(ProfileSheet::New),
         PickFor::Add => Some(ProfileSheet::Apps),
-        PickFor::Action | PickFor::Flow | PickFor::Ignore => None,
+        PickFor::Action | PickFor::Flow | PickFor::Ignore | PickFor::Pin => None,
     };
     let profile = ed.profile;
     // apps that are already chosen are shown with a check and cannot be picked twice
@@ -527,7 +529,7 @@ fn pick_app_sheet(
             .unwrap_or_default(),
         PickFor::New => vec![ed.new_profile_app.clone()],
         PickFor::Ignore => edit.smart.ignore_apps.clone(),
-        PickFor::Action | PickFor::Flow => Vec::new(),
+        PickFor::Action | PickFor::Flow | PickFor::Pin => Vec::new(),
     };
     // an app has one profile only: one that another profile has is shown grey and cannot be chosen
     let owner_of = |id: &str| -> Option<String> {
@@ -539,7 +541,7 @@ fn pick_app_sheet(
             PickFor::New | PickFor::Add => edit
                 .profile_owning(id, except)
                 .map(|i| edit.profiles[i].name.clone()),
-            PickFor::Action | PickFor::Flow | PickFor::Ignore => None,
+            PickFor::Action | PickFor::Flow | PickFor::Ignore | PickFor::Pin => None,
         }
     };
     let is_taken = |id: &str| {
@@ -673,6 +675,7 @@ fn pick_app_sheet(
             // the apps to ignore are chosen from the list only: an app CursorPie never saw is one
             // it cannot learn anyway
             if for_ != PickFor::Ignore
+                && for_ != PickFor::Pin
                 && button(
                     ui,
                     Look::Soft,
@@ -725,6 +728,18 @@ fn pick_app_sheet(
                     list.push(app.id);
                 }
             }
+            PickFor::Pin => {
+                if let Some(t) = ed.action_target.take() {
+                    let _ = tx.send(Msg::SmartPinPicked {
+                        profile: t.profile,
+                        path: t.path,
+                        name: app.name.clone(),
+                        target: platform::installed::action_text(&app),
+                        site: false,
+                    });
+                    ctx.request_repaint();
+                }
+            }
             PickFor::Action => {
                 // the same message a chosen file gives, so the slice also takes the app's icon
                 if let Some(t) = ed.action_target.take() {
@@ -757,7 +772,7 @@ fn pick_app_sheet(
                     platform::bundle_id_of(&file).map(|bundle| Msg::AppPicked { profile, bundle })
                 },
             ),
-            PickFor::Ignore => {} // not offered: the button is not drawn
+            PickFor::Ignore | PickFor::Pin => {} // not offered: the button is not drawn
             PickFor::Flow => {
                 if let Some((flow, node)) = ed.flow_target.take() {
                     spawn_file_picker(

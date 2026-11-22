@@ -112,7 +112,8 @@ pub(in crate::ui::settings) enum Look {
     Soft,
     /// Nothing until the pointer is over it: toolbars.
     Plain,
-    /// Red text on a pale red wash while hovered: destructive actions.
+    /// Red text with the outline of the theme, on a pale red wash while hovered: destructive
+    /// actions. An icon on its own (a toolbar button) has no box until the pointer is over it.
     Danger,
 }
 
@@ -133,17 +134,9 @@ impl Look {
     }
 }
 
-/// Paints the frame of a button-like control and returns the color its content should use.
-pub(in crate::ui::settings) fn button_frame(
-    ui: &egui::Ui,
-    rect: Rect,
-    resp: &egui::Response,
-    look: Look,
-) -> Color32 {
-    button_frame_r(ui, rect, resp, look, control_r())
-}
-
-/// [`button_frame`] with corners of the given `radius` (a panel button that says how round it is).
+/// Paints the frame of a button-like control and returns the color its content should use. The
+/// corners have the given `radius` (a panel button says how round it is); a [`Look::Danger`] button
+/// is boxed (see [`button_frame_boxed`]).
 pub(in crate::ui::settings) fn button_frame_r(
     ui: &egui::Ui,
     rect: Rect,
@@ -151,8 +144,30 @@ pub(in crate::ui::settings) fn button_frame_r(
     look: Look,
     radius: egui::CornerRadius,
 ) -> Color32 {
+    button_frame_boxed(ui, rect, resp, look, radius, true)
+}
+
+/// [`button_frame_r`], where `boxed` says whether a [`Look::Danger`] button is drawn as a box (with
+/// the outline of the theme, like the soft and primary ones) or stays bare until the pointer is
+/// over it (an icon on its own in a toolbar, next to plain ones).
+pub(in crate::ui::settings) fn button_frame_boxed(
+    ui: &egui::Ui,
+    rect: Rect,
+    resp: &egui::Response,
+    look: Look,
+    radius: egui::CornerRadius,
+    boxed: bool,
+) -> Color32 {
     let enabled = ui.is_enabled();
     let (rest, hot, fg) = look.colors();
+    // a warning button is a button like the others: it rests on the card, so that the outline and
+    // the shadow of the theme have a fill to go around, and it blushes under the pointer
+    let outlined_danger = boxed && look == Look::Danger;
+    let (rest, hot) = if outlined_danger {
+        (pal().card, pal().card.lerp_to_gamma(pal().bad, 0.10))
+    } else {
+        (rest, hot)
+    };
     let fill = if !enabled {
         if matches!(look, Look::Primary(_)) {
             pal().idle
@@ -167,7 +182,7 @@ pub(in crate::ui::settings) fn button_frame_r(
         rest
     };
     // the filled looks are the ones a theme outlines and casts a shadow under; a pressed one loses it
-    if enabled && matches!(look, Look::Primary(_) | Look::Soft) {
+    if enabled && (matches!(look, Look::Primary(_) | Look::Soft) || outlined_danger) {
         paint_control(
             ui.painter(),
             rect,
@@ -232,7 +247,8 @@ pub(in crate::ui::settings) fn button(
     resp.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
     });
-    let fg = button_frame(ui, rect, &resp, look);
+    // with a label a warning button has the outline of the others; an icon alone keeps to the toolbar
+    let fg = button_frame_boxed(ui, rect, &resp, look, control_r(), text.is_some());
     let painter = ui.painter();
     let mut x = rect.center().x - inner / 2.0;
     if let Some(g) = glyph {

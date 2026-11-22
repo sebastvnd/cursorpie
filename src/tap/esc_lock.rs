@@ -22,7 +22,7 @@
 //! The setting [`Config::esc_lock`](crate::config::Config::esc_lock) (on by default) turns it off.
 //! The lock itself is one flag in memory, shared with the three-finger tap of the trackpad.
 
-use super::gesture::Gesture;
+use super::gesture::{Gesture, Source};
 use super::{Kind, RECORDING, Verdict, pie_clicks, touch, trigger};
 use crate::config::{cfg, lock};
 use crate::geometry::Point;
@@ -165,7 +165,12 @@ pub(super) fn click_unlock(
     if !(touch::lock::in_force() && touch::lock::held()) {
         return false;
     }
-    if !matches!(&*lock(state), Gesture::Passthrough) {
+    // `Passthrough`: the press went to the app. `InSettings(Mouse)`: the pie was locked by Esc with
+    // the button still down.
+    if !matches!(
+        &*lock(state),
+        Gesture::Passthrough | Gesture::InSettings(Source::Mouse)
+    ) {
         return false;
     }
     touch::lock::set(false);
@@ -298,8 +303,20 @@ mod tests {
             None,
             "only the key-up of a taken press"
         );
+        assert!(
+            touch::lock::held(),
+            "the mouse button is still down on the lock: no need to let go first"
+        );
 
-        // locked and nothing held: Esc is the app's
+        // the trigger is still held right after locking: a second Esc unlocks at once
+        assert_eq!(esc(&st, &n, true), Some(Verdict::Drop));
+        assert!(!touch::lock::is_locked());
+        assert_eq!(esc(&st, &n, false), Some(Verdict::Drop));
+        while rx.try_recv().is_ok() {}
+
+        // locked again, the button is up: Esc is the app's
+        touch::lock::set(true);
+        touch::lock::set_held(false);
         assert_eq!(esc(&st, &n, true), None);
         assert!(touch::lock::is_locked());
 

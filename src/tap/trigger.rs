@@ -1104,14 +1104,23 @@ pub(super) fn open_after_unlock(
         return false;
     }
     let button = cfg().trigger_button;
-    if !matches!(&*lock(state), Gesture::Passthrough) {
-        return false;
+    // `Passthrough`: the hold began on the lock and its press went to the app.
+    // `InSettings(Mouse)`: the hold was a pie that Esc locked, the button is still down and the app
+    // never saw its press.
+    let held_state =
+        |g: &Gesture| matches!(g, Gesture::Passthrough | Gesture::InSettings(Source::Mouse));
+    let app_got_press = match &*lock(state) {
+        Gesture::Passthrough => true,
+        g if held_state(g) => false,
+        _ => return false,
+    };
+    if app_got_press {
+        // not while locked: the guard of the state is let go before anything is posted
+        post_mouse(p, Kind::Up, button);
     }
-    // not while locked: the guard of the state is let go before anything is posted
-    post_mouse(p, Kind::Up, button);
     super::touch::lock::mark_reveal();
     let g = lock(state);
-    if !matches!(&*g, Gesture::Passthrough) {
+    if !held_state(&g) {
         super::touch::lock::clear_reveal();
         return false; // the button came up while the release was posted: nothing is held any more
     }
@@ -1142,6 +1151,12 @@ pub(super) fn esc_lock(state: &Arc<Mutex<Gesture>>, notifier: &Notifier) -> Opti
         Source::Touch => Gesture::Idle,
     };
     drop(g);
+    if source == Source::Mouse {
+        // The button is still down on the lock that was just closed: Esc (or a left click) opens
+        // it again right away, without letting go of the trigger first. The flag ends with the
+        // release (`release_to_idle`).
+        super::touch::lock::set_held(true);
+    }
     notifier.send(Msg::HidePie);
     Some(center)
 }

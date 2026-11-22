@@ -241,14 +241,34 @@ pub struct UserIcons {
 
 /// Images in the icons folder, and how many were left out (so the picker can say so).
 pub fn scan_user_icons() -> UserIcons {
-    let Ok(rd) = fs::read_dir(user_icons_dir()) else {
+    scan_in(&user_icons_dir())
+}
+
+/// A hash of what is in `path`, to tell identical pictures apart from different ones.
+fn content_key(path: &std::path::Path) -> Option<(u64, u64)> {
+    use std::hash::{Hash, Hasher};
+    let bytes = fs::read(path).ok()?;
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut h);
+    Some((bytes.len() as u64, h.finish()))
+}
+
+/// [`scan_user_icons`] for the folder `dir`.
+///
+/// Two kinds of file are not listed. The icons the intelligent pie keeps for the sites it suggests
+/// (`site-<host>.png`, see [`siteicon`](crate::smart::siteicon)) belong to it, are fetched again
+/// when they are missing, and would bury the icons the person chose. And of several files with the
+/// same picture (a button pressed more than once used to save a copy each time) only one is shown,
+/// the one with the shortest name; the others stay on disk and keep working where a slice uses them.
+fn scan_in(dir: &std::path::Path) -> UserIcons {
+    let Ok(rd) = fs::read_dir(dir) else {
         return UserIcons {
             icons: Vec::new(),
             not_listed: 0,
         };
     };
     let mut too_big = 0;
-    let mut v: Vec<String> = rd
+    let mut v: Vec<PathBuf> = rd
         .filter_map(|e| e.ok())
         .map(|e| e.path())
         .filter(|p| {
@@ -258,6 +278,11 @@ pub fn scan_user_icons() -> UserIcons {
                 .unwrap_or(false)
         })
         .filter(|p| {
+            !p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with(crate::smart::siteicon::PREFIX))
+        })
+        .filter(|p| {
             let fits = p
                 .metadata()
                 .map(|m| m.len() <= MAX_ICON_FILE_BYTES)
@@ -265,6 +290,16 @@ pub fn scan_user_icons() -> UserIcons {
             too_big += usize::from(!fits);
             fits
         })
+        .collect();
+    // the shortest name of identical pictures stays: `web-x.png`, not `web-x-2.png`
+    v.sort_by(|a, b| {
+        let key = |p: &PathBuf| (p.as_os_str().len(), p.clone());
+        key(a).cmp(&key(b))
+    });
+    let mut seen = std::collections::HashSet::new();
+    let mut v: Vec<String> = v
+        .into_iter()
+        .filter(|p| content_key(p).is_none_or(|k| seen.insert(k)))
         .map(|p| tilde(&p))
         .collect();
     v.sort();
@@ -363,5 +398,31 @@ mod tests {
             filtered("", 2).iter().all(|d| d.icon != "ico:copy"),
             "category 2 is Navigate"
         );
+    }
+
+    #[test]
+    fn the_folder_lists_one_of_identical_pictures_and_leaves_the_site_cache_out() {
+        let dir = std::env::temp_dir().join(format!("cursorpie-scan-icons-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let put = |name: &str, byte: u8| fs::write(dir.join(name), [0x89, b'P', byte]).unwrap();
+        put("web-chatgpt-com.png", 1);
+        put("web-chatgpt-com-2.png", 1);
+        put("web-chatgpt-com-3.png", 1);
+        put("web-notion-so.png", 2);
+        put("site-youtube-com.png", 3);
+        put("mine.png", 4);
+        let got = scan_in(&dir);
+        let names: Vec<String> = got
+            .icons
+            .iter()
+            .map(|i| i.rsplit('/').next().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            names,
+            vec!["mine.png", "web-chatgpt-com.png", "web-notion-so.png"]
+        );
+        assert_eq!(got.not_listed, 0);
+        let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -2,10 +2,38 @@
 
 ## Unreleased
 
+## 0.9.3
+
+- **Fixed: the sheet _Icon from a website_ grew wider when the icon arrived.** The address row kept 112 points for its
+  button, but _Fetch again_ is wider, so the row overflowed and pushed the sheet out by about 30 points. The button now
+  keeps its own width and the field takes what is left, so the sheet has the same width while loading and after.
+- **Improved: the preview of the icon.** One card with the icon as the site serves it and as it will be on the pie, both
+  on a checkerboard so a transparent area can be told from a plain one, with the name and size of the picture and the
+  icon at about its real size on a light and a dark slice. It is painted in a fixed rectangle, so a long address can no
+  longer widen the sheet.
+
+- **Fixed: a warning button had no outline.** _Remove cpd_, _Forget everything_, _Quit CursorPie_ and the buttons of a
+  panel with the _Danger_ look were drawn bare, next to buttons that had the outline and the shadow of the theme. They
+  now have them too, in Settings and in panels, with red text that turns on a pale red wash under the pointer. A
+  button that is only an icon (remove a step, delete in a toolbar) stays bare until the pointer is over it, like the
+  plain icon buttons beside it.
+
+- **Fixed: the sources of an Intelligent slice were one tall column.** _Open apps_, _Frequent apps_, _Open pages_ and
+  the others now sit side by side and wrap to the next line when there is no room.
+
+- **New: a _Pick..._ button for a "URL / file" action.** It opens the list of sites (the same sheet as _Choose site_ in
+  Behavior > Intelligent): the pages that are open in the browser now when the browser extension is connected, marked
+  _Open now_ and kept with their full address, then the sites CursorPie has seen. The sheet also has an **Add** button
+  for the address that is typed.
+
+- **New: add apps and websites by hand to an Intelligent slice.** The slice editor has _Added by you_ with _Add app..._
+  and _Add site..._. What is added is always in the ring, before the suggestions, and is not repeated when it is
+  suggested too. It is saved as `pinned` in the slice, which is left out of `config.json` when empty.
+
 - **Fixed: `cargo publish` could not build the package of the app** (`unresolved import diag::problems`). `diag/` had
   gained a module while its version stayed `0.1.0`, the one crates.io already had, and `cargo publish` builds the app
-  against the published crate. `cursorpie-diag` is now `0.2.0` and has to be published first. New `cargo tools
-diag-seal` records what was published, and `cargo tools check` fails when `diag/` changes under a published version.
+  against the published crate. `cursorpie-diag` is now `0.2.0` and has to be published first. New `cargo tools diag-seal`
+  records what was published, and `cargo tools check` fails when `diag/` changes under a published version.
 
 ## 0.9.2
 

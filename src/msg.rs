@@ -110,6 +110,22 @@ pub enum Msg {
         slot: Slot,
         app: String,
     },
+    /// A website was chosen for a "URL / file" action of the slice at `path` (`slot` = which action).
+    ActionUrlPicked {
+        profile: usize,
+        path: Vec<usize>,
+        slot: Slot,
+        url: String,
+    },
+    /// An app or a website was added by hand to the Intelligent slice at `path`. `target` is the
+    /// text of an "Open app" action, or the address of the site (`site`).
+    SmartPinPicked {
+        profile: usize,
+        path: Vec<usize>,
+        name: String,
+        target: String,
+        site: bool,
+    },
     /// An app was chosen for the "App" block `node` of the flow at index `flow`.
     FlowAppPicked { flow: usize, node: u32, app: String },
     /// The look for a newer release ended (see [`update`](crate::update)). `manual` is true when the

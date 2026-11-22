@@ -685,7 +685,9 @@ pub fn harmonize(src: &RgbaImage, style: &Style) -> RgbaImage {
     canvas
 }
 
-/// Saves `img` as a PNG in `dir`, named after `host`, never replacing a file that is there.
+/// Saves `img` as a PNG in `dir`, named after `host`, never replacing a file that is there. When a
+/// file of that host already holds exactly this picture, that file is the answer and nothing new is
+/// written, so pressing the button twice does not stack up copies of one icon.
 ///
 /// # Errors
 ///
@@ -698,6 +700,9 @@ pub fn save_png(img: &RgbaImage, dir: &Path, host: &str) -> Result<PathBuf, Stri
     let mut path = dir.join(format!("web-{safe}.png"));
     let mut n = 2;
     while path.exists() {
+        if image::open(&path).is_ok_and(|old| old.to_rgba8() == *img) {
+            return Ok(path);
+        }
         path = dir.join(format!("web-{safe}-{n}.png"));
         n += 1;
     }
@@ -709,6 +714,22 @@ pub fn save_png(img: &RgbaImage, dir: &Path, host: &str) -> Result<PathBuf, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saving_the_same_icon_twice_keeps_one_file_and_a_different_one_gets_its_own() {
+        let dir = std::env::temp_dir().join(format!("cursorpie-save-png-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let a = RgbaImage::from_pixel(8, 8, Rgba([200, 10, 10, 255]));
+        let b = RgbaImage::from_pixel(8, 8, Rgba([10, 10, 200, 255]));
+        let first = save_png(&a, &dir, "chatgpt.com").unwrap();
+        assert_eq!(save_png(&a, &dir, "chatgpt.com").unwrap(), first);
+        let other = save_png(&b, &dir, "chatgpt.com").unwrap();
+        assert_ne!(other, first);
+        assert_eq!(save_png(&b, &dir, "chatgpt.com").unwrap(), other);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn sites_are_read_from_what_people_type() {

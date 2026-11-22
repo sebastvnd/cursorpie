@@ -18,8 +18,8 @@
 
 use super::habits::{Habits, action_key, half_life, page_of, readable_id};
 use crate::config::{
-    Action, AppIconStyle, Item, ItemKind, MAX_ITEMS, SmartConfig, SmartLayout, SmartSlice,
-    SmartSource,
+    Action, AppIconStyle, Item, ItemKind, MAX_ITEMS, SmartConfig, SmartLayout, SmartPin,
+    SmartSlice, SmartSource,
 };
 use crate::ui::appicon;
 use std::collections::{HashMap, HashSet};
@@ -417,11 +417,41 @@ pub fn slice(slice: &SmartSlice, input: &Input) -> Vec<Item> {
     if !input.cfg.enabled {
         return Vec::new();
     }
-    ring(
-        &input.cfg.sources_for(slice),
-        usize::from(slice.count),
-        input,
-    )
+    // what the person added by hand comes first, then the suggestions (the same thing twice is
+    // shown once)
+    let mut items: Vec<Item> = slice.pinned.iter().map(|p| pin_item(p, input)).collect();
+    let room = usize::from(slice.count);
+    let mut rest = ring(&input.cfg.sources_for(slice), room + items.len(), input);
+    rest.retain(|r| !items.iter().any(|p| p.kind == r.kind));
+    rest.truncate(room);
+    items.extend(rest);
+    items.truncate(MAX_ITEMS);
+    if !slice.pinned.is_empty() {
+        distinct_icons(&mut items);
+    }
+    items
+}
+
+/// The slice of something that was added by hand to an intelligent slice.
+fn pin_item(p: &SmartPin, input: &Input) -> Item {
+    if p.site {
+        let host = page_of(&p.target, false)
+            .map(|(_, _, label)| label)
+            .unwrap_or_default();
+        let icon = if p.icon.trim().is_empty() {
+            site_icon(&host, input, "ico:globe")
+        } else {
+            p.icon.clone()
+        };
+        Item::run(&short(&p.name), &icon, Action::OpenUrl(p.target.clone()))
+    } else {
+        let icon = if p.icon.trim().is_empty() {
+            "ico:app-window"
+        } else {
+            p.icon.as_str()
+        };
+        Item::run(&short(&p.name), icon, Action::OpenApp(p.target.clone()))
+    }
 }
 
 /// A category of the grouped intelligent pie: a slice with a name and an icon that opens a ring of
@@ -478,6 +508,7 @@ pub fn groups(input: &Input) -> Vec<Item> {
                 SmartSlice {
                     sources,
                     count: MAX_ITEMS as u8,
+                    pinned: Vec::new(),
                 },
             ))
         })
@@ -1065,8 +1096,29 @@ mod tests {
         let two_apps = SmartSlice {
             sources: vec![SmartSource::FrequentApps],
             count: 2,
+            pinned: Vec::new(),
         };
         assert_eq!(slice(&two_apps, &input(&h, &ctx, &c, &[])).len(), 2);
+    }
+
+    #[test]
+    fn what_was_added_by_hand_comes_first() {
+        let h = habits();
+        let c = cfg();
+        let ctx = Context::default();
+        let mut s = SmartSlice::of(SmartSource::FrequentPages);
+        s.pinned = vec![SmartPin {
+            name: "bank.example".into(),
+            icon: String::new(),
+            target: "https://bank.example".into(),
+            site: true,
+        }];
+        let items = slice(&s, &input(&h, &ctx, &c, &[]));
+        assert_eq!(items[0].name, "bank.example");
+        assert!(matches!(
+            &items[0].kind,
+            ItemKind::Run(Action::OpenUrl(u)) if u == "https://bank.example"
+        ));
     }
 
     #[test]

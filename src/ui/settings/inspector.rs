@@ -3,8 +3,9 @@
 use super::action_editor::action_editor;
 use super::icon_picker::icon_picker;
 use super::picker::spawn_file_picker;
-use super::state::{ActionTarget, Ed, PickFor, Rec, Slot};
+use super::state::{ActionTarget, Ed, PickFor, Rec, SiteFor, Slot};
 use super::tabs::profile_toolbar::open_picker;
+use super::tabs::smart_site::open_site_pick;
 use crate::config::*;
 use crate::keys::{Shortcut, key};
 use crate::msg::Msg;
@@ -352,6 +353,10 @@ pub(super) fn item_inspector(
         .collect();
     let (mut start, remove, mut enter, mut shift) = (None::<Slot>, false, false, 0i32);
     let mut pick_app: Option<Slot> = None;
+    // "choose a website for this slice", and the slice that was added by hand: an app (false) or a
+    // website (true) for the Intelligent slice
+    let mut pick_site: Option<Slot> = None;
+    let mut pin_pick: Option<bool> = None;
     let mut change_icon = false;
     // "use the icon of the app this slice opens", in this tone (with the app as the action has it)
     let mut use_app_icon: Option<(SliceTone, String)> = None;
@@ -432,6 +437,9 @@ pub(super) fn item_inspector(
                 if r.pick_app {
                     pick_app = Some(Slot::Run);
                 }
+                if r.pick_site {
+                    pick_site = Some(Slot::Run);
+                }
                 // a slice that opens an app can wear that app's icon, in color or as a white or
                 // black glyph
                 if let Action::OpenApp(app) = a
@@ -481,6 +489,9 @@ pub(super) fn item_inspector(
                 if r.pick_app {
                     pick_app = Some(Slot::Back);
                 }
+                if r.pick_site {
+                    pick_site = Some(Slot::Back);
+                }
                 section_label(ui, "Forward button");
                 let r = action_editor(ui, &format!("{uid}_f"), forward, rf, env.accent, env.flows);
                 if r.shortcut {
@@ -488,6 +499,9 @@ pub(super) fn item_inspector(
                 }
                 if r.pick_app {
                     pick_app = Some(Slot::Forward);
+                }
+                if r.pick_site {
+                    pick_site = Some(Slot::Forward);
                 }
                 for (k, &b) in buttons.iter().enumerate() {
                     section_label(ui, &crate::mouse::button_label(b));
@@ -512,6 +526,9 @@ pub(super) fn item_inspector(
                     if r.pick_app {
                         pick_app = Some(Slot::Extra(b));
                     }
+                    if r.pick_site {
+                        pick_site = Some(Slot::Extra(b));
+                    }
                 }
                 if buttons.is_empty() {
                     muted(ui, "More buttons? Scan your mouse in General > Mouse.");
@@ -530,25 +547,95 @@ pub(super) fn item_inspector(
                     ui,
                     "A ring that is made when the pie opens. Choose what it draws from; none chosen means everything that is switched on in Behavior > Intelligent.",
                 );
-                for src in crate::config::SmartSource::ALL {
-                    let on = s.sources.contains(&src);
-                    let look = if on {
-                        Look::Primary(env.accent)
-                    } else {
-                        Look::Soft
-                    };
-                    if button(ui, look, None, src.label()).clicked() {
-                        if on {
-                            s.sources.retain(|x| *x != src);
-                        } else {
-                            s.sources.push(src);
-                            s.sources.sort();
+                // the sources flow side by side and wrap, instead of one tall column; the room
+                // between them is wide enough for the shadow of the theme
+                ui.scope(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(10.0, 12.0);
+                    ui.horizontal_wrapped(|ui| {
+                        for src in crate::config::SmartSource::ALL {
+                            let on = s.sources.contains(&src);
+                            let look = if on {
+                                Look::Primary(env.accent)
+                            } else {
+                                Look::Soft
+                            };
+                            if button(ui, look, None, src.label()).clicked() {
+                                if on {
+                                    s.sources.retain(|x| *x != src);
+                                } else {
+                                    s.sources.push(src);
+                                    s.sources.sort();
+                                }
+                            }
                         }
-                    }
-                }
+                    });
+                });
+                ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     ui.label("Suggestions");
                     ui.add(egui::DragValue::new(&mut s.count).range(1..=MAX_ITEMS as u8));
+                });
+                // what the person adds by hand: always in the ring, before the suggestions
+                section_label(ui, "Added by you");
+                muted(
+                    ui,
+                    "Apps and websites you choose yourself. They come first in the ring; the suggestions follow.",
+                );
+                let mut gone: Option<usize> = None;
+                for (k, pin) in s.pinned.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        let icon = if pin.site {
+                            symbols::GLOBE
+                        } else {
+                            symbols::APP_WINDOW
+                        };
+                        let (at, _) =
+                            ui.allocate_exact_size(Vec2::splat(20.0), egui::Sense::hover());
+                        fonts::paint_icon(
+                            ui.painter(),
+                            at.center(),
+                            icon,
+                            16.0,
+                            pal().muted,
+                            false,
+                        );
+                        ui.label(&pin.name);
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if icon_button_look(ui, Look::Danger, symbols::X, "Remove", true)
+                                .clicked()
+                            {
+                                gone = Some(k);
+                            }
+                        });
+                    });
+                }
+                if let Some(k) = gone {
+                    s.pinned.remove(k);
+                }
+                let room = s.pinned.len() < MAX_ITEMS;
+                ui.horizontal_wrapped(|ui| {
+                    if button_if(
+                        ui,
+                        room,
+                        Look::Soft,
+                        Some(symbols::APP_WINDOW),
+                        "Add app\u{2026}",
+                    )
+                    .clicked()
+                    {
+                        pin_pick = Some(false);
+                    }
+                    if button_if(
+                        ui,
+                        room,
+                        Look::Soft,
+                        Some(symbols::GLOBE),
+                        "Add site\u{2026}",
+                    )
+                    .clicked()
+                    {
+                        pin_pick = Some(true);
+                    }
                 });
             }
         }
@@ -615,6 +702,27 @@ pub(super) fn item_inspector(
             slot,
         });
         open_picker(env.ctx, ed, env.tx, PickFor::Action);
+    }
+    if let Some(slot) = pick_site {
+        // the list of sites, the one of Behavior > Intelligent, answering this slice
+        ed.action_target = Some(ActionTarget {
+            profile: env.profile,
+            path: path.clone(),
+            slot,
+        });
+        open_site_pick(env.ctx, ed, SiteFor::Url);
+    }
+    if let Some(site) = pin_pick {
+        ed.action_target = Some(ActionTarget {
+            profile: env.profile,
+            path: path.clone(),
+            slot: Slot::Run,
+        });
+        if site {
+            open_site_pick(env.ctx, ed, SiteFor::Pin);
+        } else {
+            open_picker(env.ctx, ed, env.tx, PickFor::Pin);
+        }
     }
     if let Some((tone, app)) = use_app_icon {
         match appicon::app_id_for_action(&app, &ed.installed) {

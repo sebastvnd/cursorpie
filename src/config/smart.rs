@@ -87,6 +87,25 @@ pub struct SmartSlice {
     pub sources: Vec<SmartSource>,
     /// How many suggestions the ring has at most (1 to [`MAX_ITEMS`](super::MAX_ITEMS)).
     pub count: u8,
+    /// Slices the person added by hand (an app, a website): always in the ring, before the
+    /// suggestions. Left out of the file when there are none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pinned: Vec<SmartPin>,
+}
+
+/// One slice that was added by hand to an intelligent slice (see [`SmartSlice::pinned`]).
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub struct SmartPin {
+    /// What the slice is called.
+    pub name: String,
+    /// Its icon string. Empty for a website: the icon that was fetched for the site is used.
+    #[serde(default)]
+    pub icon: String,
+    /// What it opens: the text of an "Open app" action, or the address of a website.
+    pub target: String,
+    /// Whether `target` is a website (otherwise an app).
+    #[serde(default)]
+    pub site: bool,
 }
 
 impl Default for SmartSlice {
@@ -94,6 +113,7 @@ impl Default for SmartSlice {
         Self {
             sources: Vec::new(),
             count: 6,
+            pinned: Vec::new(),
         }
     }
 }
@@ -104,6 +124,7 @@ impl SmartSlice {
         Self {
             sources: vec![source],
             count: super::MAX_ITEMS as u8,
+            pinned: Vec::new(),
         }
     }
 }
@@ -280,6 +301,8 @@ impl SmartSlice {
         self.sources.sort();
         self.sources.dedup();
         self.count = self.count.clamp(1, super::MAX_ITEMS as u8);
+        self.pinned.retain(|p| !p.target.trim().is_empty());
+        self.pinned.truncate(super::MAX_ITEMS);
     }
 }
 

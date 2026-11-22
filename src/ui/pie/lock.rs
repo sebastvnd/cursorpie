@@ -80,7 +80,9 @@ pub struct Scene {
 /// starts and stops without a visible kink (the plain smoothstep has a speed jump there).
 pub fn smooth(x: f32, a: f32, b: f32) -> f32 {
     let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
-    t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
+    // float rounding can land a hair outside 0..1 (1.0000002); `1.0 - smooth(..)` would then be
+    // slightly negative, and egui's `gamma_multiply` panics on a negative factor
+    (t * t * t * (t * (t * 6.0 - 15.0) + 10.0)).clamp(0.0, 1.0)
 }
 
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
@@ -321,6 +323,19 @@ mod tests {
             let v = smooth(i as f32 / 100.0, 0.0, 1.0);
             assert!((0.0..=1.0).contains(&v) && v >= last);
             last = v;
+        }
+    }
+
+    #[test]
+    fn the_curve_never_rounds_outside_zero_to_one() {
+        for a in [0.0_f32, 0.35, 0.62, 0.92] {
+            for b in [0.4_f32, 0.55, 1.0, 1.15] {
+                for i in 0..=2000 {
+                    let v = smooth(i as f32 / 1000.0, a, b);
+                    assert!((0.0..=1.0).contains(&v), "{a} {b} {i}: {v}");
+                    assert!((0.0..=1.0).contains(&(1.0 - v)));
+                }
+            }
         }
     }
 

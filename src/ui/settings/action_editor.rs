@@ -55,6 +55,7 @@ fn make_action(i: usize) -> Action {
 pub(super) struct ActionClick {
     pub shortcut: bool,
     pub pick_app: bool,
+    pub pick_site: bool,
 }
 
 /// Draws the editor for `a`. The caller reacts to the returned clicks (start recording, pick an app).
@@ -142,11 +143,20 @@ fn fields(
             }
         }
         Action::OpenUrl(s) => {
+            let w = (ui.available_width() - 124.0).max(120.0);
             ui.add(
                 text_field(s)
-                    .desired_width(ui.available_width())
+                    .desired_width(w)
                     .hint_text("https://…  or a file path"),
             );
+            // opens the list of sites: the pages open in the browser now, and the sites CursorPie
+            // has seen
+            if button(ui, Look::Soft, Some(symbols::GLOBE), "Pick\u{2026}")
+                .on_hover_text("Choose from the open pages and the sites CursorPie has seen")
+                .clicked()
+            {
+                out.pick_site = true;
+            }
         }
         Action::Command(s) => {
             ui.add(

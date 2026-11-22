@@ -264,34 +264,45 @@ fn body(ui: &mut egui::Ui, ctx: &egui::Context, w: &mut WebIcon, accent: Color32
 }
 
 /// The address field and the Fetch / Cancel button.
+///
+/// The button keeps its own width and sits at the right edge, the field takes what is left. It
+/// used to reserve a fixed 112 points for the button, but "Fetch again" is wider than that, so the
+/// row overflowed and the whole sheet grew wider the moment a picture arrived.
 fn address_row(ui: &mut egui::Ui, ctx: &egui::Context, w: &mut WebIcon, accent: Color32) {
     let loading = matches!(w.phase, Phase::Loading(_));
     let again = w.raw.is_some();
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 8.0;
-        let field_w = (ui.available_width() - 112.0).max(120.0);
-        let resp = ui.add_enabled(
-            !loading,
-            text_field(&mut w.url)
-                .desired_width(field_w)
-                .hint_text("example.com"),
-        );
-        if w.focus {
-            resp.request_focus();
-            w.focus = false;
-        }
-        let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        if loading {
-            if button(ui, Look::Soft, Some(symbols::X), "Cancel").clicked() {
-                w.stop();
+    let width = ui.available_width();
+    let mut fetch = false;
+    ui.allocate_ui_with_layout(
+        Vec2::new(width, CONTROL_H),
+        egui::Layout::right_to_left(egui::Align::Center),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            if loading {
+                if button(ui, Look::Soft, Some(symbols::X), "Cancel").clicked() {
+                    w.stop();
+                }
+            } else {
+                let label = if again { "Fetch again" } else { "Fetch" };
+                fetch = button(ui, Look::Primary(accent), Some(symbols::GLOBE), label).clicked();
             }
-        } else {
-            let label = if again { "Fetch again" } else { "Fetch" };
-            if button(ui, Look::Primary(accent), Some(symbols::GLOBE), label).clicked() || enter {
-                w.start(ctx);
+            let field_w = ui.available_width().max(120.0);
+            let resp = ui.add_enabled(
+                !loading,
+                text_field(&mut w.url)
+                    .desired_width(field_w)
+                    .hint_text("example.com"),
+            );
+            if w.focus {
+                resp.request_focus();
+                w.focus = false;
             }
-        }
-    });
+            fetch |= resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        },
+    );
+    if fetch && !loading {
+        w.start(ctx);
+    }
 }
 
 /// The loading animation: a tile that breathes, a comet circling it, and what is being done.
@@ -360,49 +371,240 @@ fn loading_view(ui: &mut egui::Ui, ctx: &egui::Context, w: &WebIcon, accent: Col
     ctx.request_repaint();
 }
 
-/// A square that shows `tex` over `backdrop`.
-fn tile(ui: &mut egui::Ui, side: f32, backdrop: Color32, tex: Option<&egui::TextureHandle>) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
-    ui.painter().rect_filled(rect, 14.0, backdrop);
+/// Height of the preview card.
+const PREVIEW_H: f32 = 156.0;
+/// Side of the two big tiles of the preview card.
+const PREVIEW_TILE: f32 = 104.0;
+/// Side of the small tiles that show the icon about as large as it is on the pie.
+const PREVIEW_CHIP: f32 = 40.0;
+/// The icon is drawn this far from the edge of its tile.
+const PREVIEW_INSET: f32 = 10.0;
+
+/// The part of `outer` that a picture of `w` x `h` points fills when it is fitted in, centered.
+fn fit(outer: Rect, w: f32, h: f32) -> Rect {
+    if w <= 0.0 || h <= 0.0 {
+        return outer;
+    }
+    let k = (outer.width() / w).min(outer.height() / h);
+    Rect::from_center_size(outer.center(), Vec2::new(w * k, h * k))
+}
+
+/// Paints `tex` fitted into `rect`.
+fn paint_tex(painter: &egui::Painter, rect: Rect, tex: &egui::TextureHandle) {
+    let [w, h] = tex.size();
+    let whole = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0));
+    painter.image(
+        tex.id(),
+        fit(rect, w as f32, h as f32),
+        whole,
+        Color32::WHITE,
+    );
+}
+
+/// Covers the four corners of `rect` outside a rounded corner of `radius` with `color`, so
+/// something square painted inside `rect` seems to have rounded corners.
+fn round_off(painter: &egui::Painter, rect: Rect, radius: f32, color: Color32) {
+    use std::f32::consts::{FRAC_PI_2, PI};
+    const STEPS: usize = 10;
+    let r = radius;
+    let corners = [
+        (
+            rect.left_top(),
+            Pos2::new(rect.min.x + r, rect.min.y + r),
+            PI,
+        ),
+        (
+            rect.right_top(),
+            Pos2::new(rect.max.x - r, rect.min.y + r),
+            PI * 1.5,
+        ),
+        (
+            rect.right_bottom(),
+            Pos2::new(rect.max.x - r, rect.max.y - r),
+            0.0,
+        ),
+        (
+            rect.left_bottom(),
+            Pos2::new(rect.min.x + r, rect.max.y - r),
+            FRAC_PI_2,
+        ),
+    ];
+    let mut mesh = egui::Mesh::default();
+    for (corner, centre, from) in corners {
+        let base = mesh.vertices.len() as u32;
+        mesh.colored_vertex(corner, color);
+        for k in 0..=STEPS {
+            let a = from + FRAC_PI_2 * k as f32 / STEPS as f32;
+            mesh.colored_vertex(centre + Vec2::new(a.cos(), a.sin()) * r, color);
+        }
+        for k in 0..STEPS as u32 {
+            mesh.add_triangle(base, base + 1 + k, base + 2 + k);
+        }
+    }
+    painter.add(egui::Shape::mesh(mesh));
+}
+
+/// A rounded square with a checkerboard (so that a transparent area can be told from a plain
+/// one) and the picture `tex` on it. `around` is the color behind the square.
+fn preview_tile(
+    painter: &egui::Painter,
+    rect: Rect,
+    checks: (Color32, Color32),
+    around: Color32,
+    tex: Option<&egui::TextureHandle>,
+) {
+    const RADIUS: f32 = 14.0;
+    const CELL: f32 = 8.0;
+    painter.rect_filled(rect, 0.0, checks.0);
+    let inside = painter.with_clip_rect(rect);
+    let (cols, rows) = (
+        (rect.width() / CELL).ceil() as i32,
+        (rect.height() / CELL).ceil() as i32,
+    );
+    for j in 0..rows {
+        for i in 0..cols {
+            if (i + j) % 2 == 1 {
+                let at = rect.min + Vec2::new(i as f32, j as f32) * CELL;
+                inside.rect_filled(Rect::from_min_size(at, Vec2::splat(CELL)), 0.0, checks.1);
+            }
+        }
+    }
+    round_off(painter, rect, RADIUS, around);
     if let Some(t) = tex {
-        let whole = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0));
-        ui.painter()
-            .image(t.id(), rect.shrink(8.0), whole, Color32::WHITE);
+        paint_tex(painter, rect.shrink(PREVIEW_INSET), t);
+    }
+    painter.rect_stroke(
+        rect,
+        RADIUS,
+        Stroke::new(1.0, pal().border),
+        egui::StrokeKind::Inside,
+    );
+}
+
+/// A line of text cut with an ellipsis at `width` points.
+fn one_line(
+    painter: &egui::Painter,
+    text: &str,
+    font: FontId,
+    color: Color32,
+    width: f32,
+) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::simple(text.to_owned(), font, color, width.max(20.0));
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    painter.layout_job(job)
+}
+
+/// The preview card: the icon as the site serves it, an arrow, the icon as it will be on the pie,
+/// and next to them the name of the site, the size, and the icon at about its real size on a
+/// light and a dark slice. Everything is painted inside one rectangle of a fixed size, so nothing
+/// in it can push the sheet wider.
+fn preview_card(ui: &mut egui::Ui, w: &WebIcon) {
+    let (card, _) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), PREVIEW_H),
+        egui::Sense::hover(),
+    );
+    let p = pal();
+    let painter = ui.painter().clone();
+    painter.rect_filled(card, 16.0, p.idle);
+
+    const PAD: f32 = 16.0;
+    const ARROW_ROOM: f32 = 44.0;
+    let from = Rect::from_min_size(card.min + Vec2::splat(PAD), Vec2::splat(PREVIEW_TILE));
+    let to = Rect::from_min_size(
+        Pos2::new(from.max.x + ARROW_ROOM, from.min.y),
+        Vec2::splat(PREVIEW_TILE),
+    );
+    let light = (
+        Color32::from_rgb(250, 250, 252),
+        Color32::from_rgb(228, 228, 233),
+    );
+    let dark = (Color32::from_rgb(30, 30, 34), Color32::from_rgb(42, 42, 48));
+    preview_tile(&painter, from, light, p.idle, w.orig_tex.as_ref());
+    let result = w.shown.as_ref().map(|s| &s.1);
+    preview_tile(&painter, to, dark, p.idle, result);
+
+    let arrow_at = Pos2::new((from.max.x + to.min.x) / 2.0, from.center().y);
+    fonts::paint_icon(
+        &painter,
+        arrow_at,
+        symbols::ARROW_RIGHT,
+        18.0,
+        p.muted,
+        false,
+    );
+    for (tile, name) in [(from, "From the site"), (to, "On the pie")] {
+        painter.text(
+            Pos2::new(tile.center().x, tile.max.y + 12.0),
+            Align2::CENTER_CENTER,
+            name,
+            FontId::proportional(12.5),
+            p.muted,
+        );
+    }
+
+    // the facts, at the right
+    let x = to.max.x + 22.0;
+    let room = card.max.x - PAD - x;
+    let (rw, rh) = w.raw.as_ref().map_or((0, 0), |r| (r.width(), r.height()));
+    let host = one_line(&painter, &w.host, text_font(15.0, true), p.text, room);
+    let dims = one_line(
+        &painter,
+        &format!("{rw} \u{d7} {rh} px"),
+        FontId::proportional(12.5),
+        p.muted,
+        room,
+    );
+    let mut y = from.min.y + 2.0;
+    let host_h = host.size().y;
+    painter.galley(Pos2::new(x, y), host, p.text);
+    y += host_h + 2.0;
+    painter.galley(Pos2::new(x, y), dims, p.muted);
+
+    painter.text(
+        Pos2::new(x, from.max.y - PREVIEW_CHIP - 8.0),
+        Align2::LEFT_BOTTOM,
+        "Actual size",
+        FontId::proportional(12.5),
+        p.muted,
+    );
+    let chips_y = from.max.y - PREVIEW_CHIP;
+    for (k, checks) in [light, dark].into_iter().enumerate() {
+        let chip = Rect::from_min_size(
+            Pos2::new(x + k as f32 * (PREVIEW_CHIP + 10.0), chips_y),
+            Vec2::splat(PREVIEW_CHIP),
+        );
+        painter.rect_filled(chip, 11.0, checks.0);
+        if let Some(t) = result {
+            paint_tex(&painter, chip.shrink(6.0), t);
+        }
+        painter.rect_stroke(
+            chip,
+            11.0,
+            Stroke::new(1.0, p.border),
+            egui::StrokeKind::Inside,
+        );
     }
 }
 
-/// The two previews, the controls and the buttons.
+/// The preview, the controls and the buttons.
 fn ready_view(ui: &mut egui::Ui, w: &mut WebIcon, accent: Color32) -> Step {
     let mut step = Step::Stay;
-    let orig = w.orig_tex.clone();
-    let result = w.shown.as_ref().map(|s| s.1.clone());
-    let (rw, rh) = w.raw.as_ref().map_or((0, 0), |r| (r.width(), r.height()));
     let flat = w.style.plate == Plate::None
         && w.style.tint != Tint::Original
         && w.shown.as_ref().is_some_and(|s| webicon::is_opaque(&s.2));
 
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 12.0;
-        ui.vertical(|ui| {
-            tile(ui, 112.0, Color32::from_rgb(236, 236, 240), orig.as_ref());
-            muted(ui, "From the site");
-        });
-        ui.label(fonts::icon(symbols::ARROW_RIGHT, 18.0, pal().muted));
-        ui.vertical(|ui| {
-            tile(ui, 112.0, Color32::from_rgb(30, 30, 34), result.as_ref());
-            muted(ui, "On the pie");
-        });
-        ui.vertical(|ui| {
-            ui.label(fonts::title(w.host.clone(), 14.0, pal().text));
-            muted(ui, &format!("{rw} \u{d7} {rh} px"));
-            if rw.max(rh) < 64 {
-                sheet_text(
-                    ui,
-                    "The site only offers a small icon, so it looks soft when enlarged.",
-                );
-            }
-        });
-    });
+    preview_card(ui, w);
+    if w.raw
+        .as_ref()
+        .is_some_and(|r| r.width().max(r.height()) < 64)
+    {
+        ui.add_space(6.0);
+        sheet_text(
+            ui,
+            "The site only offers a small icon, so it looks soft when enlarged.",
+        );
+    }
     ui.add_space(6.0);
 
     let mut st = w.style;
