@@ -140,4 +140,12 @@
     <loc>https://sebastvnd.github.io/cursorpie/flowhub/</loc>
     <priority>0.8</priority>
   </url>
+  <url>
+    <loc>https://sebastvnd.github.io/cursorpie/blog/</loc>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://sebastvnd.github.io/cursorpie/blog/the-pie-that-ghosted-your-fullscreen-app/</loc>
+    <priority>0.7</priority>
+  </url>
 </urlset>

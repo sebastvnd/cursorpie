@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#fff8ec">
+  <meta name="description" content="Why the CursorPie pie menu worked but was invisible over full-screen apps on macOS, why the first fix did nothing, and the window levels, collection behavior and KVO class name that finally fixed it.">
+  <title>The pie that ghosted your full-screen app — CursorPie Blog</title>
+  <meta name="robots" content="index, follow, max-image-preview:large">
+  <link rel="canonical" href="https://sebastvnd.github.io/cursorpie/blog/the-pie-that-ghosted-your-fullscreen-app/">
+  <meta property="og:type" content="article">
+  <meta property="og:site_name" content="CursorPie">
+  <meta property="og:title" content="The pie that ghosted your full-screen app">
+  <meta property="og:description" content="A bug story: the pie menu ran your action but drew nothing over full-screen apps on macOS. Two fixes, four bugs, one very wrong class name.">
+  <meta property="og:url" content="https://sebastvnd.github.io/cursorpie/blog/the-pie-that-ghosted-your-fullscreen-app/">
+  <meta property="og:image" content="https://sebastvnd.github.io/cursorpie/assets/og-image.png">
+  <meta property="article:published_time" content="2026-11-25">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="The pie that ghosted your full-screen app">
+  <meta name="twitter:description" content="Window levels, collection behavior and a KVO class name: how CursorPie learned to draw over full-screen apps.">
+  <meta name="twitter:image" content="https://sebastvnd.github.io/cursorpie/assets/og-image.png">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BlogPosting",
+    "headline": "The pie that ghosted your full-screen app",
+    "description": "Why the CursorPie pie menu worked but was invisible over full-screen apps on macOS, and how it was fixed.",
+    "datePublished": "2026-11-25",
+    "inLanguage": "en",
+    "image": "https://sebastvnd.github.io/cursorpie/assets/og-image.png",
+    "mainEntityOfPage": "https://sebastvnd.github.io/cursorpie/blog/the-pie-that-ghosted-your-fullscreen-app/",
+    "author": { "@type": "Organization", "name": "CursorPie", "url": "https://sebastvnd.github.io/cursorpie/" },
+    "publisher": { "@type": "Organization", "name": "CursorPie", "url": "https://sebastvnd.github.io/cursorpie/" }
+  }
+  </script>
+  <link rel="icon" href="../../assets/cursorpie-mark.png">
+  <script>
+    /* Saved theme before first paint, same key as the main site. */
+    (function () {
+      var d = document.documentElement;
+      try {
+        var t = localStorage.getItem('cursorpie-theme');
+        if (t !== 'light' && t !== 'dark') t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        d.dataset.theme = t;
+        var m = document.querySelector('meta[name="theme-color"]');
+        if (m) m.setAttribute('content', t === 'dark' ? '#100f14' : '#fff8ec');
+      } catch (e) {}
+    })();
+  </script>
+  <link rel="stylesheet" href="../../assets/site.css">
+  <link rel="stylesheet" href="../../assets/blog.css">
+</head>
+<body class="blog">
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="progress" id="progress" aria-hidden="true"></div>
+
+<header class="topbar" id="topbar">
+  <div class="topbar-pill">
+    <a class="brand" href="../../index.html" aria-label="CursorPie home"><img src="../../assets/cursorpie-logo.png" alt="CursorPie"></a>
+    <nav class="nav" id="nav" aria-label="Main navigation">
+      <a href="../../index.html#how-it-works">How it works</a>
+      <a href="../../index.html#features">Features</a>
+      <a href="../../flowhub/">Flow Hub</a>
+      <a href="../" aria-current="page" class="is-here">Blog</a>
+      <a href="../../index.html#download">Download</a>
+      <a href="../../index.html?doc=docs/README.md">Docs</a>
+    </nav>
+    <div class="topbar-tools">
+      <a class="icon-btn gh" href="https://github.com/sebastvnd/cursorpie" target="_blank" rel="noopener" aria-label="GitHub" data-tip="GitHub"><span class="icon" aria-hidden="true">&#xe576;</span></a>
+      <button class="icon-btn" type="button" data-theme-toggle aria-label="Switch to dark theme" data-tip="Dark theme"><span class="icon" aria-hidden="true">&#xe330;</span></button>
+      <a class="btn btn-sm btn-lime topbar-cta" href="../../index.html#download">Get it <span class="icon" aria-hidden="true">&#xe20c;</span></a>
+      <button class="icon-btn menu-btn" type="button" id="menu-btn" aria-label="Open menu" aria-expanded="false" aria-controls="nav"><span class="burger"><i></i><i></i></span></button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+  <header class="post-hero">
+    <div class="wrap">
+      <nav class="crumbs" aria-label="Breadcrumb">
+        <a href="../../index.html">CursorPie</a><span class="sep">/</span><a href="../">Blog</a><span class="sep">/</span><b>Full-screen bug story</b>
+      </nav>
+      <h1>The pie that <em class="mark mark-pink">ghosted</em> your <em class="mark">full-screen</em> app</h1>
+      <p class="post-dek">You hold the button, you flick, your action runs&hellip; and you never see the pie. Here&rsquo;s the bug hunt behind that on macOS: two fixes (the first one flopped), four bugs in a trench coat, and what we learned about how windows stack.</p>
+      <div class="meta">
+        <span class="chip lime">Bug story</span>
+        <span class="chip">macOS</span>
+        <span class="chip">Rust</span>
+        <span class="chip">Window levels</span>
+        <span class="chip sky">9 min read</span>
+        <span class="chip"><time datetime="2026-11-25">Nov 25, 2026</time></span>
+      </div>
+    </div>
+  </header>
+
+  <div class="wrap post-layout">
+    <article class="post" id="post">
+
+      <aside class="tldr" aria-label="Short version">
+        <h2 id="tldr">TL;DR</h2>
+        <ul>
+          <li><b>Symptom:</b> on macOS the pie <em>worked</em> over a full-screen app (slice picked, action ran) but nothing was drawn.</li>
+          <li><b>Why:</b> a full-screen app lives in its own Space. Another app&rsquo;s window only shows there with the right <code>collectionBehavior</code>, a high enough window level and the right activation policy.</li>
+          <li><b>Fix #1 (0.9.0)</b> set two of the bits and a level that was too low. Looked right. Did nothing.</li>
+          <li><b>Fix #2 (0.9.1)</b> found the real culprits: a missing bit, a low level, the toolkit overwriting our level on every show, and a class-name check that never matched.</li>
+          <li><b>Sequel:</b> pie, pill, lock animation, panels and Settings share one window, and hand-overs between them glitched. One owner and explicit hand-over rules fix that (next release).</li>
+        </ul>
+      </aside>
+
+      <h2 id="what-it-looked-like"><span class="num">1</span>What it looked like</h2>
+      <p>CursorPie is a pie menu for your cursor: hold the middle button (or touch and hold a trackpad), flick toward a slice, release. Simple. Now do that inside a full-screen browser, a video player or a game on macOS.</p>
+      <p>The hold registered. You flicked. The slice you aimed at actually <em>ran</em>: the shortcut fired, the app opened. And the whole time there was no pie on screen. Not glitchy, not half-drawn. Just gone. A <strong>phantom pie</strong>.</p>
+      <p>That&rsquo;s the evil part. Everything that normally breaks first, the input hook, the gesture state machine, the action worker, was fine. The logs said &ldquo;all good.&rdquo; The only thing wrong was a rectangle of pixels that wasn&rsquo;t being composited where you could see it.</p>
+
+      <h2 id="why-macos-does-this"><span class="num">2</span>Why macOS does this: full screen is its own Space</h2>
+      <p>When an app goes full screen on macOS, it doesn&rsquo;t just get bigger. It moves into a <strong>Space of its own</strong>. A window from a <em>different</em> app doesn&rsquo;t get drawn in that Space unless the window explicitly says it&rsquo;s allowed to. CursorPie&rsquo;s pie is a window from a different app. So it has to pass three checks at the same time:</p>
+      <ol class="rules">
+        <li><span class="n">1</span><b>Say it in the collection behavior</b>
+          <code>CanJoinAllSpaces</code> (follow the person), <code>FullScreenAuxiliary</code> (may sit beside a full-screen window) and, since macOS 13, <code>CanJoinAllApplications</code> (may be drawn in another app&rsquo;s Space).</li>
+        <li><span class="n">2</span><b>Be above what that Space draws</b>
+          The window level has to be higher than what a full-screen Space paints. The screen-saver level works. Lower ones may not.</li>
+        <li><span class="n">3</span><b>Don&rsquo;t steal focus</b>
+          CursorPie is an <em>accessory</em> app (no Dock icon), so showing the window doesn&rsquo;t activate the app and yank you out of the Space.</li>
+      </ol>
+      <p>Miss any one of the three and the window is &ldquo;shown&rdquo; as far as the app knows, and invisible as far as you know.</p>
+
+      <figure class="fig">
+        <svg viewBox="0 0 680 318" role="img" aria-labelledby="fig1-t fig1-d">
+          <title id="fig1-t">Window levels, from normal windows up to the screen-saver level</title>
+          <desc id="fig1-d">A stack of five layers. From the bottom: normal windows at level 0, floating at 3, status at 25, a dashed band for what a full-screen Space draws, and the screen-saver level at 1000 where the pie now lives.</desc>
+          <path class="axis" d="M22 296V26M22 26l-7 11M22 26l7 11"/>
+          <text class="axis-t" x="36" y="14">DRAWN ON TOP</text>
+
+          <rect x="46" y="22" width="330" height="48" rx="14" fill="#ff5ea8" stroke="#14110f" stroke-width="2.5"/>
+          <text class="l-ink" x="64" y="43">Screen saver · 1000</text>
+          <text class="l-ink-sub" x="64" y="60">where the pie lives now (0.9.1)</text>
+
+          <rect x="46" y="82" width="330" height="48" rx="14" class="l-bg" stroke-dasharray="7 6"/>
+          <text class="l-txt" x="64" y="103">What a full-screen Space draws</text>
+          <text class="l-sub" x="64" y="120">somewhere above 25 on current macOS</text>
+
+          <rect x="46" y="142" width="330" height="48" rx="14" fill="#ff9a3d" stroke="#14110f" stroke-width="2.5"/>
+          <text class="l-ink" x="64" y="163">Status · 25</text>
+          <text class="l-ink-sub" x="64" y="180">where the pie was in 0.9.0 (too low)</text>
+
+          <rect x="46" y="202" width="330" height="48" rx="14" fill="#5ad0ff" stroke="#14110f" stroke-width="2.5"/>
+          <text class="l-ink" x="64" y="223">Floating · 3</text>
+          <text class="l-ink-sub" x="64" y="240">the toolkit&rsquo;s &ldquo;always on top&rdquo;</text>
+
+          <rect x="46" y="262" width="330" height="48" rx="14" class="l-bg"/>
+          <text class="l-txt" x="64" y="283">Normal windows · 0</text>
+          <text class="l-sub" x="64" y="300">your apps; Settings gets this back</text>
+
+          <path class="axis" d="M392 46h28M392 160h28M392 226h28" stroke-dasharray="3 5"/>
+          <text class="l-sub" x="430" y="42">&#10003; shows over full-screen apps</text>
+          <text class="l-sub" x="430" y="156">&#10007; ordered in, never seen</text>
+          <text class="l-sub" x="430" y="222">&#10007; the toolkit writes this on every show</text>
+        </svg>
+        <figcaption>Higher number, drawn on top. The status level we used first sits below what a full-screen Space paints, so the pie was ordered in and never seen.</figcaption>
+      </figure>
+
+      <h2 id="attempt-one"><span class="num">3</span>Attempt #1 (0.9.0): looks right, does nothing</h2>
+      <p>The first fix was reasonable. In the changelog it reads great: the pie window now joins every Space, may sit beside a full-screen window, and is raised above the Dock while it&rsquo;s shown. In code that meant two collection-behavior bits and the <em>status</em> window level.</p>
+      <p>Shipped. Pie: still invisible over full-screen apps.</p>
+      <p>Which is the kind of result that makes you stare at a diff and go &ldquo;but&hellip; it&rsquo;s <em>right</em>.&rdquo; It was right. It just wasn&rsquo;t reaching anything.</p>
+
+      <h2 id="four-bugs"><span class="num">4</span>Four bugs in a trench coat</h2>
+      <p>Version 0.9.1 is where the real post-mortem happened. Teaching the app to log what AppKit says about its own window (more on that below) showed it wasn&rsquo;t one bug. It was four, stacked:</p>
+      <ol class="bugs">
+        <li><b>A missing bit.</b> Without <code>CanJoinAllApplications</code> (macOS 13+), a window of one app never reaches the full-screen Space of another app, whatever the other bits say. 0.9.0 only set the first two.</li>
+        <li><b>A level that was too low.</b> The status level (25) is <em>below</em> what a full-screen Space draws on current macOS. The screen-saver level (1000) is not.</li>
+        <li><b>The toolkit kept fighting back.</b> Every time the pie was shown, the toolkit wrote its own &ldquo;always on top&rdquo; (the floating level, 3). So the window was ordered in at the wrong level, and our code only raised it a frame later. A window ordered in at the wrong level wasn&rsquo;t drawn over a full-screen app. Our fix ran <em>before</em> the toolkit&rsquo;s commands of the same frame, so the toolkit always had the last word.</li>
+        <li><b>The one that hurts: we were configuring a window that wasn&rsquo;t ours.</b> The code looked for the toolkit&rsquo;s window with <code>starts_with("Winit")</code>. But the window is observed with KVO, and AppKit gives observed objects a runtime subclass, so its class is really <code>NSKVONotifying_WinitWindow</code>. The check <strong>never matched</strong>. None of our settings reached the pie window. A looser check that took every non-<code>NS…</code> class landed on the tray icon&rsquo;s window instead. Wrong building entirely.</li>
+      </ol>
+      <div class="callout note">
+        <b>So 0.9.0 wasn&rsquo;t just &ldquo;not enough&rdquo;</b>
+        Even a perfect set of bits would have changed nothing, because bug #4 meant the code never talked to the pie window. Always check that the thing you&rsquo;re configuring is the thing you think it is.
+      </div>
+
+      <h2 id="the-fix"><span class="num">5</span>The fix (0.9.1)</h2>
+      <p>Four moves, one per bug, plus a rule to keep them from drifting apart: <strong>one function owns the window&rsquo;s level and behavior</strong>. Everyone else keeps their hands off.</p>
+      <p>First, find the right window. Accept both the plain class and the KVO subclass:</p>
+<pre data-file="src/platform/macos/apps.rs"><code><span class="c">/// `WinitWindow`, or the `NSKVONotifying_` subclass AppKit
+/// makes of it while it is observed.</span>
+<span class="k">fn</span> is_toolkit_window_class(name: <span class="n">&amp;str</span>) -&gt; <span class="n">bool</span> {
+    name.strip_prefix(<span class="s">"NSKVONotifying_"</span>).unwrap_or(name) == <span class="s">"WinitWindow"</span>
+}</code></pre>
+      <p>Second, give it every bit it needs (and drop the ones that conflict, because AppKit throws an exception if a window has two bits that exclude each other), and the screen-saver level:</p>
+<pre data-file="src/platform/macos/apps.rs"><code><span class="k">const</span> OVER_FULL_SCREEN_BITS: <span class="n">usize</span> = CB_CAN_JOIN_ALL_SPACES
+    | CB_CAN_JOIN_ALL_APPLICATIONS   <span class="c">// macOS 13+: the Space of another app</span>
+    | CB_FULL_SCREEN_AUXILIARY
+    | CB_STATIONARY
+    | CB_IGNORES_CYCLE;
+
+<span class="k">fn</span> level_for(over: <span class="n">bool</span>, current: <span class="n">isize</span>) -&gt; <span class="n">Option</span>&lt;<span class="n">isize</span>&gt; {
+    <span class="k">if</span> over {
+        (current != LEVEL_OVER_FULL_SCREEN).then_some(LEVEL_OVER_FULL_SCREEN)
+    } <span class="k">else</span> {
+        (current == LEVEL_OVER_FULL_SCREEN).then_some(LEVEL_FLOATING)
+    }
+}</code></pre>
+      <p>Third, stop the toolkit from fighting. On macOS CursorPie simply never sends the toolkit&rsquo;s level at all:</p>
+<pre data-file="src/ui/app/windows.rs"><code><span class="k">fn</span> pin_on_top(ctx: <span class="n">&amp;egui::Context</span>) {
+    <span class="k">if</span> platform::OS != platform::Os::Mac {
+        ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(
+            egui::WindowLevel::AlwaysOnTop,
+        ));
+    }
+}</code></pre>
+      <p>Fourth, run the whole thing <strong>every frame</strong>. That sounds wasteful, but it&rsquo;s a few messages to AppKit, and it sends nothing when the window is already right. That&rsquo;s what makes it safe: because the toolkit rewrites window state whenever it likes, an idempotent &ldquo;make it right again&rdquo; step beats trying to win a race once.</p>
+      <p>Two details worth stealing:</p>
+      <ul>
+        <li><strong>Settings gets its normal level back.</strong> The function takes an <code>over</code> flag. While Settings is open it removes the bits and gives back a normal level, because a file chooser must be able to cover Settings. The &ldquo;always above everything&rdquo; treatment is only for the pie, notices and panels.</li>
+        <li><strong>There&rsquo;s a unit test for the bits.</strong> <code>the_pie_joins_every_space_and_every_app_and_sits_beside_a_full_screen_window</code> checks that every required bit is present, so a future refactor can&rsquo;t silently drop <code>CanJoinAllApplications</code> again.</li>
+      </ul>
+
+      <h2 id="windows-and-linux"><span class="num">6</span>What about Windows, Linux, and other apps?</h2>
+      <p>The full-screen Space is a macOS thing, so the other systems are calmer, with caveats:</p>
+      <ul>
+        <li><strong>Windows:</strong> the pie window is created <code>WS_EX_TOPMOST</code>, which Windows already draws over a full-screen window. <code>keep_over_full_screen</code> is a deliberate no-op there. A different &ldquo;covered by another app&rdquo; problem exists, though: Windows never calls a low-level hook for windows of a program running <strong>as administrator</strong> (an elevated editor, an installer, a terminal) unless CursorPie is elevated too. So the pie doesn&rsquo;t open there at all. Since 0.8.22 a watchdog notices the program in front is one of those and shows a notice, once per program and run, that names it and says what to do.</li>
+        <li><strong>Linux:</strong> the function is also a no-op. Stacking is left to the toolkit&rsquo;s always-on-top request, which depends on your window manager honoring it. X11 is pre-stable and Wayland is still experimental, so check <a href="../../index.html?doc=docs/user/known-issues.md">Known issues</a> before you trust it on your desktop.</li>
+      </ul>
+
+      <h2 id="the-sequel"><span class="num">7</span>The sequel: one window, too many owners</h2>
+      <p>Here&rsquo;s the architecture detail that bit us next. The pie, the notice pill (the little badge that names the slice), the lock animation, a flow&rsquo;s panel and the Settings card all share <strong>one native window</strong>. Cheap on memory, nice for latency. But who owns the window right now used to be implied by about a dozen boolean flags (<code>pie_open</code>, <code>visible</code>, <code>hud</code>, <code>panel</code>, <code>lock_anim</code>, <code>settings_open</code>&hellip;), and every transition had to keep them in step by hand.</p>
+      <p>When one flag got forgotten, you got a pie drawn <strong>stretched, or at the old place</strong>, for a few frames, because it was painted into a window that was still mapped for the previous owner. On macOS there was a second twist: a window that is shown is reported as <em>occluded</em> by the system for roughly 3 to 60 ms, and during that time the toolkit draws nothing. The first frame of the pill, which starts its animation clock, was being burned before the window was even visible.</p>
+      <p>The fix, in the next release (it&rsquo;s under <em>Unreleased</em> in the <a href="../../index.html?doc=CHANGELOG.md">changelog</a>):</p>
+      <ul>
+        <li><strong>One place names the owner.</strong> <code>ui/app/owner.rs</code> derives the owner (<code>Idle</code>, <code>Standby</code>, <code>Pie</code>, <code>Lock</code>, <code>Notice</code>, <code>Panel</code>, Settings) from the flags in the same priority the UI draws them, and a pure, tested function says what a hand-over does to the window.</li>
+        <li><strong>Hand over a mapped window instead of hiding and re-showing it.</strong> On macOS the faded pie and the lock animation pass the window straight to the notice that&rsquo;s waiting, rather than hiding it and mapping it again 10 to 12 ms later.</li>
+        <li><strong>A geometry gate.</strong> Whoever takes a window that&rsquo;s hidden, or at another size or place, draws a transparent frame (which also wipes the last owner&rsquo;s picture) until the system has carried out the size and place, then starts its clock. Capped at 150 ms.</li>
+        <li><strong>A watchdog for lost frame requests.</strong> While an animation is on screen, every pass also asks for a frame on a timer, so a lost request costs one frame, not seconds.</li>
+        <li><strong>Every change of owner is logged</strong> (<code>ui</code> / <code>owner</code>), so a glitch reads back as &ldquo;from X to Y.&rdquo;</li>
+      </ul>
+
+      <h2 id="how-to-debug"><span class="num">8</span>When the pie is open but you can&rsquo;t see it</h2>
+      <p>The best thing to come out of this was a way to <em>see</em> the problem. In a diagnostic build (Developer mode, in Settings &rarr; About), the macOS log has two lines for exactly this:</p>
+      <ul>
+        <li><code>ui:mac_window_class</code> prints the class of every window the app owns, once per class. The pie window should show up as <code>NSKVONotifying_WinitWindow</code>. If it doesn&rsquo;t, you&rsquo;re talking to the wrong window (hello, bug #4).</li>
+        <li><code>ui:mac_window_state</code> prints one line each time the window changes: <code>over</code>, <code>visible</code>, <code>on_space</code>, <code>occlusion</code>, <code>behavior</code> (hex), <code>level</code>, <code>policy</code> and <code>app_active</code>.</li>
+      </ul>
+      <p>How to read it: <code>level</code> should be <code>1000</code> while the pie is over a full-screen app (<code>3</code> or <code>0</code> for Settings), <code>policy</code> should be <code>1</code> (accessory, no Dock icon), and <code>on_space=false</code> means the window isn&rsquo;t being drawn in the Space you&rsquo;re in. The full list is in <a href="../../index.html?doc=docs/DEBUGGING.md">the debugging guide</a>.</p>
+      <div class="callout tip">
+        <b>The real lesson</b>
+        &ldquo;The action ran&rdquo; and &ldquo;the user can see it&rdquo; are two different tests. Log the state of the thing the user looks at, not only the thing your code does.
+      </div>
+
+      <h2 id="what-we-learned"><span class="num">9</span>What we&rsquo;d tell past us</h2>
+      <ul>
+        <li><strong>Verify the target, not just the call.</strong> A correct message sent to the wrong object is a silent no-op. Name-match runtime classes carefully (KVO subclasses!).</li>
+        <li><strong>Don&rsquo;t race your framework. Own one thing in one place.</strong> If the toolkit rewrites a property, don&rsquo;t sprinkle fixes around it; centralize and re-assert idempotently.</li>
+        <li><strong>Make the invisible visible.</strong> Two log lines about the window&rsquo;s real state beat a week of guessing.</li>
+        <li><strong>Pin the tricky bit with a test.</strong> Bit sets are easy to break on a refactor and impossible to eyeball.</li>
+        <li><strong>Make shared resources have a single owner.</strong> A dozen flags is a state machine pretending not to be one.</li>
+      </ul>
+
+      <section class="post-cta" aria-labelledby="cta-h">
+        <h2 id="cta-h">Wanna see it work?</h2>
+        <p>CursorPie is free, open source (MIT), has no account and no telemetry. Hold, flick, release. If a pie ever hides behind something it shouldn&rsquo;t, tell us: attach the log lines above and we&rsquo;ll hunt it down.</p>
+        <div class="cta-row">
+          <a class="btn btn-lime" href="../../index.html#download">Download CursorPie <span class="icon" aria-hidden="true">&#xe20c;</span></a>
+          <a class="btn" href="https://github.com/sebastvnd/cursorpie/issues" target="_blank" rel="noopener">Report an issue</a>
+          <a class="btn" href="https://github.com/sebastvnd/cursorpie/blob/main/src/platform/macos/apps.rs" target="_blank" rel="noopener">Read the source</a>
+        </div>
+      </section>
+
+      <nav class="post-next" aria-label="More">
+        <a href="../"><small>&larr; Back to</small><b>All posts</b></a>
+        <a href="../../index.html?doc=CHANGELOG.md"><small>Keep reading</small><b>The full changelog &rarr;</b></a>
+      </nav>
+    </article>
+
+    <aside class="toc" id="toc" aria-label="On this page"></aside>
+  </div>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="footer-grid">
+      <div class="footer-brand">
+        <a href="../../index.html" aria-label="CursorPie home"><img src="../../assets/cursorpie-logo.png" alt="CursorPie"></a>
+        <p>A simple pie menu that stays close to your cursor and feels natural to use every day.</p>
+        <div class="footer-social">
+          <a class="icon-btn" href="https://github.com/sebastvnd/cursorpie" target="_blank" rel="noopener" aria-label="GitHub" data-tip="GitHub"><span class="icon" aria-hidden="true">&#xe576;</span></a>
+          <a class="icon-btn" href="https://github.com/sebastvnd/cursorpie/issues" target="_blank" rel="noopener" aria-label="Report an issue" data-tip="Report an issue"><span class="icon" aria-hidden="true">&#xe5f4;</span></a>
+          <a class="icon-btn" href="../../index.html#download" aria-label="Download" data-tip="Download"><span class="icon" aria-hidden="true">&#xe20c;</span></a>
+        </div>
+      </div>
+      <nav class="footer-col" aria-label="Learn">
+        <h4>Learn</h4>
+        <ul>
+          <li><a href="../../index.html?doc=docs/README.md"><span class="icon" aria-hidden="true">&#xe0e6;</span>Documentation</a></li>
+          <li><a href="../../index.html?doc=docs/user/install.md"><span class="icon" aria-hidden="true">&#xe20c;</span>Installation</a></li>
+          <li><a href="../../index.html?doc=docs/user/README.md"><span class="icon" aria-hidden="true">&#xe2dc;</span>User guide</a></li>
+          <li><a href="../../flowhub/"><span class="icon" aria-hidden="true">&#xe2dc;</span>Flow Hub</a></li>
+          <li><a href="../"><span class="icon" aria-hidden="true">&#xe0e6;</span>Blog</a></li>
+        </ul>
+      </nav>
+      <nav class="footer-col" aria-label="Project">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../index.html?doc=CHANGELOG.md"><span class="icon" aria-hidden="true">&#xe1a0;</span>Changelog</a></li>
+          <li><a href="../../index.html?doc=docs/user/known-issues.md"><span class="icon" aria-hidden="true">&#xe4e0;</span>Known issues</a></li>
+          <li><a href="../../index.html?doc=CONTRIBUTING.md"><span class="icon" aria-hidden="true">&#xe2a8;</span>Contributing</a></li>
+          <li><a href="https://github.com/sebastvnd/cursorpie/issues" target="_blank" rel="noopener"><span class="icon" aria-hidden="true">&#xe5f4;</span>Report an issue</a></li>
+        </ul>
+      </nav>
+    </div>
+    <div class="footer-bottom">
+      <span><i class="icon" aria-hidden="true">&#xe40c;</i><span>© <span data-year>2026</span> CursorPie · MIT License</span></span>
+      <span><i class="icon" aria-hidden="true">&#xe2a8;</i><span>Made with Rust and egui · Inspired by Kando</span></span>
+    </div>
+  </div>
+</footer>
+
+<script src="../../assets/blog.js" defer></script>
+</body>
+</html>

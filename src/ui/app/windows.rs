@@ -59,6 +59,24 @@ pub struct ShowWait {
 /// Transparent frames drawn after the window was mapped (see [`App::settle_frames`]).
 const SETTLE_FRAMES: u8 = 2;
 
+/// Longest the window of a new owner is kept empty while it takes its size and place (macOS, see
+/// [`App::arm_geom_gate`]).
+const GATE_MAX: Duration = Duration::from_millis(150);
+
+/// Empty frames drawn at the final size and place before the new owner draws (see
+/// [`App::arm_geom_gate`]).
+const GATE_FRAMES: u8 = 2;
+
+/// A window that is on its way to the size and the place a new owner needs (macOS). While it is,
+/// nothing is drawn: see `App::arm_geom_gate`.
+pub struct GeomGate {
+    want: Vec2,
+    pos: Pos2,
+    since: Instant,
+    /// Frames seen so far with the window where it was asked to be.
+    frames: u8,
+}
+
 /// How far the ring may drift from the center of the pie window while the window stands still, in
 /// outer radii of the ring (see [`App::show_pie`]). The window has this much room on every side.
 const DRIFT_ROOM: f32 = 2.5;
@@ -70,6 +88,12 @@ const REPAINT_BURST: Duration = Duration::from_millis(800);
 /// the rounding to whole pixels. An unknown size counts as arrived: there is nothing to wait for.
 fn has_size(size: Option<Vec2>, want: Vec2) -> bool {
     size.is_none_or(|s| (s.x - want.x).abs() <= 2.0 && (s.y - want.y).abs() <= 2.0)
+}
+
+/// Whether a window whose top-left corner is `outer_min` (None = the system did not say) is at
+/// `want`, give or take the rounding to whole pixels. An unknown place counts as arrived.
+fn has_pos(outer_min: Option<Pos2>, want: Pos2) -> bool {
+    outer_min.is_none_or(|p| (p.x - want.x).abs() <= 2.0 && (p.y - want.y).abs() <= 2.0)
 }
 
 /// Whether the shared window lets the pointer through once the pie is hidden ([`HidePie`](crate::msg::Msg::HidePie)).
@@ -158,6 +182,7 @@ impl App {
 
     /// Puts the window away: hides it.
     pub(crate) fn hide_root(&mut self, ctx: &egui::Context) {
+        self.geom_gate = None;
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         if self.pie_full {
             // The pie of the slice names had the window the size of the display: it is made small
@@ -183,13 +208,20 @@ impl App {
         top_left: Pos2,
         click_through: bool,
     ) {
+        // (asked before anything is sent: is the window already what the new owner needs?)
+        let fits = self.window_is(ctx, win, top_left);
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(win));
         ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
         ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(click_through));
         pin_on_top(ctx);
         ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(top_left));
+        let was_mapped = self.visible;
         self.visible = true;
         self.show_window(ctx, win);
+        if !(was_mapped && fits) {
+            // a window that was hidden, or mapped for another owner at another size or place
+            self.arm_geom_gate(ctx, win, top_left);
+        }
         ctx.request_repaint();
         if platform::window_manager_may_recenter() {
             ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(top_left));
@@ -198,13 +230,87 @@ impl App {
         }
     }
 
+    /// Whether the window, as the system reports it now, already has the size `size` and its
+    /// top-left corner at `top_left`.
+    pub(super) fn window_is(&self, ctx: &egui::Context, size: Vec2, top_left: Pos2) -> bool {
+        let (inner, outer) = ctx.input(|i| {
+            let v = i.viewport();
+            (v.inner_rect.map(|r| r.size()), v.outer_rect.map(|r| r.min))
+        });
+        // (an unknown geometry is not "right": the gate then simply runs for its few frames)
+        inner.is_some() && outer.is_some() && has_size(inner, size) && has_pos(outer, top_left)
+    }
+
+    /// macOS: keeps the window empty until it has the size and the place the new owner asked for.
+    ///
+    /// Everything that is sent to a window (size, place, `Visible(true)`) is carried out by the
+    /// system a moment *after* the frame that sent it, and the toolkit does not paint into a
+    /// window that has just been shown until the system has said that it is on screen (the
+    /// occlusion state of the window follows the show by 3 to 60 ms, see the `mac_window_state`
+    /// lines of the log). Until then the new owner's first frames were drawn into the old
+    /// geometry (a pill stretched over the 1920x1080 window of the pie, a pie squeezed into the
+    /// 560x140 of a pill) or into a window nobody saw yet, and what is more, the animation of the
+    /// pill started its clock on a frame that was never shown: the circle stood still, then the
+    /// pill jumped ahead. While the gate is up `App::ui` draws nothing (a transparent frame, which
+    /// also wipes what the last owner left in the buffer), and the owner draws its first frame,
+    /// and starts its clock, when the window is right. Bounded by [`GATE_MAX`].
+    pub(super) fn arm_geom_gate(&mut self, ctx: &egui::Context, want: Vec2, pos: Pos2) {
+        if platform::OS != platform::Os::Mac {
+            return;
+        }
+        self.geom_gate = Some(GeomGate {
+            want,
+            pos,
+            since: Instant::now(),
+            frames: 0,
+        });
+        ctx.request_repaint();
+    }
+
+    /// Runs every pass of `App::logic`: lets the new owner draw once the window is where it was
+    /// asked to be (see [`App::arm_geom_gate`]).
+    pub(super) fn step_geom_gate(&mut self, ctx: &egui::Context) {
+        let Some(g) = self.geom_gate.as_mut() else {
+            return;
+        };
+        if !self.visible {
+            self.geom_gate = None; // taken down again before it was ever shown
+            return;
+        }
+        let (inner, outer) = ctx.input(|i| {
+            let v = i.viewport();
+            (v.inner_rect.map(|r| r.size()), v.outer_rect.map(|r| r.min))
+        });
+        let arrived = has_size(inner, g.want) && has_pos(outer, g.pos);
+        if arrived {
+            g.frames = g.frames.saturating_add(1);
+        }
+        let waited = g.since.elapsed();
+        if (arrived && g.frames >= GATE_FRAMES) || waited >= GATE_MAX {
+            diag::log!(
+                "ui",
+                "geom_gate_done",
+                waited_ms = waited,
+                arrived = arrived
+            );
+            self.geom_gate = None;
+            ctx.request_repaint();
+        } else {
+            ctx.request_repaint_after(Duration::from_millis(4));
+        }
+    }
+
     /// What Settings and the welcome window both start with: the pie, a notice and a panel give the
     /// window up, the editing state is reset, and `settings_open` is set. Returns whether the window
     /// was showing something (for `place_card_window`).
     fn take_window_for_card(&mut self, ctx: &egui::Context) -> bool {
         let was_visible = self.visible;
-        self.drop_hud(ctx);
+        self.geom_gate = None;
+        self.drop_hud(ctx, false);
         self.drop_panel(ctx, true);
+        // a lock animation or a pill of the slice names that was on screen does not outlive the
+        // pie it belonged to (see `owner::release_transients`)
+        self.release_transients();
         self.pie_open = false;
         self.set_settings_open(true);
         self.visible = true;
@@ -663,8 +769,12 @@ impl App {
             hud = self.hud.is_some(),
             visible = self.visible
         );
-        // the pie takes the window over from a notice or a panel that is still on screen
-        self.drop_hud(ctx);
+        // who has the window now, asked before the pie takes it over (see `owner::handover`)
+        let before = self.owner();
+        // the pie takes the window over from a notice or a panel that is still on screen (on macOS
+        // the window stays mapped for it: hiding it and mapping it again in the same frame is what
+        // made the pie glitch after a notice, see `App::arm_geom_gate`)
+        self.drop_hud(ctx, true);
         self.drop_panel(ctx, false);
         // and it never takes the focus (a panel that was on this window left it activatable)
         platform::set_window_passive(true);
@@ -678,7 +788,25 @@ impl App {
         let was_open = self.pie_open && self.visible && self.anim > 0.2;
         let level_changed = self.follow_trail(trail_on, path.len(), x as f32, y as f32);
         let relevel = was_open && (level_changed || self.path != path);
+        // The window of this gesture is on screen and the pie asks for another level of it: the
+        // window is the one to keep, however far the last ring has bloomed. `relevel` (the bloom
+        // is well on its way) is stricter, and decided whether the window was kept: a pointer
+        // that asked for the next level in the first 50 ms of a bloom made the window be
+        // reconfigured while it was mapped, which is the stutter the next comment is about.
+        let same_gesture = self.pie_open && self.visible && (level_changed || self.path != path);
+        // A window that is mapped while no pie is open: the last pie is still fading, a notice left
+        // it mapped for the pie that was asked for during it, or the lock animation ran in it. It
+        // belongs to nobody, so it is the one kind of mapped window that may be taken down and
+        // mapped again (below). A pie that is open is never hidden to be placed: it is asked for
+        // twice now and then, and a submenu is `same_gesture`.
+        let stale_window = self.visible && !self.pie_open;
         self.path = path;
+        // The pill of the slice names belongs to one gesture: a submenu keeps it (it only has to
+        // follow the pointer to the slice of the next ring), a new pie starts without the pill of
+        // the one that is still fading, which would come back with it half gone.
+        if !same_gesture {
+            self.slice_pill = None;
+        }
         self.hover = None;
         self.hover_anim = [0.0; MAX_ITEMS];
         self.badge_in = [0.0; MAX_ITEMS];
@@ -766,7 +894,27 @@ impl App {
         let same_size = ctx.input(|i| i.viewport().inner_rect).is_some_and(|r| {
             (r.width() - win_sz.x).abs() <= 1.0 && (r.height() - win_sz.y).abs() <= 1.0
         });
-        let reuse = relevel && same_size && self.show_wait.is_none();
+        let reuse = same_gesture && same_size && self.show_wait.is_none();
+        // A stale window (see `stale_window`) must not be resized or moved while it is on screen:
+        // the request is carried out a few frames later and the pie is drawn into the old
+        // geometry first, stretched or at the old place. On Linux it is hidden and comes back
+        // through the usual map (`show_window`: size first, one empty frame, then visible), like
+        // the first pie after a pause. The other systems resize a mapped window without that
+        // artifact (see `window_settling`). A window that is still waiting to be mapped
+        // (`show_wait`) is not on screen, and is simply configured again.
+        if stale_window
+            && self.show_wait.is_none()
+            && platform::OS == platform::Os::Linux
+            && super::owner::handover(before, super::owner::Owner::Pie, reuse)
+                == super::owner::Handover::Remap
+        {
+            diag::log!("ui", "pie_remap", from = before.name());
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            self.visible = false;
+            self.show_wait = None;
+            self.want_pos = None;
+            self.settle_frames = 0;
+        }
         // where the ring would be in the window that stands, on whole pixels (a ring on a half
         // pixel is resampled and softens)
         let ppp = ctx.pixels_per_point();
@@ -793,6 +941,18 @@ impl App {
             self.pie_off = Vec2::ZERO;
         }
         self.pie_full = full.is_some();
+        // (asked before the commands below are sent)
+        let stale_fits = stale_window && {
+            let at = if fixed {
+                self.pie_origin
+            } else if let Some((_, _, tl)) = full {
+                tl
+            } else {
+                let (wx, wy) = platform::window_point(x, y);
+                egui::pos2((wx as f32 - w / 2.0).round(), (wy as f32 - w / 2.0).round())
+            };
+            self.window_is(ctx, win_sz, at)
+        };
         if !reuse {
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(win_sz));
             ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
@@ -850,6 +1010,10 @@ impl App {
             if let Some(wait) = self.show_wait.as_mut() {
                 wait.pos = Some(top_left); // asked again once the window is mapped
             }
+        } else if stale_window && !reuse && !stale_fits {
+            // mapped for another owner (a notice, the lock animation) at another size or place:
+            // nothing is drawn until the system has carried out the move and the resize
+            self.arm_geom_gate(ctx, win_sz, top_left);
         }
         // A hidden window gets its next frame only if somebody asks for it. Without this the pie
         // could be "open" for as long as nothing else woke the window (the first press after a long
@@ -937,6 +1101,27 @@ impl App {
             self.repaint_until = None;
         } else {
             ctx.request_repaint_after(Duration::from_millis(16));
+        }
+    }
+
+    /// macOS: while the lock animation, the padlock of an unlock or a notice is on screen, asks for
+    /// a frame on a timer in every pass, in addition to the `request_repaint` the drawing makes.
+    ///
+    /// The drawing code keeps its animation going by asking for the next frame from inside the
+    /// frame. The toolkit drops such a request as "outdated" when other passes ran before it was
+    /// read, and it runs no drawing pass at all while the system says the window is occluded
+    /// (which it does for a few milliseconds after every map, see `arm_geom_gate`); a request that
+    /// is lost that way left the pill or the padlock standing still, with nobody to ask for the next
+    /// frame, until something else woke the window up some seconds later. `App::logic` runs in
+    /// every pass, drawing or not, so the request made here always comes from the newest pass.
+    pub(super) fn step_anim_watchdog(&mut self, ctx: &egui::Context) {
+        if platform::OS != platform::Os::Mac || !self.visible || self.settings_open {
+            return;
+        }
+        if self.lock_anim.is_some() || self.lock_reveal.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(33));
+        } else if self.hud.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(100));
         }
     }
 
@@ -1105,6 +1290,38 @@ fn blocked_reaction(touch: bool, focused: bool) -> Blocked {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_window_is_at_its_place_give_or_take_the_rounding() {
+        let want = Pos2::new(680.0, 1978.0);
+        assert!(super::has_pos(Some(Pos2::new(680.0, 1978.0)), want));
+        assert!(super::has_pos(Some(Pos2::new(681.0, 1977.5)), want));
+        assert!(
+            !super::has_pos(Some(Pos2::new(0.0, 1080.0)), want),
+            "the old owner's place"
+        );
+        assert!(
+            super::has_pos(None, want),
+            "an unknown place is not waited for"
+        );
+    }
+
+    #[test]
+    fn the_gate_is_only_ever_armed_on_macos() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut app = App::new(rx, tx, 200.0, None);
+        let ctx = egui::Context::default();
+        app.arm_geom_gate(&ctx, Vec2::new(560.0, 140.0), Pos2::ZERO);
+        assert_eq!(
+            app.geom_gate.is_some(),
+            platform::OS == platform::Os::Mac,
+            "elsewhere the window is hidden and mapped the way it always was"
+        );
+        // a gate on a window that is no longer shown is dropped, never waited for
+        app.visible = false;
+        app.step_geom_gate(&ctx);
+        assert!(app.geom_gate.is_none());
+    }
+
     #[test]
     fn hiding_the_pie_never_makes_an_open_settings_window_click_through() {
         assert!(super::passthrough_after_hide(false));

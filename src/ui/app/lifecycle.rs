@@ -71,6 +71,7 @@ impl App {
         self.release_font_atlas(ctx);
         self.toast = None;
         platform::release_unused_memory();
+        crate::ui::trim::note(); // and once more when the pages the renderer let go of are free
         crate::ui::memlog::mark("sleep_end");
         self.ed.icons.log_stats("sleep_end");
     }
@@ -130,6 +131,11 @@ impl App {
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize([w, w].into()));
         self.hide_root(ctx);
         platform::release_unused_memory();
+        // A second trim, a moment later and off the UI thread. The one above runs in the frame that
+        // hides the window, while the renderer may still hold what the last frames of Settings used
+        // (textures, vertex buffers); what it let go of after that was only given back by the next
+        // press or by the sleep a minute later, so the program stayed large in between.
+        crate::ui::trim::note();
         crate::ui::memlog::mark("settings_closed");
         self.ed.icons.log_stats("settings_closed");
         self.sleep_step(ctx); // the idle clock starts now

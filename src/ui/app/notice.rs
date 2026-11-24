@@ -103,7 +103,7 @@ impl App {
     }
 
     /// Turns the (hidden) window into the notice and shows it.
-    fn begin_hud(&mut self, ctx: &egui::Context, note: HudNote) {
+    pub(super) fn begin_hud(&mut self, ctx: &egui::Context, note: HudNote) {
         let (position, hold, scale) = {
             let c = cfg();
             (
@@ -173,16 +173,55 @@ impl App {
     }
 
     /// The pie or Settings wants the window: the notice (and one that was waiting) goes away at once.
-    pub(super) fn drop_hud(&mut self, ctx: &egui::Context) {
+    ///
+    /// With `keep_mapped` (the pie) the window of a notice is not hidden on macOS: it is handed
+    /// over as it is, and `App::show_pie` keeps it empty until it has the size and the place of
+    /// the pie (`App::arm_geom_gate`). Hiding it and mapping it again in the same frame showed the
+    /// last frame of the pill in the new window for a moment and made the pie's bloom stutter.
+    pub(super) fn drop_hud(&mut self, ctx: &egui::Context, keep_mapped: bool) {
         self.hud_pending = None;
         self.pie_pending = None;
         if self.hud.take().is_some() {
             platform::set_window_passive(true);
-            self.visible = false;
             self.show_wait = None;
             self.want_pos = None;
+            if keep_mapped && platform::OS == platform::Os::Mac {
+                return;
+            }
+            self.visible = false;
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         }
+    }
+
+    /// macOS: the window is about to be hidden and a notice is waiting for it (the pie has faded
+    /// out after an action, or the lock animation is over): the notice takes the mapped window
+    /// over instead of the window being hidden and mapped again 10 ms later. Returns whether it
+    /// did; if not, nothing was changed (a notice that is no longer wanted is dropped, as
+    /// [`App::step_hud`] would).
+    ///
+    /// The hide and the map in two frames were the source of the stutter of the pill: while the
+    /// window was hidden the toolkit kept painting it on a 100 ms timer into a surface nobody
+    /// could see, the map brought the previous owner's last frame back for a moment, and the
+    /// first frame of the pill (which starts its clock) was drawn before the window was on screen.
+    pub(crate) fn hand_to_pending_hud(&mut self, ctx: &egui::Context) -> bool {
+        if platform::OS != platform::Os::Mac {
+            return false;
+        }
+        let Some((note, since)) = self.hud_pending.take() else {
+            return false;
+        };
+        if self.settings_open
+            || self.panel.is_some()
+            || !self.panel_queue.is_empty()
+            || since.elapsed() > PENDING_MAX
+            || (!cfg().hud && !note.kind.is_lock())
+        {
+            return false;
+        }
+        // the big window of the slice names is made small again by `begin_hud` (it sends the size)
+        self.pie_full = false;
+        self.begin_hud(ctx, note);
+        true
     }
 
     /// The notice is over: the window is hidden again, or, when a panel waits for it, goes straight

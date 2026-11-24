@@ -56,6 +56,11 @@ jobs:
             cp -R flowhub _site/
           fi
 
+          # Blog (https://sebastvnd.github.io/cursorpie/blog/): static pages, one folder per post.
+          if [ -d blog ]; then
+            cp -R blog _site/
+          fi
+
           if [ -f diag/README.md ]; then
             mkdir -p _site/diag
             cp diag/README.md _site/diag/
@@ -76,6 +81,12 @@ jobs:
           test -f _site/flowhub/catalog.json
           test -f _site/assets/flowhub.js
           test -f _site/assets/flowhub.css
+
+      - name: Check that the blog is in the site
+        run: |
+          test -f _site/blog/index.html
+          test -f _site/assets/blog.css
+          test -f _site/assets/blog.js
 
       - name: Upload website artifact
         uses: actions/upload-pages-artifact@v4

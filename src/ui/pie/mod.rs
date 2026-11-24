@@ -235,6 +235,11 @@ impl App {
             self.forget_trail();
             self.slice_pill = None;
             if self.visible {
+                // macOS: a notice that waits for the window takes it as it is (see
+                // `App::hand_to_pending_hud`)
+                if self.hand_to_pending_hud(&ctx) {
+                    return;
+                }
                 self.visible = false;
                 self.hide_root(&ctx);
                 if !self.panel_queue.is_empty() {

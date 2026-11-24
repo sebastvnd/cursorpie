@@ -2,6 +2,62 @@
 
 ## Unreleased
 
+## 0.9.4
+
+- **Fixed (macOS): the pill and the lock animation stood still for a moment, then jumped ahead, and the pie glitched
+  when they followed each other.** The log of a session shows the cause: after the lock animation (and after every
+  action) the window was hidden and mapped again for the pill 10 to 12 ms later (`mac_window_state` `visible=false`, then
+  `hud_show`), after being shrunk to 262x262 by `hide_root`, and an unlock while the pill was on screen did the same the
+  other way round. A window that is shown is reported as occluded by the system for 3 to 60 ms (`occlusion=8192`) and the
+  toolkit draws nothing in that time, so the first frame of the pill, which starts its clock, was drawn before the window
+  was on screen or at the size of the previous owner, the request for the next frame was lost with it, and the circle
+  stood still until something else woke the window. Now (macOS only):
+  - the pie that has faded and the lock animation hand the mapped window to the notice that waits for it instead of
+    hiding it first (`App::hand_to_pending_hud`), and a pie that is asked for while a notice is on screen takes the
+    mapped window the same way (`drop_hud(.., keep_mapped)`);
+  - whoever takes a window that is hidden or at another size or place draws nothing, a transparent frame that also wipes
+    the last owner's picture, until the system has carried out the size and the place, and starts its clock then
+    (`App::arm_geom_gate`, logged as `ui` / `geom_gate_done`, at most 150 ms);
+  - while the lock animation, the padlock of an unlock or a notice is on screen, every pass of `App::logic` also asks
+    for a frame on a timer (`App::step_anim_watchdog`), so a lost request costs a frame, not seconds.
+
+- **Fixed: the memory of the pie editor (full screen above all) and an idle size that grew with every visit to
+  Settings.** The pie editor laid out its icon glyphs and labels at `size × zoom` with the zoom as a continuous number
+  (a wheel, a pinch, and the "fit" that full screen does), and egui cuts a new set of glyphs into its font atlas for
+  every size it is asked for. On macOS that atlas is as wide as the GPU allows (16384 texels) and egui only starts it
+  over when it is 80% full, so one zoom gesture could fill hundreds of MB on the CPU and the same again on the GPU, which
+  the allocator did not give back (the trim after closing reported 0 MB), so each visit left the program a little
+  larger. Now: the zoom of the glyphs goes through a ladder of 8 sizes per doubling (`fonts::zoom_ladder`, about 30 sizes
+  over the whole range); the atlas is capped at 4096 texels a side (`App::raw_input_hook`); and Settings rebuilds the
+  atlas as soon as it is taller than 1024 rows (`fonts::guard_atlas`, logged as `ui` / `atlas_guard`).
+
+- **Fixed: the Flow canvas kept the allocator busy and the program stayed large after it was closed.** The canvas ran
+  the flow checker on every frame (it walks the descendants of every block: a few thousand short-lived allocations for a
+  flow of 100 blocks) and walked the flow twice more to count the reachable blocks, so merely having the canvas open
+  filled the heap with holes that were not given back when Settings closed. The result of the checker is now kept
+  until the flow, or the list of flows it may call, changes (`FlowIssues`), and the walk is done once per frame. When
+  zoomed, the text of blocks that are out of the view is no longer laid out again at the zoomed size, so it no longer
+  cuts glyphs (and grows the font atlas) for text nobody sees. Closing Settings and sleeping now also ask the trim
+  thread for a second trim a moment later, when the renderer has let go of what the last frames used.
+
+- **Fixed: glitches and a pulled, stretched picture when the one window changes hands.** The pie, the notice pill, the
+  lock animation, a panel and Settings share one window, and what owned it was spread over a dozen flags that each
+  transition had to keep in step. There is now one place that names the owner and the rules of a hand-over
+  (`ui/app/owner.rs`, logged as `ui` / `owner`), and five things that came from the old way are gone:
+  - A pie asked for while the last one was still fading, right after a notice, after the lock animation or right after
+    Settings closed was drawn into a window that was still mapped for the old owner, so for a few frames it showed
+    stretched or at the old place. On Linux that window is now taken down and mapped again the way the first pie after
+    a pause is.
+  - A submenu asked for in the first moments of the bloom of the ring above reconfigured the mapped window (the old
+    stutter). A level of the same gesture now always keeps its window.
+  - The pill of the slice names blinked out and in at every submenu, because it faded with the bloom clock that a
+    submenu starts again. It now fades only when the pie closes, and the pill of a finished pie never comes back with
+    the next one.
+  - Opening Settings during the lock animation left the animation behind. It kept the Windows stand-by from mapping
+    the window, so the next pie came late. Settings now lets go of the animation and of the pill.
+  - The place of the slice-name pill is worked out once per pointer position instead of in every frame (a list of the
+    displays, a round trip to the X server on X11, in the frames that animate the pill).
+
 ## 0.9.3
 
 - **New: the download of an update shows a progress bar.** The sheet _Updating CursorPie_ now has a bar that fills as the

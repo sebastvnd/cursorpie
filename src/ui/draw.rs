@@ -178,10 +178,25 @@ pub fn draw_icon(
     size: f32,
     ink: Color32,
 ) {
+    draw_icon_at(painter, tex, icon, c, size, size, ink);
+}
+
+/// [`draw_icon`] for a size that follows a zoom: a picture is drawn at exactly `size`, but a glyph
+/// or a text (which egui cuts into its font atlas once per size) is laid out at `glyph_size`, which
+/// the caller takes from [`fonts::zoom_ladder`], so zooming does not cut a new set per step.
+pub fn draw_icon_at(
+    painter: &egui::Painter,
+    tex: Option<&egui::TextureHandle>,
+    icon: &str,
+    c: Pos2,
+    size: f32,
+    glyph_size: f32,
+    ink: Color32,
+) {
     if let Some(t) = tex {
         draw_texture(painter, t, c, size, Color32::from_white_alpha(ink.a()));
     } else if let Some(glyph) = symbols::resolve(icon) {
-        fonts::paint_icon(painter, c, glyph, size, ink, false);
+        fonts::paint_icon(painter, c, glyph, glyph_size, ink, false);
     } else {
         // an image path that failed to load shows "?" so the problem is visible
         let text = if icon_path(icon).is_some() { "?" } else { icon };
@@ -191,7 +206,7 @@ pub fn draw_icon(
             c,
             Align2::CENTER_CENTER,
             text,
-            FontId::proportional(size * shrink),
+            FontId::proportional(glyph_size * shrink),
             ink,
         );
     }

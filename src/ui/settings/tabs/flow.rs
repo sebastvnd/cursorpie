@@ -69,7 +69,9 @@ use crate::ui::settings::action_editor::browser_fields;
 use crate::ui::settings::clip::{self, Clip};
 use crate::ui::settings::panel_designer;
 use crate::ui::settings::picker::spawn_file_picker;
-use crate::ui::settings::state::{Ed, FlowMenu, FlowNew, FlowView, KitStatus, PickFor, Rec, Slot};
+use crate::ui::settings::state::{
+    Ed, FlowIssues, FlowMenu, FlowNew, FlowView, KitStatus, PickFor, Rec, Slot,
+};
 use crate::ui::settings::tabs::profile_toolbar::{flow_app_sheet, open_picker};
 use crate::ui::settings::theme::*;
 use crate::ui::settings::widgets::*;
@@ -1653,7 +1655,14 @@ pub(in crate::ui::settings) fn crisp_text(
         let list = g.entry(layer);
         for i in 0..list.next_idx().0 {
             list.mutate_shape(ShapeIdx(i), |clipped| {
-                if holds_text(&clipped.shape) {
+                // A text that is clipped away is not laid out at the zoomed size: it is not seen,
+                // and cutting its glyphs would only grow the font atlas (a flow of 100 blocks,
+                // zoomed in, has most of its text out of the view).
+                if holds_text(&clipped.shape)
+                    && clipped
+                        .clip_rect
+                        .intersects(clipped.shape.visual_bounding_rect())
+                {
                     found.push((i, clipped.shape.clone()));
                 }
             });
@@ -1781,13 +1790,15 @@ fn canvas(
     let fi = ed.flow;
     // what cannot work in this flow, found without running it, and what could not work in its
     // last run
-    let issues = {
+    // (worked out again only when the flow changes: see `FlowIssues`; running the checker on every
+    // frame filled the heap with short-lived allocations for as long as the canvas was open)
+    let issues: Vec<Issue> = {
         let known: Vec<&str> = others
             .iter()
             .map(|(id, _)| id.as_str())
             .chain(std::iter::once(flow.id.as_str()))
             .collect();
-        check_flow(flow, &known)
+        FlowIssues::get(&mut ed.flow_issues, flow, &known).to_vec()
     };
     let marks: Vec<(u32, String)> = ed.flow_marks.get(&flow.id).cloned().unwrap_or_default();
     let avail = ui.available_rect_before_wrap();
@@ -2121,7 +2132,16 @@ fn canvas(
         let zoom = ed.flow_zoom;
 
         // the blocks a run can get to; the others are marked and their wires are dim
-        let reach_ids: Vec<u32> = flow.reachable().iter().map(|n| n.id).collect();
+        // (and how many of them are steps: the hint line needs the number, and the walk of the
+        // flow is done once for both)
+        let (reach_ids, steps): (Vec<u32>, usize) = {
+            let reach = flow.reachable();
+            let steps = reach
+                .iter()
+                .filter(|n| !matches!(n.kind, NodeKind::Start | NodeKind::End))
+                .count();
+            (reach.iter().map(|n| n.id).collect(), steps)
+        };
         let pointer = ctx
             .input(|i| i.pointer.latest_pos())
             .map(|p| from_global * p);
@@ -2647,11 +2667,6 @@ fn canvas(
             }
         }
 
-        let steps = flow
-            .reachable()
-            .iter()
-            .filter(|n| !matches!(n.kind, NodeKind::Start | NodeKind::End))
-            .count();
         // the hint line, in the strip under the blocks; the longest of these that fits the width
         // is the one shown, so it never runs out of the canvas
         let mut head = format!(

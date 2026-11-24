@@ -242,7 +242,7 @@ impl App {
             return;
         }
         let tries = w.tries;
-        let mapping = self.show_wait.is_some() || self.veil.is_some();
+        let mapping = self.show_wait.is_some() || self.veil.is_some() || self.geom_gate.is_some();
         match watch_step(w.since.elapsed(), tries, mapping) {
             WatchStep::Wait(d) => ctx.request_repaint_after(d),
             WatchStep::GiveUp => {

@@ -11,7 +11,7 @@
 
 A configurable pie menu for your cursor — available on macOS, Windows and Linux, with a mouse or a trackpad.
 
-[**Visit the website**](https://sebastvnd.github.io/cursorpie/) · [Download latest release](https://github.com/sebastvnd/cursorpie/releases/latest) · [Explore the docs](https://sebastvnd.github.io/cursorpie/index.html?doc=docs/README.md)
+[**Visit the website**](https://sebastvnd.github.io/cursorpie/) · [Download latest release](https://github.com/sebastvnd/cursorpie/releases/latest) · [Explore the docs](https://sebastvnd.github.io/cursorpie/index.html?doc=docs/README.md) · [Read the blog](https://sebastvnd.github.io/cursorpie/blog/)
 
 [![CI](https://github.com/sebastvnd/cursorpie/actions/workflows/ci.yml/badge.svg)](https://github.com/sebastvnd/cursorpie/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/sebastvnd/cursorpie?include_prereleases)](https://github.com/sebastvnd/cursorpie/releases)

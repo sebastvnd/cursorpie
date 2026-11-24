@@ -395,10 +395,12 @@ struct PaneOut {
     over: bool,
 }
 
-/// The size of a text at zoom `z`, in half points (the text is cut into the font atlas at each
-/// size, so a steady zoom does not fill it).
+/// The size of a text at zoom `z`. The zoom goes through [`fonts::zoom_ladder`] first: the text is cut
+/// into the font atlas at each size and egui never gives a size back, so a zoom that a wheel or a
+/// pinch moves in tiny steps (or a "fit" that lands on any value) may only ever ask for the sizes of
+/// the ladder. The text keeps its place; it is at most about 4% off the exact zoom.
 fn text_size(base: f32, z: f32) -> f32 {
-    ((base * z * 2.0).round() / 2.0).max(6.0)
+    (base * fonts::zoom_ladder(z)).max(6.0)
 }
 
 fn rgb3(c: Color32) -> [u8; 3] {
@@ -830,6 +832,8 @@ fn pane(ui: &mut Ui, ctx: &egui::Context, ed: &mut Ed, p: Pane) -> PaneOut {
         }
     }
     let z = view.zoom;
+    // the zoom as the glyphs of the icon font and the text see it (see `text_size`)
+    let gz = fonts::zoom_ladder(z);
     let geoms = geoms_for(view);
     let pointer = ui.input(|i| i.pointer.latest_pos());
     let hover = if blocked {
@@ -1070,12 +1074,13 @@ fn pane(ui: &mut Ui, ctx: &egui::Context, ed: &mut Ed, p: Pane) -> PaneOut {
                 (0.0, 24.0 * z)
             };
             let tex = texture(ctx, ed, &mut icons, &it.icon);
-            draw_icon(
+            draw_icon_at(
                 &painter,
                 tex.as_ref(),
                 &it.icon,
                 tp + vec2(0.0, icon_dy),
                 30.0 * z,
+                30.0 * gz,
                 ink,
             );
             if labels {
@@ -1092,7 +1097,7 @@ fn pane(ui: &mut Ui, ctx: &egui::Context, ed: &mut Ed, p: Pane) -> PaneOut {
                     &painter,
                     tp + vec2(0.0, caret_dy),
                     symbols::CARET_RIGHT,
-                    13.0 * z,
+                    13.0 * gz,
                     if selected { ink } else { accent },
                     false,
                 );
@@ -1106,7 +1111,7 @@ fn pane(ui: &mut Ui, ctx: &egui::Context, ed: &mut Ed, p: Pane) -> PaneOut {
                         -0.45 * (geom.outer - geom.inner),
                     ),
                     symbols::TERMINAL_WINDOW,
-                    14.0 * z,
+                    14.0 * gz,
                     AMBER,
                     false,
                 );
@@ -1135,7 +1140,7 @@ fn pane(ui: &mut Ui, ctx: &egui::Context, ed: &mut Ed, p: Pane) -> PaneOut {
             } else {
                 symbols::CHART_PIE_SLICE
             },
-            22.0 * z,
+            22.0 * gz,
             pal().muted,
             false,
         );
@@ -3080,13 +3085,17 @@ mod tests {
     }
 
     #[test]
-    fn text_sizes_come_in_half_points() {
+    fn text_sizes_come_from_a_short_ladder() {
         assert_eq!(text_size(11.5, 1.0), 11.5);
         assert_eq!(text_size(11.5, 0.3), 6.0);
-        assert_eq!(
-            text_size(14.0, 1.26) * 2.0,
-            (text_size(14.0, 1.26) * 2.0).round()
-        );
+        // a sweep of the whole zoom range asks for a few dozen sizes, not one per step
+        let mut sizes: Vec<u32> = (0..3700)
+            .map(|i| 0.3 + i as f32 / 1000.0)
+            .map(|z| (text_size(14.0, z) * 100.0).round() as u32)
+            .collect();
+        sizes.sort_unstable();
+        sizes.dedup();
+        assert!(sizes.len() <= 40, "{} sizes", sizes.len());
     }
 
     #[test]

@@ -70,13 +70,23 @@ impl App {
     pub(crate) fn lock_finish(&mut self, ctx: &egui::Context, anim: LockAnim) {
         self.lock_anim = None;
         self.lock_over_pie = false;
+        self.lock_reveal = None;
         self.anim = 0.0;
-        self.visible = false;
         self.forget_trail();
-        self.hide_root(ctx);
+        // the pill of the slice names went away with the pie that collapsed: a stale one would be
+        // drawn, or found over and skipped for a frame, by the next pie
+        self.slice_pill = None;
         if anim.started.elapsed() < Duration::from_secs_f32(LOCK_SECS) + STALE_AFTER {
             self.hud_pending = Some((note_for(anim.locked), Instant::now()));
         }
+        // macOS: the pill that says what happened takes the mapped window (the animation has faded
+        // to nothing, so the window is empty); it is not hidden and mapped again for it
+        if self.hand_to_pending_hud(ctx) {
+            ctx.request_repaint();
+            return;
+        }
+        self.visible = false;
+        self.hide_root(ctx);
         ctx.request_repaint();
     }
 

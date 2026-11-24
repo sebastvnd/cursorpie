@@ -34,6 +34,50 @@ pub struct FlowFull {
     pub outer: Option<egui::Pos2>,
 }
 
+/// The problems the checker found in a flow, with what they were worked out from.
+///
+/// `check_flow` walks the descendants of every block, which is a few thousand short-lived
+/// allocations for a flow of 100 blocks. The canvas used to run it on **every frame** (**see CHANGELOG.md**), so a canvas
+/// that was only open (the pointer moving over it is enough to repaint) kept the allocator busy
+/// all the time and left the heap full of holes that it did not give back when Settings closed.
+/// The result only changes when the flow does, so it is kept and compared (no allocation: a plain
+/// `==`) instead of being worked out again.
+pub struct FlowIssues {
+    /// The flow that was checked.
+    flow: Flow,
+    /// The ids of the flows it may call, as they were when it was checked.
+    known: Vec<String>,
+    /// What was found.
+    issues: Vec<crate::config::Issue>,
+}
+
+impl FlowIssues {
+    /// The problems of `flow`, worked out again only if `flow` or `known` differ from the last call
+    /// (`slot` keeps the last result between frames).
+    pub fn get<'a>(
+        slot: &'a mut Option<FlowIssues>,
+        flow: &Flow,
+        known: &[&str],
+    ) -> &'a [crate::config::Issue] {
+        let fresh = slot.as_ref().is_some_and(|c| {
+            c.known.len() == known.len()
+                && c.known.iter().zip(known).all(|(a, b)| a == b)
+                && c.flow == *flow
+        });
+        if !fresh {
+            *slot = Some(FlowIssues {
+                flow: flow.clone(),
+                known: known.iter().map(|s| (*s).to_owned()).collect(),
+                issues: crate::config::check_flow(flow, known),
+            });
+        }
+        match slot {
+            Some(c) => c.issues.as_slice(),
+            None => &[],
+        }
+    }
+}
+
 /// The pages of the Behavior tab: its panels, grouped by what they are about.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum BehaviorPage {
@@ -576,6 +620,9 @@ pub struct Ed {
     /// Flow tab: the blocks that could not do their work in the last run of each flow (by flow
     /// id), with the reason; the editor marks them until the flow runs well again
     pub flow_marks: std::collections::BTreeMap<String, Vec<(u32, String)>>,
+    /// Flow tab: what the checker found in the flow on the canvas, kept until that flow (or the list
+    /// of flows it may call) changes. See `FlowIssues`.
+    pub flow_issues: Option<FlowIssues>,
     /// What the About tab says about updates. Kept across Settings sessions: a check that is still
     /// running when Settings closes reports into it, and the next opening starts from what the last
     /// check found (see `App::update_on_settings_open`).
@@ -745,6 +792,7 @@ impl Ed {
             flow_wire: None,
             flow_menu: None,
             flow_marks: std::collections::BTreeMap::new(),
+            flow_issues: None,
             update: Status::default(),
             update_offer: None,
             update_can_install: false,
@@ -843,6 +891,7 @@ impl Ed {
         self.flow_search = String::new();
         self.flow_side = false;
         self.flow_side_leave = None;
+        self.flow_issues = None;
         self.pie_picked.clear();
         self.pie_marquee = None;
         self.pie_marquee_base.clear();
@@ -1113,5 +1162,31 @@ mod tests {
         ed.add_catalog = Some(AddCatalog::new(true, &[]));
         ed.reset_nav();
         assert!(!ed.adding && ed.add_catalog.is_none());
+    }
+
+    #[test]
+    fn the_issues_of_a_flow_are_kept_until_the_flow_changes() {
+        let mut slot = None;
+        let mut flow = Flow::new("a", "A");
+        let first = FlowIssues::get(&mut slot, &flow, &["a"]).to_vec();
+        assert!(slot.is_some(), "the result is kept");
+        let again = FlowIssues::get(&mut slot, &flow, &["a"]).to_vec();
+        assert_eq!(first, again, "the same flow gives the same answer");
+        // a changed flow, and a changed list of flows it may call, are checked again
+        flow.name = "B".into();
+        let _ = FlowIssues::get(&mut slot, &flow, &["a"]);
+        assert_eq!(slot.as_ref().map(|c| c.flow.name.as_str()), Some("B"));
+        let _ = FlowIssues::get(&mut slot, &flow, &["a", "b"]);
+        assert_eq!(slot.as_ref().map(|c| c.known.len()), Some(2));
+    }
+
+    #[test]
+    fn leaving_the_flow_tab_drops_the_kept_issues() {
+        let mut ed = Ed::new();
+        let flow = Flow::new("a", "A");
+        let _ = FlowIssues::get(&mut ed.flow_issues, &flow, &["a"]);
+        assert!(ed.flow_issues.is_some());
+        ed.release_flow_state();
+        assert!(ed.flow_issues.is_none());
     }
 }

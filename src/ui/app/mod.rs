@@ -7,6 +7,7 @@
 //! | `notice` | the notice of what CursorPie is doing (`ui::hud`): showing the window as a small pill and drawing it |
 //! | `standby` | keeping the window mapped for the next pie (Windows) and showing a pie again that never reached the screen |
 //! | `lifecycle` | idle sleep, freeing the Settings copy, warming up icons before the pie opens |
+//! | `owner` | who owns the window (pie, pill, lock, panel, Settings) and how it is handed over |
 //! | `updates` | the daily look for a newer release: what Settings does when it opens, and with the answer |
 //!
 //! The same native window shows the pie and Settings (see
@@ -18,12 +19,13 @@ mod lifecycle;
 mod lock;
 mod messages;
 mod notice;
+mod owner;
 mod panel;
 mod standby;
 mod updates;
 mod windows;
 pub(crate) use notice::pill_center;
-pub use windows::ShowWait;
+pub use windows::{GeomGate, ShowWait};
 
 use crate::config::{Config, MAX_ITEMS, cfg};
 use crate::history::History;
@@ -179,6 +181,9 @@ pub struct App {
     /// Linux: the window was asked to appear and is kept unmapped until it has its size and an empty
     /// frame was drawn, see `App::show_window`. While set, nothing is drawn.
     pub show_wait: Option<ShowWait>,
+    /// macOS: the window is on its way to the size and place of its new owner and nothing is drawn
+    /// until it has them (see `App::arm_geom_gate`).
+    pub geom_gate: Option<GeomGate>,
     /// Linux: transparent frames still to draw *after* the window was mapped. Under XWayland the
     /// surface only exists once the window is mapped, so the frames drawn before that never reach
     /// the compositor; the first buffer it sees must be empty as well. While above 0 nothing is drawn.
@@ -238,6 +243,9 @@ pub struct App {
     /// A pie was asked for and has not been drawn yet (see `App::step_pie_watch`).
     pub pie_watch: Option<standby::PieWatch>,
 
+    /// Who owned the window at the last pass of `logic`, to log every change (see `owner`).
+    last_owner: owner::Owner,
+
     pub tray: Option<TrayHandles>,
 }
 
@@ -295,6 +303,7 @@ impl App {
             settings_anim: 0.0,
             settings_wait: None,
             show_wait: None,
+            geom_gate: None,
             settle_frames: 0,
             x_window: None,
             veil: None,
@@ -317,6 +326,7 @@ impl App {
             standby: None,
             primed: false,
             pie_watch: None,
+            last_owner: owner::Owner::Idle,
             tray,
         }
     }
@@ -363,6 +373,18 @@ impl eframe::App for App {
         [0.0, 0.0, 0.0, 0.0] // the window is always transparent; the settings card paints itself
     }
 
+    /// Caps the side of the font atlas (see [`crate::ui::fonts::ATLAS_SIDE_MAX`]). egui makes the
+    /// atlas as wide as the biggest texture the GPU takes, 16384 texels on Metal, and only starts it
+    /// over when it is 80% full: a zoom over text at many sizes then filled hundreds of MB, on the
+    /// CPU and again on the GPU, that the allocator did not give back after Settings closed. The
+    /// limit is only ever lowered, never raised above what the GPU reported.
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        let reported = raw_input
+            .max_texture_side
+            .unwrap_or_else(|| ctx.input(|i| i.max_texture_side));
+        raw_input.max_texture_side = Some(reported.min(crate::ui::fonts::ATLAS_SIDE_MAX));
+    }
+
     /// Runs even while the window is hidden (as long as something calls request_repaint).
     /// Must not draw any UI.
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
@@ -397,6 +419,8 @@ impl eframe::App for App {
             self.handle_msg(ctx, msg);
         }
         self.step_show_wait(ctx);
+        self.step_geom_gate(ctx);
+        self.step_anim_watchdog(ctx);
         self.step_veil(ctx);
         self.watch_close_flush(ctx);
         self.step_repaint_burst(ctx);
@@ -406,6 +430,7 @@ impl eframe::App for App {
         self.step_pie_watch(ctx);
         self.prime_window(ctx);
         self.step_standby(ctx);
+        self.note_owner();
 
         // end of a preview (see Msg::Preview)
         if let Some(until) = self.preview_until {
@@ -434,6 +459,11 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // Settings cuts glyphs at many sizes while a canvas is zoomed: start the atlas again when it
+        // has grown past what the interface needs (a no-op nearly always: two numbers are read)
+        if self.settings_open {
+            crate::ui::fonts::guard_atlas(ui.ctx());
+        }
         // light or dark for this frame; Settings previews the choice before it is saved
         let (appearance, ui_theme, theme) = if self.settings_open {
             (
@@ -446,8 +476,9 @@ impl eframe::App for App {
             (c.appearance, c.ui_theme.clone(), c.theme)
         };
         crate::ui::settings::theme::apply_appearance(ui.ctx(), appearance, &ui_theme, &theme);
-        if self.show_wait.is_some() {
-            // waiting to be mapped: draw nothing, so the buffer shown first is fully transparent
+        if self.show_wait.is_some() || self.geom_gate.is_some() {
+            // waiting to be mapped, or for the size and place of the new owner: draw nothing, so
+            // the buffer shown first is fully transparent
         } else if self.settle_frames > 0 {
             // just mapped: the compositor has no buffer of ours yet, keep it empty a little longer
             self.settle_frames -= 1;

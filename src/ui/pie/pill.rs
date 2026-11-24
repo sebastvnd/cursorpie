@@ -42,11 +42,49 @@ pub struct SlicePill {
     hud: Hud,
     /// What the pill was last told to show; `None` once the pointer left every slice.
     sent: Option<HudNote>,
+    /// Where the pill sits for the pointer position it was last placed for (see [`Place`]).
+    place: Option<Place>,
+}
+
+/// Where the pill goes, worked out for one pointer position and kept until that changes.
+///
+/// The place is a function of the display under the pointer and of the *Notice position* setting,
+/// and neither changes while a ring is on screen. It used to be worked out again in every frame the
+/// pill was painted: a list of the displays, which on X11 is a round trip to the X server and in
+/// a Wayland session a read of the compositor's outputs, in the very frames that were already
+/// busy animating the pill and the pie.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Place {
+    /// The pointer position (pointer space) this was worked out for.
+    pie_pos: Pos2,
+    /// The size of the pill it was worked out for.
+    scale: f32,
+    /// Where the notice would be on the display (pointer space).
+    at: Pos2,
+    /// How many points of the window one point of the pointer's space is.
+    k: f32,
+}
+
+impl Place {
+    /// Works out the place for a pill of `scale` and a pointer at `pie_pos`.
+    fn of(pie_pos: Pos2, scale: f32) -> Self {
+        let k = crate::platform::window_scale(f64::from(pie_pos.x), f64::from(pie_pos.y)) as f32;
+        let area = screen_rect_at(pie_pos)
+            .unwrap_or_else(|| Rect::from_center_size(pie_pos, Vec2::new(1600.0, 1000.0)));
+        let at = pill_center(cfg().hud_position, area, pie_pos, scale);
+        Self {
+            pie_pos,
+            scale,
+            at,
+            k,
+        }
+    }
 }
 
 /// One frame of the pill: what to draw and with which textures. Made before the pie paints (it
 /// needs `&mut App` to load the icons) and painted after it.
 pub(super) struct PillFrame {
+    place: Place,
     note: HudNote,
     prev: Option<HudNote>,
     look: PillLook,
@@ -90,6 +128,7 @@ impl App {
                     self.slice_pill = Some(SlicePill {
                         hud,
                         sent: Some(note),
+                        place: None,
                     });
                 }
             }
@@ -102,7 +141,16 @@ impl App {
             }
         }
 
-        let pie_fade = ease_out_cubic(self.anim);
+        // The pill goes with the pie when the pie is *closing*, not whenever the bloom clock runs
+        // from zero: a submenu starts the clock again (`App::show_pie`) while the pie stays open,
+        // and the pill, which follows the pointer from one ring to the next, blinked out and in
+        // with it at every change of level.
+        let pie_fade = if self.pie_open {
+            1.0
+        } else {
+            ease_out_cubic(self.anim)
+        };
+        let pie_pos = self.pie_pos;
         let (accent, smoked) = {
             let c = cfg();
             (hud::accent_of(&c), hud::smoked(&c))
@@ -113,10 +161,19 @@ impl App {
             self.slice_pill = None;
             return None;
         }
+        // where it goes: worked out again only when the pointer's position or the size changed
+        let scale = p.hud.scale;
+        let place = match p.place {
+            Some(place) if place.pie_pos == pie_pos && place.scale == scale => place,
+            _ => {
+                let place = Place::of(pie_pos, scale);
+                p.place = Some(place);
+                place
+            }
+        };
         // a name that came too soon after the last one takes its turn now
         p.hud.flush_queued(now);
         let pulse = p.hud.pulse(now);
-        let scale = p.hud.scale;
         let note = p.hud.note.clone();
         let (prev, swap) = p.hud.previous(now);
         let prev = prev.cloned();
@@ -154,6 +211,7 @@ impl App {
             .and_then(|n| n.icon.as_deref())
             .and_then(|s| self.ed.icon_for(ctx, s));
         Some(PillFrame {
+            place,
             note,
             prev,
             look,
@@ -180,11 +238,8 @@ impl PillFrame {
             .unwrap_or_else(|| Vec2::new(hud::PILL_MIN_W, hud::PILL_H) * scale);
         let half = size / 2.0;
         let edge = EDGE * scale;
-        // where the notice would be on the display, in the window
-        let k = crate::platform::window_scale(f64::from(pie_pos.x), f64::from(pie_pos.y)) as f32;
-        let area = screen_rect_at(pie_pos)
-            .unwrap_or_else(|| Rect::from_center_size(pie_pos, Vec2::new(1600.0, 1000.0)));
-        let at = pill_center(cfg().hud_position, area, pie_pos, scale);
+        // where the notice would be on the display, in the window (worked out once, see `Place`)
+        let Place { at, k, .. } = self.place;
         let want = c + (at - pie_pos) * k;
         let x = want
             .x

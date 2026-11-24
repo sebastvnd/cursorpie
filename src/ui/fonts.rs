@@ -153,6 +153,50 @@ fn definitions_for(odd: bool) -> FontDefinitions {
 /// Which of the two sets of definitions the context was given last (see [`definitions_for`]).
 static ATLAS_ODD: AtomicBool = AtomicBool::new(false);
 
+/// The widest (and tallest) the font atlas may become, in texels.
+///
+/// egui makes the atlas as wide as the biggest texture the GPU takes (16384 on Metal) and doubles its
+/// height whenever a row of glyphs does not fit, and it rebuilds it only when it is 80% full. With that
+/// width one zoom gesture over text at a continuous size (the pie editor, full screen) grew the atlas
+/// to hundreds of MB on the CPU and the same again on the GPU, and the allocator never gave it all
+/// back. A side of 4096 caps the atlas at 64 MB and makes egui start it over long before that; the
+/// glyphs of the normal sizes need a few MB. Applied by `App::raw_input_hook`.
+pub const ATLAS_SIDE_MAX: usize = 4096;
+
+/// How many text sizes a zoomed text is cut at per doubling of the zoom (see [`zoom_ladder`]).
+const ZOOM_STEPS_PER_OCTAVE: f32 = 8.0;
+
+/// A zoom snapped to a short ladder (8 steps per doubling, about 9% apart); 1.0 stays 1.0.
+///
+/// egui cuts a new set of glyphs into its atlas for every text size it is asked for and never gives
+/// one back, so a text whose size follows a continuous value (a zoom that a wheel or a pinch moves
+/// in tiny steps) must be laid out at `base * zoom_ladder(zoom)`: about 30 sizes over the whole range
+/// of the canvas instead of one per frame. A picture is scaled by the painter for free and keeps the
+/// exact zoom; only text and the icon font need this.
+pub fn zoom_ladder(zoom: f32) -> f32 {
+    if !zoom.is_finite() || zoom <= 0.0 {
+        return 1.0;
+    }
+    ((zoom.log2() * ZOOM_STEPS_PER_OCTAVE).round() / ZOOM_STEPS_PER_OCTAVE).exp2()
+}
+
+/// The atlas is rebuilt, whatever drew into it, once its image is taller than this many rows (about
+/// 16 MB at [`ATLAS_SIDE_MAX`] wide). The glyphs of the interface at normal sizes fit in a quarter
+/// of that; what is above it is sizes that nobody uses any more.
+const ATLAS_SOFT_ROWS: usize = 1024;
+
+/// Starts the font atlas again if it grew past `ATLAS_SOFT_ROWS`. Cheap (two numbers), so it is
+/// called on every frame that draws. Returns whether it asked for the rebuild.
+pub fn guard_atlas(ctx: &egui::Context) -> bool {
+    let [_, rows] = ctx.fonts(|f| f.font_image_size());
+    if rows > ATLAS_SOFT_ROWS {
+        diag::log!("ui", "atlas_guard", rows = rows);
+        reset_atlas(ctx);
+        return true;
+    }
+    false
+}
+
 /// Registers the fonts. Call once, when the egui context is created.
 pub fn install(ctx: &egui::Context) {
     ATLAS_ODD.store(false, Ordering::Relaxed);
@@ -240,6 +284,76 @@ mod tests {
             missing.borrow().is_empty(),
             "no glyph for {:?}",
             missing.borrow()
+        );
+    }
+
+    #[test]
+    fn the_zoom_ladder_keeps_one_and_has_few_rungs() {
+        assert_eq!(zoom_ladder(1.0), 1.0);
+        assert_eq!(zoom_ladder(f32::NAN), 1.0);
+        assert_eq!(zoom_ladder(-2.0), 1.0);
+        let mut rungs: Vec<u32> = (0..4000)
+            .map(|i| 0.3 + 3.7 * i as f32 / 4000.0)
+            .map(|z| (zoom_ladder(z) * 1000.0).round() as u32)
+            .collect();
+        rungs.sort_unstable();
+        rungs.dedup();
+        assert!(rungs.len() <= 40, "{} rungs", rungs.len());
+        for z in [0.3_f32, 0.77, 1.3, 2.9, 4.0] {
+            let k = zoom_ladder(z) / z;
+            assert!((0.95..1.05).contains(&k), "z {z} -> {}", zoom_ladder(z));
+        }
+    }
+
+    /// The pie editor lays out its icon glyphs and labels at `size * zoom`. A sweep of the whole zoom
+    /// range at the sizes of the pie editor must stay small in the atlas when the zoom goes through
+    /// the ladder, and must not when it does not (which is what used to fill gigabytes).
+    #[test]
+    fn a_zoom_sweep_through_the_ladder_keeps_the_atlas_small() {
+        fn sweep(ladder: bool) -> [usize; 2] {
+            let ctx = egui::Context::default();
+            install(&ctx);
+            let input = egui::RawInput {
+                max_texture_side: Some(ATLAS_SIDE_MAX),
+                ..Default::default()
+            };
+            let mut z = 0.3_f32;
+            while z < 4.0 {
+                let g = if ladder { zoom_ladder(z) } else { z };
+                let mut frame = input.clone();
+                frame.screen_rect = Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                ));
+                // nothing renders the output, so the texture uploads are dropped on purpose
+                ctx.run_ui(frame, |ui| {
+                    let p = ui.painter().clone();
+                    for (base, family) in [
+                        (13.0, icons()),
+                        (22.0, icons()),
+                        (30.0, icons()),
+                        (11.5, FontFamily::Proportional),
+                        (14.0, FontFamily::Proportional),
+                    ] {
+                        p.text(
+                            egui::Pos2::ZERO,
+                            egui::Align2::LEFT_TOP,
+                            "Abc Slice name 0123 \u{e0a2}\u{e0a4}\u{e0a6}",
+                            FontId::new(base * g, family),
+                            Color32::WHITE,
+                        );
+                    }
+                })
+                .drop_without_applying_deltas();
+                z += 0.01;
+            }
+            ctx.fonts(|f| f.font_image_size())
+        }
+        let [w, laddered] = sweep(true);
+        assert_eq!(w, ATLAS_SIDE_MAX);
+        assert!(
+            laddered <= ATLAS_SOFT_ROWS,
+            "the ladder let the atlas grow to {laddered} rows"
         );
     }
 }
