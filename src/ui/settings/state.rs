@@ -634,6 +634,13 @@ pub struct Ed {
     pub update_can_install: bool,
     /// Whether the swap asks for the administrator's password (Linux, a folder only root writes to)
     pub update_needs_password: bool,
+    /// Why this copy cannot update itself (see `update::install::install_check`), found when Settings
+    /// opens and again after a failed install; `None` while it can. About and the update sheet say
+    /// it in words, instead of only offering the release page.
+    pub update_blocker: Option<install::Blocker>,
+    /// Why the last check or install failed (`update::last_detail`), for the line under the status
+    /// in About and the *Copy details* button; empty when nothing failed.
+    pub update_detail: String,
     /// Windows: whether CursorPie runs as administrator or is installed to, read when Settings
     /// opens; the About tab's *Administrator mode* panel is drawn from it (nothing elsewhere)
     pub admin_mode: crate::platform::AdminMode,
@@ -797,6 +804,8 @@ impl Ed {
             update_offer: None,
             update_can_install: false,
             update_needs_password: false,
+            update_blocker: None,
+            update_detail: String::new(),
             admin_mode: crate::platform::AdminMode::default(),
             update_staged: None,
             update_done: None,

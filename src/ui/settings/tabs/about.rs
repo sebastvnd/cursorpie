@@ -9,7 +9,7 @@ use crate::ui::fonts;
 use crate::ui::settings::theme::*;
 use crate::ui::settings::widgets::*;
 use crate::ui::symbols;
-use crate::update::Status;
+use crate::update::{Status, install};
 use eframe::egui::{self, Color32, Pos2, Rect, Vec2};
 
 /// Opens `url` (or a `mailto:` address) with the system's default handler.
@@ -58,6 +58,36 @@ fn link_button(ui: &mut egui::Ui, icon: char, text: &str, url: &str) {
     }
 }
 
+/// What *Copy details* puts on the clipboard after a failed check or install: the version and the
+/// system, what failed, why this copy cannot update itself (if it cannot) and the detail of the
+/// failure. Plain lines the person can paste into a report.
+fn failure_report(state: Status, detail: &str, blocker: Option<&install::Blocker>) -> String {
+    let mut text = format!(
+        "CursorPie {VERSION} on {} {}\n",
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
+    match state {
+        Status::Failed(why) => {
+            text.push_str(&format!("Update check failed: {}\n", why.explain()));
+        }
+        Status::InstallFailed(version, why) => {
+            text.push_str(&format!("Install of {version} failed: {}\n", why.explain()));
+        }
+        _ => {}
+    }
+    if let Some(why) = blocker {
+        text.push_str(&format!(
+            "This copy cannot update itself: {}\n",
+            why.explain()
+        ));
+    }
+    if !detail.is_empty() {
+        text.push_str(&format!("Detail: {detail}\n"));
+    }
+    text
+}
+
 impl App {
     /// Draws the About tab: the hero card, the updates panel, then the panels made from the
     /// constants in [`crate::about`]. `accent` colors the version badge and the primary button.
@@ -76,6 +106,10 @@ impl App {
         let ctx = ui.ctx().clone();
         let state = self.ed.update;
         let can_install = self.ed.update_can_install;
+        let blocker = self.ed.update_blocker.clone();
+        let detail = self.ed.update_detail.clone();
+        let pending = matches!(state, Status::Available(_) | Status::InstallFailed(..));
+        let failed = matches!(state, Status::Failed(_) | Status::InstallFailed(..));
         panel(ui, "Updates", |ui| {
             let hint = match state {
                 Status::Available(_) => format!("You are using {VERSION}."),
@@ -97,6 +131,19 @@ impl App {
                 Status::Ready(found) => status(ui, true, &format!("Version {found} is ready")),
                 Status::InstallFailed(..) => status(ui, false, "Could not install"),
             });
+            // why an update cannot be installed here, in words, before the buttons: a copy that
+            // only offers the release page and does not say why leaves the person guessing
+            if pending
+                && !can_install
+                && let Some(why) = &blocker
+            {
+                strong_note(ui, &why.explain());
+            }
+            // why a check or an install failed (the exit code of curl and what it means, what the
+            // new program said), which the one sentence above cannot say
+            if failed && !detail.is_empty() {
+                note(ui, &format!("Details: {detail}"));
+            }
             toggle_row(
                 ui,
                 &mut self.edit.check_updates,
@@ -118,6 +165,9 @@ impl App {
                 );
                 if check.clicked() {
                     self.start_update_check(&ctx, true);
+                }
+                if failed && button(ui, Look::Soft, None, "Copy details").clicked() {
+                    ctx.copy_text(failure_report(state, &detail, blocker.as_ref()));
                 }
                 match state {
                     Status::Available(_) | Status::InstallFailed(..) if can_install => {
@@ -162,15 +212,21 @@ impl App {
                 }
             });
             let how = if can_install && self.ed.update_needs_password {
-                "Install update downloads the release from GitHub and checks its checksum. This copy is in a folder only an administrator can write to, so when CursorPie restarts to update, your system asks for your password; if you cancel, the old version starts again. Your settings are kept."
+                "Install update downloads the release from GitHub and checks its checksum. This copy is in a folder only an administrator can write to, so when CursorPie restarts to update, your system asks for your password; if you cancel, the old version starts again. Your settings are kept.".to_string()
             } else if can_install {
-                "Install update downloads the release from GitHub, checks its checksum, replaces this copy and restarts CursorPie. Your settings are kept."
+                "Install update downloads the release from GitHub, checks its checksum, replaces this copy and restarts CursorPie. Your settings are kept.".to_string()
             } else if self.ed.admin_mode.installed {
-                "CursorPie is installed as administrator, which Install update does not touch. Download the new version and start it: CursorPie offers to update the installed one."
+                "CursorPie is installed as administrator, which Install update does not touch. Download the new version and start it: CursorPie offers to update the installed one.".to_string()
+            } else if let Some(why) = &blocker {
+                if pending {
+                    "Download page opens the release page in your browser, where you pick the package for your system.".to_string()
+                } else {
+                    why.explain()
+                }
             } else {
-                "This copy was not installed in the usual place, so it cannot update itself: Download page opens the release page in your browser."
+                "This copy was not installed in the usual place, so it cannot update itself: Download page opens the release page in your browser.".to_string()
             };
-            note(ui, how);
+            note(ui, &how);
             if crate::platform::OS == crate::platform::Os::Mac {
                 note(
                     ui,
@@ -343,4 +399,30 @@ fn credits_panel(ui: &mut egui::Ui) {
             });
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_failure_report_names_the_system_the_failure_and_the_reason() {
+        let v = crate::update::Version::parse("9.9.9").unwrap();
+        let state = Status::InstallFailed(v, crate::update::install::InstallError::NotInstalled);
+        let why = install::Blocker::Replaced;
+        let text = failure_report(state, "tar ended with Some(2)", Some(&why));
+        assert!(
+            text.starts_with(&format!("CursorPie {VERSION} on ")),
+            "{text}"
+        );
+        assert!(text.contains("Install of 9.9.9 failed"), "{text}");
+        assert!(text.contains("cannot update itself"), "{text}");
+        assert!(text.contains("Detail: tar ended with Some(2)"), "{text}");
+    }
+
+    #[test]
+    fn the_failure_report_leaves_out_what_is_not_known() {
+        let text = failure_report(Status::UpToDate, "", None);
+        assert_eq!(text.lines().count(), 1, "only the version line: {text}");
+    }
 }

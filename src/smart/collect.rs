@@ -128,7 +128,7 @@ impl Sampler {
         let front = obs
             .front
             .as_deref()
-            .filter(|id| !id.is_empty() && !super::is_self(id));
+            .filter(|id| !id.is_empty() && !super::is_self(id) && !super::is_noise(id));
         // an app on the ignore list is not learned, and is not remembered as the app before the
         // next one either: no trace of it, not even in "what comes after"
         let learnable = front.filter(|id| !c.ignores_app(id));
@@ -524,7 +524,7 @@ fn tidy(rt: &mut Runtime, c: &SmartConfig, names: Option<HashMap<String, (String
         rt.names_at = Some(Instant::now());
     }
     let keep = |kind: Kind, key: &str| match kind {
-        Kind::App => !c.ignores_app(key),
+        Kind::App => !c.ignores_app(key) && !super::is_noise(key),
         Kind::Page => !c.ignores_site(key.split('/').next().unwrap_or(key)),
         Kind::Action => true,
     };
@@ -623,6 +623,31 @@ mod tests {
         s.step(&mut h, &obs("io.github.cursorpie"), &c, T0);
         s.step(&mut h, &obs("io.github.cursorpie"), &c, T0 + 10);
         assert!(h.apps.is_empty());
+    }
+
+    #[test]
+    fn the_shell_of_windows_is_not_learned_and_links_nothing() {
+        let (mut h, mut s, c) = (Habits::default(), Sampler::default(), cfg_on());
+        for round in 0..4u64 {
+            s.step(&mut h, &obs("code.exe"), &c, T0 + round * 30);
+            // the Start menu and a search come to the front between two real apps
+            s.step(&mut h, &obs("searchhost.exe"), &c, T0 + round * 30 + 10);
+            s.step(
+                &mut h,
+                &obs("applicationframehost.exe"),
+                &c,
+                T0 + round * 30 + 15,
+            );
+            s.step(&mut h, &obs("chrome.exe"), &c, T0 + round * 30 + 20);
+        }
+        assert!(!h.apps.contains_key("searchhost.exe"));
+        assert!(!h.apps.contains_key("applicationframehost.exe"));
+        assert!(h.apps.contains_key("code.exe") && h.apps.contains_key("chrome.exe"));
+        assert!(
+            h.after["code.exe"].0.contains_key("chrome.exe"),
+            "the shell is not 'what came after': {:?}",
+            h.after
+        );
     }
 
     #[test]

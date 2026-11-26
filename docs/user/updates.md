@@ -41,6 +41,34 @@ Only an ordinary install is updated: macOS `CursorPie.app` in a folder you can w
 write to only with `pkexec`, see the Linux note). Anything else gets **Download page**. On macOS the app is signed ad hoc, so macOS may ask for the
 Accessibility permission again after an update.
 
+## When the update cannot be installed
+
+CursorPie tells you why, in the About tab (and in the update sheet), and what to do about it. The reasons:
+
+| It says | Because | What to do |
+|---|---|---|
+| Runs from a build folder | the program is in `target/release` or `target/debug` | install a release package, or build again |
+| Opened from the download or the disk image (macOS) | macOS runs it from a temporary read-only place | drag CursorPie to Applications and start it from there |
+| Not inside a CursorPie app (macOS) | the program was started outside a `.app` | install from the disk image |
+| Replaced while it ran (Linux) | a package manager or another update changed the file | quit CursorPie and start it again |
+| Runs from another folder than Setup's (Windows) | an unzipped download, or a folder Setup did not make | run `CursorPie-windows-setup.exe` once |
+| You cannot write to the folder | macOS or Linux, a folder you do not own | move CursorPie to a folder you own, or update as an administrator |
+| Needs `pkexec` (Linux) | the folder is root's and polkit is not installed | install polkit, or `./install.sh --user` |
+| Belongs to the package manager (Linux) | the program is under `/usr/bin`, `/usr/lib` and the like | update with `apt`/`dnf`, or `./install.sh --user` |
+| No package for this system | the release has none for this architecture | the release page lists what exists |
+| The release is still being published | its files are not all there yet | try again in a few minutes |
+
+When a check or an install fails, the line under the status (**Details**) says why: the exit code of `curl` or `wget`
+and what it means (for example `curl exit 22`: GitHub answered 403, its limit of 60 requests an hour for one network),
+what `tar`, `hdiutil` or `ditto` ended with, or what the new program said when it did not start. **Copy details** puts
+the version, the system and these lines on the clipboard for a report.
+
+What makes a failure rare: a request that `curl` fails is repeated with `wget`; on Windows a `curl` that stops at the
+TLS handshake gets one more try without the revocation check; the package is downloaded up to three times (also when it
+does not match its checksum) and a slow link is allowed; when GitHub's API refuses (its limit is 60 requests an hour per
+address, which a school, an office or a mobile operator shares between many people) the tag is read from the release page
+and the checksum comes from the `.sha256` file of the package. Nothing is ever installed without a checksum.
+
 ## What an update brings besides the program
 
 The swap replaces the program. The files CursorPie keeps *outside* its executable, which it wrote for you and which a

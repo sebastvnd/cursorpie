@@ -140,4 +140,12 @@
     <loc>https://sebastvnd.github.io/cursorpie/flowhub/</loc>
     <priority>0.8</priority>
   </url>
+  <url>
+    <loc>https://sebastvnd.github.io/cursorpie/developer/</loc>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://sebastvnd.github.io/cursorpie/developer/kanban/</loc>
+    <priority>0.6</priority>
+  </url>
 </urlset>

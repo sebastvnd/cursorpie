@@ -147,7 +147,10 @@ fn hl(input: &Input) -> f64 {
 }
 
 fn allowed_app(id: &str, input: &Input) -> bool {
-    !super::is_self(id) && !input.cfg.ignores_app(id) && input.ctx.front.as_deref() != Some(id)
+    !super::is_self(id)
+        && !super::is_noise(id)
+        && !input.cfg.ignores_app(id)
+        && input.ctx.front.as_deref() != Some(id)
 }
 
 /// The key of the page that is in view, if the browser told.

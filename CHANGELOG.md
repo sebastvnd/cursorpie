@@ -4,6 +4,44 @@
 
 ## 0.10.0
 
+- **New: the welcome guide offers the intelligent pie.** The last page, before _Done_, has a switch _Turn on the
+  intelligent pie_ (off unless the person turns it on). With _Done_ it switches learning on and gives the general pie
+  an Intelligent slice, as Behavior > Intelligent does; _Skip_ and Esc change nothing.
+- **Fixed (Windows): the intelligent pie offered the same nameless suggestions to everyone, with no icons.** Three
+  things were behind it. (1) The window of every Store (UWP) app (Settings, Calculator, Photos...) belongs to
+  `ApplicationFrameHost.exe`, so they were all learned as one app with the icon of the host, and the Start menu, a
+  search and the input panel (`SearchHost.exe`, `StartMenuExperienceHost.exe`, `TextInputHost.exe`...) were learned as
+  apps too: they are in front for a moment whenever the Start menu is used, so they ranked above the real apps. The
+  app's own process is now looked up inside the frame (for the intelligent pie, the pie of an app and the app under
+  the pointer alike), and those shell programs are neither learned nor suggested; the ones an earlier version learned
+  are dropped at the next tidy-up (or at once with _Learn now_). (2) The program file of an app was known only while the
+  app ran or when the Start menu listed it, so the icon of a suggested app that had been closed (a portable program, a
+  game, a Store app) was not found. The folder of the app in front is now remembered when it is learned. (3) A slice
+  whose app icon cannot be had was drawn as the text of the icon string (`appcolor:code.exe`) squeezed into the slice, on
+  every system; it now shows a generic app glyph (the pill still has the name).
+
+- **Fixed: an update that could not be installed only offered the release page and did not say why.** Three things
+  were behind it. (1) A copy that "was not installed in the usual way" got one sentence for a dozen different causes
+  (a build folder, a program replaced while it ran, macOS App Translocation or the disk image, a folder that cannot be
+  written, no `pkexec`, a package-manager program, Windows running from another folder than Setup's, a system with no
+  package). About and the update sheet now say which one it is and what to do about it, and _Check now_ and a failed
+  install look at it again instead of keeping the answer from when Settings opened. (2) A failed check or install
+  was told as "could not be reached" whatever the cause. The exit code of `curl`/`wget` and what it means (GitHub's
+  limit of 60 requests an hour for one address, DNS, TLS, a full disk), what `tar`/`hdiutil`/`ditto` ended with and what
+  the new program said when `--selftest` failed are shown under the status, and **Copy details** puts them on the
+  clipboard for a report. (3) The Windows path of the installed program was compared as text, so a short 8.3 name, a
+  junction or a `\\?\` prefix made the installed copy look like another one; it is now resolved by the file system
+  too, like the installer already did.
+- **Changed: an update is much harder to stop.** A request that `curl` fails is repeated with `wget`; on Windows a
+  `curl` that stops at the TLS handshake (the revocation check that firewalls and antivirus programs block) gets one more
+  try without that check; the download is tried three times (a broken connection or a file that is not the published one
+  is nearly always fine the next time), allows a slow link (it is only given up under 1 KB/s for a minute, or after half
+  an hour) and a check that GitHub's API refuses reads the tag from the release page instead. Without the API's list of
+  files, the `.sha256` file of the package is the checksum.
+- **Changed (release workflow): every package has a `.sha256` file, and a release becomes public only when all its files
+  are on it.** Until now a release was "the newest" while its files were still uploading, and a running CursorPie that
+  looked in that window found a release with no package or no checksum for its system.
+
 - **Added: `cargo tools install`, to build and install CursorPie on any Linux distribution.** It finds the package
   manager from `/etc/os-release` (also through `ID_LIKE`, so derivatives of Debian, Fedora, Arch, openSUSE, Alpine, Void
   and Gentoo work without being listed), installs the C toolchain and the development files of libx11, libxi, libxtst
@@ -17,7 +55,7 @@
   the pie paints the picture under its icons (`ui/pie/liquid.rs`). Each slice is a chain of circles that the shader
   melts, because rust-glass has no ring sector; the alpha is a second copy of the shapes drawn white on black in the
   same canvas. A transparent window cannot read the screen, so the glass bends a graphite backdrop of its own and
-  shows what is behind the pie through the *Clearness* setting. New setting *Liquid optics* (`glass_liquid`, on by
+  shows what is behind the pie through the _Clearness_ setting. New setting _Liquid optics_ (`glass_liquid`, on by
   default) under Pie material > Glass. Falls back to the painted glass without a usable GPU, on a custom outline, in a
   build with `--no-default-features`, and while the worker starts. The worker is freed when the UI goes to sleep.
   Needs Rust 1.90 (`rust-version`), which rust-glass asks for.
@@ -39,14 +77,14 @@
   toolkit draws nothing in that time, so the first frame of the pill, which starts its clock, was drawn before the window
   was on screen or at the size of the previous owner, the request for the next frame was lost with it, and the circle
   stood still until something else woke the window. Now (macOS only):
-  - the pie that has faded and the lock animation hand the mapped window to the notice that waits for it instead of
-    hiding it first (`App::hand_to_pending_hud`), and a pie that is asked for while a notice is on screen takes the
-    mapped window the same way (`drop_hud(.., keep_mapped)`);
-  - whoever takes a window that is hidden or at another size or place draws nothing, a transparent frame that also wipes
-    the last owner's picture, until the system has carried out the size and the place, and starts its clock then
-    (`App::arm_geom_gate`, logged as `ui` / `geom_gate_done`, at most 150 ms);
-  - while the lock animation, the padlock of an unlock or a notice is on screen, every pass of `App::logic` also asks
-    for a frame on a timer (`App::step_anim_watchdog`), so a lost request costs a frame, not seconds.
+    - the pie that has faded and the lock animation hand the mapped window to the notice that waits for it instead of
+      hiding it first (`App::hand_to_pending_hud`), and a pie that is asked for while a notice is on screen takes the
+      mapped window the same way (`drop_hud(.., keep_mapped)`);
+    - whoever takes a window that is hidden or at another size or place draws nothing, a transparent frame that also wipes
+      the last owner's picture, until the system has carried out the size and the place, and starts its clock then
+      (`App::arm_geom_gate`, logged as `ui` / `geom_gate_done`, at most 150 ms);
+    - while the lock animation, the padlock of an unlock or a notice is on screen, every pass of `App::logic` also asks
+      for a frame on a timer (`App::step_anim_watchdog`), so a lost request costs a frame, not seconds.
 
 - **Fixed: the memory of the pie editor (full screen above all) and an idle size that grew with every visit to
   Settings.** The pie editor laid out its icon glyphs and labels at `size × zoom` with the zoom as a continuous number
@@ -71,19 +109,19 @@
   lock animation, a panel and Settings share one window, and what owned it was spread over a dozen flags that each
   transition had to keep in step. There is now one place that names the owner and the rules of a hand-over
   (`ui/app/owner.rs`, logged as `ui` / `owner`), and five things that came from the old way are gone:
-  - A pie asked for while the last one was still fading, right after a notice, after the lock animation or right after
-    Settings closed was drawn into a window that was still mapped for the old owner, so for a few frames it showed
-    stretched or at the old place. On Linux that window is now taken down and mapped again the way the first pie after
-    a pause is.
-  - A submenu asked for in the first moments of the bloom of the ring above reconfigured the mapped window (the old
-    stutter). A level of the same gesture now always keeps its window.
-  - The pill of the slice names blinked out and in at every submenu, because it faded with the bloom clock that a
-    submenu starts again. It now fades only when the pie closes, and the pill of a finished pie never comes back with
-    the next one.
-  - Opening Settings during the lock animation left the animation behind. It kept the Windows stand-by from mapping
-    the window, so the next pie came late. Settings now lets go of the animation and of the pill.
-  - The place of the slice-name pill is worked out once per pointer position instead of in every frame (a list of the
-    displays, a round trip to the X server on X11, in the frames that animate the pill).
+    - A pie asked for while the last one was still fading, right after a notice, after the lock animation or right after
+      Settings closed was drawn into a window that was still mapped for the old owner, so for a few frames it showed
+      stretched or at the old place. On Linux that window is now taken down and mapped again the way the first pie after
+      a pause is.
+    - A submenu asked for in the first moments of the bloom of the ring above reconfigured the mapped window (the old
+      stutter). A level of the same gesture now always keeps its window.
+    - The pill of the slice names blinked out and in at every submenu, because it faded with the bloom clock that a
+      submenu starts again. It now fades only when the pie closes, and the pill of a finished pie never comes back with
+      the next one.
+    - Opening Settings during the lock animation left the animation behind. It kept the Windows stand-by from mapping
+      the window, so the next pie came late. Settings now lets go of the animation and of the pill.
+    - The place of the slice-name pill is worked out once per pointer position instead of in every frame (a list of the
+      displays, a round trip to the X server on X11, in the frames that animate the pill).
 
 ## 0.9.3
 

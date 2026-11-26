@@ -29,6 +29,8 @@
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
+use std::process::Command;
 use std::process::ExitCode;
 
 /// The libraries `pkg-config` must find for the build to work (the names of their `.pc` files).
@@ -908,7 +910,8 @@ mod tests {
             "cursorpie-.png",
         ]);
         let list = files(Path::new("/src"), Path::new("/home/a/.local"), &icons);
-        let to: Vec<String> = list.iter().map(|c| c.to.display().to_string()).collect();
+        // compared as paths, not text: Windows joins with `\\`
+        let to: Vec<&Path> = list.iter().map(|c| c.to.as_path()).collect();
         assert_eq!(
             to,
             [
@@ -917,6 +920,7 @@ mod tests {
                 "/home/a/.local/share/icons/hicolor/16x16/apps/cursorpie.png",
                 "/home/a/.local/share/icons/hicolor/512x512/apps/cursorpie.png",
             ]
+            .map(Path::new)
         );
         assert_eq!(list[0].mode, 0o755);
         assert_eq!(list[0].from, Path::new("/src/target/release/cursorpie"));

@@ -56,6 +56,10 @@ jobs:
             cp -R flowhub _site/
           fi
 
+          # Developer pages. The Kanban page reads the board and the cards straight from kanban/.
+          cp -R developer _site/
+          cp -R kanban _site/
+
           if [ -f diag/README.md ]; then
             mkdir -p _site/diag
             cp diag/README.md _site/diag/
@@ -76,6 +80,14 @@ jobs:
           test -f _site/flowhub/catalog.json
           test -f _site/assets/flowhub.js
           test -f _site/assets/flowhub.css
+
+      - name: Check that the developer pages are in the site
+        run: |
+          test -f _site/developer/index.html
+          test -f _site/developer/kanban/index.html
+          test -f _site/assets/developer.js
+          test -f _site/assets/developer.css
+          test -f _site/kanban/BOARD.md
 
       - name: Upload website artifact
         uses: actions/upload-pages-artifact@v4

@@ -41,13 +41,23 @@ enum Answer {
 }
 
 /// What the sheet says under its title.
-fn body_text(version: crate::update::Version, can_install: bool, needs_password: bool) -> String {
+fn body_text(
+    version: crate::update::Version,
+    can_install: bool,
+    needs_password: bool,
+    blocker: Option<&install::Blocker>,
+) -> String {
     let current = VERSION;
     if !can_install {
+        // say why: "not installed in the usual place" alone leaves the person with a button and no
+        // idea what to change
+        let why = blocker.map_or_else(
+            || "This copy of CursorPie was not installed in the usual place, so it cannot update itself.".to_string(),
+            install::Blocker::explain,
+        );
         return format!(
-            "You are using {current}. This copy of CursorPie was not installed in the usual place, \
-             so it cannot update itself: the page opens in your browser, where you pick the package \
-             for your system."
+            "You are using {current}. {why}\n\nThe page opens in your browser, where you pick the \
+             package for your system."
         );
     }
     let mut text = format!(
@@ -176,8 +186,10 @@ fn done_text(outcome: Outcome) -> (String, String, bool) {
             format!("CursorPie {to} was not installed"),
             format!(
                 "The update did not finish, so CursorPie {from} is running again and nothing was \
-                 lost. You can press Install update in the About tab to try again, or download \
-                 {to} from the release page."
+                 lost. The usual causes are a folder that cannot be written to, a security program \
+                 that blocked the swap, or CursorPie being started by hand while it ran; the About \
+                 tab says when it knows which. You can press Install update there to try again, or \
+                 download {to} from the release page."
             ),
             false,
         ),
@@ -288,7 +300,7 @@ impl App {
             self.ed.card,
             Vec2::new(
                 560.0,
-                if self.ed.update_needs_password {
+                if self.ed.update_needs_password || self.ed.update_blocker.is_some() {
                     340.0
                 } else {
                     270.0
@@ -302,7 +314,12 @@ impl App {
                     accent,
                     &format!("CursorPie {version} is available"),
                 );
-                let text = body_text(version, can_install, self.ed.update_needs_password);
+                let text = body_text(
+                    version,
+                    can_install,
+                    self.ed.update_needs_password,
+                    self.ed.update_blocker.as_ref(),
+                );
                 sheet_text(ui, &text);
                 ui.add_space(GAP);
                 // the way forward is the rightmost button, the way back the one before it
@@ -367,6 +384,23 @@ mod tests {
             to: v("0.9.0"),
         });
         assert!(!good && title.contains("0.9.0") && text.contains("0.8.19"));
+    }
+
+    #[test]
+    fn the_offer_says_why_a_copy_cannot_update_itself() {
+        let v = crate::update::Version::parse("9.9.9").unwrap();
+        let generic = body_text(v, false, false, None);
+        assert!(generic.contains("not installed in the usual place"));
+        let why = install::Blocker::Translocated;
+        let text = body_text(v, false, false, Some(&why));
+        assert!(text.contains("Applications"), "{text}");
+        assert!(
+            !text.contains("usual place"),
+            "the reason replaces the guess"
+        );
+        // a copy that can update itself says nothing about a blocker
+        let ok = body_text(v, true, false, Some(&why));
+        assert!(!ok.contains("Applications folder"));
     }
 
     #[test]

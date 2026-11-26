@@ -18,6 +18,19 @@ system, install the *previous* release, publish (or point `LATEST_RELEASE_API_UR
       *from another version*) without pressing **Show the extension files**. Loaded from another folder: it is asked at most
       a few times and the line says what to do.
 - [ ] Linux: an old `~/.local/share/applications/cursorpie.desktop` is the new one; an edited one is left alone.
+- [ ] Each reason in [the table of reasons](../user/updates.md#when-the-update-cannot-be-installed) is shown by the
+      copy it names: `target/release` (build folder), macOS from the disk image and from `~/Downloads` after a first
+      launch (App Translocation), an unzipped Windows download, Linux `/usr/bin/cursorpie`, `/usr/local/bin` without
+      `pkexec`, and a program replaced while it runs (`cp` a newer file over it, or `mv`). The sentence names the folder
+      and says what to do; **Download page** is still there.
+- [ ] **Check now** after the folder was made writable (or the program restarted) turns *Download page* into *Install
+      update* without reopening Settings.
+- [ ] Rate limit: block `api.github.com` (hosts file or firewall) and press **Check now**: the check still finds the new
+      version (from the release page) and **Install update** works; the **Details** line names the API failure.
+- [ ] A download that is cut half way (kill `curl` once, or unplug and replug the network) is tried again by itself;
+      three failures end with **Details** naming `curl exit ...` and **Copy details** works.
+- [ ] A release whose files are still uploading (publish it as a draft with the macOS image only, then public) says *still
+      being published*, not *no package for this system*.
 - [ ] Offline: **Check now** says *Could not check*, nothing else changes. A tampered file (change one byte of the
       downloaded package while it sits in `updates/`) is refused as *not the file the release published*.
 - [ ] A copy run from `target/release` (or an unzipped Windows download) shows **Download page**, not *Install update*.

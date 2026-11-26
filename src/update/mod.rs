@@ -19,6 +19,7 @@
 //! | [`install`] | the one-click install: package choice, download, checksum, swap (see its table) |
 //! | [`sha256`] | the checksum |
 //! | [`Status`] | what the About tab shows |
+//! | [`last_detail`] | why the last check or install failed (exit codes, what the new program said), for About |
 //!
 //! The state is a small file of its own, `update_state.json`, next to `config.json`. It is not part
 //! of the config on purpose: it changes without the person touching Settings, so it must not make a
@@ -53,6 +54,34 @@ const MAX_STATE_BYTES: u64 = 4 * 1024;
 
 /// Seconds in a day, for [`day_number`].
 const DAY_S: u64 = 86_400;
+
+// ---------------------------------------------------------------------------- what went wrong
+
+/// What the last check or install that failed came to, in words: the step, the exit code of
+/// `curl`/`wget` and what it means, what the new program said when it did not start. The sentences
+/// of [`Failure`] and [`install::InstallError`] say *what* could not be done; this says *why*, and
+/// is what the person can copy from About and send in a report. Best effort: it describes the
+/// latest run and only that.
+static DETAIL: Mutex<String> = Mutex::new(String::new());
+
+/// Forgets the detail of the earlier run; every check and install starts with it.
+pub(crate) fn clear_detail() {
+    lock(&DETAIL).clear();
+}
+
+/// Adds one piece to the detail of the run that is going on.
+pub(crate) fn note_detail(text: &str) {
+    let mut detail = lock(&DETAIL);
+    if !detail.is_empty() {
+        detail.push_str("; ");
+    }
+    detail.push_str(text);
+}
+
+/// The detail of the last failed check or install (empty when there is none).
+pub fn last_detail() -> String {
+    lock(&DETAIL).clone()
+}
 
 // ---------------------------------------------------------------------------- versions
 
@@ -228,7 +257,7 @@ impl Failure {
                 "CursorPie needs curl (or wget) to look for updates, and neither was found."
             }
             Failure::Unreachable => {
-                "The release page could not be reached. Check the connection and try again."
+                "The release page could not be reached. Check the connection, a proxy or firewall, and try again."
             }
             Failure::BadAnswer => "GitHub answered, but not with a release CursorPie can read.",
         }
@@ -252,8 +281,27 @@ impl From<HttpError> for Failure {
 ///
 /// See [`Failure`].
 pub fn fetch_latest() -> Result<Version, Failure> {
-    let text = http::get_text(LATEST_RELEASE_API_URL, CHECK_TIMEOUT_S, MAX_ANSWER_BYTES)?;
-    parse_latest(&text).ok_or(Failure::BadAnswer)
+    clear_detail();
+    let failure = match http::get_text(LATEST_RELEASE_API_URL, CHECK_TIMEOUT_S, MAX_ANSWER_BYTES) {
+        Ok(text) => match parse_latest(&text) {
+            Some(version) => return Ok(version),
+            None => {
+                note_detail("release API: the answer is not a release");
+                Failure::BadAnswer
+            }
+        },
+        Err(why) => {
+            note_detail(&format!("release API: {}", http::last_detail()));
+            Failure::from(why)
+        }
+    };
+    // GitHub's API answers only 60 requests an hour to one address, and a school, an office or a
+    // mobile operator shares one address between many people. The release page has no such limit
+    // and names the same tag, so a check that the API refused is tried there before it is given up.
+    match install::page_release() {
+        Some((version, _tag)) => Ok(version),
+        None => Err(failure),
+    }
 }
 
 /// Looks for a newer release on a worker thread. An answer is written to the state file first (so

@@ -162,6 +162,9 @@ pub fn load_icon_bytes(
     Some(ctx.load_texture(name, color, egui::TextureOptions::LINEAR))
 }
 
+/// What an app icon that cannot be had is drawn as.
+const APP_FALLBACK: &str = "ico:app-window";
+
 /// Draws an icon centered at `c` in a box of `size`, in the color `ink`.
 ///
 /// An icon string is one of three things, see [`crate::ui::symbols`]:
@@ -197,6 +200,14 @@ pub fn draw_icon_at(
         draw_texture(painter, t, c, size, Color32::from_white_alpha(ink.a()));
     } else if let Some(glyph) = symbols::resolve(icon) {
         fonts::paint_icon(painter, c, glyph, glyph_size, ink, false);
+    } else if crate::ui::appicon::is_app_icon(icon) {
+        // The icon of an app that is not there (yet, or at all: closed, not installed, a program
+        // the system gives no icon for). The icon string itself is no text to show: it used to be
+        // drawn as it is, `appcolor:code.exe` squeezed into a slice. A generic app glyph says
+        // "an app" and keeps the slice readable (the pill has the name).
+        if let Some(glyph) = symbols::resolve(APP_FALLBACK) {
+            fonts::paint_icon(painter, c, glyph, glyph_size, ink, false);
+        }
     } else {
         // an image path that failed to load shows "?" so the problem is visible
         let text = if icon_path(icon).is_some() { "?" } else { icon };

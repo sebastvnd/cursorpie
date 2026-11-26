@@ -64,6 +64,36 @@ pub(crate) fn is_self(id: &str) -> bool {
     id.to_ascii_lowercase().contains("cursorpie")
 }
 
+/// Whether `id` is a program that comes to the front without being an app the person uses: the
+/// parts of the Windows shell (search, the Start menu, the input panel, the lock screen, the
+/// secure desktop) and `ApplicationFrameHost`, the frame of every Store app. They are in front for a
+/// moment whenever the Start menu or a search is used, so a count of "what is in front" ranks them
+/// above the real apps, and they have no icon of their own to show: the intelligent pie then offered
+/// the same nameless suggestions to everyone. Neither learned nor suggested; one that an earlier
+/// version learned is dropped at the next tidy-up. The names are those of Windows programs: no app of
+/// another system has one of them for an id.
+pub(crate) fn is_noise(id: &str) -> bool {
+    matches!(
+        id.to_ascii_lowercase().as_str(),
+        "applicationframehost.exe"
+            | "searchhost.exe"
+            | "searchapp.exe"
+            | "searchui.exe"
+            | "startmenuexperiencehost.exe"
+            | "shellexperiencehost.exe"
+            | "textinputhost.exe"
+            | "lockapp.exe"
+            | "logonui.exe"
+            | "consent.exe"
+            | "winlogon.exe"
+            | "dwm.exe"
+            | "ctfmon.exe"
+            | "sihost.exe"
+            | "fontdrvhost.exe"
+            | "widgets.exe"
+    )
+}
+
 /// Starts the worker (see [`collect::init`]). Called once at startup, before the tap.
 pub fn init(notifier: crate::msg::Notifier) {
     collect::init(notifier);
@@ -395,6 +425,22 @@ mod tests {
         let mut c = Config::default();
         c.profiles[0].items = items;
         c
+    }
+
+    #[test]
+    fn the_parts_of_the_shell_are_noise_and_real_apps_are_not() {
+        for id in [
+            "ApplicationFrameHost.exe",
+            "searchhost.exe",
+            "StartMenuExperienceHost.exe",
+            "textinputhost.exe",
+        ] {
+            assert!(is_noise(id), "{id}");
+        }
+        // File Explorer is an app the person uses
+        for id in ["explorer.exe", "chrome.exe", "code.exe", "com.apple.Safari"] {
+            assert!(!is_noise(id), "{id}");
+        }
     }
 
     #[test]

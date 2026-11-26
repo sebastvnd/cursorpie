@@ -1,50 +1,25 @@
 <div align="center">
-
-  <img src="assets/app-icon-256.png" alt="CursorPie" width="120">
-
-  <h1>CursorPie</h1>
-  <h3>Your actions, one gesture away.</h3>
-
-  <p>
-    Hold a mouse button or a finger on your trackpad.<br>
-    Flick toward an action. Release.
-  </p>
-
-  <br>
+    <p align="center">
+    <img src="assets/app-icon-256.png" alt="CursorPie" width="120">
+    </p>
+    <h1 align="center">CursorPie</h1>
+    <p align="center">
+      <strong>Your actions, one gesture away.</strong><br>
+      Hold a mouse button or a finger on your trackpad. Flick toward an action. Release.
+    </p>
 
   <!-- Primary actions -->
-  <a href="https://sebastvnd.github.io/cursorpie/">
-    <img src="https://img.shields.io/badge/Website-Explore%20CursorPie-2563eb?style=for-the-badge&logo=googlechrome&logoColor=white" alt="Visit Website">
-  </a>
-  <a href="https://github.com/sebastvnd/cursorpie/releases/latest">
-    <img src="https://img.shields.io/badge/Download-Latest%20Release-238636?style=for-the-badge&logo=github&logoColor=white" alt="Download Latest Release">
-  </a>
-  <a href="https://sebastvnd.github.io/cursorpie/index.html?doc=docs/README.md">
-    <img src="https://img.shields.io/badge/Documentation-Read%20the%20Docs-8957e5?style=for-the-badge&logo=readthedocs&logoColor=white" alt="Explore Documentation">
-  </a>
-  <!-- Platform support -->
-  <img src="https://img.shields.io/badge/macOS-Supported-555555?style=for-the-badge&logo=apple&logoColor=white" alt="macOS">
-  <img src="https://img.shields.io/badge/Windows-Supported-0078D4?style=for-the-badge&logo=windows&logoColor=white" alt="Windows">
-  <img src="https://img.shields.io/badge/Linux-Supported-FCC624?style=for-the-badge&logo=linux&logoColor=black" alt="Linux">
-
-<br>
-
-<!-- Project resources -->
-<a href="docs/user/install.md">
-  <img src="https://img.shields.io/badge/Installation-Getting%20Started-30363d?style=flat-square&logo=rocket&logoColor=white" alt="Installation">
-</a>
-<a href="docs/user/README.md">
-  <img src="https://img.shields.io/badge/User%20Guide-Documentation-30363d?style=flat-square&logo=readthedocs&logoColor=white" alt="User Guide">
-</a>
-<a href="docs/user/configuration.md">
-  <img src="https://img.shields.io/badge/Configuration-Settings-30363d?style=flat-square&logo=gear&logoColor=white" alt="Configuration">
-</a>
-<a href="CONTRIBUTING.md">
-  <img src="https://img.shields.io/badge/Contributing-Join%20the%20Project-30363d?style=flat-square&logo=github&logoColor=white" alt="Contributing">
-</a>
-<a href="CHANGELOG.md">
-  <img src="https://img.shields.io/badge/Changelog-What's%20New-30363d?style=flat-square&logo=keepachangelog&logoColor=white" alt="Changelog">
-</a>
+  <p align="center">
+    <a href="https://sebastvnd.github.io/cursorpie/"><img src="https://img.shields.io/badge/Website-Explore%20CursorPie-2563eb?style=flat-square&logo=googlechrome&logoColor=white" alt="Visit Website"></a>
+    <a href="https://github.com/sebastvnd/cursorpie/releases/latest"><img src="https://img.shields.io/badge/Download-Latest%20Release-238636?style=flat-square&logo=github&logoColor=white" alt="Download Latest Release"></a>
+    <a href="https://sebastvnd.github.io/cursorpie/index.html?doc=docs/README.md"><img src="https://img.shields.io/badge/Documentation-Read%20the%20Docs-8957e5?style=flat-square&logo=readthedocs&logoColor=white" alt="Explore Documentation"></a>
+    <br>
+    <a href="docs/user/install.md"><img src="https://img.shields.io/badge/Installation-Getting%20Started-30363d?style=flat-square&logo=rocket&logoColor=white" alt="Installation"></a>
+    <a href="docs/user/README.md"><img src="https://img.shields.io/badge/User%20Guide-Documentation-30363d?style=flat-square&logo=readthedocs&logoColor=white" alt="User Guide"></a>
+    <a href="docs/user/configuration.md"><img src="https://img.shields.io/badge/Configuration-Settings-30363d?style=flat-square&logo=gear&logoColor=white" alt="Configuration"></a>
+    <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/Contributing-Join%20the%20Project-30363d?style=flat-square&logo=github&logoColor=white" alt="Contributing"></a>
+    <a href="CHANGELOG.md"><img src="https://img.shields.io/badge/Changelog-What's%20New-30363d?style=flat-square&logo=keepachangelog&logoColor=white" alt="Changelog"></a>
+  </p>
 
 </div>
 
@@ -61,8 +36,6 @@
 </h2>
 
 <img src="assets/demo.png" alt="demo">
-
-CursorPie puts a radial menu right under your pointer. Hold the middle mouse button (or touch and hold a trackpad), move toward the action you need, then release. No hunting through menus and no need to remember a long list of shortcuts.
 
 A slice can send a keyboard shortcut, open an application, URL or file, run a command, switch a mouse-button mode, or open a submenu. You can keep a general menu and create a different profile for each application.
 
@@ -213,4 +186,4 @@ CursorPie runs locally. It has no account system or telemetry. Its only network 
       License
 </h2>
 
-CursorPie is released under the [MIT License](LICENSE). It uses egui/eframe, tray-icon, serde and image, and is inspired by [Kando](https://github.com/kando-menu/kando).
+CursorPie is released under the [MIT License](LICENSE).

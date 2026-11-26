@@ -20,8 +20,10 @@
 //! a build folder, from an unzipped Windows download or from a folder the user cannot write to is
 //! left alone and the person is sent to the release page (see [`InstallError`]).
 
-use super::{CHECK_TIMEOUT_S, Failure, MAX_ANSWER_BYTES, Version, sha256};
-use crate::about::{APP_NAME, LATEST_RELEASE_API_URL, RELEASES_URL, SELFTEST_ARG};
+use super::{CHECK_TIMEOUT_S, Failure, MAX_ANSWER_BYTES, Version, note_detail, sha256};
+use crate::about::{
+    APP_NAME, LATEST_RELEASE_API_URL, LATEST_RELEASE_URL, RELEASES_URL, SELFTEST_ARG,
+};
 use crate::config::app_support_dir;
 use crate::msg::{Msg, Notifier};
 use crate::platform::http::{self, HttpError};
@@ -33,8 +35,18 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::time::Duration;
 
-/// Longest a download takes before it is given up, in seconds.
-const DOWNLOAD_TIMEOUT_S: u64 = 600;
+/// Longest a download takes before it is given up, in seconds. A transfer that has almost stopped
+/// is given up much sooner (see `Client::download_args` in `platform::http`), so this only bounds a
+/// slow link that still moves: half an hour is 30 MB at 20 KB/s.
+const DOWNLOAD_TIMEOUT_S: u64 = 1800;
+
+/// How many times the download of the package is tried (a broken connection, a package that does
+/// not match its checksum) before the person is told.
+const DOWNLOAD_ATTEMPTS: u64 = 3;
+
+/// How much of the release page is read to find the tag in it (see [`page_release`]). The tag is in
+/// the `<head>`, which is far smaller than this.
+const PAGE_HEAD_BYTES: u64 = 512 * 1024;
 
 /// Biggest package that is downloaded. The packages are a few MiB.
 const MAX_PACKAGE_BYTES: u64 = 200 * 1024 * 1024;
@@ -160,6 +172,11 @@ pub struct Release {
     /// The tag, `v` and the version, or the version alone: the only forms an address is made from.
     pub tag: String,
     pub assets: Vec<Asset>,
+    /// The release was not read from GitHub's API but made from the tag on the release page (the API
+    /// refused: its limit of requests for one address, a proxy). Its `assets` are then the names the
+    /// release workflow gives its files, not a list of what is there, and its checksums can only
+    /// come from the `.sha256` files.
+    pub from_page: bool,
 }
 
 /// A name that is safe in a file path and in an address.
@@ -216,7 +233,89 @@ pub fn parse_release(json: &str) -> Option<Release> {
         version,
         tag,
         assets,
+        from_page: false,
     })
+}
+
+/// The newest release as the release page names it: the tag in the page's own address (the
+/// `<head>` of `releases/latest` holds `.../releases/tag/v0.10.1`). This is the way round when
+/// GitHub's API says no, which it does for every request after the 60th in an hour from one address,
+/// and a school, an office or a mobile operator shares one address between many people. It costs no
+/// request to the API, and the address it reads is a constant ([`LATEST_RELEASE_URL`]); the tag is
+/// checked like any other (see [`tag_in_page`]).
+pub fn page_release() -> Option<(Version, String)> {
+    let head = http::get_head(LATEST_RELEASE_URL, CHECK_TIMEOUT_S, PAGE_HEAD_BYTES).ok()?;
+    tag_in_page(&String::from_utf8_lossy(&head))
+}
+
+/// The first `/releases/tag/<tag>` in `html` whose tag is `vX.Y.Z` or `X.Y.Z` and that ends there
+/// (a pre-release such as `v0.10.1-beta` is not a stable release and is skipped).
+pub fn tag_in_page(html: &str) -> Option<(Version, String)> {
+    const MARK: &str = "/releases/tag/";
+    let mut rest = html;
+    while let Some(at) = rest.find(MARK) {
+        rest = &rest[at + MARK.len()..];
+        let end = rest
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == '.'))
+            .unwrap_or(rest.len());
+        let tag = &rest[..end];
+        let ends_there = rest[end..].chars().next().is_none_or(|c| {
+            matches!(c, '"' | '\'' | '<' | '>' | '?' | '#' | '&') || c.is_whitespace()
+        });
+        if ends_there
+            && let Some(version) = Version::parse(tag)
+            && (tag == format!("v{version}") || tag == version.to_string())
+        {
+            return Some((version, tag.to_string()));
+        }
+    }
+    None
+}
+
+/// A release made from a tag alone (see [`Release::from_page`]): the packages of both builds and
+/// the `.sha256` file of each, under the names the release workflow gives them.
+fn release_from_tag(version: Version, tag: String, standard: &str) -> Release {
+    let mut assets = Vec::new();
+    for build in [Build::Standard, Build::Log] {
+        let name = build_asset(standard, build);
+        assets.push(Asset {
+            name: format!("{name}.sha256"),
+            size: 0,
+            digest: None,
+        });
+        assets.push(Asset {
+            name,
+            size: 0,
+            digest: None,
+        });
+    }
+    Release {
+        version,
+        tag,
+        assets,
+        from_page: true,
+    }
+}
+
+/// The newest stable release: GitHub's API answer, or, when the API cannot be used, the release
+/// that the release page names (see [`page_release`]).
+fn latest_release(standard: &str) -> Result<Release, InstallError> {
+    let failure = match http::get_text(LATEST_RELEASE_API_URL, CHECK_TIMEOUT_S, MAX_ANSWER_BYTES) {
+        Ok(json) => match parse_release(&json) {
+            Some(release) => return Ok(release),
+            None => {
+                note_detail("release API: the answer is not a release");
+                InstallError::Network(Failure::BadAnswer)
+            }
+        },
+        Err(e) => {
+            note_detail(&format!("release API: {}", http::last_detail()));
+            InstallError::from(e)
+        }
+    };
+    page_release()
+        .map(|(version, tag)| release_from_tag(version, tag, standard))
+        .ok_or(failure)
 }
 
 /// The address of a file of `release`: GitHub's own download address for its tag. Made here, never
@@ -306,29 +405,147 @@ pub fn build_asset(standard: &str, build: Build) -> String {
     }
 }
 
+/// Why this copy is not updated in place. Each reason says what is the matter and what the person
+/// can do about it ([`Blocker::explain`]); until now all of them were told as one sentence, "not
+/// installed in the usual way", and the person was left with the release page and a guess.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Blocker {
+    /// The program could not find out where it is.
+    UnknownPath,
+    /// A copy run from a build folder (`target/release`).
+    BuildFolder,
+    /// macOS: the program is not inside a `CursorPie.app`.
+    NotABundle,
+    /// macOS: the app runs from the disk image or from the temporary place macOS makes for an app
+    /// that was opened straight from a download (App Translocation); both are read-only.
+    Translocated,
+    /// Linux: the program file was replaced while it was running (the path ends in `(deleted)`).
+    Replaced,
+    /// Windows: the program runs from this folder, not from the one Setup installs to.
+    OtherFolder(String),
+    /// Windows: `LOCALAPPDATA` is not set.
+    NoProfileFolder,
+    /// The folder of the program cannot be written to (macOS, or Linux without `pkexec`).
+    FolderNotWritable(String),
+    /// Linux: the folder is only writable by an administrator and `pkexec` is not installed.
+    NoPkexec(String),
+    /// Linux: the program belongs to the system's package manager.
+    PackageManaged(String),
+    /// The releases have no package for this system.
+    NoPackage(String),
+}
+
+impl Blocker {
+    /// What is the matter and what to do about it, in sentences for the About tab and the update
+    /// sheet. Every one ends with a way forward; *Download page* is always one of them.
+    pub fn explain(&self) -> String {
+        match self {
+            Blocker::UnknownPath => {
+                "CursorPie could not find out where its program file is, so it cannot replace it. Download the new version from the release page.".to_string()
+            }
+            Blocker::BuildFolder => {
+                "This copy runs from a build folder (target/release), which an update never replaces. Build it again with cargo, or install a release package.".to_string()
+            }
+            Blocker::NotABundle => {
+                "This copy is not inside a CursorPie app, so there is nothing to replace. Install CursorPie from the disk image on the release page.".to_string()
+            }
+            Blocker::Translocated => {
+                "macOS runs this copy from a temporary read-only place because it was opened straight from the download or from the disk image. Drag CursorPie to your Applications folder, start it from there, and update again.".to_string()
+            }
+            Blocker::Replaced => {
+                "The program file was replaced while CursorPie was running (by a package manager or another update). Quit CursorPie and start it again; it can update itself after that.".to_string()
+            }
+            Blocker::OtherFolder(folder) => format!(
+                "This copy runs from {folder}, not from the folder that Setup installs to. Run CursorPie-windows-setup.exe from the release page once; after that CursorPie updates itself."
+            ),
+            Blocker::NoProfileFolder => {
+                "Windows did not tell CursorPie where your program folder is (LOCALAPPDATA is not set), so it cannot find its installed copy. Run CursorPie-windows-setup.exe from the release page.".to_string()
+            }
+            Blocker::FolderNotWritable(folder) => format!(
+                "You cannot write to {folder}, so CursorPie cannot replace itself there. Move CursorPie to a folder you own (for example ~/Applications, or ~/.local/bin on Linux), or update it from an administrator account."
+            ),
+            Blocker::NoPkexec(folder) => format!(
+                "{folder} can only be written by an administrator, and pkexec (polkit) is not installed to ask for the password. Install polkit, or run ./install.sh --user to move CursorPie to ~/.local/bin."
+            ),
+            Blocker::PackageManaged(path) => format!(
+                "{path} belongs to your system's package manager, which is the one to update it (for example apt or dnf). Or run ./install.sh --user to install CursorPie to ~/.local/bin, which it can update itself."
+            ),
+            Blocker::NoPackage(system) => format!(
+                "The releases have no package for this system ({system}) yet, so there is nothing to install. The release page lists what exists."
+            ),
+        }
+    }
+}
+
 /// Where an update of the running copy goes: the app bundle on macOS, the installed `.exe` on
 /// Windows, the program on Linux. `None` when this copy is not an ordinary install: a copy run from
 /// a build folder (`target/release`), from an unzipped Windows download, or a program that was
 /// already replaced. `exe` is the path of the running program, `local_app_data` is `%LOCALAPPDATA%`.
+/// `check_target` says why when it is none.
 pub fn install_target(os: Os, exe: &str, local_app_data: Option<&str>) -> Option<PathBuf> {
+    check_target(os, exe, local_app_data, same_install_path).ok()
+}
+
+/// Whether two Windows paths name the same file: the text is compared first (case and slashes do not
+/// matter), and when it differs both are resolved by the file system, which turns 8.3 short names
+/// (`JOHNDO~1`), junctions and links into the one real path. Without that, an installed copy that
+/// was started through such a path was taken for another copy and never updated (the same trap
+/// `HANDOVER_ARG` in `about.rs` exists for).
+fn same_install_path(a: &str, b: &str) -> bool {
+    let text = |p: &str| p.replace('/', "\\").to_lowercase();
+    text(a) == text(b)
+        || matches!(
+            (fs::canonicalize(a), fs::canonicalize(b)),
+            (Ok(x), Ok(y)) if text(x.to_string_lossy().as_ref()) == text(y.to_string_lossy().as_ref())
+        )
+}
+
+/// [`install_target`] with the reason when there is none. `same` tells whether two paths are the
+/// same file (a parameter so the rule can be tested without a file system).
+fn check_target(
+    os: Os,
+    exe: &str,
+    local_app_data: Option<&str>,
+    same: impl Fn(&str, &str) -> bool,
+) -> Result<PathBuf, Blocker> {
+    let slashes = exe.replace('\\', "/");
+    if slashes.contains("/target/release/") || slashes.contains("/target/debug/") {
+        return Err(Blocker::BuildFolder);
+    }
     match os {
         Os::Mac => {
-            let at = exe.find(".app/Contents/MacOS/")?;
-            Some(PathBuf::from(&exe[..at + ".app".len()]))
+            if exe.contains("/AppTranslocation/") || exe.starts_with("/Volumes/") {
+                return Err(Blocker::Translocated);
+            }
+            let at = exe
+                .find(".app/Contents/MacOS/")
+                .ok_or(Blocker::NotABundle)?;
+            Ok(PathBuf::from(&exe[..at + ".app".len()]))
         }
         Os::Windows => {
-            let local = local_app_data?.trim_end_matches(['\\', '/']);
+            // the file system's own spelling of a path can start with `\\?\`
+            let exe = exe.strip_prefix(r"\\?\").unwrap_or(exe);
+            let local = local_app_data
+                .filter(|l| !l.trim().is_empty())
+                .ok_or(Blocker::NoProfileFolder)?
+                .trim_end_matches(['\\', '/']);
             let installed = format!(r"{local}\Programs\{APP_NAME}\cursorpie.exe");
-            let same = |a: &str, b: &str| {
-                a.replace('/', "\\").to_lowercase() == b.replace('/', "\\").to_lowercase()
-            };
-            same(exe, &installed).then(|| PathBuf::from(exe))
+            if same(exe, &installed) {
+                Ok(PathBuf::from(exe))
+            } else {
+                // by hand: a Windows path is not one on the system the tests run on
+                let folder = exe
+                    .rsplit_once(['\\', '/'])
+                    .map_or(exe, |(folder, _)| folder);
+                Err(Blocker::OtherFolder(folder.to_string()))
+            }
         }
         Os::Linux => {
-            let in_build_folder =
-                exe.contains("/target/release/") || exe.contains("/target/debug/");
-            let replaced = exe.ends_with(" (deleted)");
-            (!in_build_folder && !replaced).then(|| PathBuf::from(exe))
+            if exe.ends_with(" (deleted)") {
+                Err(Blocker::Replaced)
+            } else {
+                Ok(PathBuf::from(exe))
+            }
         }
     }
 }
@@ -341,6 +558,8 @@ pub fn install_target(os: Os, exe: &str, local_app_data: Option<&str>) -> Option
 pub enum InstallError {
     /// The release has no package for this system, or no newer release exists any more.
     NoPackage,
+    /// The release is there but none of its files are: it is still being published.
+    NotPublishedYet,
     /// This copy is not an ordinary install, or its folder cannot be written.
     NotInstalled,
     /// The release gives no checksum to check the download with.
@@ -364,11 +583,14 @@ impl InstallError {
     pub fn explain(self) -> &'static str {
         match self {
             InstallError::NoPackage => "This release has no package for this system.",
+            InstallError::NotPublishedYet => {
+                "The new release is still being published: its files are not all there yet. Try again in a few minutes."
+            }
             InstallError::NotInstalled => {
                 "This copy of CursorPie was not installed in the usual way, or its folder cannot be written."
             }
             InstallError::NoChecksum => {
-                "The release does not publish a checksum to check the download with."
+                "The release does not publish a checksum to check the download with. If it came out a moment ago, its files may still be uploading: try again in a few minutes."
             }
             InstallError::Network(why) => why.explain(),
             InstallError::Corrupt => {
@@ -476,9 +698,38 @@ fn exit_code(program: impl AsRef<std::ffi::OsStr>, args: &[&std::ffi::OsStr]) ->
         .and_then(|s| s.code())
 }
 
+/// The last `max` characters of `text`, trimmed and on one line: the end of what a program said is
+/// the part that names the cause.
+fn tail(text: &str, max: usize) -> String {
+    let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let skip = one_line.chars().count().saturating_sub(max);
+    one_line.chars().skip(skip).collect()
+}
+
 /// Starts `program --selftest` (see [`SELFTEST_ARG`]): whether the program runs on this system.
+/// When it does not, what it said (a missing library, a C library that is too old) is kept for the
+/// person (see [`note_detail`]): "does not start on this system" alone cannot be acted on.
 fn starts(program: &Path) -> bool {
-    succeeds(program, &[std::ffi::OsStr::new(SELFTEST_ARG)])
+    let output = Command::new(program)
+        .arg(SELFTEST_ARG)
+        .stdin(Stdio::null())
+        .output();
+    match output {
+        Ok(out) if out.status.success() => true,
+        Ok(out) => {
+            let said = String::from_utf8_lossy(&out.stderr);
+            note_detail(&format!(
+                "the new program ended with {:?} when started to test it: {}",
+                out.status.code(),
+                tail(&said, 300)
+            ));
+            false
+        }
+        Err(e) => {
+            note_detail(&format!("the new program could not be started: {e}"));
+            false
+        }
+    }
 }
 
 /// macOS: copies `CursorPie.app` out of the disk image to `target`'s folder and starts it once.
@@ -504,6 +755,7 @@ fn stage_mac(package: &Path, target: &Path, dir: &Path) -> Result<PathBuf, Insta
     let attached = exit_code("hdiutil", &args);
     if attached != Some(0) {
         diag::log!("ui", "unpack_failed", step = "attach", code = attached);
+        note_detail(&format!("hdiutil attach ended with {attached:?}"));
         return Err(InstallError::Unpack);
     }
     let staged = sibling(target, NEW_SUFFIX);
@@ -546,6 +798,7 @@ fn copy_app(app: &Path, staged: &Path) -> Result<(), InstallError> {
         Ok(())
     } else {
         diag::log!("ui", "unpack_failed", step = "copy", code = copied);
+        note_detail(&format!("ditto ended with {copied:?}"));
         let _ = fs::remove_dir_all(staged);
         Err(InstallError::Unpack)
     }
@@ -561,14 +814,19 @@ fn stage_linux(
 ) -> Result<PathBuf, InstallError> {
     use std::ffi::OsStr;
     let unpacked = dir.join("unpacked");
-    fs::create_dir_all(&unpacked).map_err(|_| InstallError::Unpack)?;
+    fs::create_dir_all(&unpacked).map_err(|e| {
+        note_detail(&format!("making {}: {e}", unpacked.display()));
+        InstallError::Unpack
+    })?;
     let args = [
         OsStr::new("-xzf"),
         package.as_os_str(),
         OsStr::new("-C"),
         unpacked.as_os_str(),
     ];
-    if !succeeds("tar", &args) {
+    let untarred = exit_code("tar", &args);
+    if untarred != Some(0) {
+        note_detail(&format!("tar ended with {untarred:?}"));
         return Err(InstallError::Unpack);
     }
     // the archive holds one folder, `cursorpie-<version>-linux-<arch>`, with the program in it
@@ -584,7 +842,10 @@ fn stage_linux(
         sibling(target, NEW_SUFFIX)
     };
     let _ = fs::remove_file(&staged);
-    fs::copy(&found, &staged).map_err(|_| InstallError::Unpack)?;
+    fs::copy(&found, &staged).map_err(|e| {
+        note_detail(&format!("copying the program to {}: {e}", staged.display()));
+        InstallError::Unpack
+    })?;
     if crate::platform::make_executable(&staged).is_err() || !starts(&staged) {
         let _ = fs::remove_file(&staged);
         return Err(InstallError::SelfTest);
@@ -685,7 +946,15 @@ pub(crate) fn expected_checksum(release: &Release, asset: &Asset) -> Result<Stri
         return Err(InstallError::NoChecksum);
     }
     let url = asset_url(release, &sidecar);
-    let text = http::get_text(&url, CHECK_TIMEOUT_S, MAX_CHECKSUM_BYTES)?;
+    let text = http::get_text(&url, CHECK_TIMEOUT_S, MAX_CHECKSUM_BYTES).map_err(|e| {
+        note_detail(&format!("{sidecar}: {}", http::last_detail()));
+        // a release known only by its tag may simply have no such file (an older release)
+        if release.from_page {
+            InstallError::NoChecksum
+        } else {
+            InstallError::from(e)
+        }
+    })?;
     parse_checksum_file(&text).ok_or(InstallError::NoChecksum)
 }
 
@@ -720,27 +989,54 @@ fn package_managed(path: &Path) -> bool {
     .any(|dir| path.starts_with(dir))
 }
 
-/// [`installable_here`] with the way the swap is done. A Linux copy in a folder the person cannot
-/// write to (`/usr/local/bin`, where `install.sh` puts it without `--user`) is updated with the
-/// administrator's password when `pkexec` is there and the program is not the package manager's.
-pub fn install_plan() -> Option<InstallPlan> {
+/// [`installable_here`] with the way the swap is done, or the reason there is none (see
+/// [`Blocker`]). A Linux copy in a folder the person cannot write to (`/usr/local/bin`, where
+/// `install.sh` puts it without `--user`) is updated with the administrator's password when
+/// `pkexec` is there and the program is not the package manager's.
+///
+/// # Errors
+///
+/// The [`Blocker`] that says why this copy is not updated in place.
+pub fn install_check() -> Result<InstallPlan, Blocker> {
     let os = platform::OS;
-    let exe = std::env::current_exe().ok()?;
+    let exe = std::env::current_exe().map_err(|_| Blocker::UnknownPath)?;
     let local = std::env::var("LOCALAPPDATA").ok();
-    let target = install_target(os, &exe.to_string_lossy(), local.as_deref())?;
-    let writable = os == Os::Windows || target.parent().is_some_and(can_write);
-    if writable {
-        return Some(InstallPlan {
+    let target = check_target(
+        os,
+        &exe.to_string_lossy(),
+        local.as_deref(),
+        same_install_path,
+    )?;
+    let os_release = fs::read_to_string("/etc/os-release").unwrap_or_default();
+    let arch = std::env::consts::ARCH;
+    if asset_name(os, arch, &os_release).is_none() {
+        return Err(Blocker::NoPackage(format!("{os:?} {arch}")));
+    }
+    let folder = target_folder(&target).display().to_string();
+    if os == Os::Windows || target.parent().is_some_and(can_write) {
+        return Ok(InstallPlan {
             target,
             needs_password: false,
         });
     }
-    (os == Os::Linux && Path::new(PKEXEC).is_file() && !package_managed(&target)).then_some(
-        InstallPlan {
-            target,
-            needs_password: true,
-        },
-    )
+    if os != Os::Linux {
+        return Err(Blocker::FolderNotWritable(folder));
+    }
+    if package_managed(&target) {
+        return Err(Blocker::PackageManaged(target.display().to_string()));
+    }
+    if !Path::new(PKEXEC).is_file() {
+        return Err(Blocker::NoPkexec(folder));
+    }
+    Ok(InstallPlan {
+        target,
+        needs_password: true,
+    })
+}
+
+/// [`install_check`] without the reason.
+pub fn install_plan() -> Option<InstallPlan> {
+    install_check().ok()
 }
 
 /// Downloads the newest release's package for this system, checks it and stages it. Blocks for as
@@ -767,17 +1063,20 @@ pub fn prepare() -> Result<Staged, InstallError> {
 /// See [`prepare`].
 pub fn prepare_with(want: Want) -> Result<Staged, InstallError> {
     reset_progress();
+    super::clear_detail();
     let os = platform::OS;
     let InstallPlan {
         target,
         needs_password,
-    } = install_plan().ok_or(InstallError::NotInstalled)?;
+    } = install_check().map_err(|why| {
+        note_detail(&why.explain());
+        InstallError::NotInstalled
+    })?;
     let os_release = fs::read_to_string("/etc/os-release").unwrap_or_default();
     let standard =
         asset_name(os, std::env::consts::ARCH, &os_release).ok_or(InstallError::NoPackage)?;
 
-    let json = http::get_text(LATEST_RELEASE_API_URL, CHECK_TIMEOUT_S, MAX_ANSWER_BYTES)?;
-    let release = parse_release(&json).ok_or(InstallError::Network(Failure::BadAnswer))?;
+    let release = latest_release(standard)?;
     let newer = Version::current().is_some_and(|current| {
         release.version > current || (want.same_version && release.version == current)
     });
@@ -795,14 +1094,23 @@ pub fn prepare_with(want: Want) -> Result<Staged, InstallError> {
         Build::Standard => (Build::Standard, standard.to_string()),
     };
     let name = name.as_str();
-    let asset = release
-        .assets
-        .iter()
-        .find(|a| a.name == name)
-        .ok_or(InstallError::NoPackage)?;
+    let Some(asset) = release.assets.iter().find(|a| a.name == name) else {
+        // a release that is still being uploaded has none of its packages yet: that is a matter of
+        // waiting, not of this system having no package
+        let any_package = release
+            .assets
+            .iter()
+            .any(|a| a.name.starts_with("CursorPie-"));
+        return Err(if any_package {
+            InstallError::NoPackage
+        } else {
+            InstallError::NotPublishedYet
+        });
+    };
     let expected = expected_checksum(&release, asset)?;
 
     let dir = fresh_updates_dir().map_err(|e| {
+        note_detail(&format!("making the updates folder: {e}"));
         if platform::is_disk_full(&e) {
             InstallError::NoSpace
         } else {
@@ -828,24 +1136,62 @@ pub fn prepare_with(want: Want) -> Result<Staged, InstallError> {
             e
         }
     };
-    if let Err(e) = download_watched(&url, &package, asset.size) {
-        return Err(failed(InstallError::from(e)));
+    fetch_package(&url, &package, asset.size, &expected).map_err(&failed)?;
+    set_step(Step::Preparing);
+    stage(
+        release.version,
+        build,
+        os,
+        package,
+        target.clone(),
+        &dir,
+        needs_password,
+    )
+    .map_err(failed)
+}
+
+/// Downloads the package and checks it, up to [`DOWNLOAD_ATTEMPTS`] times: a connection that broke
+/// half way, or a download that is not the file the release published (a proxy that rewrote it, a
+/// mirror that was not finished), is nearly always right on the next try, and the person had to
+/// press *Try again* by hand. A missing `curl` and `wget`, and a file that is too big, are not tried
+/// again: the next try would end the same way.
+fn fetch_package(url: &str, package: &Path, size: u64, expected: &str) -> Result<(), InstallError> {
+    let mut failure = InstallError::Network(Failure::Unreachable);
+    for attempt in 0..DOWNLOAD_ATTEMPTS {
+        if attempt > 0 {
+            // 2 s, then 4 s: long enough for a router or a proxy to be done with a hiccup
+            std::thread::sleep(Duration::from_secs(2 * attempt));
+        }
+        match download_watched(url, package, size) {
+            Ok(()) => {}
+            Err(e @ (HttpError::NoClient | HttpError::BadAnswer)) => {
+                note_detail(&format!("download: {}", http::last_detail()));
+                return Err(InstallError::from(e));
+            }
+            Err(e) => {
+                note_detail(&format!(
+                    "download, try {} of {DOWNLOAD_ATTEMPTS}: {}",
+                    attempt + 1,
+                    http::last_detail()
+                ));
+                failure = InstallError::from(e);
+                continue;
+            }
+        }
+        set_step(Step::Checking);
+        match verify(package, size, expected) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                note_detail(&format!(
+                    "the download is not the published file (try {} of {DOWNLOAD_ATTEMPTS})",
+                    attempt + 1
+                ));
+                let _ = fs::remove_file(package);
+                failure = e;
+            }
+        }
     }
-    set_step(Step::Checking);
-    verify(&package, asset.size, &expected)
-        .and_then(|()| {
-            set_step(Step::Preparing);
-            stage(
-                release.version,
-                build,
-                os,
-                package,
-                target.clone(),
-                &dir,
-                needs_password,
-            )
-        })
-        .map_err(failed)
+    Err(failure)
 }
 
 // ---------------------------------------------------------------------------- progress
@@ -1495,6 +1841,7 @@ mod tests {
     fn every_error_has_its_own_sentence() {
         let all = [
             InstallError::NoPackage,
+            InstallError::NotPublishedYet,
             InstallError::NotInstalled,
             InstallError::NoChecksum,
             InstallError::Network(Failure::Unreachable),
@@ -1532,6 +1879,209 @@ mod tests {
         for var in ["$pid", "$staged", "$target", "$mode", "$old"] {
             assert!(!s.contains(&format!(" {var} ")), "{var} unquoted");
         }
+    }
+
+    const WIN_LOCAL: Option<&str> = Some(r"C:\Users\Ann\AppData\Local");
+    const WIN_INSTALLED: &str = r"C:\Users\Ann\AppData\Local\Programs\CursorPie\cursorpie.exe";
+
+    /// A path rule with no file system: only the text counts.
+    fn text_only(a: &str, b: &str) -> bool {
+        a.replace('/', "\\").to_lowercase() == b.replace('/', "\\").to_lowercase()
+    }
+
+    #[test]
+    fn every_reason_a_copy_is_not_updated_says_what_to_do() {
+        let all = [
+            Blocker::UnknownPath,
+            Blocker::BuildFolder,
+            Blocker::NotABundle,
+            Blocker::Translocated,
+            Blocker::Replaced,
+            Blocker::OtherFolder(r"C:\Users\Ann\Downloads\CursorPie".into()),
+            Blocker::NoProfileFolder,
+            Blocker::FolderNotWritable("/Applications".into()),
+            Blocker::NoPkexec("/usr/local/bin".into()),
+            Blocker::PackageManaged("/usr/bin/cursorpie".into()),
+            Blocker::NoPackage("Linux aarch64".into()),
+        ];
+        for (i, a) in all.iter().enumerate() {
+            let text = a.explain();
+            assert!(text.ends_with('.'), "{text}");
+            assert!(
+                text.len() > 60,
+                "a reason is a sentence, not a label: {text}"
+            );
+            for b in &all[i + 1..] {
+                assert_ne!(text, b.explain());
+            }
+        }
+        // the folder or the path that is the matter is named, so it can be acted on
+        assert!(
+            Blocker::FolderNotWritable("/Applications".into())
+                .explain()
+                .contains("/Applications")
+        );
+        assert!(
+            Blocker::OtherFolder(r"C:\Temp\x".into())
+                .explain()
+                .contains(r"C:\Temp\x")
+        );
+    }
+
+    #[test]
+    fn a_macos_app_opened_from_the_download_or_the_image_is_told_apart() {
+        let translocated = "/private/var/folders/ab/xyz/AppTranslocation/1234/d/CursorPie.app/Contents/MacOS/CursorPie";
+        assert_eq!(
+            check_target(Os::Mac, translocated, None, text_only),
+            Err(Blocker::Translocated)
+        );
+        let image = "/Volumes/CursorPie/CursorPie.app/Contents/MacOS/CursorPie";
+        assert_eq!(
+            check_target(Os::Mac, image, None, text_only),
+            Err(Blocker::Translocated)
+        );
+        assert_eq!(
+            check_target(Os::Mac, "/opt/bin/cursorpie", None, text_only),
+            Err(Blocker::NotABundle)
+        );
+    }
+
+    #[test]
+    fn a_build_folder_is_named_on_every_system() {
+        for (os, exe) in [
+            (Os::Mac, "/Users/ann/cursorpie/target/release/cursorpie"),
+            (Os::Linux, "/home/ann/cursorpie/target/debug/cursorpie"),
+            (
+                Os::Windows,
+                r"C:\src\cursorpie\target\release\cursorpie.exe",
+            ),
+        ] {
+            assert_eq!(
+                check_target(os, exe, WIN_LOCAL, text_only),
+                Err(Blocker::BuildFolder),
+                "{exe}"
+            );
+        }
+    }
+
+    #[test]
+    fn windows_says_which_folder_it_runs_from_and_accepts_the_file_systems_spelling() {
+        let unzipped = r"C:\Users\Ann\Downloads\CursorPie\cursorpie.exe";
+        assert_eq!(
+            check_target(Os::Windows, unzipped, WIN_LOCAL, text_only),
+            Err(Blocker::OtherFolder(
+                r"C:\Users\Ann\Downloads\CursorPie".into()
+            ))
+        );
+        assert_eq!(
+            check_target(Os::Windows, WIN_INSTALLED, None, text_only),
+            Err(Blocker::NoProfileFolder)
+        );
+        assert_eq!(
+            check_target(Os::Windows, WIN_INSTALLED, Some("  "), text_only),
+            Err(Blocker::NoProfileFolder),
+            "an empty profile folder is none"
+        );
+        // `\\?\` is how the file system spells a path it resolved
+        let verbatim = format!(r"\\?\{WIN_INSTALLED}");
+        assert_eq!(
+            check_target(Os::Windows, &verbatim, WIN_LOCAL, text_only),
+            Ok(PathBuf::from(WIN_INSTALLED))
+        );
+        // the same file under another spelling (a short name, a junction) is told by the resolver
+        let short = r"C:\Users\ANN~1\AppData\Local\Programs\CursorPie\cursorpie.exe";
+        let resolves = |a: &str, b: &str| text_only(a, b) || (a == short && b == WIN_INSTALLED);
+        assert!(check_target(Os::Windows, short, WIN_LOCAL, resolves).is_ok());
+    }
+
+    #[test]
+    fn a_program_replaced_while_it_runs_is_told_apart_from_other_linux_copies() {
+        assert_eq!(
+            check_target(
+                Os::Linux,
+                "/usr/local/bin/cursorpie (deleted)",
+                None,
+                text_only
+            ),
+            Err(Blocker::Replaced)
+        );
+        assert!(check_target(Os::Linux, "/usr/local/bin/cursorpie", None, text_only).is_ok());
+    }
+
+    #[test]
+    fn the_release_page_names_the_newest_release_in_its_head() {
+        let head = r#"<html><head><meta property="og:url" content="https://github.com/sebastvnd/cursorpie/releases/tag/v0.10.1"><link rel="canonical" href="https://github.com/sebastvnd/cursorpie/releases/tag/v0.10.1">"#;
+        let (version, tag) = tag_in_page(head).expect("a tag");
+        assert_eq!(
+            (version, tag.as_str()),
+            (Version::parse("0.10.1").unwrap(), "v0.10.1")
+        );
+        // a tag without the v is as good
+        let plain = r#"<a href="/sebastvnd/cursorpie/releases/tag/0.9.0">"#;
+        assert_eq!(
+            tag_in_page(plain).map(|(_, t)| t),
+            Some("0.9.0".to_string())
+        );
+    }
+
+    #[test]
+    fn a_pre_release_or_a_page_without_a_tag_is_never_taken_for_a_release() {
+        let none = |html: &str| assert_eq!(tag_in_page(html), None, "{html}");
+        none(r#"<a href="/x/releases/tag/v0.10.1-beta">"#);
+        none(r#"<a href="/x/releases/tag/v0.10.1-rc1">"#);
+        none(r#"<a href="/x/releases/tag/latest">"#);
+        none(r#"<a href="/x/releases/tag/v1.2">"#);
+        none("<html>rate limited</html>");
+        none("");
+        // a pre-release first and a stable release after it: the stable one is the answer
+        let both = r#"<a href="/x/releases/tag/v0.11.0-beta"><a href="/x/releases/tag/v0.10.1">"#;
+        assert_eq!(
+            tag_in_page(both).map(|(_, t)| t),
+            Some("v0.10.1".to_string())
+        );
+    }
+
+    #[test]
+    fn a_release_known_only_by_its_tag_names_both_builds_and_their_checksums() {
+        let v = Version::parse("0.10.1").unwrap();
+        let r = release_from_tag(v, "v0.10.1".into(), "CursorPie-windows-setup.exe");
+        assert!(r.from_page);
+        let names: Vec<&str> = r.assets.iter().map(|a| a.name.as_str()).collect();
+        for want in [
+            "CursorPie-windows-setup.exe",
+            "CursorPie-windows-setup.exe.sha256",
+            "CursorPie-devlog-windows-setup.exe",
+            "CursorPie-devlog-windows-setup.exe.sha256",
+        ] {
+            assert!(names.contains(&want), "{want} in {names:?}");
+        }
+        // no digest is invented: the checksum comes from the .sha256 file or not at all
+        assert!(r.assets.iter().all(|a| a.digest.is_none() && a.size == 0));
+        let package = r
+            .assets
+            .iter()
+            .find(|a| a.name == "CursorPie-windows-setup.exe")
+            .unwrap();
+        assert_eq!(
+            asset_url(&r, &package.name),
+            format!("{RELEASES_URL}/download/v0.10.1/CursorPie-windows-setup.exe")
+        );
+    }
+
+    #[test]
+    fn the_end_of_what_a_program_said_is_kept_on_one_line() {
+        assert_eq!(tail("a\n  b\n\tc", 100), "a b c");
+        assert_eq!(tail("one two three four", 10), "three four");
+        assert_eq!(tail("", 10), "");
+        // characters, not bytes: a cut never lands inside one
+        assert_eq!(tail("ééééé", 2), "éé");
+    }
+
+    #[test]
+    fn a_failed_selftest_keeps_what_the_program_said() {
+        super::super::clear_detail();
+        assert!(!starts(Path::new("/nonexistent/cursorpie-selftest")));
+        assert!(super::super::last_detail().contains("could not be started"));
     }
 
     #[test]

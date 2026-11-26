@@ -1,7 +1,9 @@
 //! Running apps and the pointer: frontmost app, app under the pointer, app icons, activation.
 //!
 //! The **app id** of a window is the lower-case file name of its process's executable
-//! (`chrome.exe`). UWP apps all report `applicationframehost.exe`.
+//! (`chrome.exe`). The window of a Store (UWP) app belongs to `ApplicationFrameHost.exe`, which is
+//! the same program for all of them, so the app's own process is looked up inside the frame (see
+//! `app_pid_of`).
 
 use super::dpi::{last_scale, scale_at_physical};
 use super::util::{
@@ -36,11 +38,11 @@ use windows_sys::Win32::System::Threading::{
 use windows_sys::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows_sys::Win32::UI::Shell::{SHFILEINFOW, SHGFI_ICON, SHGFI_LARGEICON, SHGetFileInfoW};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, DestroyIcon, EnumWindows, GA_ROOT, GW_OWNER, GWL_EXSTYLE, GetAncestor,
-    GetClassNameW, GetCursorPos, GetForegroundWindow, GetIconInfo, GetWindow, GetWindowLongW,
-    GetWindowRect, GetWindowTextLengthW, GetWindowThreadProcessId, HICON, ICONINFO, IsIconic,
-    IsWindowVisible, IsZoomed, PrivateExtractIconsW, SW_MAXIMIZE, SW_RESTORE, SWP_NOACTIVATE,
-    SWP_NOOWNERZORDER, SWP_NOZORDER, SetForegroundWindow, SetWindowPos, ShowWindow,
+    BringWindowToTop, DestroyIcon, EnumChildWindows, EnumWindows, GA_ROOT, GW_OWNER, GWL_EXSTYLE,
+    GetAncestor, GetClassNameW, GetCursorPos, GetForegroundWindow, GetIconInfo, GetWindow,
+    GetWindowLongW, GetWindowRect, GetWindowTextLengthW, GetWindowThreadProcessId, HICON, ICONINFO,
+    IsIconic, IsWindowVisible, IsZoomed, PrivateExtractIconsW, SW_MAXIMIZE, SW_RESTORE,
+    SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOZORDER, SetForegroundWindow, SetWindowPos, ShowWindow,
     WS_EX_DLGMODALFRAME, WS_EX_TOOLWINDOW, WindowFromPoint,
 };
 
@@ -73,6 +75,61 @@ fn app_id_of_pid(pid: u32) -> Option<String> {
     exe_id_from_path(&exe_path_of_pid(pid)?)
 }
 
+/// App id of process `pid`, and the program file is remembered for it.
+///
+/// An app id is only a file name, and the icon of an app that is not running any more can be found
+/// only if its folder is known (see [`super::apppath`]). A program that is in front is running, so
+/// this is the moment its folder is certain: without it the icon of an app that is not in the Start
+/// menu (a portable program, a game, a Store app) is not found once the app is closed, and the
+/// intelligent pie, which suggests apps that are closed, has nothing to draw for it.
+fn app_id_and_remember(pid: u32) -> Option<String> {
+    let path = exe_path_of_pid(pid)?;
+    let id = exe_id_from_path(&path)?;
+    super::apppath::remember(&path);
+    Some(id)
+}
+
+/// The process whose program is the app behind the top-level window `root`.
+///
+/// A window of a Store (UWP) app belongs to `ApplicationFrameHost.exe`, the same program for the
+/// Settings, the Calculator, Photos and every other app of its kind, so going by the window's
+/// process makes them all one app, with the icon of the host. The app's own window is a child of the
+/// frame (class `Windows.UI.Core.CoreWindow`) and belongs to the app's process: that process is
+/// returned instead. Anything that is not such a frame, and a frame whose app window cannot be found
+/// (a suspended app), is answered by the process of the window itself.
+fn app_pid_of(root: HWND) -> u32 {
+    let own = pid_of(root);
+    if !super::util::is_uwp_frame_class(&class_of(root)) {
+        return own;
+    }
+    let mut find = CoreWindowFind {
+        host: own,
+        found: 0,
+    };
+    // SAFETY: the callback only runs during `EnumChildWindows`; `find` outlives it.
+    unsafe { EnumChildWindows(root, Some(pick_core_window), &mut find as *mut _ as LPARAM) };
+    if find.found != 0 { find.found } else { own }
+}
+
+/// What [`pick_core_window`] looks for and what it found.
+struct CoreWindowFind {
+    /// The process of the frame: a window of that process is not the app's.
+    host: u32,
+    /// The process of the app's window, 0 until found.
+    found: u32,
+}
+
+unsafe extern "system" fn pick_core_window(hwnd: HWND, data: LPARAM) -> i32 {
+    // SAFETY: `data` is the `CoreWindowFind` passed by `app_pid_of`, alive during the enumeration.
+    let find = unsafe { &mut *(data as *mut CoreWindowFind) };
+    let pid = pid_of(hwnd);
+    if pid != 0 && pid != find.host && super::util::is_core_window_class(&class_of(hwnd)) {
+        find.found = pid;
+        return 0; // found: stop
+    }
+    1
+}
+
 /// App id of the application in front.
 pub fn frontmost_bundle_id() -> Option<String> {
     // SAFETY: plain query.
@@ -80,7 +137,7 @@ pub fn frontmost_bundle_id() -> Option<String> {
     if hwnd.is_null() {
         return None;
     }
-    app_id_of_pid(pid_of(hwnd))
+    app_id_and_remember(app_pid_of(hwnd))
 }
 
 /// Whether the token behind `token` (open with `TOKEN_QUERY`) belongs to an elevated process.
@@ -207,11 +264,10 @@ pub fn bundle_id_at(p: Point) -> Option<String> {
         if is_shell_surface(&class_of(root)) {
             return None;
         }
-        let pid = pid_of(root);
-        if pid == GetCurrentProcessId() {
+        if pid_of(root) == GetCurrentProcessId() {
             return None;
         }
-        app_id_of_pid(pid)
+        app_id_and_remember(app_pid_of(root))
     }
 }
 

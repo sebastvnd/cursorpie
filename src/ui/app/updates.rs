@@ -20,7 +20,6 @@ impl App {
         };
         let today = update::day_number(SystemTime::now());
         let state = update::load_state();
-        let plan = install::install_plan();
         // developer mode is device state: read it again each time Settings opens, and forget the
         // log that was read before
         self.ed.dev_on = crate::devmode::is_on();
@@ -28,8 +27,7 @@ impl App {
         self.ed.dev_read_at = None;
         self.ed.dev_note = None;
         self.ed.dev_spec = crate::devmode::log_spec().unwrap_or_default();
-        self.ed.update_can_install = plan.is_some();
-        self.ed.update_needs_password = plan.is_some_and(|p| p.needs_password);
+        self.refresh_install_plan();
         // a check or an install that is still running keeps its say: its answer comes by message
         if !Self::update_busy(self.ed.update) {
             self.ed.update = match state.latest_version() {
@@ -49,12 +47,36 @@ impl App {
         }
     }
 
+    /// Finds out again whether this copy can update itself, and if not why not. Called when Settings
+    /// opens, when *Check now* is pressed and after an install failed, so a folder that was not
+    /// writable a minute ago, or a program file that was replaced since, never leaves the About tab
+    /// with an answer that is out of date until Settings is opened again.
+    pub(crate) fn refresh_install_plan(&mut self) {
+        match install::install_check() {
+            Ok(plan) => {
+                self.ed.update_can_install = true;
+                self.ed.update_needs_password = plan.needs_password;
+                self.ed.update_blocker = None;
+            }
+            Err(why) => {
+                diag::log!("ui", "update_blocked");
+                self.ed.update_can_install = false;
+                self.ed.update_needs_password = false;
+                self.ed.update_blocker = Some(why);
+            }
+        }
+    }
+
     /// Looks for a newer release on a worker thread; the answer arrives as `Msg::UpdateChecked`.
     /// `manual` is true for the *Check now* button. Does nothing while a check is already running.
     pub(crate) fn start_update_check(&mut self, ctx: &egui::Context, manual: bool) {
         if Self::update_busy(self.ed.update) {
             return;
         }
+        if manual {
+            self.refresh_install_plan();
+        }
+        self.ed.update_detail.clear();
         self.ed.update = Status::Checking;
         let notifier = Notifier {
             tx: self.tx.clone(),
@@ -76,6 +98,11 @@ impl App {
             Ok(found) if current.is_some_and(|c| found > c) => Status::Available(found),
             Ok(_) => Status::UpToDate,
             Err(why) => Status::Failed(why),
+        };
+        self.ed.update_detail = if matches!(self.ed.update, Status::Failed(_)) {
+            update::last_detail()
+        } else {
+            String::new()
         };
         if manual {
             let text = match self.ed.update {
@@ -120,6 +147,7 @@ impl App {
         };
         diag::log!("ui", "update_install");
         self.ed.update_offer = None;
+        self.ed.update_detail.clear();
         self.ed.update = Status::Downloading(version);
         self.say(format!("Downloading CursorPie {version}..."));
         let notifier = Notifier {
@@ -188,6 +216,11 @@ impl App {
             (Err(why), Status::Downloading(version)) => {
                 self.ed.dev_leaving = false;
                 self.ed.update = Status::InstallFailed(version, why);
+                self.ed.update_detail = update::last_detail();
+                // the copy may have changed since Settings opened (the folder, the program file)
+                if why == install::InstallError::NotInstalled {
+                    self.refresh_install_plan();
+                }
                 self.say("Could not install the update.");
             }
             _ => {}
@@ -219,6 +252,8 @@ impl App {
                 self.ed.dev_leaving = false;
                 self.ed.update_staged = None;
                 self.ed.update = Status::InstallFailed(staged.version, why);
+                self.ed.update_detail =
+                    "the step that replaces the program could not be started".to_string();
                 self.say("Could not start the update.");
             }
         }

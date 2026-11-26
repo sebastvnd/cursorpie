@@ -20,6 +20,18 @@ pub fn exe_id_from_path(path: &str) -> Option<String> {
     (!name.is_empty()).then(|| name.to_ascii_lowercase())
 }
 
+/// Whether a window class is the frame that `ApplicationFrameHost.exe` draws around a Store (UWP)
+/// app.
+pub fn is_uwp_frame_class(class: &str) -> bool {
+    class == "ApplicationFrameWindow"
+}
+
+/// Whether a window class is the window a Store (UWP) app draws its content in, inside the frame of
+/// [`is_uwp_frame_class`]. It belongs to the process of the app, not to the host.
+pub fn is_core_window_class(class: &str) -> bool {
+    class == "Windows.UI.Core.CoreWindow"
+}
+
 /// The app id that the text of an "Open app" slice stands for, to find that app among the running
 /// ones: `chrome`, `Chrome.exe` and `C:\Tools\Chrome.exe` all give `chrome.exe`. The text is what
 /// `ShellExecuteW` accepts, which is more than an executable name (`chrome` is resolved through App
@@ -659,6 +671,14 @@ mod tests {
         );
         assert_eq!(from_wide(&[104, 105]), "hi", "no terminator needed");
         assert_eq!(wide(""), vec![0]);
+    }
+
+    #[test]
+    fn the_windows_of_a_store_app_are_told_by_their_class() {
+        assert!(is_uwp_frame_class("ApplicationFrameWindow"));
+        assert!(!is_uwp_frame_class("Chrome_WidgetWin_1"));
+        assert!(is_core_window_class("Windows.UI.Core.CoreWindow"));
+        assert!(!is_core_window_class("ApplicationFrameWindow"));
     }
 
     #[test]

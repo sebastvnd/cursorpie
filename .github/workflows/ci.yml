@@ -625,12 +625,33 @@ jobs:
           for name in cpd-macos-universal cpd-windows-x86_64.exe cpd-linux-x86_64; do
             sha256sum "$name" > "$name.sha256"
           done
+      # A checksum file for every package, not only for the macOS image: the update checks a download
+      # against the `digest` GitHub publishes for it and, when the release answer lacks that (GitHub's
+      # API refused, a file that was just uploaded), against this file (`expected_checksum` in
+      # src/update/install.rs). With neither, nothing is installed.
+      - name: Checksums of the packages
+        run: |
+          cd release-assets
+          for name in CursorPie-*; do
+            case "$name" in *.sha256) continue ;; esac
+            test -f "$name.sha256" || sha256sum "$name" > "$name.sha256"
+          done
+          ls -1 CursorPie-*.sha256
+      # The release is made as a draft and made public only when every file is on it. A public release
+      # is "the newest" at once, and the update check of every running CursorPie asks for the newest:
+      # while the files were still being uploaded it found a release with no package or no checksum for
+      # its system, and the person saw an update that could not be installed.
       - name: Publish release assets
         uses: softprops/action-gh-release@v2
         with:
           files: release-assets/*
           fail_on_unmatched_files: true
           generate_release_notes: true
+          draft: true
+      - name: Make the release public
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false --repo "$GITHUB_REPOSITORY"
 
   # The one check to require. It runs whatever happened before: it fails when a job failed or was
   # cancelled (a skipped job is fine: its content has passed before), and when everything is green it

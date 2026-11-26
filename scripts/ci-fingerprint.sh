@@ -45,6 +45,7 @@ SITE=(
     ':(exclude)README-WEBSITE.md'
     ':(exclude,glob)google*.html'
     ':(exclude)flowhub'
+    ':(exclude)developer'
     ':(exclude).github/workflows/static.yml'
     ':(exclude).github/pull_request_template.md'
 )

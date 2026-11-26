@@ -37,6 +37,7 @@ const SITE: &[&str] = &[
     "README-WEBSITE.md",
     "google*.html",
     "flowhub",
+    "developer",
     ".github/workflows/static.yml",
     ".github/pull_request_template.md",
 ];

@@ -19,7 +19,7 @@ This page says how to use it, what it learns, and what it never does.
 
 ## Quick start
 
-1. Open **Settings > Behavior > Intelligent** and switch **Learn and suggest** on. It is off until you do: nothing is
+1. The last page of the welcome guide offers to turn it on. Otherwise open **Settings > Behavior > Intelligent** and switch **Learn and suggest** on. It is off until you do: nothing is
    observed or stored before that. Press **Save**.
 2. Use your computer as usual for a day or two. Press **Learn now** whenever you want to see what was picked up
    (the page says *how many apps, pages and actions*).
@@ -227,6 +227,7 @@ everything** act at once. The same fields live in the `smart` object of `config.
 | The pie says *Nothing to suggest* | The sources that are on have nothing: check that the browser extension is connected for pages, or switch more sources on |
 | An app has an odd name | Names come from the installed apps at tidy-up: press **Learn now** |
 | An app or a site should never appear | Add it to the ignore lists; it disappears at the next tidy-up (**Learn now** for at once) |
+| (Windows) The suggestions are the same for everyone, or have no icon | Update to a version with the Store-app and shell fix, then press **Learn now**: the Start menu, search and `ApplicationFrameHost` are no longer learned, and ones learned before are dropped at the tidy-up. An app's icon is found once the app has been in front (its folder is remembered); sites need the [browser extension](../BROWSER_EXTENSION.md) |
 | An intelligent slice does not open | It has nothing to suggest, or Learn and suggest is off |
 
 ## See also

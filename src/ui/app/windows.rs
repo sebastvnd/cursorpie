@@ -652,14 +652,15 @@ impl App {
         crate::config::mark_welcomed();
         // a trackpad found at the first start switched its hold on; this is where it is written
         crate::tap::save_first_start_trackpad();
-        let (apply, login, open_settings, picks) = match &self.welcome {
+        let (apply, login, open_settings, picks, intelligent) = match &self.welcome {
             Some(w) => (
                 w.apply,
                 w.launch_at_login,
                 w.open_settings_after,
                 w.picks.clone(),
+                w.intelligent,
             ),
-            None => (false, false, false, Vec::new()),
+            None => (false, false, false, Vec::new(), false),
         };
         // what the person said they do most shapes the pie: only when the guide was finished, so
         // Skip and Esc leave the pie as it was
@@ -667,6 +668,25 @@ impl App {
             let snapshot = {
                 let mut c = cfg();
                 config::persona::apply(&mut c, platform::OS, &picks);
+                c.clone()
+            };
+            config::save_config(&snapshot);
+        }
+        // the intelligent pie, when the person asked for it on the last page: as Settings does when
+        // the feature is switched on, the general pie gets an intelligent slice to show it
+        if apply && intelligent {
+            let snapshot = {
+                let mut c = cfg();
+                c.smart.enabled = true;
+                let general = c.global_profile();
+                let has = c.profiles.iter().any(|p| {
+                    p.items
+                        .iter()
+                        .any(|i| matches!(i.kind, config::ItemKind::Smart(_)))
+                });
+                if !has {
+                    crate::smart::add_slice(&mut c, general);
+                }
                 c.clone()
             };
             config::save_config(&snapshot);

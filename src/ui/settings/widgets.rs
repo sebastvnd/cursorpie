@@ -1451,6 +1451,17 @@ pub(in crate::ui::settings) fn note(ui: &mut egui::Ui, text: &str) {
     ui.add_space(ROW_PAD);
 }
 
+/// [`note`] in the primary text color: for what the person has to read and act on (why an update
+/// cannot be installed here), not for a remark they can skip.
+pub(in crate::ui::settings) fn strong_note(ui: &mut egui::Ui, text: &str) {
+    if started(ui) {
+        divider(ui);
+    }
+    ui.add_space(ROW_PAD);
+    ui.add(egui::Label::new(RichText::new(text).size(13.0).color(pal().text)).wrap());
+    ui.add_space(ROW_PAD);
+}
+
 /// A row of buttons inside a panel, wrapping onto more lines when it must.
 pub(in crate::ui::settings) fn actions<R>(
     ui: &mut egui::Ui,

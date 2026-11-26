@@ -18,7 +18,7 @@
 //! |   page 1  Permissions  (macOS: Accessibility,          |
 //! |                         Windows: the system tray, ...) |
 //! |   page 2  About you    (what do you do most?)          |
-//! |   page 3  Done         (launch at login)               |
+//! |   page 3  Done         (launch at login, intelligent pie) |
 //! |                                                        |
 //! +--------------------------------------------------------+
 //! | Back                   o o o o                   Next  |  footer
@@ -115,6 +115,9 @@ pub struct Welcome {
     pub page: usize,
     /// The "Launch at login" box of the last page.
     pub launch_at_login: bool,
+    /// The "Intelligent pie" box of the last page. Off by default: learning what the person uses
+    /// is theirs to switch on, and it is applied only when the guide ends with "Done".
+    pub intelligent: bool,
     /// Set when the window was left with "Get started" or "Open Settings" (not with Skip or Esc):
     /// only then is the launch-at-login box applied.
     pub apply: bool,
@@ -131,6 +134,7 @@ impl Welcome {
         Self {
             page: 0,
             launch_at_login,
+            intelligent: false,
             apply: false,
             open_settings_after: false,
             picks: Vec::new(),
@@ -143,7 +147,6 @@ enum Step {
     None,
     Next,
     Back,
-    Skip,
     Finish { open_settings: bool },
 }
 
@@ -312,20 +315,6 @@ impl App {
         if page > 0 {
             draw_wordmark(&painter, top.min.x + PAD, top.center().y, 28.0);
         }
-        ui.scope_builder(
-            egui::UiBuilder::new()
-                .max_rect(top.shrink2(Vec2::new(PAD, 0.0)))
-                .layout(egui::Layout::right_to_left(egui::Align::Center)),
-            |ui| {
-                if page + 1 < PAGES
-                    && button(ui, Look::Soft, None, "Skip")
-                        .on_hover_text("Close this guide. You can reopen it from the tray menu.")
-                        .clicked()
-                {
-                    step = Step::Skip;
-                }
-            },
-        );
 
         // ---------------------------------------------------------------- page
         // each page fades in and rises a few points when it appears
@@ -450,7 +439,6 @@ impl App {
                 Step::None => {}
                 Step::Next => w.page = (w.page + 1).min(PAGES - 1),
                 Step::Back => w.page = w.page.saturating_sub(1),
-                Step::Skip => self.closing = Some(false),
                 Step::Finish { open_settings } => {
                     w.apply = true;
                     w.open_settings_after = open_settings;
@@ -914,7 +902,7 @@ fn setup_page(ui: &mut egui::Ui, accent: Color32, os: Os) {
 
 /// Page 3: a check, "You're all set", one line on how to use the pie and the launch-at-login box.
 fn ready_page(ui: &mut egui::Ui, w: &mut Welcome, accent: Color32, os: Os) {
-    const RADIUS: f32 = 34.0;
+    const RADIUS: f32 = 18.0;
     const TOGGLE_W: f32 = 440.0;
     let area = ui.available_rect_before_wrap();
     let painter = ui.painter().clone();
@@ -933,15 +921,15 @@ fn ready_page(ui: &mut egui::Ui, w: &mut Welcome, accent: Color32, os: Os) {
         (area.width() - 2.0 * PAD).clamp(160.0, 440.0),
     );
     // the block: check, title, line, toggle (about 64 points high), centered in the page
-    let gaps = [22.0, 8.0, 30.0];
-    let toggle_h = 64.0;
+    let gaps = [10.0, 4.0, 6.0];
+    let toggle_h = 64.0 * 2.0;
     let block =
         2.0 * RADIUS + gaps[0] + title.size().y + gaps[1] + lead.size().y + gaps[2] + toggle_h;
     let mut y = (area.center().y - block / 2.0).round().max(area.min.y);
 
     let c = egui::pos2(cx, y + RADIUS);
     sticker_disc(&painter, c, RADIUS - 2.0, accent, 3.0);
-    fonts::paint_icon(&painter, c, symbols::CHECK, 34.0, on_accent(accent), false);
+    fonts::paint_icon(&painter, c, symbols::CHECK, 22.0, on_accent(accent), false);
     y += 2.0 * RADIUS + gaps[0];
 
     let title_h = title.size().y;
@@ -972,6 +960,13 @@ fn ready_page(ui: &mut egui::Ui, w: &mut Welcome, accent: Color32, os: Os) {
                     &mut w.launch_at_login,
                     "Launch CursorPie at login",
                     os.welcome_startup_hint(),
+                    accent,
+                );
+                toggle_row(
+                    ui,
+                    &mut w.intelligent,
+                    "Turn on the intelligent pie",
+                    "Suggests the apps and sites you use. Stays on this computer.",
                     accent,
                 );
             });
@@ -1173,6 +1168,10 @@ mod tests {
     fn a_new_welcome_starts_on_the_first_page_with_nothing_picked() {
         let w = Welcome::new(true);
         assert_eq!((w.page, w.launch_at_login, w.apply), (0, true, false));
+        assert!(
+            !w.intelligent,
+            "learning is never on unless the person says so"
+        );
         assert!(w.picks.is_empty());
     }
 
