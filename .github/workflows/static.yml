@@ -1,4 +1,3 @@
-
 name: Deploy CursorPie Website
 
 on:
@@ -7,25 +6,22 @@ on:
       - main
   workflow_dispatch:
 
+# Default: no access. Each job asks only for what it needs.
 permissions:
   contents: read
 
+# Never cancel a running Pages deployment: cancelling the run between "upload"
+# and "deploy" is what produces `No artifacts named "github-pages" were found`.
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
-  deploy:
+  # ---------------------------------------------------------------------------
+  # 1. BUILD: assemble _site and upload it as the "github-pages" artifact.
+  # ---------------------------------------------------------------------------
+  build:
     runs-on: ubuntu-latest
-
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
 
     steps:
       - name: Checkout repository
@@ -72,8 +68,6 @@ jobs:
             fi
           done
 
-          touch _site/.nojekyll
-
       - name: Check that Flow Hub is in the site
         run: |
           test -f _site/flowhub/index.html
@@ -89,12 +83,43 @@ jobs:
           test -f _site/assets/developer.css
           test -f _site/kanban/BOARD.md
 
+      - name: Check the artifact has no symlinks or hardlinks
+        run: |
+          if [ -n "$(find _site -type l)" ]; then
+            echo "Symlinks are not allowed in a Pages artifact:"
+            find _site -type l
+            exit 1
+          fi
+
+      # Note: upload-pages-artifact@v4 skips hidden files (.nojekyll included).
+      # That is fine: deploying through Actions does not run Jekyll.
       - name: Upload website artifact
+        id: upload
         uses: actions/upload-pages-artifact@v4
         with:
+          name: github-pages
           path: _site
-          include-hidden-files: true
 
+  # ---------------------------------------------------------------------------
+  # 2. DEPLOY: a separate job, so the artifact is fully stored before it is read.
+  # ---------------------------------------------------------------------------
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    permissions:
+      contents: read
+      pages: write      # publish to Pages
+      id-token: write   # verify the deployment comes from this workflow
+      actions: read     # let deploy-pages list the "github-pages" artifact (needed on private repos)
+
+    steps:
       - name: Deploy website
         id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          artifact_name: github-pages
