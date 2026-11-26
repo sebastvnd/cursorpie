@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+## 0.10.0
+
+- **Added: `cargo tools install`, to build and install CursorPie on any Linux distribution.** It finds the package
+  manager from `/etc/os-release` (also through `ID_LIKE`, so derivatives of Debian, Fedora, Arch, openSUSE, Alpine, Void
+  and Gentoo work without being listed), installs the C toolchain and the development files of libx11, libxi, libxtst
+  and libxrandr plus the run-time libraries, checks the Rust version against `rust-version`, builds in release mode
+  and copies the program, the desktop entry and the icons under `~/.local` (or `/usr/local` with `--system`), and
+  installs the udev rule on a Wayland session. `--pm` names the manager of a distribution that is not known,
+  `--dry-run` shows the steps and does none of them. NixOS and Guix are not driven: the tool prints what to install.
+
+- **Changed: the glass pie can be drawn with rust-glass (liquid optics).** A worker thread renders the slices off screen
+  with the [rust-glass](https://crates.io/crates/rust-glass) crate (bevel, dispersion, a rim that follows one light) and
+  the pie paints the picture under its icons (`ui/pie/liquid.rs`). Each slice is a chain of circles that the shader
+  melts, because rust-glass has no ring sector; the alpha is a second copy of the shapes drawn white on black in the
+  same canvas. A transparent window cannot read the screen, so the glass bends a graphite backdrop of its own and
+  shows what is behind the pie through the *Clearness* setting. New setting *Liquid optics* (`glass_liquid`, on by
+  default) under Pie material > Glass. Falls back to the painted glass without a usable GPU, on a custom outline, in a
+  build with `--no-default-features`, and while the worker starts. The worker is freed when the UI goes to sleep.
+  Needs Rust 1.90 (`rust-version`), which rust-glass asks for.
+
+- **Changed: a quieter welcome window, four pages instead of six.** Page 1 is only the logo, the name, one line and
+  **Get started**; page 2 is the permission (macOS Accessibility, the Windows tray, the Linux notes, with the live
+  status); page 3 asks what the person does most (it still shapes the first pie); page 4 says the guide is done and
+  holds the **Launch at login** box, with **Done** in the footer. The "How it works", "Your pie" and tips pages, the
+  "Step n of m" labels and the page names beside the dots are gone, and the dots now sit in the middle of the footer
+  with Back and Next on its two sides.
+
 ## 0.9.4
 
 - **Fixed (macOS): the pill and the lock animation stood still for a moment, then jumped ahead, and the pie glitched

@@ -83,7 +83,7 @@
 //!
 //! 1. `ui/settings/welcome.rs`: raise `PAGES` and add a `match` arm in `App::welcome_ui` that calls a
 //!    new `fn <name>_page(ui: &mut egui::Ui, ..)`. Pages draw inside the body rectangle; the
-//!    footer (dots, Back, Next, Get started) and the top bar (Skip) come from `welcome_ui`.
+//!    footer (dots, Back, Next, Done) and the top bar (Skip) come from `welcome_ui`.
 //! 2. A text that differs between macOS and Windows is a pure function of
 //!    [`Os`](crate::platform::Os) next to the others, with a test for both values.
 //! 3. State that must survive between pages goes into `Welcome`; anything that must happen when the

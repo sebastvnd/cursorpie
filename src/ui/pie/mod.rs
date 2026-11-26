@@ -2,6 +2,7 @@
 
 pub mod genz;
 pub mod glass;
+pub mod liquid;
 pub mod lock;
 pub mod pill;
 mod trail;
@@ -116,6 +117,17 @@ impl App {
         let glass = glass::Glass::of(&cfg());
         let genz = genz::of(&cfg());
         let outline = cfg().outline();
+        // Liquid glass (rust-glass, off screen): only for a round pie, and only where the build and
+        // the GPU allow it. Otherwise, and until its first picture, the glass is painted.
+        let want_liquid =
+            glass.is_some() && liquid::AVAILABLE && cfg().glass_liquid && outline.is_circle();
+        let liquid_draw = if want_liquid {
+            self.liquid.poll(&ctx)
+        } else {
+            liquid::Draw::Painted
+        };
+        let painted_glass = matches!(liquid_draw, liquid::Draw::Painted);
+        let mut pieces: Vec<liquid::Piece> = Vec::new();
         // Glass is always smoked graphite, even in the light appearance: pale glass on a light page
         // looks washed out. Gen Z is always white with dark ink. Solid follows the appearance.
         let smoked = glass.is_some() || (dark() && !genz);
@@ -234,6 +246,7 @@ impl App {
             // nothing draws it any more)
             self.forget_trail();
             self.slice_pill = None;
+            self.liquid.pie_closed();
             if self.visible {
                 // macOS: a notice that waits for the window takes it as it is (see
                 // `App::hand_to_pending_hud`)
@@ -424,6 +437,15 @@ impl App {
                     let shade = a(if glass.is_some() { 26.0 } else { 40.0 }, fade);
                     ring_shadow(&painter, c, r, bend, shade);
                 }
+                // the glass of rust-glass lies under every slice's icon, so it is added first
+                if let liquid::Draw::Ready { id, side } = liquid_draw {
+                    painter.image(
+                        id,
+                        egui::Rect::from_center_size(c, Vec2::splat(side)),
+                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                        Color32::WHITE,
+                    );
+                }
 
                 let sl = TAU / total as f32;
                 let gap = if total > 1 {
@@ -461,18 +483,29 @@ impl App {
                         .lerp_to_gamma(on_accent(accent), (h * 0.95).min(1.0));
                     let (s0, s1) = (start + gap / 2.0, start + sl - gap / 2.0);
                     if let Some(g) = glass {
-                        glass::slice(
-                            &painter,
-                            c,
-                            bend,
-                            (inner, rr),
-                            (s0, s1),
-                            col,
-                            h,
-                            lf,
-                            g,
-                            total == 1,
-                        );
+                        if want_liquid {
+                            pieces.push(liquid::Piece::slice(
+                                (s0, s1),
+                                (inner, rr),
+                                col,
+                                (h, lf),
+                                g,
+                            ));
+                        }
+                        if painted_glass {
+                            glass::slice(
+                                &painter,
+                                c,
+                                bend,
+                                (inner, rr),
+                                (s0, s1),
+                                col,
+                                h,
+                                lf,
+                                g,
+                                total == 1,
+                            );
+                        }
                     } else if genz {
                         genz::slice(
                             &painter,
@@ -610,7 +643,13 @@ impl App {
                     CORE_INACTIVE
                 };
                 if let Some(g) = glass {
-                    glass::core(&painter, c, core, fade, Some(disc), g);
+                    if want_liquid {
+                        let tint = [disc.r(), disc.g(), disc.b()];
+                        pieces.push(liquid::Piece::disc(core, tint, fade, g));
+                    }
+                    if painted_glass {
+                        glass::core(&painter, c, core, fade, Some(disc), g);
+                    }
                 } else if genz {
                     genz::core(&painter, c, core, fade, disc);
                 } else {
@@ -712,6 +751,14 @@ impl App {
                     pill.paint(&painter, rect, c, self.pie_pos);
                 }
             });
+
+        // The glass of this frame goes to the worker (nothing is sent when it did not change); its
+        // picture is the one painted from the next frame on.
+        if let (true, Some(g)) = (want_liquid, glass) {
+            let room = pie_outer(self.win) + OVERSHOOT_ROOM;
+            self.liquid
+                .submit(liquid::Scene::new(room, ctx.pixels_per_point(), g, pieces));
+        }
     }
 }
 

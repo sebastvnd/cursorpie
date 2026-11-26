@@ -30,7 +30,7 @@ are under [Development workflow](#development-workflow).
 
 - **macOS 11 or later, Windows 10 (1809) / 11, or Linux with an X11 or Wayland session.** Other Unixes build a do-nothing
   stub, enough to run `cargo test`.
-- **Rust 1.88 or later** (edition 2024), installed with [rustup](https://rustup.rs).
+- **Rust 1.90 or later** (edition 2024), installed with [rustup](https://rustup.rs).
 - **Node.js 18 or later** ([nodejs.org](https://nodejs.org)), only for the tests of the browser extension that
   `cargo tools ci` runs on jsdom (`tests/browser-extension`). The step runs `npm install` there the first time.
 - **macOS:** Xcode Command Line Tools (`xcode-select --install`) for the linker and `codesign`.
@@ -39,6 +39,10 @@ are under [Development workflow](#development-workflow).
   Debian and Ubuntu: `sudo apt install build-essential libx11-dev libxi-dev libxtst-dev libxrandr-dev`.
   Fedora: `sudo dnf install gcc libX11-devel libXi-devel libXtst-devel libXrandr-devel`. A minimal system may
   also lack libraries the window toolkit loads at run time (OpenGL, libxkbcommon-x11, libxcursor).
+  **On any other distribution, run `cargo tools install`**: it reads `/etc/os-release` (`ID`, then `ID_LIKE`), installs
+  these libraries with `apt`, `dnf`, `pacman`, `zypper`, `apk`, `xbps` or `emerge`, builds, and installs under
+  `~/.local` (`--system` for `/usr/local`, `--dry-run` to only see the steps). For a distribution it does not know,
+  name the manager with `--pm`, or install the libraries by hand and run it with `--no-deps`.
 
 ## Build, run and package
 
@@ -121,12 +125,35 @@ package (standard library only, never part of the app) and behave the same on ma
 | `cargo tools clean-logs` | deletes old debug logs, keeping the newest 3 by default (`--keep N`, `--older-than DAYS`, `--all`, `--dir PATH`, `--dry-run`) |
 | `cargo tools zip` | packs the project into a `.zip`, excluding `target/`, `.git/`, files larger than 10 MiB, common video formats and `.gif` files (`-o FILE`, `--list`, `--no-git`) |
 | `cargo tools info` | prints the facts a bug report needs: OS, desktop session, tool versions |
+| `cargo tools install` | Linux, any distribution: installs the libraries with its package manager, builds and installs CursorPie (`--dry-run`, `--pm NAME`, `--system`, `--no-deps`, see the prerequisites above) |
+| `cargo tools kanban` | the work board of the project, kept in Git: Backlog, In Progress, Done, In Evaluation (`add`, `move`, `note`, `rm`, `list`, `show`, `board`, `check`; `--commit` commits the change), see below |
 
 `cargo tools zip` applies the 10 MiB limit to **each individual file**, not to the ZIP as a
 whole. The limit is 10,485,760 bytes: files larger than that are skipped, while a file exactly
 at the limit is kept. Common video formats and `.gif` files are skipped regardless of size;
 extension matching is case-insensitive. The same filters apply to `cargo tools zip --list`, so
 its output contains only files that would be included in the archive.
+
+### The kanban board
+
+The work in progress is tracked in the repository itself, in `kanban/`, so that it is reviewed, branched and merged
+like the code. A card is one small Markdown file in `kanban/cards/` (`0001.md`, `0002.md`, ...) with a title, a
+column, an owner, two dates and free notes. The four columns are **Backlog**, **In Progress**, **Done** and
+**In Evaluation**. `cargo tools kanban` prints the board; the other commands change it:
+
+```text
+cargo tools kanban add Fix the crash on wake --status backlog
+cargo tools kanban move 3 in-progress              # the move is written in the notes of the card
+cargo tools kanban note 3 Reproduced with a 400 ms click gap
+cargo tools kanban move 3 in-evaluation --commit   # --commit commits kanban/ and nothing else
+```
+
+`kanban/BOARD.md` is generated from the cards (one table per column, readable on GitHub): never edit it by hand. Every
+command writes it again, and `cargo tools kanban check`, a step of `cargo tools ci --quick`, fails when it is out of
+date, for instance after a card was edited by hand. After a merge conflict in it, run `cargo tools kanban board`.
+Two branches that add a card at the same time conflict on the same file name: move one of the two cards to the next
+free number (the file name and nothing else), then run `cargo tools kanban board`.
+`kanban/README.md` has the details.
 
 ### The loop
 
@@ -153,6 +180,7 @@ one definition of "the checks pass".
 | format | `cargo fmt --all -- --check` | everywhere |
 | version files agree | `cargo tools check` | everywhere |
 | diagnostic log lines | `cargo tools diag-lint` | everywhere |
+| kanban board | `cargo tools kanban check` | everywhere |
 | clippy | `cargo clippy --workspace --all-targets -- -D warnings` | everywhere |
 | tests | `cargo test --workspace --all-targets` | everywhere |
 | doc tests | `cargo test --doc` | everywhere |
@@ -184,7 +212,7 @@ request that touches other files all give the same fingerprint as before.
 | Group | Covers | Jobs it can skip |
 |---|---|---|
 | `check` | every tracked file except the website (`index.html`, `sitemap.xml`, `robots.txt`, `flowhub/`, the Pages workflow, ...) | the three `test` jobs |
-| `build` | `check` without `tests/`, `tools/`, `CHANGELOG.md` and the editor and hook files | the four `package-*` jobs |
+| `build` | `check` without `tests/`, `tools/`, `kanban/`, `CHANGELOG.md` and the editor and hook files | the four `package-*` jobs |
 
 - The first job, `Fingerprint`, computes both and asks the GitHub API for an artifact named `ci-ok-` plus the group and the
   fingerprint. It counts only when the run that wrote it belongs to this repository (a fork cannot vouch for
@@ -335,7 +363,8 @@ map at the top of the crate docs (`src/lib.rs`) instead of a copy here.
 Outside `src/`, the repository is laid out like this:
 
 ```text
-tools/         the repository tools, run as `cargo tools ...`: ci, check, bump, hooks, commit-msg, diag, log, diag-lint, clean-logs, zip, info, trackpad
+tools/         the repository tools, run as `cargo tools ...`: ci, check, bump, hooks, commit-msg, diag, log, diag-lint, clean-logs, zip, info, kanban, trackpad
+kanban/        the work board (cards and the generated BOARD.md), see "The kanban board" above
 diag/          the diagnostic log (`CURSORPIE_DEBUG=1`): a crate of its own, no dependencies, see docs/DEBUGGING.md
 .githooks/     Git hooks that call the tools (turned on with `cargo tools hooks install`)
 .github/       the CI workflow and the pull request template

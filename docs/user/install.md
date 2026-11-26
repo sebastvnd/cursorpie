@@ -195,6 +195,28 @@ cd cursorpie-*-linux-*
 
 Build on an older distribution if the binary must also start on older ones (glibc is not backwards compatible).
 
+**Another distribution (Arch, openSUSE, Alpine, Void, Gentoo, or a derivative of any of them).** From a checkout of the
+repository, one command installs the development packages with your package manager, builds and installs:
+
+```sh
+cargo tools install --dry-run        # shows every step and does none of them
+cargo tools install                  # asks before each command; installs under ~/.local
+cargo tools install --system         # under /usr/local instead (asks for your password where it must)
+```
+
+The distribution is read from `/etc/os-release`, also through `ID_LIKE`, so Linux Mint, Pop!_OS, Manjaro, EndeavourOS,
+Nobara and the like are known by the family they come from. Known package managers: `apt`, `dnf`, `pacman`, `zypper`,
+`apk`, `xbps` and `emerge`. It needs [Rust](https://rustup.rs) 1.90 or later (it says so if yours is older) and skips the
+packages when `pkg-config` already finds the libraries. On a Wayland session it also installs the udev rule
+(`--no-udev` leaves it out).
+
+For a distribution it does not know (NixOS, Guix, a new one), name the package manager that is closest with
+`--pm NAME`, or install the libraries yourself (a C compiler, `pkg-config`, and the development files of libX11, libXi,
+libXtst and libXrandr; at run time OpenGL, libxkbcommon-x11 and libXcursor) and run `cargo tools install --no-deps`.
+`--no-build` installs the `target/release/cursorpie` you already built, `--prefix DIR` chooses another folder, `--yes`
+does not ask. A package name that does not exist on your release is reported by the package manager; please tell us
+which one, it is one line to fix.
+
 **Start it** from your applications menu or run `cursorpie`. It can start at login from **Settings > Behavior**.
 
 ### Linux checklist
@@ -210,9 +232,10 @@ There is no tray icon on Linux yet: Pause and Quit are in **Settings > General**
 
 ## First launch
 
-On every system a short welcome window opens the first time. It shows the gesture, then the one thing to do next (macOS:
-allow Accessibility, with a live status; Windows: where the tray icon is; Linux: that there is no tray icon, and on
-Wayland the udev rule steps with a live status) and ends with a **Launch at login** box. Skip it with **Skip** or `Esc`.
+On every system a short welcome window opens the first time. After a first page with the logo and **Get started**, it
+shows the one thing to do next (macOS: allow Accessibility, with a live status; Windows: where the tray icon is; Linux:
+that there is no tray icon, and on Wayland the udev rule steps with a live status), asks what you do most (it shapes your
+first pie) and ends with a **Launch at login** box. Skip it with **Skip** or `Esc`.
 **Welcome guide...** in the menu bar or tray menu shows it again (Linux has no tray icon, so there the window appears only
 on the first start). The empty file `welcome_shown` next to `config.json` records that it was shown; delete it to see the
 window at the next start.

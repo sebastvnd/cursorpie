@@ -18,6 +18,8 @@
 //! | `clean-logs` | `clean.rs` | deletes old debug logs |
 //! | `zip` | `zip.rs` | packs the project into a `.zip`, excluding `target/`, `.git/`, files larger than 10 MiB, video formats and `.gif` files |
 //! | `info` | `info.rs` | prints the facts a bug report needs (OS, session, tool versions) |
+//! | `install` | `install.rs` | Linux, any distribution: installs the libraries, builds and installs CursorPie |
+//! | `kanban` | `kanban.rs` | the work board kept in Git: Backlog, In Progress, Done, In Evaluation |
 //!
 //! The tools use only the standard library, so they build in seconds and work on every OS the
 //! project supports. Each one keeps its decisions in pure functions with unit tests; this file
@@ -33,6 +35,8 @@ mod diagseal;
 mod git;
 mod hooks;
 mod info;
+mod install;
+mod kanban;
 mod lint;
 mod logview;
 mod sha256;
@@ -91,6 +95,31 @@ Commands:
                                than 10 MiB, common video formats or .gif files; --list uses the same
                                filters (default file: NAME-VERSION.zip next to the project folder)
   info                         print the facts a bug report needs: OS, session, tool versions
+  install [options]            Linux: install the libraries the build needs with the package manager of
+                               your distribution, build CursorPie and install it (default under ~/.local)
+      --user | --system | --prefix DIR   where the files go: ~/.local, /usr/local or DIR
+      --pm NAME                  package manager (apt, dnf, pacman, zypper, apk, xbps, emerge) for a
+                                 distribution the tool does not know; the distribution is read from
+                                 /etc/os-release, also through ID_LIKE
+      --no-deps | --deps-only    skip the packages | only install the packages
+      --no-build                 install the target/release/cursorpie that is already built
+      --udev | --no-udev         install the udev rule of Wayland sessions (default: on Wayland)
+      -y, --yes                  do not ask before each command
+      --dry-run                  print every step and do none of them
+  kanban [command]             the work board of the project, kept in Git (kanban/): columns Backlog,
+                               In Progress, Done and In Evaluation. No command prints the board
+      list [STATUS]              print the board, or one column of it
+      show ID                    print one card with its notes
+      add TITLE [--status S] [--owner NAME] [--note TEXT]
+                                 add a card (default status: backlog, default owner: git user.name)
+      move ID STATUS             move a card to another column; the move is written in its notes
+      note ID TEXT               append a dated note to a card
+      rm ID                      delete a card
+      board                      write kanban/BOARD.md (four tables) again from the cards
+      check                      the cards can be read and BOARD.md is up to date (part of
+                                 `ci --quick`)
+      STATUS is backlog, in-progress, done or in-evaluation. add, move, note and rm take --commit:
+      commit the change to kanban/ and nothing else
   help                         show this text
 
 Rules and workflow: CONTRIBUTING.md, sections "Development workflow" and "Releasing"."#;
@@ -124,6 +153,10 @@ enum Task {
     Zip(zip::Options),
     /// Print the facts a bug report needs.
     Info,
+    /// Install the libraries, build and install CursorPie (Linux).
+    Install(install::Options),
+    /// Work with the kanban board.
+    Kanban(kanban::Command),
 }
 
 /// Reads the arguments after the program name. `-h` or `--help` anywhere asks for the usage.
@@ -159,6 +192,8 @@ fn parse_command<I: IntoIterator<Item = String>>(args: I) -> Result<Task, String
         "zip" => zip::parse_args(rest).map(Task::Zip),
         "info" if rest.is_empty() => Ok(Task::Info),
         "info" => Err("info takes no arguments".into()),
+        "install" => install::parse_args(rest).map(Task::Install),
+        "kanban" => kanban::parse_args(rest).map(Task::Kanban),
         other => Err(format!("unknown command '{other}'")),
     }
 }
@@ -247,6 +282,8 @@ fn run(root: &Path, task: Task) -> Result<ExitCode, String> {
         Task::CleanLogs(options) => clean::run(&options),
         Task::Zip(options) => zip::run(root, &options),
         Task::Info => Ok(info::run(root)),
+        Task::Install(options) => install::run(root, &options),
+        Task::Kanban(command) => kanban::run(root, &command),
     }
 }
 
@@ -320,6 +357,27 @@ mod tests {
             Ok(Task::CommitMsg(".git/COMMIT_EDITMSG".into()))
         );
         assert_eq!(parse(&["info"]), Ok(Task::Info));
+        assert_eq!(
+            parse(&["install"]),
+            Ok(Task::Install(install::Options::default()))
+        );
+        assert!(matches!(
+            parse(&["install", "--dry-run", "--pm", "dnf"]),
+            Ok(Task::Install(o)) if o.dry_run && o.pm == Some(install::Manager::Dnf)
+        ));
+        assert!(parse(&["install", "--pm", "nix"]).is_err());
+        assert_eq!(
+            parse(&["kanban"]),
+            Ok(Task::Kanban(kanban::Command::List { status: None }))
+        );
+        assert_eq!(
+            parse(&["kanban", "move", "3", "done"]),
+            Ok(Task::Kanban(kanban::Command::Move {
+                id: 3,
+                status: kanban::Status::Done,
+                commit: false
+            }))
+        );
         assert!(matches!(parse(&["zip", "--list"]), Ok(Task::Zip(o)) if o.list));
         assert!(matches!(parse(&["clean-logs", "--all"]), Ok(Task::CleanLogs(o)) if o.keep == 0));
         assert_eq!(parse(&["diag"]), Ok(Task::Diag(None)));
@@ -353,5 +411,7 @@ mod tests {
         assert!(parse(&["info", "x"]).is_err());
         assert!(parse(&["zip", "--fast"]).is_err());
         assert!(parse(&["clean-logs", "--keep"]).is_err());
+        assert!(parse(&["kanban", "plan"]).is_err());
+        assert!(parse(&["kanban", "move", "3"]).is_err());
     }
 }

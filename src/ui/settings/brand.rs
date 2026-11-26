@@ -101,6 +101,40 @@ pub fn paint(painter: &egui::Painter, art: Art, rect: Rect, color: Color32) -> b
     true
 }
 
+static APP_ICON_PNG: &[u8] = include_bytes!("../../../assets/app-icon-256.png");
+
+/// The texture of the application icon in its own colors (the rounded square of the dock, the
+/// taskbar and the website), made on first use and kept in the context. Unlike the marks it is not
+/// tinted.
+fn app_icon_texture(ctx: &egui::Context) -> Option<TextureHandle> {
+    let id = egui::Id::new("cursorpie-brand-texture-app-icon");
+    if let Some(tex) = ctx.data(|d| d.get_temp::<TextureHandle>(id)) {
+        return Some(tex);
+    }
+    let img = image::load_from_memory_with_format(APP_ICON_PNG, image::ImageFormat::Png)
+        .ok()?
+        .into_rgba8();
+    let size = [img.width() as usize, img.height() as usize];
+    let image = egui::ColorImage::from_rgba_unmultiplied(size, img.as_raw());
+    let tex = ctx.load_texture("brand-app-icon", image, TextureOptions::LINEAR);
+    ctx.data_mut(|d| d.insert_temp(id, tex.clone()));
+    Some(tex)
+}
+
+/// Draws the application icon as large as fits in `rect`, centered. False if the picture could not
+/// be loaded (the caller draws a stand-in).
+pub fn paint_app_icon(painter: &egui::Painter, rect: Rect) -> bool {
+    let Some(tex) = app_icon_texture(painter.ctx()) else {
+        return false;
+    };
+    let size = tex.size_vec2();
+    let scale = (rect.width() / size.x).min(rect.height() / size.y);
+    let fit = Rect::from_center_size(rect.center(), size * scale);
+    let whole = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
+    painter.image(tex.id(), fit, whole, Color32::WHITE);
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -125,6 +159,13 @@ mod tests {
                 "opaque pixels are white, the painter tints them"
             );
         }
+    }
+
+    #[test]
+    fn the_app_icon_is_a_square_picture_with_color() {
+        let img = image::load_from_memory_with_format(APP_ICON_PNG, image::ImageFormat::Png)
+            .expect("the file is a PNG");
+        assert_eq!(img.width(), img.height());
     }
 
     #[test]

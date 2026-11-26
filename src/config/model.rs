@@ -625,6 +625,10 @@ pub struct Config {
     pub glass_frost: u8,
     /// Glass only: how bright the rim and the sheen are, in percent.
     pub glass_shine: u8,
+    /// Glass only: draw the slices with the optics of rust-glass (bevel, dispersion, a rim that
+    /// follows one light) instead of painting them. Falls back to the painted glass where there is
+    /// no usable GPU, and on a pie with a custom outline. See [`ui::pie::liquid`](crate::ui::pie::liquid).
+    pub glass_liquid: bool,
     /// The pie is not a circle but a regular polygon with rounded corners (see
     /// [`Outline`](crate::geometry::Outline)); the three numbers below shape it. Off (the
     /// default): a circle, as before.

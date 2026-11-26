@@ -554,6 +554,15 @@ impl App {
                 slider_row(ui, "Clearness", &mut cfg.glass_clear, 0..=100, " %", accent);
                 slider_row(ui, "Frost", &mut cfg.glass_frost, 0..=100, " %", accent);
                 slider_row(ui, "Shine", &mut cfg.glass_shine, 0..=100, " %", accent);
+                if crate::ui::pie::liquid::AVAILABLE {
+                    toggle_row(
+                        ui,
+                        &mut cfg.glass_liquid,
+                        "Liquid optics",
+                        "Draw the glass with the bevel, the dispersion and the moving light of rust-glass. The tiles above stay painted. Turns itself off where there is no usable GPU.",
+                        accent,
+                    );
+                }
             }
         });
         panel(ui, "Pie shape", |ui| {

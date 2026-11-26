@@ -383,6 +383,7 @@ impl Config {
             glass_clear: 60,
             glass_frost: 45,
             glass_shine: 60,
+            glass_liquid: true,
             pie_custom_shape: false,
             pie_sides: crate::geometry::PIE_SIDES_DEFAULT,
             pie_round: crate::geometry::PIE_ROUND_DEFAULT,

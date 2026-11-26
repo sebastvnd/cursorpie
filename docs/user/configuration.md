@@ -137,6 +137,7 @@ Every field with its default value, and a small menu. A field you leave out take
   "glass_clear": 60,
   "glass_frost": 45,
   "glass_shine": 60,
+  "glass_liquid": true,
   "pie_custom_shape": false,
   "pie_sides": 4,
   "pie_round": 45,
@@ -238,6 +239,7 @@ Every field with its default value, and a small menu. A field you leave out take
 | `pie_round` | Custom shape: how round the corners are, 0 (sharp) to 100 (a circle), in percent (default 45) |
 | `pie_turn` | Custom shape: how far the polygon is turned, 0 to 359 degrees (0 = a flat side faces left) |
 | `pie_style` | `"GenZ"` (default for a fresh install), `"Solid"` or `"Glass"`: the bold look of the website (white slices, thick dark outlines, hard shadows; the same in both appearances), opaque slices, or see-through frosted ones (always smoked dark). A saved choice is kept |
+| `glass_liquid` | Glass style only, `true` by default: the slices are drawn with the optics of rust-glass (bevel, colour fringes, a rim that follows one light) on a GPU of its own. It turns itself off where there is no usable GPU, on a pie with a custom shape, and in a build made with `--no-default-features`; the glass is then painted as before |
 | `glass_clear`, `glass_frost`, `glass_shine` | Glass style only, in percent (0 to 100, larger values are clamped): how see-through the slices are (default 60), how frosted (default 45) and how bright the rim and sheen are (default 60) |
 | `touch_trigger` | macOS trackpad, Windows precision touchpad and Linux touchpad (X11 pre-stable, Wayland experimental): a hold opens the pie (default `false`, but see `touch_auto_done`; while it is off the system's touch library is never loaded on macOS, nothing is registered with Windows and `/dev/input` is never opened on Linux). See [Trackpad hold](trackpad.md) |
 | `touch_auto_done` | `false` (default) or `true`: CursorPie switches `touch_trigger` on by itself, once, at the first start that finds a trackpad, and then sets this to `true`. Turning the switch off or on yourself in Settings, or pressing *Scan for trackpad*, sets it too, so a hold you turned off stays off. While it is `false` and no trackpad is found nothing is decided, and a trackpad that shows up later is picked up at the next start |

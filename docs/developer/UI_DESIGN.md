@@ -164,16 +164,18 @@ for every button look.
 The first start (and "Welcome guide..." in the tray menu) shows an 820 x 580 pt card (`WELCOME_SIZE`,
 shrunk by `welcome_size_for` on small displays, never below 660 x 500 pt) in the same window as Settings,
 with the same shadow, outline, colors, open/close animation and widgets. It has a top bar (logo, name,
-Skip), a page in the middle and a footer (page dots, Back, Next or Get started).
+Skip; the first page has the logo in its middle instead), a page in the middle and a footer (Back, page dots
+in the center, Next or Done). It is kept quiet: one idea per page, centered, few words.
 
-- Three pages: how the gesture works (Hold, Flick, Release), what to do next (macOS: Accessibility, with
-  a status that refreshes every second; Windows: the system tray) and tips with the launch-at-login box.
+- Four pages: the logo, the name and "Get started"; the permission (macOS: Accessibility, with a status that
+  refreshes every second; Windows: the system tray; Linux: the notes and, on Wayland, the udev rule); "What do
+  you do most?" (shapes the first pie); and "You're all set" with the launch-at-login box.
 - It is a mode of the Settings window, not a second window: `App::welcome` is `Some` and
   `settings_open` is true, so the pie stays hidden while it is open.
 - The only text that depends on the OS lives in pure functions of `Os` (`setup_title`, `setup_lead`,
-  `setup_steps`, `tips`), so a test covers both systems.
-- Esc and Skip close it without applying anything; Get started and Open Settings also apply the
-  launch-at-login box. Either way it is remembered as shown.
+  `setup_steps`), so a test covers both systems.
+- Esc and Skip close it without applying anything; Done also applies the picked
+  persona and the launch-at-login box. Either way it is remembered as shown.
 
 ## The pie
 
@@ -194,6 +196,16 @@ much of the page shows through, never fully clear), *Frost* and *Shine*. A strip
 previews them. The window cannot read what is behind it, so the frost is **painted, not a real blur of
 the desktop**; a true backdrop blur needs a native call per system (NSVisualEffectView on macOS, the DWM
 on Windows, the compositor on Linux) and is a follow-up.
+
+**Liquid optics** (`ui/pie/liquid.rs`, the `liquid-glass` feature, setting `glass_liquid`) replaces the painted slices
+with a picture drawn by rust-glass on a worker thread. The pie sends a `Scene` (the slices as angles, radii and
+numbers) whenever it changes and paints the newest texture under the icons; the hover, the badges and the pill stay
+egui. Limits to keep in mind when changing it: rust-glass clears to an opaque color and only draws rounded rectangles,
+so a slice is a chain of circles (`circles`) and the alpha is read from a second copy in the right half of the canvas
+(`pack`); the glass has no screen to refract, only its own backdrop (`gpu::backdrop`); a pie with a custom outline is
+painted; and the Settings tiles (`settings/demo.rs`) are painted too. `Link::poll` says what to draw: `Painted`
+(no worker, no picture yet, dead), `Pending` (worker warm, picture of this pie not there yet: no glass for a frame) or
+`Ready`. Anything that fails turns the pie back to `Painted` for the rest of the run (log: `ui` / `liquid_off`).
 
 Glass is **always smoked graphite**, in the light appearance as well (`draw::glass_colors`): pale glass on a
 light page has nothing to catch the light against, so it looked washed out. Only the Solid style follows the

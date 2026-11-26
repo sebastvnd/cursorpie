@@ -205,6 +205,8 @@ pub struct App {
     /// pie next to the ring (see [`crate::ui::pie::pill`]). Some from the first slice the pointer
     /// reaches until the pill has gone away; `None` while the pie is closed.
     pub slice_pill: Option<crate::ui::pie::pill::SlicePill>,
+    /// The worker that draws the liquid glass of the pie (see [`crate::ui::pie::liquid`]).
+    pub liquid: crate::ui::pie::liquid::Link,
     /// A notice that arrived while the pie was still on screen: shown as soon as the window is free.
     pub hud_pending: Option<(crate::ui::hud::HudNote, Instant)>,
     /// A pie that was asked for while a notice was on screen: the notice finishes its animation
@@ -313,6 +315,7 @@ impl App {
             toast: None,
             hud: None,
             slice_pill: None,
+            liquid: crate::ui::pie::liquid::Link::default(),
             hud_pending: None,
             pie_pending: None,
             lock_anim: None,

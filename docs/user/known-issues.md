@@ -1,9 +1,7 @@
 # Known issues and limitations
 
 What does not work yet, or works differently, grouped by system. Linux is split by session type: **X11 is pre-stable** and
-**Wayland is experimental** (see [CursorPie on Linux](linux.md)). If you hit something that is not listed, please
-[open an issue](https://github.com/sebastvnd/cursorpie/issues) with your system version, how you started
-CursorPie, the trigger button and the output of `cargo run --release` from a terminal.
+**Wayland is experimental** (see [CursorPie on Linux](linux.md)). If you encounter any unlisted issues while using CursorPie, you can run CursorPie in developer mode to get more detailed log reports, you can enable it in About > Developer tools. after that you can contribute by [open an issue](https://github.com/sebastvnd/cursorpie/issues) report in our repository.
 
 ## All systems
 
@@ -17,8 +15,6 @@ CursorPie, the trigger button and the output of `cargo run --release` from a ter
   pass through untouched.
 - "App under the pointer" looks at normal app windows (not the Dock, menu bar or desktop). Bringing it to the
   front activates the whole app, not one particular window.
-- Sequences cannot be created or edited in Settings yet, only in `config.json`. Settings shows how many steps a
-  sequence has and keeps it.
 - **Image icons have size limits.** An image over 4096 px on a side, or one that cannot be decoded, is not drawn: the slice shows `?`. The **Mine** page of the icon picker lists at most 120 images of 2 MB each and says how many it left out. Choosing a big image with **Image...** avoids all of this: CursorPie saves a smaller copy in the `icons` folder and tells you (see [Using the pie](using-the-pie.md#icons-and-look)).
 - **Import... refuses a config file over 4 MiB**, and Menu > Share refuses a profile file over 24 MiB.
 - Undo covers one Settings session. After you save and close, use **Settings > General > Backups** (the last
@@ -40,18 +36,14 @@ CursorPie, the trigger button and the output of `cargo run --release` from a ter
   of some games (the display is taken over) cannot be drawn over by any app.
 - Ad-hoc signed builds may need the Accessibility permission again after each rebuild. Sign with a stable
   identity (`SIGN_ID`) to avoid that.
-- **Trackpad** (off by default): it uses Apple's private `MultitouchSupport` framework, which Apple may change in any
-  release (the feature turns itself off and says so), so it cannot be in a Mac App Store build. The surface of a
-  Magic Mouse is not used. Haptic ticks need a Force Touch trackpad and the system's haptic setting on. **Not yet
-  verified on a Mac:** see the manual checklist in [the trackpad plan](../developer/TRACKPAD_HAPTICS_PLAN.md#manual-verification-checklist).
 - **Launch at login** points at the executable that was running when you enabled it. Toggle it off and on again
   if you move the app.
 - **Other Spaces** tries three ways, each only when the previous one did not bring a window of the app onto the
-  screen: `open -a` (works when *When switching to an application, switch to a Space with open windows for the
-  application* is on), then Control+Right or Control+Left pressed directly, then the same through System Events
-  (which asks for the Automation permission once). The arrow keys need the Mission Control shortcuts *Move left /
-  right a space* to be on. If nothing works you stay where you were and `CursorPie: could not reach the Space of
-  <app>` is printed. Start with `CURSORPIE_DEBUG=1 cargo run --release` to see what each way found. How it works:
+  screen: `open -a` (works when _When switching to an application, switch to a Space with open windows for the
+  application_ is on), then Control+Right or Control+Left pressed directly, then the same through System Events
+  (which asks for the Automation permission once). The arrow keys need the Mission Control shortcuts _Move left /
+  right a space_ to be on. If nothing works you stay where you were and `CursorPie: could not reach the Space of
+<app>` is printed. Start with `CURSORPIE_DEBUG=1 cargo run --release` to see what each way found. How it works:
   [Other desktops](../developer/OTHER_DESKTOPS.md).
 - **Two screens:** "Open app" shows the app on the screen you clicked: its front window there is raised, or,
   when it has none there, its front window is moved to that screen through Accessibility. A full-screen window
@@ -77,11 +69,6 @@ CursorPie, the trigger button and the output of `cargo run --release` from a ter
   `scripts\sign-local.ps1` signs your own build with a certificate you create and trusts it on your PC. That
   helps only the PCs that trust the certificate; it does not help other people's PCs. Building from source
   (`cargo build --release`) on the PC that will run it also avoids most "new file" detections.
-
-- **Touchpad** (off by default): only a Windows *precision* touchpad can open the pie; an older touchpad that Windows
-  treats as a plain mouse cannot be read. It is read through Raw Input, so no driver and no permission is needed. A tap followed by a hold may start a Windows tap-and-drag and click the app under the pie unless *Tap
-  twice and drag to multi-select* is off. No haptic ticks. **Not yet verified on Windows:** see the manual checklist
-  in [the trackpad plan](../developer/TRACKPAD_HAPTICS_PLAN.md#windows-precision-touchpad).
 - Only the middle button can be the trigger. Windows reports only the middle, back and forward buttons, so a
   mode can use only those two side buttons, and CursorPie cannot tell two mice apart, only mice with a different
   number of buttons.

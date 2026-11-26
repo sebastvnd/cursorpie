@@ -37,6 +37,9 @@ enum Action {
     Versions,
     /// The rules for the log lines in `src/` and what the analyzer reads (`cargo tools diag-lint`).
     DiagLint,
+    /// The cards of the kanban board can be read and `kanban/BOARD.md` is up to date
+    /// (`cargo tools kanban check`).
+    Kanban,
     /// The tests of the browser extension (`tests/browser-extension`): jsdom is installed there when
     /// it is missing, then `npm test` runs them with Node's own test runner.
     BrowserTests,
@@ -81,6 +84,11 @@ fn steps() -> Vec<Step> {
             name: "diagnostic log lines",
             quick: true,
             action: Action::DiagLint,
+        },
+        Step {
+            name: "kanban board",
+            quick: true,
+            action: Action::Kanban,
         },
         cargo_step(
             "clippy",
@@ -204,6 +212,14 @@ fn execute(root: &Path, action: &Action) -> Result<(), String> {
             }
         }
         Action::BrowserTests => browser_tests(root),
+        Action::Kanban => {
+            let problems = crate::kanban::problems(root)?;
+            if problems.is_empty() {
+                Ok(())
+            } else {
+                Err(problems.join("; "))
+            }
+        }
         Action::DiagLint => {
             let problems = crate::lint::problems(root)?;
             if problems.is_empty() {
@@ -312,6 +328,7 @@ mod tests {
         assert!(quick.contains(&"format"));
         assert!(quick.contains(&"version files agree"));
         assert!(quick.contains(&"diagnostic log lines"));
+        assert!(quick.contains(&"kanban board"));
         assert!(quick.len() < all.len(), "the full run does more");
     }
 

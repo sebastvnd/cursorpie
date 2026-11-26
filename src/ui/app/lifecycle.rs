@@ -68,6 +68,8 @@ impl App {
         self.release_editor();
         // the web of the last gesture in trail mode, and the glyphs its nodes cut
         self.forget_trail();
+        // the worker of the liquid glass, with its GPU device and the fonts it loaded
+        self.liquid.release();
         self.release_font_atlas(ctx);
         self.toast = None;
         platform::release_unused_memory();

@@ -11,7 +11,8 @@
 # Groups:
 #   check  what `cargo tools ci` and the `test` job look at: everything tracked except the website.
 #   build  what the packaged programs are made of (the `package-*` jobs): `check` without the tests
-#          of the browser extension, the repository tools (`tools/`), the changelog and the editor files.
+#          of the browser extension, the repository tools (`tools/`), the kanban board (`kanban/`),
+#          the changelog and the editor files.
 #
 # Usage:
 #   scripts/ci-fingerprint.sh                  print both fingerprints
@@ -53,6 +54,7 @@ SITE=(
 NOT_PACKAGED=(
     ':(exclude)tests'
     ':(exclude)tools'
+    ':(exclude)kanban'
     ':(exclude)CHANGELOG.md'
     ':(exclude).githooks'
     ':(exclude).editorconfig'

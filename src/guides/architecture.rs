@@ -25,6 +25,7 @@
 //! | **`cursorpie-actions`** | [`actions::init`](crate::actions::init) | the queue of [`Action`](crate::config::Action)s to execute | receives jobs from [`actions::run_in`](crate::actions::run_in) |
 //! | **`cursorpie-timers`** | [`tap::spawn`](crate::tap::spawn) | the queue of delayed jobs of the tap: the hold timer and the double-click timer, each a short job that runs when it is due | jobs lock the gesture state, send `Msg`, post a click; started with the tap so a press inside the hook never has to start a thread |
 //! | **`cursorpie-config-saver`** | [`tap::spawn`](crate::tap::spawn) | the writes of the config that `set_active` asks for; several in a row become one write of the newest state | receives the config to write through a channel |
+//! | **`cursorpie-liquid`** | [`liquid::Link`](crate::ui::pie::liquid::Link), the first time a glass pie is drawn with *Liquid optics* | a rust-glass renderer with its own GPU device (off screen, never the window of the app) | receives scenes (the slices as numbers, newest wins) and sends back one picture each, then wakes egui; freed when the UI goes to sleep. If it cannot start or panics, the pie paints its glass as before |
 //! | short-lived | on demand | file chooser, icon scans, launched programs, update check | send `Msg` or touch shared state |
 //!
 //! Why separate threads?

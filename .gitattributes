@@ -2,6 +2,10 @@
 .githooks/* text eol=lf
 *.sh text eol=lf
 
+# The kanban board (`cargo tools kanban`): the cards and the generated board keep Unix line endings.
+kanban/**/*.md text eol=lf
+kanban/BOARD.md linguist-generated
+
 # Fonts and the demo animations are binary: never rewrite line endings.
 *.ttf binary
 *.gif binary

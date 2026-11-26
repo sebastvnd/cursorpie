@@ -1,8 +1,8 @@
 [package]
 name = "cursorpie"
-version = "0.9.4"
+version = "0.10.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.90"
 description = "Hold-to-open pie menu for macOS, Windows and Linux (X11 and Wayland): per-app profiles, shortcuts, launchers and submenus."
 license = "MIT"
 
@@ -34,9 +34,6 @@ exclude = [
     "/assets/js",
     "/assets/site.css",
     "/assets/site.js",
-    "/assets/blog.css",
-    "/assets/blog.js",
-    "/blog",
     "/assets/og-image.png",
     "/assets/cursorpie-logo.png",
     "/assets/icons",
@@ -45,6 +42,7 @@ exclude = [
     "/docs/gifs",
     "/installer",
     "/scripts",
+    "/kanban",
 ]
 
 # The developer tools (`cargo tools ...`, see CONTRIBUTING.md) are a second package of this workspace.
@@ -54,6 +52,11 @@ exclude = [
 members = ["tools", "diag"]
 
 [features]
+# The default build draws the glass pie with rust-glass (see src/ui/pie/liquid.rs). It needs Rust 1.90 and
+# brings wgpu, which is only used off screen, on a worker thread. `--no-default-features` builds the
+# painted glass alone, which is also what the pie falls back to when there is no usable GPU.
+default = ["liquid-glass"]
+liquid-glass = ["dep:rust-glass"]
 # Compiles the Windows backend on any OS so `cargo check --features check-windows` can type-check
 # it (and its pure helpers can be unit tested) without a Windows machine. Not needed on Windows.
 check-windows = ["dep:windows-sys"]
@@ -76,6 +79,10 @@ tiff = { version = "0.11", default-features = false, features = ["lzw", "deflate
 # The native window handle (HWND), to strip the OS frame of the Windows window (see ui::app).
 # Same major version eframe uses, so there is only one copy.
 raw-window-handle = "0.6"
+
+# Liquid Glass: renders the glass of the pie off screen on a GPU of its own (wgpu), and hands egui a
+# picture. Optional, see the `liquid-glass` feature.
+rust-glass = { version = "0.2", optional = true }
 
 # Config + icons
 serde = { version = "1", features = ["derive"] }
