@@ -106,13 +106,55 @@ unsafe extern "C" fn on_x_error(_dpy: *mut Display, _event: *mut XErrorEvent) ->
 /// events; 2 is the usual "Virtual core pointer").
 struct GrabState {
     buttons: Vec<c_int>,
+    /// The key combinations that are grabbed (X keycode, X modifier mask without the locks): the
+    /// keyboard trigger, see [`Conn::set_key_grabs`].
+    keys: Vec<(c_int, c_uint)>,
     master: c_int,
 }
 
 static GRABS: Mutex<GrabState> = Mutex::new(GrabState {
     buttons: Vec::new(),
+    keys: Vec::new(),
     master: 2,
 });
+
+/// The X modifier mask of a `MOD_*` bitmask (the inverse of `tap::linux::mods_from_state`).
+pub fn x_modifiers(mods: u8) -> c_uint {
+    use crate::keys::{MOD_ALT, MOD_CMD, MOD_CTRL, MOD_SHIFT};
+    let mut m = 0;
+    if mods & MOD_SHIFT != 0 {
+        m |= SHIFT_MASK;
+    }
+    if mods & MOD_CTRL != 0 {
+        m |= CONTROL_MASK;
+    }
+    if mods & MOD_ALT != 0 {
+        m |= MOD1_MASK;
+    }
+    if mods & MOD_CMD != 0 {
+        m |= MOD4_MASK;
+    }
+    m
+}
+
+/// The X key grab a combination needs: its keycode and modifier mask. `None` for a key that has no
+/// X keycode.
+pub fn key_grab_for(sc: &Shortcut) -> Option<(c_int, c_uint)> {
+    let keycode = keymap::x_keycode_for(sc.key)?;
+    Some((c_int::from(keycode), x_modifiers(sc.mods)))
+}
+
+/// The four masks a key is grabbed with: with and without Caps Lock and Num Lock, which are in the
+/// state of every key event but are not modifiers of a shortcut (a grab for `Ctrl` alone would not
+/// match while Num Lock is on).
+fn with_locks(mask: c_uint) -> [c_uint; 4] {
+    [
+        mask,
+        mask | LOCK_MASK,
+        mask | MOD2_MASK,
+        mask | LOCK_MASK | MOD2_MASK,
+    ]
+}
 
 fn set_bit(bits: &mut [u8], event: c_int) {
     bits[(event >> 3) as usize] |= 1 << (event & 7);
@@ -944,12 +986,90 @@ impl Conn {
         all
     }
 
+    /// Makes `wanted` the set of grabbed key combinations (the keyboard trigger). `true` if every one
+    /// of them could be grabbed (a desktop shortcut or another tool may hold the same combination).
+    /// A grabbed combination is delivered to CursorPie instead of the app, together with every key
+    /// event until its key is let go, so the combination is swallowed and Esc and Space reach the
+    /// pie while it is held. Asks the server to report the auto-repeat of a key as presses only
+    /// (without it every repeat would look like a release), once.
+    pub fn set_key_grabs(&self, wanted: &[(c_int, c_uint)]) -> bool {
+        let mut g = crate::config::lock(&GRABS);
+        let mut supported: Bool = FALSE;
+        // SAFETY: plain request; `supported` outlives the call.
+        unsafe {
+            XkbSetDetectableAutoRepeat(self.dpy, TRUE, &mut supported);
+        }
+        for k in g.keys.clone() {
+            if !wanted.contains(&k) {
+                self.ungrab_key(k);
+            }
+        }
+        let mut installed = Vec::new();
+        for k in wanted {
+            if g.keys.contains(k) || self.grab_key(*k) {
+                installed.push(*k);
+            }
+        }
+        let all = installed.len() == wanted.len();
+        g.keys = installed;
+        all
+    }
+
+    /// The key combinations that are grabbed right now.
+    pub fn grabbed_keys(&self) -> Vec<(c_int, c_uint)> {
+        crate::config::lock(&GRABS).keys.clone()
+    }
+
+    /// One passive grab per lock state, not trapped (the caller does that).
+    fn grab_key_raw(&self, (keycode, mask): (c_int, c_uint)) {
+        for m in with_locks(mask) {
+            // SAFETY: plain request on the root window.
+            unsafe {
+                XGrabKey(
+                    self.dpy,
+                    keycode,
+                    m,
+                    self.root,
+                    FALSE,
+                    GRAB_MODE_ASYNC,
+                    GRAB_MODE_ASYNC,
+                );
+            }
+        }
+    }
+
+    fn ungrab_key_raw(&self, (keycode, mask): (c_int, c_uint)) {
+        for m in with_locks(mask) {
+            // SAFETY: plain request; a grab that is not there is an error the caller absorbs.
+            unsafe {
+                XUngrabKey(self.dpy, keycode, m, self.root);
+            }
+        }
+    }
+
+    /// Grabs a combination; `true` when the server accepted all four of its masks. A refused
+    /// combination leaves no grab behind.
+    fn grab_key(&self, k: (c_int, c_uint)) -> bool {
+        let (_, failed) = self.trapped(|| self.grab_key_raw(k));
+        if failed {
+            let _ = self.trapped(|| self.ungrab_key_raw(k));
+        }
+        !failed
+    }
+
+    fn ungrab_key(&self, k: (c_int, c_uint)) {
+        let _ = self.trapped(|| self.ungrab_key_raw(k));
+    }
+
     /// Lifts every button grab (used while CursorPie is paused: events then reach the apps untouched).
     pub fn release_grabs(&self) {
         let g = crate::config::lock(&GRABS);
         self.trapped(|| {
             for b in &g.buttons {
                 self.ungrab_button(*b);
+            }
+            for k in &g.keys {
+                self.ungrab_key_raw(*k);
             }
             // SAFETY: plain request; a stale id is absorbed by `trapped`.
             unsafe {
@@ -965,6 +1085,9 @@ impl Conn {
             let mut all = true;
             for b in &g.buttons {
                 all &= self.grab_button(*b);
+            }
+            for k in &g.keys {
+                self.grab_key_raw(*k);
             }
             all
         });

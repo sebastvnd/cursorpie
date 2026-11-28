@@ -16,33 +16,33 @@ categories = ["gui"]
 # `packaging/linux/` stays in: `include_str!` embeds the desktop entry and the GNOME extension from it,
 # and the udev rules are shipped there too (the in-app guides point to them).
 # `diag/` and `tools/` are packages of their own and are never part of this one. What the build needs
-# stays in: `src/`, `assets/fonts/`, `assets/cursorpie-mark.png`, `assets/cursorpie-logo-black.png` (all
-# `include_bytes!`) and `CONTRIBUTING.md` (the `guides::contributing` page includes it as documentation).
-# Check the list with `cargo package --list` before publishing.
+# stays in: `src/`, `assets/fonts/`, `assets/cursorpie-mark.png`, `assets/cursorpie-logo-black.png`,
+# `assets/picto/mascot/*.svg` (all `include_bytes!`) and `CONTRIBUTING.md` (the `guides::contributing`
+# page includes it as documentation). Check the list with `cargo package --list` before publishing.
 exclude = [
-    "/.cargo",
-    "/.github",
-    "/.githooks",
-    "/.nojekyll",
-    "/.editorconfig",
-    "/.gitattributes",
-    "/index.html",
-    "/googlebdeb0f49ec379d7f.html",
-    "/robots.txt",
-    "/sitemap.xml",
-    "/README-WEBSITE.md",
-    "/assets/js",
-    "/assets/site.css",
-    "/assets/site.js",
-    "/assets/og-image.png",
-    "/assets/cursorpie-logo.png",
-    "/assets/icons",
-    "/assets/app-icon-macos.png",
-    "/icon",
-    "/docs/gifs",
-    "/installer",
-    "/scripts",
-    "/kanban",
+  "/.cargo",
+  "/.github",
+  "/.githooks",
+  "/.nojekyll",
+  "/.editorconfig",
+  "/.gitattributes",
+  "/index.html",
+  "/googlebdeb0f49ec379d7f.html",
+  "/robots.txt",
+  "/sitemap.xml",
+  "/README-WEBSITE.md",
+  "/assets/js",
+  "/assets/site.css",
+  "/assets/site.js",
+  "/assets/og-image.png",
+  "/assets/cursorpie-logo.png",
+  "/assets/icons",
+  "/assets/app-icon-macos.png",
+  "/icon",
+  "/docs/gifs",
+  "/installer",
+  "/scripts",
+  "/kanban",
 ]
 
 # The developer tools (`cargo tools ...`, see CONTRIBUTING.md) are a second package of this workspace.
@@ -67,6 +67,7 @@ debug-log = ["diag/force"]
 [dependencies]
 # UI (egui 0.36 uses `App::ui` + `App::logic`, same as the original code).
 # `eframe` is declared per target below, because the renderer differs between the OSes.
+egui_extras = { version = "0.36", default-features = false, features = ["svg"] }
 
 # The diagnostic log (`CURSORPIE_DEBUG=1`, docs/DEBUGGING.md). It is a crate of its own with no
 # dependencies, so the code that writes the log is not part of the app's sources.
@@ -74,7 +75,10 @@ diag = { package = "cursorpie-diag", version = "0.2.0", path = "diag" }
 
 # Reads the multi-page TIFF macOS hands out for app icons. Only the codecs macOS uses are enabled.
 # Kept for every target because the decoder is plain Rust and its tests run everywhere.
-tiff = { version = "0.11", default-features = false, features = ["lzw", "deflate"] }
+tiff = { version = "0.11", default-features = false, features = [
+  "lzw",
+  "deflate",
+] }
 
 # The native window handle (HWND), to strip the OS frame of the Windows window (see ui::app).
 # Same major version eframe uses, so there is only one copy.
@@ -91,33 +95,42 @@ serde_json = "1"
 # not PNG, JPEG or WebP is converted to a PNG when it is imported (`ui::iconfit`), so the profile
 # sharing, which only writes those three, keeps working. All of them are plain Rust.
 image = { version = "0.25", default-features = false, features = [
-    "png", "jpeg", "webp", "gif", "bmp", "ico", "tiff", "tga", "qoi", "pnm",
+  "png",
+  "jpeg",
+  "webp",
+  "gif",
+  "bmp",
+  "ico",
+  "tiff",
+  "tga",
+  "qoi",
+  "pnm",
 ] }
 
 # Windows backend, only enabled by the `check-windows` feature on other targets (see [target.'cfg(windows)']).
 windows-sys = { version = "0.61", optional = true, features = [
-    "Win32_Devices_HumanInterfaceDevice",
-    "Win32_Foundation",
-    "Win32_Graphics_Dwm",
-    "Win32_Graphics_Gdi",
-    "Win32_Security",
-    "Win32_Storage_FileSystem",
-    "Win32_System_Com",
-    "Win32_System_Diagnostics_Debug",
-    "Win32_System_Diagnostics_ToolHelp",
-    "Win32_System_LibraryLoader",
-    "Win32_System_Memory",
-    "Win32_System_ProcessStatus",
-    "Win32_System_Registry",
-    "Win32_System_Shutdown",
-    "Win32_System_SystemInformation",
-    "Win32_System_Threading",
-    "Win32_UI_Controls_Dialogs",
-    "Win32_UI_HiDpi",
-    "Win32_UI_Input",
-    "Win32_UI_Input_KeyboardAndMouse",
-    "Win32_UI_Shell",
-    "Win32_UI_WindowsAndMessaging",
+  "Win32_Devices_HumanInterfaceDevice",
+  "Win32_Foundation",
+  "Win32_Graphics_Dwm",
+  "Win32_Graphics_Gdi",
+  "Win32_Security",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Com",
+  "Win32_System_Diagnostics_Debug",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Memory",
+  "Win32_System_ProcessStatus",
+  "Win32_System_Registry",
+  "Win32_System_Shutdown",
+  "Win32_System_SystemInformation",
+  "Win32_System_Threading",
+  "Win32_UI_Controls_Dialogs",
+  "Win32_UI_HiDpi",
+  "Win32_UI_Input",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
 ] }
 
 # UI on macOS (and on any other target that only builds the test stub): eframe's default features,
@@ -138,17 +151,20 @@ eframe = "0.36"
 # Wayland window and failed with `Glutin(... "provided native window is not supported")`.
 [target.'cfg(target_os = "linux")'.dependencies]
 eframe = { version = "0.36", default-features = false, features = [
-    "accesskit",
-    "default_fonts",
-    "glow",
-    "x11",
+  "accesskit",
+  "default_fonts",
+  "glow",
+  "x11",
 ] }
 # Same winit eframe uses (already in the tree, no new code): only for the trait that forces the X11
 # backend, see `force_x11` in lib.rs.
 winit = { version = "0.30", default-features = false, features = ["x11"] }
 # Wayland, KDE adapter and the session watcher (logind): D-Bus, the blocking API. Pure Rust, no
 # system library; the `tokio` runtime is not used (`default-features` off keeps the async-io one).
-zbus = { version = "5", default-features = false, features = ["blocking-api", "async-io"] }
+zbus = { version = "5", default-features = false, features = [
+  "blocking-api",
+  "async-io",
+] }
 
 # macOS: event tap, frontmost app, activation policy (no Dock icon), app icons.
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -158,15 +174,19 @@ core-graphics = "0.25"
 core-foundation = "0.10"
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", features = [
-    "NSApplication",
-    "NSHapticFeedback",
-    "NSResponder",
-    "NSRunningApplication",
-    "NSWorkspace",
-    "NSImage",
+  "NSApplication",
+  "NSHapticFeedback",
+  "NSResponder",
+  "NSRunningApplication",
+  "NSWorkspace",
+  "NSImage",
 ] }
 # App icons: NSWorkspace hands out the icon as TIFF data (NSString / NSURL / NSData for the calls)
-objc2-foundation = { version = "0.3", features = ["NSString", "NSURL", "NSData"] }
+objc2-foundation = { version = "0.3", features = [
+  "NSString",
+  "NSURL",
+  "NSData",
+] }
 
 # Tray / menu bar icon (muda menus are re-exported as `tray_icon::menu`). Not built on other
 # targets: on Linux it would need GTK (the Linux tray is future work, docs/developer/LINUX_MIGRATION.md).
@@ -182,40 +202,44 @@ tray-icon = "0.25"
 # Turn the default features off: with both renderers compiled in, eframe prefers `wgpu`.
 # Never add the `wgpu` feature here (see docs/developer/UI_DESIGN.md, "Transparent window on Windows").
 eframe = { version = "0.36", default-features = false, features = [
-    "accesskit",
-    "default_fonts",
-    "glow",
+  "accesskit",
+  "default_fonts",
+  "glow",
 ] }
 windows-sys = { version = "0.61", features = [
-    "Win32_Devices_HumanInterfaceDevice",
-    "Win32_Foundation",
-    "Win32_Graphics_Dwm",
-    "Win32_Graphics_Gdi",
-    "Win32_Security",
-    "Win32_Storage_FileSystem",
-    "Win32_System_Com",
-    "Win32_System_Diagnostics_Debug",
-    "Win32_System_Diagnostics_ToolHelp",
-    "Win32_System_LibraryLoader",
-    "Win32_System_Memory",
-    "Win32_System_ProcessStatus",
-    "Win32_System_Registry",
-    "Win32_System_Shutdown",
-    "Win32_System_SystemInformation",
-    "Win32_System_Threading",
-    "Win32_UI_Controls_Dialogs",
-    "Win32_UI_HiDpi",
-    "Win32_UI_Input",
-    "Win32_UI_Input_KeyboardAndMouse",
-    "Win32_UI_Shell",
-    "Win32_UI_WindowsAndMessaging",
+  "Win32_Devices_HumanInterfaceDevice",
+  "Win32_Foundation",
+  "Win32_Graphics_Dwm",
+  "Win32_Graphics_Gdi",
+  "Win32_Security",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Com",
+  "Win32_System_Diagnostics_Debug",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Memory",
+  "Win32_System_ProcessStatus",
+  "Win32_System_Registry",
+  "Win32_System_Shutdown",
+  "Win32_System_SystemInformation",
+  "Win32_System_Threading",
+  "Win32_UI_Controls_Dialogs",
+  "Win32_UI_HiDpi",
+  "Win32_UI_Input",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
 ] }
 
 [package.metadata.docs.rs]
 # docs.rs builds the docs for an Apple target by default; the Windows backend is documented
 # with the extra target below.
 default-target = "aarch64-apple-darwin"
-targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-pc-windows-msvc"]
+targets = [
+  "aarch64-apple-darwin",
+  "x86_64-apple-darwin",
+  "x86_64-pc-windows-msvc",
+]
 # Show the internals (tap, ui, ...) too: this is documentation for contributors.
 rustdoc-args = ["--document-private-items"]
 

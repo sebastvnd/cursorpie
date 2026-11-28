@@ -27,6 +27,7 @@ history, but its status line must say what is true today.
 | [WAYLAND_SUPPORT.md](WAYLAND_SUPPORT.md) | **Experimental**: written, not yet run on real Plasma, GNOME, Hyprland or Sway | Why Wayland support is needed, what each compositor offers, the parity contract, milestones and spikes |
 | [OTHER_DESKTOPS.md](OTHER_DESKTOPS.md) | Done | How *Open app* follows an app to another desktop or Space |
 | [UI_DESIGN.md](UI_DESIGN.md) | Living | Look, rendering rules and the visual checklist |
+| [MASCOT.md](MASCOT.md) | Living | The octopus mascot: how to show it, how to add a pose, where it belongs |
 | [TRACKPAD_HAPTICS_PLAN.md](TRACKPAD_HAPTICS_PLAN.md) | Implemented; native layers awaiting verification on real hardware | How trackpads (macOS, Windows, Linux) and Mac haptics work with the same pie as the mouse |
 
 ## Where the Linux code is

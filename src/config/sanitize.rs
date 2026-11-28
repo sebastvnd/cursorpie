@@ -187,6 +187,20 @@ impl Config {
             Config::default().touch_still_mm
         };
         self.touch_typing_guard_ms = self.touch_typing_guard_ms.min(2000);
+        // a combination of the keyboard trigger needs a modifier (a bare key would take typing
+        // away) and may not be Esc (Esc closes a pie): anything else is no combination at all
+        let usable = |s: &crate::keys::Shortcut| {
+            s.mods & crate::keys::MOD_MASK != 0 && s.key != crate::keys::key::ESCAPE
+        };
+        self.key_trigger = self.key_trigger.filter(usable);
+        self.key_trigger_app = self.key_trigger_app.filter(usable);
+        // the same combination twice is one: the general pie keeps it
+        if self.key_trigger_app.is_some_and(|a| {
+            self.key_trigger
+                .is_some_and(|g| (g.key, g.mods) == (a.key, a.mods))
+        }) {
+            self.key_trigger_app = None;
+        }
         super::flow::clean_flows(&mut self.flows);
         self
     }
@@ -539,5 +553,73 @@ mod tests {
         };
         assert_eq!(kind(&inner[0]), Action::OpenApp("@browser".into()));
         assert_eq!(kind(&inner[1]), cmd("ls"), "a command of the user stays");
+    }
+
+    // ------------------------------------------------------------ the keyboard trigger
+
+    #[test]
+    fn the_keyboard_trigger_is_off_by_default_and_an_old_file_keeps_it_off() {
+        let c = parse(r#"{"version":2}"#);
+        assert_eq!(c.key_trigger, None);
+        assert_eq!(c.key_trigger_app, None);
+        assert_eq!(c.key_trigger_mode, crate::config::KeyPieMode::Auto);
+    }
+
+    #[test]
+    fn a_combination_survives_saving_and_loading() {
+        use crate::keys::{MOD_CTRL, MOD_SHIFT, Shortcut, key};
+        let c = Config {
+            key_trigger: Some(Shortcut::new(key::SPACE, MOD_CTRL)),
+            key_trigger_app: Some(Shortcut::new(key::SPACE, MOD_CTRL | MOD_SHIFT)),
+            key_trigger_mode: crate::config::KeyPieMode::Toggle,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&c).unwrap();
+        let back = parse(&json);
+        assert_eq!(back.key_trigger, c.key_trigger);
+        assert_eq!(back.key_trigger_app, c.key_trigger_app);
+        assert_eq!(back.key_trigger_mode, crate::config::KeyPieMode::Toggle);
+    }
+
+    #[test]
+    fn a_combination_without_a_modifier_or_with_esc_is_dropped() {
+        use crate::keys::{MOD_CTRL, Shortcut, key};
+        let c = Config {
+            key_trigger: Some(Shortcut::new(key::SPACE, 0)),
+            key_trigger_app: Some(Shortcut::new(key::ESCAPE, MOD_CTRL)),
+            ..Default::default()
+        };
+        let c = c.sanitize();
+        assert_eq!(c.key_trigger, None, "a bare key would take typing away");
+        assert_eq!(c.key_trigger_app, None, "Esc closes a pie");
+    }
+
+    #[test]
+    fn the_same_combination_twice_is_one_and_the_general_pie_keeps_it() {
+        use crate::keys::{MOD_CTRL, Shortcut, key};
+        let sc = Shortcut::new(key::SPACE, MOD_CTRL);
+        let c = Config {
+            key_trigger: Some(sc),
+            key_trigger_app: Some(sc),
+            ..Default::default()
+        };
+        let c = c.sanitize();
+        assert_eq!(c.key_trigger, Some(sc));
+        assert_eq!(c.key_trigger_app, None);
+    }
+
+    #[test]
+    fn recording_a_combination_that_the_other_has_moves_it() {
+        use crate::keys::{MOD_CTRL, MOD_SHIFT, Shortcut, key};
+        let a = Shortcut::new(key::SPACE, MOD_CTRL);
+        let b = Shortcut::new(key::SPACE, MOD_CTRL | MOD_SHIFT);
+        let mut c = Config::default();
+        c.set_key_trigger(false, a);
+        c.set_key_trigger(true, b);
+        assert_eq!((c.key_trigger, c.key_trigger_app), (Some(a), Some(b)));
+        c.set_key_trigger(true, a); // the one of the app takes it from the general pie
+        assert_eq!((c.key_trigger, c.key_trigger_app), (None, Some(a)));
+        c.set_key_trigger(false, Shortcut::new(key::SPACE, 0)); // not usable: nothing changes
+        assert_eq!((c.key_trigger, c.key_trigger_app), (None, Some(a)));
     }
 }

@@ -9,6 +9,7 @@
 //! | [`tray`] | the menu bar icon and menu |
 //! | [`appicon`] | real app icons, reduced to white glyphs |
 //! | [`icons`] | the bounded texture cache for icons, shared by the pie and Settings |
+//! | [`mascot`] | the octopus mascot: its poses (`assets/picto/mascot/`), and one call to show one anywhere in the UI |
 //! | [`sleep`] | the idle policy that frees caches and Settings state |
 //! | [`memlog`] | memory marks for the diagnostic log (category `mem`): free while the log is off |
 //! | [`trim`] | gives freed memory back to the OS soon after the pie was used, from a thread of its own |
@@ -27,6 +28,7 @@ pub mod fonts;
 pub mod hud;
 pub mod iconfit;
 pub mod icons;
+pub mod mascot;
 pub mod memlog;
 pub mod pie;
 pub mod screen;

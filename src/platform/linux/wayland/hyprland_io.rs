@@ -3,15 +3,18 @@
 //! synchronously, so one that is left open would freeze it (see `hyprland.rs`).
 
 use super::hyprland::{
-    MAX_REPLY, build_snapshot, focus_command, parse_active, parse_clients, parse_cursor,
-    parse_monitors, socket_paths,
+    MAX_REPLY, build_snapshot, float_command, focus_command, look_commands, move_command,
+    needs_move, parse_active, parse_clients, parse_cursor, parse_monitors, parse_own_window,
+    socket_paths, top_left_for_center,
 };
 use super::kwin;
 use super::poller::Source;
+use crate::geometry::Point;
 use std::io::{self, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 /// How long one request may take. Hyprland answers in well under a millisecond; this only bounds a
 /// compositor that is stuck.
@@ -78,5 +81,100 @@ impl Source for Hypr {
 
     fn polls_pointer(&self) -> bool {
         true
+    }
+}
+
+// ------------------------------------------------------------------- CursorPie's own window
+
+/// Which placement is the current one: a newer request ends the thread of the older one.
+static GENERATION: AtomicU64 = AtomicU64::new(0);
+/// Whether a placement thread is still working (see [`placing`]).
+static PLACING: AtomicBool = AtomicBool::new(false);
+
+/// How long one placement looks for the window and keeps it where it belongs.
+const PLACE_MAX: Duration = Duration::from_millis(1200);
+/// How often the window is looked at while it is placed.
+const PLACE_STEP: Duration = Duration::from_millis(15);
+/// How many looks in a row that find nothing to do end the placement.
+const PLACE_STABLE: u32 = 8;
+
+/// Whether the window of CursorPie is still being placed. The app keeps the window invisible
+/// while it is, so the first frames never show the compositor's border, shadow and blur, or the
+/// window in the wrong place.
+pub(crate) fn placing() -> bool {
+    PLACING.load(Ordering::Acquire)
+}
+
+/// Asks Hyprland, from a thread of its own, to put the center of CursorPie's window on `center`
+/// (layout points, as the pointer is read) and to take its border, shadow, blur and rounded
+/// corners off.
+///
+/// Why Hyprland has to be asked: the window is an XWayland window, and Hyprland treats it as any
+/// other window. It draws a border, a shadow and a blur behind it, and a transparent window
+/// (the pie) turns into an outlined box. It also places the window itself, from the position the
+/// X client asked for in X's own points, which are not the layout's points when the screen is
+/// scaled; the pie was then not under the cursor. `setprop` and `movewindowpixel` act on this one
+/// window only, so nothing is needed in the person's `hyprland.conf`.
+///
+/// A window that is mapped again is a new window for Hyprland (a new address, nothing set), so
+/// the thread looks at the window every few milliseconds, not once: whenever the address is a new
+/// one the look is taken off again, and whenever the corner is off it is moved. It ends after a
+/// few quiet looks, or after [`PLACE_MAX`].
+pub(crate) fn place_own_window(center: Point) {
+    let Some(socket) = find_socket() else {
+        return;
+    };
+    let generation = GENERATION.fetch_add(1, Ordering::AcqRel) + 1;
+    PLACING.store(true, Ordering::Release);
+    let spawned = std::thread::Builder::new()
+        .name("hyprland-place".into())
+        .spawn(move || {
+            place_loop(&socket, center, generation);
+            // only the newest placement may say that nothing is being placed any more
+            if GENERATION.load(Ordering::Acquire) == generation {
+                PLACING.store(false, Ordering::Release);
+            }
+        });
+    if spawned.is_err() {
+        PLACING.store(false, Ordering::Release);
+    }
+}
+
+fn place_loop(socket: &Path, center: Point, generation: u64) {
+    let pid = std::process::id();
+    let started = Instant::now();
+    let mut done_for: Option<String> = None;
+    let mut quiet = 0u32;
+    while started.elapsed() < PLACE_MAX && GENERATION.load(Ordering::Acquire) == generation {
+        let own = request(socket, "j/clients")
+            .ok()
+            .and_then(|t| parse_own_window(&t, pid));
+        if let Some(w) = own {
+            let mut acted = false;
+            if done_for.as_deref() != Some(w.id.as_str()) {
+                if !w.floating
+                    && let Some(cmd) = float_command(&w.id)
+                {
+                    let _ = request(socket, &cmd);
+                }
+                for cmd in look_commands(&w.id) {
+                    let _ = request(socket, &cmd);
+                }
+                done_for = Some(w.id.clone());
+                acted = true;
+            }
+            let want = top_left_for_center(center, w.rect.w, w.rect.h);
+            if needs_move(&w.rect, want)
+                && let Some(cmd) = move_command(&w.id, want.0, want.1)
+            {
+                let _ = request(socket, &cmd);
+                acted = true;
+            }
+            quiet = if acted { 0 } else { quiet + 1 };
+            if quiet >= PLACE_STABLE {
+                return;
+            }
+        }
+        std::thread::sleep(PLACE_STEP);
     }
 }

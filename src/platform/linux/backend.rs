@@ -196,7 +196,42 @@ pub fn keep_over_full_screen(_over: bool) {}
 /// X11 window managers (KWin, ...) may place a window that is mapped again at the center of the
 /// screen, ignoring the position it was given while hidden, so the pie asks for it again.
 pub fn window_manager_may_recenter() -> bool {
+    // Hyprland is the exception: it places the window through its own socket (see
+    // `place_window_center`), and a second move asked of the X server fights with that one.
+    !hyprland_places_window()
+}
+
+/// Whether this is a Hyprland session, where the pie window is placed (and stripped of the
+/// compositor's border, shadow and blur) through Hyprland's control socket.
+fn hyprland_places_window() -> bool {
+    wayland::active() && wayland::adapter::current() == wayland::adapter::Adapter::Hyprland
+}
+
+/// Hyprland only: asks the compositor to put the window of size `size` whose top-left corner the
+/// toolkit was given as `top_left` (both in the toolkit's points) so that its center is where that
+/// is in the layout, and to take its border, shadow, blur and rounded corners off. Does nothing,
+/// and returns `false`, anywhere else. The thread it starts follows the window for a moment (it is
+/// a new window for Hyprland at every map); see `wayland::hyprland_io::place_own_window`.
+pub fn place_window_center(top_left: (f64, f64), size: (f64, f64)) -> bool {
+    if !hyprland_places_window() {
+        return false;
+    }
+    let center = (top_left.0 + size.0 / 2.0, top_left.1 + size.1 / 2.0);
+    // the inverse of `window_point`: from the toolkit's points back to the layout's
+    let outputs = wayland::kwin::displays();
+    let layout = x11::conn()
+        .and_then(|c| wayland::coords::to_window_point(center, &c.monitors(), &outputs))
+        .unwrap_or(center);
+    wayland::hyprland_io::place_own_window(crate::geometry::Point {
+        x: layout.0,
+        y: layout.1,
+    });
     true
+}
+
+/// Whether [`place_window_center`] is still working on the window, so the app keeps it invisible.
+pub fn window_placement_pending() -> bool {
+    hyprland_places_window() && wayland::hyprland_io::placing()
 }
 
 /// The pointer position in logical points.

@@ -113,9 +113,9 @@ jobs:
 
     permissions:
       contents: read
-      pages: write      # publish to Pages
-      id-token: write   # verify the deployment comes from this workflow
-      actions: read     # let deploy-pages list the "github-pages" artifact (needed on private repos)
+      pages: write # publish to Pages
+      id-token: write # verify the deployment comes from this workflow
+      actions: read # let deploy-pages list the "github-pages" artifact (needed on private repos)
 
     steps:
       - name: Deploy website

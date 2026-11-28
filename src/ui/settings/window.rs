@@ -211,7 +211,11 @@ impl App {
 
         // Esc closes what is on top: a sheet, then a popup (egui closes it itself), then the window
         // (when not recording) = cancel
-        if self.closing.is_none() && self.ed.recording.is_none() && !super::picker::choosing() {
+        if self.closing.is_none()
+            && self.ed.recording.is_none()
+            && !super::picker::choosing()
+            && !super::code_editor::escape_is_taken(&ctx)
+        {
             let esc = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
             if esc {
                 if self.export_error.is_some() {
@@ -299,6 +303,8 @@ impl App {
                 ctx.pixels_per_point(),
             )
         };
+        // the windows of the Flow tab (the code editor) stay inside the card
+        ctx.data_mut(|d| d.insert_temp(egui::Id::new(super::code_editor::CARD_KEY), card_rect));
         self.ed.card = card_rect;
         let Regions {
             top,

@@ -145,6 +145,12 @@ pub(super) struct Recorder {
 }
 
 impl Recorder {
+    /// The modifiers held now (`MOD_*` bits), as far as the recorder knows: the live view of a
+    /// recording shows them as the person presses them.
+    pub(super) fn held_bits(&self) -> u8 {
+        self.order.iter().fold(0u8, |m, b| m | b)
+    }
+
     /// Forgets the modifiers (a recording starts, or stops).
     pub(super) fn reset(&mut self) {
         self.order.clear();

@@ -19,6 +19,7 @@ use crate::msg::Msg;
 use crate::ui::draw::on_accent;
 use crate::ui::fonts;
 use crate::ui::settings::action_editor::{bridge_line, browser_fields};
+use crate::ui::settings::code_editor::{self, Lang, code_edit, code_edit_fill};
 use crate::ui::settings::state::{Ed, FlowView, Slot};
 use crate::ui::settings::theme::*;
 use crate::ui::settings::widgets::*;
@@ -510,12 +511,16 @@ pub(super) fn header(ui: &mut egui::Ui, edit: &mut Config, ed: &Ed, accent: Colo
                         if bar_button(
                             ui,
                             symbols::UPLOAD_SIMPLE,
-                            "Export this flow\u{2026}",
+                            "Export this flow\u{2026}  (Shift: as a program tree)",
                             Tone::Plain,
                         )
                         .clicked()
                         {
-                            todo = Some(Do::Export);
+                            todo = Some(if ui.input(|i| i.modifiers.shift) {
+                                Do::ExportAst
+                            } else {
+                                Do::Export
+                            });
                         }
                         if bar_button(ui, symbols::COPY, "Duplicate this flow", Tone::Plain)
                             .clicked()
@@ -1409,6 +1414,11 @@ pub(super) fn steps(
     tx: &Sender<Msg>,
 ) {
     let fi = ed.flow;
+    // a step's code open in the full editor takes the place of the list
+    let whole = ui.available_rect_before_wrap();
+    if code_view(ui, ctx, flow, whole) {
+        return;
+    }
     let issues = {
         let known: Vec<&str> = others
             .iter()
@@ -1889,6 +1899,147 @@ fn row(ui: &mut egui::Ui, label: &str, add: impl FnOnce(&mut egui::Ui)) {
     });
 }
 
+/// Where the step whose code is open in the full editor is remembered (see [`code_view`]), and
+/// whether it was opened this frame (then the editor takes the keyboard).
+const CODE_OPEN: &str = "flow_list_code";
+const CODE_FRESH: &str = "flow_list_code_fresh";
+
+/// A row with the code editor ([`code_edit`]) where a command (or a JSON text) is written, and at
+/// its right a button that opens the same text in the full editor ([`code_view`]), which has the
+/// room of the whole canvas for a long script.
+fn code_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    salt: (&str, u32),
+    text: &mut String,
+    lang: Lang,
+    hint: &str,
+) {
+    let id = salt.1;
+    ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        let (r, _) = ui.allocate_exact_size(vec2(LABEL_W, CONTROL_H), Sense::hover());
+        ui.painter().text(
+            pos2(r.min.x, r.center().y),
+            egui::Align2::LEFT_CENTER,
+            label,
+            FontId::proportional(13.0),
+            pal().muted,
+        );
+        let w = (ui.available_width() - 34.0).max(60.0);
+        let at = ui.cursor().min;
+        ui.scope_builder(
+            UiBuilder::new().max_rect(Rect::from_min_size(at, vec2(w, 100_000.0))),
+            |ui| {
+                let rows = match lang {
+                    Lang::Value => 1,
+                    Lang::Shell => 3,
+                    Lang::Json => 8,
+                };
+                code_edit(ui, salt, text, lang, hint, rows);
+            },
+        );
+        if icon_button(ui, symbols::ARROWS_OUT, "Open in the full editor", true).clicked() {
+            let ctx = ui.ctx().clone();
+            ctx.data_mut(|d| {
+                d.insert_temp(egui::Id::new(CODE_OPEN), Some(id));
+                d.insert_temp(egui::Id::new(CODE_FRESH), true);
+            });
+        }
+    });
+}
+
+/// The text of a step that the full editor can open, with its language, its name and the hint of
+/// its field.
+fn code_target(kind: &mut NodeKind) -> Option<(&mut String, Lang, &'static str, &'static str)> {
+    match kind {
+        NodeKind::Command(s) => Some((
+            s,
+            Lang::Shell,
+            "Command to run",
+            "shell command (not waited for)",
+        )),
+        NodeKind::Set { value, .. } => Some((value, Lang::Value, "Value", "text, e.g. {{name}}")),
+        NodeKind::Run { command, .. } => Some((
+            command,
+            Lang::Shell,
+            "Command to run",
+            "shell command (waited for)",
+        )),
+        NodeKind::Ask {
+            mode: AskMode::Panel,
+            message,
+            ..
+        } => Some((message, Lang::Json, "Panel (JSON)", "see docs/PANELS.md")),
+        _ => None,
+    }
+}
+
+/// The code editor of one step over the whole area of the list, in place of the steps (they come
+/// back when it is closed): a bar with a way back, then the editor with all the room there is.
+/// It is closed by the arrow, by Esc (the list of suggestions has first claim on it), and when the
+/// step is gone or the flow is another. Returns whether it was drawn, so the list is not.
+fn code_view(ui: &mut egui::Ui, ctx: &egui::Context, flow: &mut Flow, area: Rect) -> bool {
+    let key = egui::Id::new(CODE_OPEN);
+    // another flow: what was open in the last one is not here
+    let flow_key = egui::Id::new("flow_list_code_flow");
+    let last: Option<String> = ctx.data(|d| d.get_temp(flow_key));
+    if last.as_deref() != Some(flow.id.as_str()) {
+        ctx.data_mut(|d| {
+            d.insert_temp(key, None::<u32>);
+            d.insert_temp(flow_key, flow.id.clone());
+        });
+    }
+    let Some(id) = ctx.data(|d| d.get_temp::<Option<u32>>(key)).flatten() else {
+        return false;
+    };
+    let Some(i) = flow.nodes.iter().position(|n| n.id == id) else {
+        ctx.data_mut(|d| d.insert_temp(key, None::<u32>));
+        return false;
+    };
+    let Some((text, lang, title, hint)) = code_target(&mut flow.nodes[i].kind) else {
+        ctx.data_mut(|d| d.insert_temp(key, None::<u32>));
+        return false;
+    };
+    let fresh: bool = ctx
+        .data(|d| d.get_temp(egui::Id::new(CODE_FRESH)))
+        .unwrap_or(false);
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new(CODE_FRESH), false));
+    let mut close = false;
+    let pad = 12.0;
+    ui.scope_builder(UiBuilder::new().max_rect(area), |ui| {
+        egui::Frame::new()
+            .fill(pal().input)
+            .stroke(Stroke::new(1.0, pal().border))
+            .corner_radius(panel_r())
+            .inner_margin(egui::Margin::same(pad as i8))
+            .show(ui, |ui| {
+                ui.set_min_size(area.size() - vec2(pad * 2.0, pad * 2.0));
+                ui.horizontal(|ui| {
+                    if icon_button(ui, symbols::ARROW_LEFT, "Back to the steps (Esc)", true)
+                        .clicked()
+                    {
+                        close = true;
+                    }
+                    ui.label(RichText::new(title).size(14.0).strong().color(pal().text));
+                });
+                ui.add_space(8.0);
+                let edit = code_edit_fill(ui, ("flow_list_code_edit", id), text, lang, hint);
+                if fresh {
+                    edit.request_focus();
+                }
+                if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+                    close = true;
+                }
+            });
+    });
+    code_editor::hold_escape(ctx);
+    if close {
+        ctx.data_mut(|d| d.insert_temp(key, None::<u32>));
+    }
+    true
+}
+
 /// A text row. A field that starts with a capital in `hint` ("Result") is a name; the rest is
 /// shown as the hint inside the field.
 fn text_row(ui: &mut egui::Ui, label: &str, text: &mut String, hint: &str) {
@@ -1952,7 +2103,14 @@ fn fields(
             }
         }),
         NodeKind::OpenUrl(s) => text_row(ui, "Address", s, "https://\u{2026}  or a file path"),
-        NodeKind::Command(s) => text_row(ui, "Command", s, "shell command (not waited for)"),
+        NodeKind::Command(s) => code_row(
+            ui,
+            "Command",
+            ("flow_cmd", id),
+            s,
+            Lang::Shell,
+            "shell command (not waited for)",
+        ),
         NodeKind::Wait(ms) => row(ui, "Wait for", |ui| {
             ui.add(
                 egui::DragValue::new(ms)
@@ -1963,7 +2121,14 @@ fn fields(
         }),
         NodeKind::Set { name, value } => {
             text_row(ui, "Variable", name, "name, e.g. count");
-            text_row(ui, "Value", value, "text, e.g. {{name}}");
+            code_row(
+                ui,
+                "Value",
+                ("set_value", id),
+                value,
+                Lang::Value,
+                "text, e.g. {{name}}",
+            );
         }
         NodeKind::Calc { out, a, op, b } => {
             text_row(ui, "Save in", out, "variable");
@@ -2012,15 +2177,14 @@ fn fields(
                         ops.push(Op::DesignPanel(id));
                     }
                 });
-                row(ui, "Panel (JSON)", |ui| {
-                    ui.add(
-                        egui::TextEdit::multiline(message)
-                            .font(egui::TextStyle::Monospace)
-                            .desired_rows(8)
-                            .desired_width(f32::INFINITY)
-                            .hint_text("see docs/PANELS.md"),
-                    );
-                });
+                code_row(
+                    ui,
+                    "Panel (JSON)",
+                    ("flow_panel_json", id),
+                    message,
+                    Lang::Json,
+                    "see docs/PANELS.md",
+                );
                 hint_line(
                     ui,
                     "Each field sets the variable named by its id. The button pressed goes below.",
@@ -2077,7 +2241,14 @@ fn fields(
             out,
             timeout_s,
         } => {
-            text_row(ui, "Command", command, "shell command (waited for)");
+            code_row(
+                ui,
+                "Command",
+                ("flow_run", id),
+                command,
+                Lang::Shell,
+                "shell command (waited for)",
+            );
             text_row(ui, "Save output in", out, "variable");
             row(ui, "Give up after", |ui| {
                 ui.add(

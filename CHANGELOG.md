@@ -2,6 +2,99 @@
 
 ## Unreleased
 
+- **New: the mascot has a home, and shows up where it has something to say.** All the octopus pictures are one
+  module now (`src/ui/mascot.rs`): a screen asks for a pose (`Pose::Success`, `Pose::Offline`, ...) and draws it with
+  one line, with no texture code of its own. Pictures are made when first drawn, sharp at the size they are shown,
+  kept in a small cache and freed when Settings closes and when the UI sleeps. A new picture is one SVG in
+  `assets/picto/mascot/` and one line in the list; a test fails if the folder and the list disagree. The mascot is
+  small and in few places: the heading of the update sheets (available, downloading, finished or not) and of the export
+  error, and the last page of the welcome guide when there is room at the side of its toggles (see
+  `docs/developer/MASCOT.md`).
+
+- **Fixed: the mascot of the welcome guide.** The first page drew the *coffee break* picture instead of the *welcome*
+  one, put it at a fixed number of points from the middle (so it sat differently in a small card), could stop the guide
+  with a panic if the picture was unreadable, and kept its own copy of the picture and of the fade.
+
+- **Changed: tidier mascot files.** The pictures are in `assets/picto/mascot/` with names that say the moment
+  (`success.svg`, `please_wait.svg`) instead of `22_octopus_winner.svg`. Ten files that were exact copies (`... 2.svg`)
+  and `picto_coffee.svg` (the same picture as `coffee_break.svg`) are gone; the master drawing moved to
+  `assets/picto/source/bubblegum.svg`; `picto_platfrom.png` is now `picto_platform.png`.
+
+- **Changed: the code window of a block is tied to the block.** The window of the code editor (the `</>` button next
+  to the command of a *Shell command*, *Run and wait* or *Set* block) used to stay where it was put on the screen,
+  away from its block. It now hangs right under the block (over it when there is no room) and follows it when the
+  block is dragged and when the canvas is panned or zoomed. It is resizable from its edges and corner, wide enough for
+  a script by default, and its size is remembered while Settings is open. In the inspector it hangs from the button.
+
+- **Changed: the code editor of a flow is calmer.** Enter is always a new line (it used to take the highlighted
+  suggestion and swap what you had typed); Tab takes a suggestion, and Enter does too only after you chose one with
+  Up / Down. The list opens from the second letter, not the first. Brackets and quotes no longer close themselves or
+  wrap a selection: what you type is what you get. Ctrl + Space opens the list by hand (Cmd + Space is Spotlight on
+  macOS and never reached the editor). The line under the box is plain words (`Line 1, column 5   Enter: new line  ·
+  Tab: indent  ·  Esc: close`, and the keys of the list while it is open) and the window has line numbers from the
+  start, so the text no longer jumps to the right at the first Enter. The window of a *Shell command* is called
+  *Command to run*.
+
+- **New: a code editor for the commands of a flow.** The command of a *Shell command* and of a *Run a command* block,
+  and the JSON of the panel of an *Ask* block, are written in a small code editor instead of a bare text box: colors
+  for keywords, commands, flags, strings, `$variables`, comments and the `{{variables}}` of the flow; a list of
+  suggestions while typing (the commands of the OS, shell keywords with snippets such as `if`, `for` and `while`,
+  `$ENV` names, and inside `{{` the variables of the flow and the filters, e.g. `{{name|sh}}`), also with
+  Ctrl/Cmd + Space (Up / Down choose, Tab or Enter accept, Esc closes); Tab and Shift + Tab indent and outdent lines,
+  Enter keeps the indent and opens a block after `then`, `do` or `{`, Ctrl/Cmd + / comments lines out, and brackets and
+  quotes close themselves. In the list of steps the editor is part of the step; on the canvas and in the inspector a
+  `</>` button next to the one-line field opens it in a popup. See `src/ui/settings/code_editor.rs`.
+  The value of a *Set* block uses it too (variables and `{{= expressions}}`). Also: the list ranks by prefix, then by a
+  word inside, then by letters in order; it offers the flags of common commands, the variables of a run (`ok`, `code`,
+  `index`), the functions of `{{= }}` and, with Ctrl/Cmd + Space in an argument, the variables of the flow as
+  `{{name|sh}}`; numbered lines; an unknown filter or function is underlined in red; a bracket or quote typed over a
+  selection wraps it. **Fixed:** Esc with the list open used to close the whole Settings window; now it only closes the
+  list. On the canvas the editor opens in a window that stays where it is put and can be dragged and resized (it was
+  a popup that followed the button and jumped when the list of suggestions came and went); in it the list floats
+  under the cursor. The welcome test and one comment test that did not compile were fixed too.
+
+- **Fixed (Hyprland): the pie was not under the cursor and had an outline and a blurred, irregular box around it.**
+  The pie is an XWayland window and Hyprland treated it as any window: it drew its border, its shadow and the blur
+  behind it (a transparent window turns into an outlined box, because Hyprland gets one buffer and cannot tell the
+  drawn part from the empty one), and it placed the window itself from the position X asked for, which is in X's
+  points, not the layout's, so it was off the pointer when the screen is scaled. CursorPie now finds its own window
+  through Hyprland's control socket (by process id), takes the border, shadow, blur, rounding and animation off that
+  window with `setprop` (both the names before and from Hyprland 0.53), makes it floating and moves its center onto the
+  pointer with `movewindowpixel`. It follows the window for a moment, because a window that is mapped again is a new
+  window for Hyprland. Nothing is needed in `hyprland.conf`. The same is done for notices, panels and the Settings
+  card. Other compositors and OSes are not changed.
+
+- **New: the welcome guide asks for the key combination.** A new page (before _Done_) asks the person to press the keys
+  that open the pie, and cannot be passed without them (except in a Wayland session, where the keyboard trigger is not
+  available). It listens as soon as it is shown and writes what is pressed as it is pressed: the modifiers held appear
+  as keycaps at once, and the key that ends the combination completes it. A key without a modifier is not accepted
+  (it says why); Esc cancels the listening, a click on the keys starts it again. Written into the config with _Done_,
+  like the other choices; opening the guide again from the tray starts with the combination that is set.
+- **New: open the pie with a key combination.** Behavior > Input > _Keyboard_ takes a combination (modifiers and a key,
+  e.g. Ctrl+Space) that opens the pie where the pointer is, for people who would rather press keys than hold a button or
+  keep a finger on the trackpad. A second combination opens the pie of the app in front. Three ways to use it: _Tap or
+  hold_ (the default: a quick tap leaves the pie open, holding it longer runs the slice under the pointer when the key is
+  let go), _Hold_, and _Press once_. A pie that stays open is chosen from with a click or a tap on the trackpad; the
+  combination again or Esc closes it without running anything (Esc here does not lock CursorPie). Works on macOS,
+  Windows and X11 (the combination is grabbed with `XGrabKey`); a Wayland session does not allow it and Settings says so.
+  Off until a combination is set. See `src/tap/key_trigger.rs`.
+
+- **New: expressions in flows.** Any text of a flow that fills in `{{variables}}` now also works out
+  `{{= (a + b) * 2 > limit }}`: arithmetic, comparisons, `&& || !`, a choice (`c ? a : b`) and functions (`min`, `max`,
+  `round`, `len`, `upper`, `contains`...). An expression is read into a syntax tree (`flowexpr::Expr`) and follows the
+  rules of the blocks (a calculation that cannot be done is empty, like _Calc_; a syntax error stays as written). The
+  checker counts the variables an expression names as read. See `docs/FLOW_AST.md`.
+- **New: flows as a program tree.** A flow file with `cursorpie_flow_ast` at the top holds nested `If`, `While`,
+  `Repeat` and `ForEach` statements (and `Let`, `Do`, `Continue`) instead of blocks and wires; the Flow tab's _Import_
+  compiles it to blocks. **Shift + _Export_** writes a structured flow back as a tree, and refuses (with a sentence) a
+  flow whose wires are not nested, because the tree is compiled again and must give the same graph. The tree has `Continue`
+  and `Break` for the innermost loop.
+- **Changed: a loop that a run leaves in the middle forgets its rounds.** The runner kept the number of rounds a loop had
+  made until the loop ended by itself, so a wire that left it early (a `Break`, or a hand-made wire) left a stale count
+  behind and the loop, entered again, had fewer rounds than it should. The rounds are now forgotten as soon as the run
+  arrives at a block outside the loop's body (see `loop_regions` in `src/flowrun.rs`). Loops that end by themselves, or
+  that go back to their head, count as before.
+
 ## 0.10.0
 
 - **New: the welcome guide offers the intelligent pie.** The last page, before _Done_, has a switch _Turn on the

@@ -104,6 +104,25 @@ something for every item, use **For each item**, and wire the last block of its 
 | **Run and wait** | runs a shell command, waits for it (1 to 120 s) and keeps what it printed and its exit code (`code`); every variable is in its environment as `CURSORPIE_<NAME>` |
 | **System** | one of: copy to / read the clipboard, type a text into the app in front, a notification, read / write / append a file, whether a file exists, an environment variable, the app in front, bring an app forward, whether an app has a window, the pointer position, a random number, the time, show a file in the file manager; and **list a folder**, **make a folder**, **copy**, **move or rename** and **delete a file** (never a folder), a file's **size** and **change time**, facts about **this computer** (system, processor, user, host, home and temporary folder), **speak a text aloud**, **save a screenshot** to a PNG file, **read** and **set the volume** |
 
+The command of **Shell command** and **Run and wait**, the JSON of a **Show a panel** step and the value of **Set** are
+written in a small code editor: colors, line numbers once there is more than one line, and a red underline for a filter
+or a function that does not exist (`{{x|nope}}`, `{{= nope(1)}}`). A list of suggestions opens while you type:
+commands, `if` / `for` / `while` snippets, `$ENV` names, the flags of common commands (`grep -`), and after `{{` the
+variables of the flow (and the ones of a run: `ok`, `code`, `index`), filters like `|sh` and, after `{{=`, the
+functions. It only opens from the second letter, so a single letter never interrupts you, and **Ctrl + Space** opens
+it by hand, also in an argument, where a variable goes in quoted for the shell (`{{name|sh}}`; on macOS **Cmd + Space**
+belongs to Spotlight). Words match by their start, then by a word inside them, then by their letters in order. **Tab**
+takes the highlighted suggestion; **Enter** is always a new line, unless you first chose a suggestion with **Up** /
+**Down**. **Esc** closes the list (and only it): keep typing and it goes away by itself. **Tab** / **Shift + Tab**
+indent, **Ctrl/Cmd + /** comments lines, and brackets and quotes are typed exactly as you type them (nothing is added
+for you). The line under the box always says what Enter, Tab and Esc do right now. On the
+canvas, the `</>` button next to the command opens the editor in a window hanging right under the block (over it when
+there is no room under it): the window is tied to the block, so it moves with it when you drag the block and follows
+the canvas when you pan or zoom. You cannot drag the window away, but you can resize it from its edges and corner
+(a long script needs room; the size is remembered while Settings is open), and Esc or the X closes it. In the
+inspector the window hangs from the button.
+
+
 A block that runs a command (**Command**, **Run and wait**) or writes a file is drawn in red, and importing a flow or a
 profile with one warns you before you save. The clipboard, notifications and questions use the tools of each system
 (`pbcopy`, PowerShell, `wl-copy` / `xclip`, `osascript`, `notify-send`...); when one is missing the block does

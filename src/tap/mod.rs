@@ -10,6 +10,7 @@
 //! | pause | the top of `dispatch` |
 //! | Esc while a pie is open, or while a locked trigger is held | `esc_lock`: locks or unlocks CursorPie |
 //! | Space while a pie is open | `space`: opens Settings, if the setting is on |
+//! | the key combination of the keyboard trigger, and a left click while its pie is open | `key_trigger`: a third source of the same gesture, see `Source::Key` |
 //! | key down / up | `keyboard`: only used to record a shortcut in Settings |
 //! | a click while a trackpad pie is open | `touch::extra`: one more finger clicks (macOS trackpad, Windows precision touchpad) |
 //! | right button | `right_click`: switches the side-button pie while a pie is open |
@@ -27,6 +28,7 @@
 
 mod esc_lock;
 pub(crate) mod gesture;
+mod key_trigger;
 mod keyboard;
 mod modorder;
 mod pie_clicks;
@@ -43,10 +45,13 @@ pub(crate) mod touch;
 
 pub use touch::Status as TouchStatus;
 
-/// Whether a pie that a trackpad hold opened is wanted right now (a hold is armed or open). The
-/// pie window asks when it is shown: such a pie takes the pointer instead of letting it through.
+/// Whether a pie that a trackpad hold or a key combination opened is wanted right now (a hold is
+/// armed or open, or a pie of the keyboard is open). The pie window asks when it is shown: such a pie
+/// takes the pointer instead of letting it through, because no button is held down to keep the apps
+/// under it from hearing the pointer move.
 pub(crate) fn touch_pie_active() -> bool {
     touch::ACTIVE.load(std::sync::atomic::Ordering::Relaxed)
+        || key_trigger::ACTIVE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// What the touch source is doing, for the Trackpad panel of Settings.
@@ -280,6 +285,10 @@ pub(crate) fn dispatch(
             if let Some(verdict) = space::handle(state, notifier, down, code, mods) {
                 return verdict;
             }
+            // the key combination that opens the pie (Behavior > Trigger > Keyboard)
+            if let Some(verdict) = key_trigger::handle(state, notifier, down, code, mods) {
+                return verdict;
+            }
             keyboard::handle_key(notifier, down, code, mods)
         }
         Ev::Mouse { kind, button, pos } => {
@@ -306,6 +315,12 @@ fn mouse_verdict(
     // the pointer moved while some other button is down: the open pie must still follow it
     if kind == Kind::Drag {
         follow_motion(state, notifier, button, pos);
+    }
+    // a click while a pie of the keyboard is open chooses the slice under the pointer
+    if button == LEFT_BUTTON
+        && let Some(v) = key_trigger::click(state, notifier, kind, pos)
+    {
+        return v;
     }
     // a click while a trackpad pie is open may be the extra click (one more finger)
     if (button == LEFT_BUTTON || button == RIGHT_BUTTON)
@@ -381,6 +396,7 @@ pub(crate) fn reset(state: &Arc<Mutex<Gesture>>, notifier: &Notifier) {
     *lock(state) = Gesture::Idle;
     touch::extra::clear();
     pie_clicks::clear();
+    key_trigger::clear();
     touch::lock::set_held(false);
     touch::ACTIVE.store(false, Ordering::SeqCst);
     SWALLOW_KEY.store(-1, Ordering::SeqCst);

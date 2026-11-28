@@ -26,6 +26,7 @@
 //! | [`config`] | any thread | data model, defaults, validation, `config.json`, the live global copy |
 //! | [`tap`] | `cursorpie-tap` thread | global event tap and the gesture state machine |
 //! | [`actions`] | `cursorpie-actions` thread | executes actions (shortcuts, `open`, shell) in order |
+//! | [`flowexpr`] | `cursorpie-actions` thread | the expressions of a flow (`{{= (a + b) * 2 > n }}`): read into a syntax tree and worked out with the variables of a run |
 //! | [`flowrun`] | `cursorpie-actions` thread | the interpreter of a flow (variables, decisions, loops, questions, system blocks) behind a [`Host`](flowrun::Host); [`actions`] supplies the real one |
 //! | [`flowstate`] | `cursorpie-actions` thread | what a flow remembers between runs: the saved state of one flow (`keep_` variables, how the last run ended) and the data every flow shares; plain JSON in `flow-state/` |
 //! | [`running`] | `cursorpie-running` thread | whether the app of an "Open app" slice already runs, and the new-window / open-app choice that follows |
@@ -69,6 +70,7 @@ pub mod config;
 pub mod cpdtool;
 pub mod debug;
 pub mod devmode;
+pub mod flowexpr;
 pub mod flowhub;
 pub mod flowrun;
 pub mod flowstate;

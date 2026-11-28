@@ -29,8 +29,10 @@ front). It is drawn in the **Flow** tab of Settings as blocks joined by wires.
   paths can join) and one output `next`; the blocks that decide have a second output `alt`.
 - A wire may lead **back** to an earlier block. That is a loop. A run is limited (see
   [How a flow runs](#how-a-flow-runs)), so a loop that never ends is stopped.
-- There is **no nested block and no expression language**: a condition compares two values, a calculation does one
-  operation. Do not invent block kinds; the app refuses a file with an unknown kind.
+- There is **no nested block** in a flow file: a condition compares two values, a calculation does one operation. A
+  text may hold an expression, `{{= (a + b) * 2 > n }}`, and a flow may be written as nested statements instead
+  of blocks and wires: both are in [FLOW_AST.md](FLOW_AST.md). Do not invent block kinds; the app refuses a file
+  with an unknown kind.
 - The app runs the graph from `Start` along the wires. A block that no path from `Start` reaches is **ignored**.
 
 ## Two places a flow can live

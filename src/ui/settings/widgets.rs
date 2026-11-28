@@ -25,6 +25,7 @@ use super::theme::*;
 use crate::keys::Shortcut;
 use crate::ui::draw::{Bend, ring_slice};
 use crate::ui::fonts;
+use crate::ui::mascot::{self, Pose};
 use crate::ui::symbols;
 use eframe::egui::{self, Color32, FontId, Pos2, Rect, RichText, Stroke, Vec2};
 use std::ops::RangeInclusive;
@@ -548,6 +549,11 @@ const SEG_PAD: f32 = 12.0;
 /// separate pills, and it never wraps, so nothing jumps when the window is resized: if the icons
 /// do not fit in the width left, they are dropped and only the names stay.
 ///
+/// Every option answers over the whole height of the track and the options touch each other, so the
+/// small ring of the track around the raised pills is no dead zone, and an option takes the choice
+/// as soon as the button goes down: egui counts a press that lasts longer than about 0.8 s, or that
+/// moves a little, as no click at all, which is what made a slow or unsteady click do nothing.
+///
 /// Returns the index that was clicked, if it is not the selected one.
 pub(in crate::ui::settings) fn segmented(
     ui: &mut egui::Ui,
@@ -615,9 +621,10 @@ pub(in crate::ui::settings) fn segmented(
             Vec2::new(*width, CONTROL_H - 2.0 * TRACK_PAD),
         );
         x += width;
+        let hit = segment_hit(track, seg, i == 0, i + 1 == items.len());
         let resp = ui
             .interact(
-                seg,
+                hit,
                 ui.id().with(("segment", i, *label)),
                 egui::Sense::click(),
             )
@@ -674,11 +681,21 @@ pub(in crate::ui::settings) fn segmented(
             text,
             Color32::PLACEHOLDER,
         );
-        if resp.clicked() && !on {
+        if !on && (resp.clicked() || resp.is_pointer_button_down_on()) {
             picked = Some(i);
         }
     }
     picked
+}
+
+/// The area of one option of a [`segmented`] control that answers the pointer: the option's own
+/// width, but the whole height of the track, and the first and the last option reach the ends of
+/// the track. Beside the painted pill there is no part of the control that does nothing.
+fn segment_hit(track: Rect, seg: Rect, first: bool, last: bool) -> Rect {
+    Rect::from_min_max(
+        Pos2::new(if first { track.min.x } else { seg.min.x }, track.min.y),
+        Pos2::new(if last { track.max.x } else { seg.max.x }, track.max.y),
+    )
 }
 
 /// A row of views to switch between, as icons only: they share `width` equally, the current one
@@ -1540,6 +1557,21 @@ pub(in crate::ui::settings) fn sheet_heading(
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 8.0;
         ui.label(fonts::icon(glyph, 18.0, color));
+        ui.add(egui::Label::new(fonts::title(title, 15.0, pal().text)).truncate());
+    });
+    ui.add_space(6.0);
+}
+
+/// Side of the mascot of [`sheet_heading_pose`], in points.
+pub(in crate::ui::settings) const SHEET_MASCOT: f32 = 36.0;
+
+/// Like [`sheet_heading`], with the mascot in `pose` ([`SHEET_MASCOT`] points) where the glyph would
+/// be. For the sheets that bring news or a result (an update, a failure): it is taller than the
+/// glyph by about 14 points, so the sheet that uses it is that much taller.
+pub(in crate::ui::settings) fn sheet_heading_pose(ui: &mut egui::Ui, pose: Pose, title: &str) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 10.0;
+        mascot::show(ui, pose, SHEET_MASCOT);
         ui.add(egui::Label::new(fonts::title(title, 15.0, pal().text)).truncate());
     });
     ui.add_space(6.0);
@@ -2542,5 +2574,35 @@ mod tests {
             size.y < CONTROL_H - 8.0,
             "no taller than a line of text: {size:?}"
         );
+    }
+
+    #[test]
+    fn every_option_of_a_segmented_control_answers_over_the_whole_track() {
+        let track = Rect::from_min_size(Pos2::new(10.0, 20.0), Vec2::new(300.0, CONTROL_H));
+        let pill = |x: f32, w: f32| {
+            Rect::from_min_size(
+                Pos2::new(x, track.min.y + 4.0),
+                Vec2::new(w, CONTROL_H - 8.0),
+            )
+        };
+        let (a, b, c) = (pill(14.0, 100.0), pill(114.0, 100.0), pill(214.0, 92.0));
+        let (ha, hb, hc) = (
+            segment_hit(track, a, true, false),
+            segment_hit(track, b, false, false),
+            segment_hit(track, c, false, true),
+        );
+        for h in [ha, hb, hc] {
+            assert_eq!(
+                (h.min.y, h.max.y),
+                (track.min.y, track.max.y),
+                "full height"
+            );
+        }
+        // the ends of the track belong to the first and the last option
+        assert_eq!(ha.min.x, track.min.x);
+        assert_eq!(hc.max.x, track.max.x);
+        // no gap and no overlap between neighbours
+        assert_eq!(ha.max.x, hb.min.x);
+        assert_eq!(hb.max.x, hc.min.x);
     }
 }

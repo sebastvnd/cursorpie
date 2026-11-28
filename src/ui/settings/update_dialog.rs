@@ -20,6 +20,7 @@
 use crate::about::{LATEST_RELEASE_URL, VERSION};
 use crate::platform::{self, Os};
 use crate::ui::app::App;
+use crate::ui::mascot::Pose;
 use crate::ui::settings::theme::*;
 use crate::ui::settings::widgets::*;
 use crate::ui::symbols;
@@ -205,7 +206,8 @@ impl App {
             return;
         };
         let needs_password = self.ed.update_needs_password;
-        let height = if needs_password { 400.0 } else { 370.0 };
+        // 14 more than with a glyph: the mascot is taller
+        let height = if needs_password { 414.0 } else { 384.0 };
         let progress = install::progress();
         // the close button and a click outside mean nothing here: the download goes on
         let (_floating, ()) = sheet(
@@ -215,10 +217,9 @@ impl App {
             Vec2::new(560.0, height),
             "Updating CursorPie",
             |ui| {
-                sheet_heading(
+                sheet_heading_pose(
                     ui,
-                    symbols::DOWNLOAD_SIMPLE,
-                    accent,
+                    Pose::Downloading,
                     &format!("Downloading CursorPie {version}"),
                 );
                 let (what, percent) = progress_label(progress);
@@ -252,19 +253,15 @@ impl App {
             ctx,
             "update_done",
             self.ed.card,
-            Vec2::new(520.0, 250.0),
+            Vec2::new(520.0, 264.0), // 14 more than with a glyph: the mascot is taller
             if good {
                 "Update finished"
             } else {
                 "Update not finished"
             },
             |ui| {
-                let (glyph, color) = if good {
-                    (symbols::CHECK_CIRCLE, pal().good)
-                } else {
-                    (symbols::WARNING_CIRCLE, pal().bad)
-                };
-                sheet_heading(ui, glyph, color, &title);
+                let pose = if good { Pose::Success } else { Pose::Sad };
+                sheet_heading_pose(ui, pose, &title);
                 sheet_text(ui, &text);
                 ui.add_space(GAP);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
@@ -300,18 +297,18 @@ impl App {
             self.ed.card,
             Vec2::new(
                 560.0,
+                // 14 more than with a glyph: the mascot is taller
                 if self.ed.update_needs_password || self.ed.update_blocker.is_some() {
-                    340.0
+                    354.0
                 } else {
-                    270.0
+                    284.0
                 },
             ),
             "Update available",
             |ui| {
-                sheet_heading(
+                sheet_heading_pose(
                     ui,
-                    symbols::DOWNLOAD_SIMPLE,
-                    accent,
+                    Pose::Notification,
                     &format!("CursorPie {version} is available"),
                 );
                 let text = body_text(

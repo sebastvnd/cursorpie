@@ -37,6 +37,8 @@
 
 <img src="assets/demo.png" alt="demo">
 
+CursorPie puts a radial menu right under your pointer. Hold the middle mouse button (or touch and hold a trackpad), move toward the action you need, then release. No hunting through menus and no need to remember a long list of shortcuts.
+
 A slice can send a keyboard shortcut, open an application, URL or file, run a command, switch a mouse-button mode, or open a submenu. You can keep a general menu and create a different profile for each application.
 
 Built with **Rust** and [egui](https://github.com/emilk/egui), CursorPie is inspired by [Kando](https://github.com/kando-menu/kando).
@@ -61,8 +63,6 @@ Get the latest ready-to-install build from [GitHub Releases](https://github.com/
 | **Fedora 44** (x86_64)                  | [Fedora package](https://github.com/sebastvnd/cursorpie/releases/latest/download/CursorPie-fedora-44-x86_64.tar.gz)                                                                                                  |
 |                                         |
 
-<br>
-
 > [!NOTE]
 > For step-by-step instructions, including the Linux `install.sh` script and macOS permissions, read the [installation guide](docs/user/install.md). Build artifacts from > individual CI runs are temporary; public downloads are published with GitHub Releases when a version tag is pushed.
 
@@ -86,7 +86,7 @@ Get the latest ready-to-install build from [GitHub Releases](https://github.com/
 
 <h2>
   <img
-    src="assets/picto/picto_platfrom.png"
+    src="assets/picto/picto_platform.png"
     alt=""
     width="24"
     style="vertical-align: middle;"

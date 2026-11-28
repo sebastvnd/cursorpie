@@ -425,9 +425,18 @@ mod tests {
             include_str!("../../assets/browser-extension/cmd-chat.js"),
             include_str!("../../assets/browser-extension/cmd-ui.js"),
         ] {
+            // `reg("id", ...` on one line, or `reg(` alone with the id on the next line (as
+            // the formatter writes it when the call does not fit on one line)
+            let mut id_on_next_line = false;
             for line in src.lines() {
                 let t = line.trim_start();
-                if let Some(rest) = t.strip_prefix("reg(\"")
+                let rest = if id_on_next_line {
+                    t.strip_prefix('"')
+                } else {
+                    t.strip_prefix("reg(\"")
+                };
+                id_on_next_line = t == "reg(";
+                if let Some(rest) = rest
                     && let Some(end) = rest.find('"')
                 {
                     out.insert(rest[..end].to_string());

@@ -159,6 +159,8 @@ impl App {
         // text. The few glyphs of the pie are cut again when it is drawn.
         let _ = crate::ui::settings::take_crisp_used();
         crate::ui::fonts::reset_atlas(ctx);
+        // the mascot's pictures (welcome, sheets) are only Settings'; they are made again when needed
+        crate::ui::mascot::release(ctx);
         self.win = cfg().pie_size;
         self.set_settings_open(false);
         platform::set_window_passive(true); // the pie never takes the focus
@@ -215,6 +217,11 @@ impl App {
         ctx.send_viewport_cmd(egui::ViewportCommand::MousePassthrough(click_through));
         pin_on_top(ctx);
         ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(top_left));
+        // Hyprland: placed (and stripped of border, shadow and blur) through its own socket
+        platform::place_window_center(
+            (top_left.x.into(), top_left.y.into()),
+            (win.x.into(), win.y.into()),
+        );
         let was_mapped = self.visible;
         self.visible = true;
         self.show_window(ctx, win);
@@ -637,6 +644,12 @@ impl App {
             egui::WindowLevel::Normal,
         ));
         ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(top_left));
+        // Hyprland: centered on the display, without its border, shadow and blur around the
+        // card's own transparent margin
+        platform::place_window_center(
+            (top_left.x.into(), top_left.y.into()),
+            (win_sz.x.into(), win_sz.y.into()),
+        );
         self.show_window(ctx, win_sz);
         request_focus(ctx);
         // on X11 the toolkit drops that request until the window is mapped, and a window manager
@@ -650,6 +663,7 @@ impl App {
     /// hides the window or turns it into Settings (the "Open Settings" button).
     pub fn finish_welcome(&mut self, ctx: &egui::Context) {
         crate::config::mark_welcomed();
+        self.ed.stop_recording(); // the key page listens for a combination while it is open
         // a trackpad found at the first start switched its hold on; this is where it is written
         crate::tap::save_first_start_trackpad();
         let (apply, login, open_settings, picks, intelligent) = match &self.welcome {
@@ -672,6 +686,23 @@ impl App {
             };
             config::save_config(&snapshot);
         }
+        // the key combination of the keyboard page: only when the guide was finished
+        let key = self.welcome.as_ref().and_then(|w| w.key);
+        let key_app = self.welcome.as_ref().and_then(|w| w.key_app);
+        if apply {
+            let snapshot = {
+                let mut c = cfg();
+                if let Some(sc) = key {
+                    c.set_key_trigger(false, sc);
+                }
+                // the page started from what the config has, so this keeps, changes or removes it
+                let main = c.key_trigger;
+                c.key_trigger_app =
+                    key_app.filter(|a| main.is_none_or(|k| (k.key, k.mods) != (a.key, a.mods)));
+                c.clone()
+            };
+            config::save_config(&snapshot);
+        }
         // the intelligent pie, when the person asked for it on the last page: as Settings does when
         // the feature is switched on, the general pie gets an intelligent slice to show it
         if apply && intelligent {
@@ -687,6 +718,16 @@ impl App {
                 if !has {
                     crate::smart::add_slice(&mut c, general);
                 }
+                c.clone()
+            };
+            config::save_config(&snapshot);
+        }
+        // the box starts from the setting, so unchecking it here switches the feature off
+        let smart_on = cfg().smart.enabled;
+        if apply && !intelligent && smart_on {
+            let snapshot = {
+                let mut c = cfg();
+                c.smart.enabled = false;
                 c.clone()
             };
             config::save_config(&snapshot);
@@ -1023,6 +1064,13 @@ impl App {
         self.pie_origin = top_left;
         if !fixed {
             ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(top_left));
+            // Hyprland: the pie is put under the pointer, and its border, shadow and blur taken
+            // off, through the compositor's own socket (the position asked of XWayland is not
+            // the layout's, and a transparent window gets an outline and a blurred box)
+            platform::place_window_center(
+                (top_left.x.into(), top_left.y.into()),
+                (win_sz.x.into(), win_sz.y.into()),
+            );
         }
         if !self.visible {
             self.visible = true;

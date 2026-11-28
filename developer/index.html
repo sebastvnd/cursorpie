@@ -1,176 +1,773 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#fff8ec">
-  <meta name="description" content="Developer documents, build commands and the public work board of CursorPie.">
-  <title>Developers — CursorPie</title>
-  <meta name="robots" content="index, follow">
-  <link rel="canonical" href="https://sebastvnd.github.io/cursorpie/developer/">
-  <meta property="og:type" content="website">
-  <meta property="og:site_name" content="CursorPie">
-  <meta property="og:title" content="Developers — CursorPie">
-  <meta property="og:description" content="Developer documents, build commands and the public work board of CursorPie.">
-  <meta property="og:url" content="https://sebastvnd.github.io/cursorpie/developer/">
-  <meta property="og:image" content="https://sebastvnd.github.io/cursorpie/assets/og-image.png">
-  <link rel="icon" href="../assets/cursorpie-mark.png">
-  <script>
-    /* Saved theme before first paint, same key as the main site. */
-    (function () {
-      var d = document.documentElement;
-      try {
-        var t = localStorage.getItem('cursorpie-theme');
-        if (t !== 'light' && t !== 'dark') t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-        d.dataset.theme = t;
-        var m = document.querySelector('meta[name="theme-color"]');
-        if (m) m.setAttribute('content', t === 'dark' ? '#100f14' : '#fff8ec');
-      } catch (e) {}
-    })();
-  </script>
-  <link rel="stylesheet" href="../assets/site.css">
-  <link rel="stylesheet" href="../assets/developer.css">
-</head>
-<body class="dev">
-<a class="skip-link" href="#main">Skip to content</a>
+    <head>
+        <meta charset="utf-8" />
+        <meta
+            name="viewport"
+            content="width=device-width, initial-scale=1, viewport-fit=cover"
+        />
+        <meta name="theme-color" content="#fff8ec" />
+        <meta
+            name="description"
+            content="Developer documents, build commands and the public work board of CursorPie."
+        />
+        <title>Developers — CursorPie</title>
+        <meta name="robots" content="index, follow" />
+        <link
+            rel="canonical"
+            href="https://sebastvnd.github.io/cursorpie/developer/"
+        />
+        <meta property="og:type" content="website" />
+        <meta property="og:site_name" content="CursorPie" />
+        <meta property="og:title" content="Developers — CursorPie" />
+        <meta
+            property="og:description"
+            content="Developer documents, build commands and the public work board of CursorPie."
+        />
+        <meta
+            property="og:url"
+            content="https://sebastvnd.github.io/cursorpie/developer/"
+        />
+        <meta
+            property="og:image"
+            content="https://sebastvnd.github.io/cursorpie/assets/og-image.png"
+        />
+        <link rel="icon" href="../assets/cursorpie-mark.png" />
+        <script>
+            /* Saved theme before first paint, same key as the main site. */
+            (function () {
+                var d = document.documentElement;
+                try {
+                    var t = localStorage.getItem("cursorpie-theme");
+                    if (t !== "light" && t !== "dark")
+                        t = matchMedia("(prefers-color-scheme: dark)").matches
+                            ? "dark"
+                            : "light";
+                    d.dataset.theme = t;
+                    var m = document.querySelector('meta[name="theme-color"]');
+                    if (m)
+                        m.setAttribute(
+                            "content",
+                            t === "dark" ? "#100f14" : "#fff8ec",
+                        );
+                } catch (e) {}
+            })();
+        </script>
+        <link rel="stylesheet" href="../assets/site.css" />
+        <link rel="stylesheet" href="../assets/developer.css" />
+    </head>
+    <body class="dev">
+        <a class="skip-link" href="#main">Skip to content</a>
 
-<header class="topbar" id="topbar">
-  <div class="topbar-pill">
-    <a class="brand" href="../index.html" aria-label="CursorPie home"><img src="../assets/cursorpie-logo.png" alt="CursorPie"></a>
-    <nav class="nav" id="nav" aria-label="Main navigation">
-      <a href="../index.html#how-it-works">How it works</a>
-      <a href="../index.html#features">Features</a>
-      <a href="../flowhub/">Flow Hub</a>
-      <a href="../developer/" aria-current="page" class="is-here">Developers</a>
-      <a href="../index.html#download">Download</a>
-      <a href="../index.html?doc=docs/README.md">Docs</a>
-    </nav>
-    <div class="topbar-tools">
-      <a class="icon-btn gh" href="https://github.com/sebastvnd/cursorpie" target="_blank" rel="noopener" aria-label="GitHub" data-tip="GitHub"><span class="icon" aria-hidden="true">&#xe576;</span></a>
-      <button class="icon-btn" type="button" data-theme-toggle aria-label="Switch to dark theme" data-tip="Dark theme"><span class="icon" aria-hidden="true">&#xe330;</span></button>
-      <a class="btn btn-sm btn-lime topbar-cta" href="../index.html#download">Get it <span class="icon" aria-hidden="true">&#xe20c;</span></a>
-      <button class="icon-btn menu-btn" type="button" id="menu-btn" aria-label="Open menu" aria-expanded="false" aria-controls="nav"><span class="burger"><i></i><i></i></span></button>
-    </div>
-  </div>
-</header>
+        <header class="topbar" id="topbar">
+            <div class="topbar-pill">
+                <a
+                    class="brand"
+                    href="../index.html"
+                    aria-label="CursorPie home"
+                    ><img src="../assets/cursorpie-logo.png" alt="CursorPie"
+                /></a>
+                <nav class="nav" id="nav" aria-label="Main navigation">
+                    <a href="../index.html#how-it-works">How it works</a>
+                    <a href="../index.html#features">Features</a>
+                    <a href="../flowhub/">Flow Hub</a>
+                    <a href="../developer/" aria-current="page" class="is-here"
+                        >Developers</a
+                    >
+                    <a href="../index.html#download">Download</a>
+                    <a href="../index.html?doc=docs/README.md">Docs</a>
+                </nav>
+                <div class="topbar-tools">
+                    <a
+                        class="icon-btn gh"
+                        href="https://github.com/sebastvnd/cursorpie"
+                        target="_blank"
+                        rel="noopener"
+                        aria-label="GitHub"
+                        data-tip="GitHub"
+                        ><span class="icon" aria-hidden="true"
+                            >&#xe576;</span
+                        ></a
+                    >
+                    <button
+                        class="icon-btn"
+                        type="button"
+                        data-theme-toggle
+                        aria-label="Switch to dark theme"
+                        data-tip="Dark theme"
+                    >
+                        <span class="icon" aria-hidden="true">&#xe330;</span>
+                    </button>
+                    <a
+                        class="btn btn-sm btn-lime topbar-cta"
+                        href="../index.html#download"
+                        >Get it
+                        <span class="icon" aria-hidden="true">&#xe20c;</span></a
+                    >
+                    <button
+                        class="icon-btn menu-btn"
+                        type="button"
+                        id="menu-btn"
+                        aria-label="Open menu"
+                        aria-expanded="false"
+                        aria-controls="nav"
+                    >
+                        <span class="burger"><i></i><i></i></span>
+                    </button>
+                </div>
+            </div>
+        </header>
 
-<main id="main">
-  <section class="dev-hero">
-    <div class="wrap">
-      <p class="eyebrow">Developers</p>
-      <h1>Build <em class="mark">CursorPie</em> with us.</h1>
-      <p class="dev-lead">Everything for people changing the code, grouped by what you want to do.</p>
-      <div class="cta-row">
-        <a class="btn btn-lime" href="./kanban/"><span class="icon" aria-hidden="true">&#xe5da;</span> Open the Kanban board</a>
-        <a class="btn" href="https://github.com/sebastvnd/cursorpie" target="_blank" rel="noopener"><span class="icon" aria-hidden="true">&#xe576;</span> Source code</a>
-      </div>
-    </div>
-  </section>
+        <main id="main">
+            <section class="dev-hero">
+                <div class="wrap">
+                    <p class="eyebrow">Developers</p>
+                    <h1>Build <em class="mark">CursorPie</em> with us.</h1>
+                    <p class="dev-lead">
+                        Everything for people changing the code, grouped by what
+                        you want to do.
+                    </p>
+                    <div class="cta-row">
+                        <a class="btn btn-lime" href="./kanban/"
+                            ><span class="icon" aria-hidden="true"
+                                >&#xe5da;</span
+                            >
+                            Open the Kanban board</a
+                        >
+                        <a
+                            class="btn"
+                            href="https://github.com/sebastvnd/cursorpie"
+                            target="_blank"
+                            rel="noopener"
+                            ><span class="icon" aria-hidden="true"
+                                >&#xe576;</span
+                            >
+                            Source code</a
+                        >
+                    </div>
+                </div>
+            </section>
 
-  <section class="wrap dev-section" aria-labelledby="cmd-h">
-    <h2 id="cmd-h">Quick commands</h2>
-    <div class="dev-columns">
-<div class="dev-box"><h3>First time</h3><ul class="dev-cmds"><li><div><code>git clone https://github.com/sebastvnd/cursorpie.git</code><span>Get the code</span></div><button type="button" class="btn btn-sm" data-copy="git clone https://github.com/sebastvnd/cursorpie.git">Copy</button></li><li><div><code>cargo tools hooks install</code><span>Turn on the Git hooks, once per clone</span></div><button type="button" class="btn btn-sm" data-copy="cargo tools hooks install">Copy</button></li><li><div><code>cargo run --release</code><span>Try the app</span></div><button type="button" class="btn btn-sm" data-copy="cargo run --release">Copy</button></li></ul></div>
-<div class="dev-box"><h3>Before a pull request</h3><ul class="dev-cmds"><li><div><code>cargo tools ci --quick</code><span>Only the checks that take seconds</span></div><button type="button" class="btn btn-sm" data-copy="cargo tools ci --quick">Copy</button></li><li><div><code>cargo tools ci</code><span>Every check CI runs</span></div><button type="button" class="btn btn-sm" data-copy="cargo tools ci">Copy</button></li></ul></div>
-<div class="dev-box"><h3>Debug and plan</h3><ul class="dev-cmds"><li><div><code>cargo tools info</code><span>Facts a bug report needs</span></div><button type="button" class="btn btn-sm" data-copy="cargo tools info">Copy</button></li><li><div><code>cargo tools log report</code><span>Log report to paste into a bug report</span></div><button type="button" class="btn btn-sm" data-copy="cargo tools log report">Copy</button></li><li><div><code>cargo tools kanban</code><span>Print the work board</span></div><button type="button" class="btn btn-sm" data-copy="cargo tools kanban">Copy</button></li></ul></div>
-    </div>
-    <p class="sr-only" id="dev-copied" role="status" aria-live="polite"></p>
-  </section>
+            <section class="wrap dev-section" aria-labelledby="cmd-h">
+                <h2 id="cmd-h">Quick commands</h2>
+                <div class="dev-columns">
+                    <div class="dev-box">
+                        <h3>First time</h3>
+                        <ul class="dev-cmds">
+                            <li>
+                                <div>
+                                    <code
+                                        >git clone
+                                        https://github.com/sebastvnd/cursorpie.git</code
+                                    ><span>Get the code</span>
+                                </div>
+                                <button
+                                    type="button"
+                                    class="btn btn-sm"
+                                    data-copy="git clone https://github.com/sebastvnd/cursorpie.git"
+                                >
+                                    Copy
+                                </button>
+                            </li>
+                            <li>
+                                <div>
+                                    <code>cargo tools hooks install</code
+                                    ><span
+                                        >Turn on the Git hooks, once per
+                                        clone</span
+                                    >
+                                </div>
+                                <button
+                                    type="button"
+                                    class="btn btn-sm"
+                                    data-copy="cargo tools hooks install"
+                                >
+                                    Copy
+                                </button>
+                            </li>
+                            <li>
+                                <div>
+                                    <code>cargo run --release</code
+                                    ><span>Try the app</span>
+                                </div>
+                                <button
+                                    type="button"
+                                    class="btn btn-sm"
+                                    data-copy="cargo run --release"
+                                >
+                                    Copy
+                                </button>
+                            </li>
+                        </ul>
+                    </div>
+                    <div class="dev-box">
+                        <h3>Before a pull request</h3>
+                        <ul class="dev-cmds">
+                            <li>
+                                <div>
+                                    <code>cargo tools ci --quick</code
+                                    ><span
+                                        >Only the checks that take seconds</span
+                                    >
+                                </div>
+                                <button
+                                    type="button"
+                                    class="btn btn-sm"
+                                    data-copy="cargo tools ci --quick"
+                                >
+                                    Copy
+                                </button>
+                            </li>
+                            <li>
+                                <div>
+                                    <code>cargo tools ci</code
+                                    ><span>Every check CI runs</span>
+                                </div>
+                                <button
+                                    type="button"
+                                    class="btn btn-sm"
+                                    data-copy="cargo tools ci"
+                                >
+                                    Copy
+                                </button>
+                            </li>
+                        </ul>
+                    </div>
+                    <div class="dev-box">
+                        <h3>Debug and plan</h3>
+                        <ul class="dev-cmds">
+                            <li>
+                                <div>
+                                    <code>cargo tools info</code
+                                    ><span>Facts a bug report needs</span>
+                                </div>
+                                <button
+                                    type="button"
+                                    class="btn btn-sm"
+                                    data-copy="cargo tools info"
+                                >
+                                    Copy
+                                </button>
+                            </li>
+                            <li>
+                                <div>
+                                    <code>cargo tools log report</code
+                                    ><span
+                                        >Log report to paste into a bug
+                                        report</span
+                                    >
+                                </div>
+                                <button
+                                    type="button"
+                                    class="btn btn-sm"
+                                    data-copy="cargo tools log report"
+                                >
+                                    Copy
+                                </button>
+                            </li>
+                            <li>
+                                <div>
+                                    <code>cargo tools kanban</code
+                                    ><span>Print the work board</span>
+                                </div>
+                                <button
+                                    type="button"
+                                    class="btn btn-sm"
+                                    data-copy="cargo tools kanban"
+                                >
+                                    Copy
+                                </button>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+                <p
+                    class="sr-only"
+                    id="dev-copied"
+                    role="status"
+                    aria-live="polite"
+                ></p>
+            </section>
 
-  <div class="wrap dev-section">
-    <div class="dev-tools">
-      <label class="dev-search"><span class="sr-only">Search developer documents</span><input id="dev-q" type="search" placeholder="Search documents: wayland, panel, log…" autocomplete="off"></label>
-      <nav class="dev-chips" aria-label="Document groups"><a class="dev-chip" href="#start">Start here</a><a class="dev-chip" href="#platforms">Platforms</a><a class="dev-chip" href="#design">Design and behavior</a><a class="dev-chip" href="#extend">Flows and extensions</a><a class="dev-chip" href="#quality">Debugging and testing</a></nav>
-    </div>
-<section class="dev-group" id="start" data-tone="lime" aria-labelledby="start-h">
-  <div class="dev-group-head"><span class="dev-icon"><span class="icon" aria-hidden="true">&#xe3fe;</span></span><div><h2 id="start-h">Start here</h2><p>Set up, build, and send your first change.</p></div></div>
-  <ul class="dev-grid">
-<li><a class="dev-card" href="../index.html?doc=CONTRIBUTING.md"><b>Contributing</b><span>Prerequisites, workflow, project rules, commits and releasing.</span></a></li>
-<li><a class="dev-card" href="../index.html?doc=docs/developer/README.md"><b>Developer guide</b><span>The entry point to the engineering notes.</span></a></li>
-<li><a class="dev-card" href="../index.html?doc=CHANGELOG.md"><b>Changelog</b><span>What changed in each version.</span></a></li>
-  </ul>
-</section>
-<section class="dev-group" id="platforms" data-tone="sky" aria-labelledby="platforms-h">
-  <div class="dev-group-head"><span class="dev-icon"><span class="icon" aria-hidden="true">&#xe1aa;</span></span><div><h2 id="platforms-h">Platforms</h2><p>How each operating system is supported, and what is still open.</p></div></div>
-  <ul class="dev-grid">
-<li><a class="dev-card" href="../index.html?doc=docs/developer/WINDOWS_MIGRATION.md"><b>Windows support</b><span>Design, status and manual checks.</span></a></li>
-<li><a class="dev-card" href="../index.html?doc=docs/developer/LINUX_MIGRATION.md"><b>Linux support (X11)</b><span>Design and migration plan.</span></a></li>
-<li><a class="dev-card" href="../index.html?doc=docs/developer/WAYLAND_SUPPORT.md"><b>Wayland support</b><span>Experimental: research, plan and status.</span></a></li>
-<li><a class="dev-card" href="../index.html?doc=docs/developer/TRACKPAD_HAPTICS_PLAN.md"><b>Trackpad and haptics</b><span>Design and plan for macOS, Windows and Linux.</span></a></li>
-  </ul>
-</section>
-<section class="dev-group" id="design" data-tone="pink" aria-labelledby="design-h">
-  <div class="dev-group-head"><span class="dev-icon"><span class="icon" aria-hidden="true">&#xe150;</span></span><div><h2 id="design-h">Design and behavior</h2><p>Decisions about how CursorPie looks and acts.</p></div></div>
-  <ul class="dev-grid">
-<li><a class="dev-card" href="../index.html?doc=docs/developer/UI_DESIGN.md"><b>UI design and rendering</b><span>The look, why it is drawn that way, and how to check it.</span></a></li>
-<li><a class="dev-card" href="../index.html?doc=docs/developer/OTHER_DESKTOPS.md"><b>Other desktops and Spaces</b><span>Opening an app that lives on another desktop.</span></a></li>
-<li><a class="dev-card" href="../index.html?doc=docs/developer/OPEN_URL_CHOICE.md"><b>Open URL choice</b><span>New window or the page that is already open.</span></a></li>
-  </ul>
-</section>
-<section class="dev-group" id="extend" data-tone="violet" aria-labelledby="extend-h">
-  <div class="dev-group-head"><span class="dev-icon"><span class="icon" aria-hidden="true">&#xe2d8;</span></span><div><h2 id="extend-h">Flows and extensions</h2><p>Build on top of CursorPie.</p></div></div>
-  <ul class="dev-grid">
-<li><a class="dev-card" href="../index.html?doc=docs/FLOWS_FOR_AI.md"><b>Flows as JSON</b><span>Complete reference for writing a valid flow.</span></a></li>
-<li><a class="dev-card" href="../index.html?doc=docs/examples/README.md"><b>Examples</b><span>Example flows and themes.</span></a></li>
-<li><a class="dev-card" href="../index.html?doc=docs/PANELS.md"><b>Panels</b><span>Widgets, fields and limits of panels.</span></a></li>
-<li><a class="dev-card" href="../index.html?doc=docs/PANEL_DESIGN_FOR_AI.md"><b>Panel design</b><span>How to design a good panel.</span></a></li>
-<li><a class="dev-card" href="../index.html?doc=docs/BROWSER_EXTENSION.md"><b>Browser extension</b><span>Control the browser from a slice.</span></a></li>
-<li><a class="dev-card" href="../index.html?doc=docs/developer/BROWSER_BRIDGE.md"><b>Browser bridge</b><span>How the extension talks to the app.</span></a></li>
-  </ul>
-</section>
-<section class="dev-group" id="quality" data-tone="orange" aria-labelledby="quality-h">
-  <div class="dev-group-head"><span class="dev-icon"><span class="icon" aria-hidden="true">&#xeae8;</span></span><div><h2 id="quality-h">Debugging and testing</h2><p>Find out what went wrong and check that it is fixed.</p></div></div>
-  <ul class="dev-grid">
-<li><a class="dev-card" href="../index.html?doc=docs/DEBUGGING.md"><b>Diagnostic log</b><span>Trace a problem that happens on one machine.</span></a></li>
-<li><a class="dev-card" href="../index.html?doc=diag/README.md"><b>The diag crate</b><span>The logging crate on its own.</span></a></li>
-<li><a class="dev-card" href="../index.html?doc=docs/developer/UPDATES_TESTING.md"><b>Testing the updater</b><span>How to check updates by hand.</span></a></li>
-  </ul>
-</section>
-    <p class="dev-empty" id="dev-empty" hidden>No document matches. Try fewer words.</p>
-  </div>
-</main>
+            <div class="wrap dev-section">
+                <div class="dev-tools">
+                    <label class="dev-search"
+                        ><span class="sr-only">Search developer documents</span
+                        ><input
+                            id="dev-q"
+                            type="search"
+                            placeholder="Search documents: wayland, panel, log…"
+                            autocomplete="off"
+                    /></label>
+                    <nav class="dev-chips" aria-label="Document groups">
+                        <a class="dev-chip" href="#start">Start here</a
+                        ><a class="dev-chip" href="#platforms">Platforms</a
+                        ><a class="dev-chip" href="#design"
+                            >Design and behavior</a
+                        ><a class="dev-chip" href="#extend"
+                            >Flows and extensions</a
+                        ><a class="dev-chip" href="#quality"
+                            >Debugging and testing</a
+                        >
+                    </nav>
+                </div>
+                <section
+                    class="dev-group"
+                    id="start"
+                    data-tone="lime"
+                    aria-labelledby="start-h"
+                >
+                    <div class="dev-group-head">
+                        <span class="dev-icon"
+                            ><span class="icon" aria-hidden="true"
+                                >&#xe3fe;</span
+                            ></span
+                        >
+                        <div>
+                            <h2 id="start-h">Start here</h2>
+                            <p>Set up, build, and send your first change.</p>
+                        </div>
+                    </div>
+                    <ul class="dev-grid">
+                        <li>
+                            <a
+                                class="dev-card"
+                                href="../index.html?doc=CONTRIBUTING.md"
+                                ><b>Contributing</b
+                                ><span
+                                    >Prerequisites, workflow, project rules,
+                                    commits and releasing.</span
+                                ></a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                class="dev-card"
+                                href="../index.html?doc=docs/developer/README.md"
+                                ><b>Developer guide</b
+                                ><span
+                                    >The entry point to the engineering
+                                    notes.</span
+                                ></a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                class="dev-card"
+                                href="../index.html?doc=CHANGELOG.md"
+                                ><b>Changelog</b
+                                ><span>What changed in each version.</span></a
+                            >
+                        </li>
+                    </ul>
+                </section>
+                <section
+                    class="dev-group"
+                    id="platforms"
+                    data-tone="sky"
+                    aria-labelledby="platforms-h"
+                >
+                    <div class="dev-group-head">
+                        <span class="dev-icon"
+                            ><span class="icon" aria-hidden="true"
+                                >&#xe1aa;</span
+                            ></span
+                        >
+                        <div>
+                            <h2 id="platforms-h">Platforms</h2>
+                            <p>
+                                How each operating system is supported, and what
+                                is still open.
+                            </p>
+                        </div>
+                    </div>
+                    <ul class="dev-grid">
+                        <li>
+                            <a
+                                class="dev-card"
+                                href="../index.html?doc=docs/developer/WINDOWS_MIGRATION.md"
+                                ><b>Windows support</b
+                                ><span
+                                    >Design, status and manual checks.</span
+                                ></a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                class="dev-card"
+                                href="../index.html?doc=docs/developer/LINUX_MIGRATION.md"
+                                ><b>Linux support (X11)</b
+                                ><span>Design and migration plan.</span></a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                class="dev-card"
+                                href="../index.html?doc=docs/developer/WAYLAND_SUPPORT.md"
+                                ><b>Wayland support</b
+                                ><span
+                                    >Experimental: research, plan and
+                                    status.</span
+                                ></a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                class="dev-card"
+                                href="../index.html?doc=docs/developer/TRACKPAD_HAPTICS_PLAN.md"
+                                ><b>Trackpad and haptics</b
+                                ><span
+                                    >Design and plan for macOS, Windows and
+                                    Linux.</span
+                                ></a
+                            >
+                        </li>
+                    </ul>
+                </section>
+                <section
+                    class="dev-group"
+                    id="design"
+                    data-tone="pink"
+                    aria-labelledby="design-h"
+                >
+                    <div class="dev-group-head">
+                        <span class="dev-icon"
+                            ><span class="icon" aria-hidden="true"
+                                >&#xe150;</span
+                            ></span
+                        >
+                        <div>
+                            <h2 id="design-h">Design and behavior</h2>
+                            <p>Decisions about how CursorPie looks and acts.</p>
+                        </div>
+                    </div>
+                    <ul class="dev-grid">
+                        <li>
+                            <a
+                                class="dev-card"
+                                href="../index.html?doc=docs/developer/UI_DESIGN.md"
+                                ><b>UI design and rendering</b
+                                ><span
+                                    >The look, why it is drawn that way, and how
+                                    to check it.</span
+                                ></a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                class="dev-card"
+                                href="../index.html?doc=docs/developer/OTHER_DESKTOPS.md"
+                                ><b>Other desktops and Spaces</b
+                                ><span
+                                    >Opening an app that lives on another
+                                    desktop.</span
+                                ></a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                class="dev-card"
+                                href="../index.html?doc=docs/developer/OPEN_URL_CHOICE.md"
+                                ><b>Open URL choice</b
+                                ><span
+                                    >New window or the page that is already
+                                    open.</span
+                                ></a
+                            >
+                        </li>
+                    </ul>
+                </section>
+                <section
+                    class="dev-group"
+                    id="extend"
+                    data-tone="violet"
+                    aria-labelledby="extend-h"
+                >
+                    <div class="dev-group-head">
+                        <span class="dev-icon"
+                            ><span class="icon" aria-hidden="true"
+                                >&#xe2d8;</span
+                            ></span
+                        >
+                        <div>
+                            <h2 id="extend-h">Flows and extensions</h2>
+                            <p>Build on top of CursorPie.</p>
+                        </div>
+                    </div>
+                    <ul class="dev-grid">
+                        <li>
+                            <a
+                                class="dev-card"
+                                href="../index.html?doc=docs/FLOWS_FOR_AI.md"
+                                ><b>Flows as JSON</b
+                                ><span
+                                    >Complete reference for writing a valid
+                                    flow.</span
+                                ></a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                class="dev-card"
+                                href="../index.html?doc=docs/examples/README.md"
+                                ><b>Examples</b
+                                ><span>Example flows and themes.</span></a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                class="dev-card"
+                                href="../index.html?doc=docs/PANELS.md"
+                                ><b>Panels</b
+                                ><span
+                                    >Widgets, fields and limits of panels.</span
+                                ></a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                class="dev-card"
+                                href="../index.html?doc=docs/PANEL_DESIGN_FOR_AI.md"
+                                ><b>Panel design</b
+                                ><span>How to design a good panel.</span></a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                class="dev-card"
+                                href="../index.html?doc=docs/BROWSER_EXTENSION.md"
+                                ><b>Browser extension</b
+                                ><span
+                                    >Control the browser from a slice.</span
+                                ></a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                class="dev-card"
+                                href="../index.html?doc=docs/developer/BROWSER_BRIDGE.md"
+                                ><b>Browser bridge</b
+                                ><span
+                                    >How the extension talks to the app.</span
+                                ></a
+                            >
+                        </li>
+                    </ul>
+                </section>
+                <section
+                    class="dev-group"
+                    id="quality"
+                    data-tone="orange"
+                    aria-labelledby="quality-h"
+                >
+                    <div class="dev-group-head">
+                        <span class="dev-icon"
+                            ><span class="icon" aria-hidden="true"
+                                >&#xeae8;</span
+                            ></span
+                        >
+                        <div>
+                            <h2 id="quality-h">Debugging and testing</h2>
+                            <p>
+                                Find out what went wrong and check that it is
+                                fixed.
+                            </p>
+                        </div>
+                    </div>
+                    <ul class="dev-grid">
+                        <li>
+                            <a
+                                class="dev-card"
+                                href="../index.html?doc=docs/DEBUGGING.md"
+                                ><b>Diagnostic log</b
+                                ><span
+                                    >Trace a problem that happens on one
+                                    machine.</span
+                                ></a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                class="dev-card"
+                                href="../index.html?doc=diag/README.md"
+                                ><b>The diag crate</b
+                                ><span>The logging crate on its own.</span></a
+                            >
+                        </li>
+                        <li>
+                            <a
+                                class="dev-card"
+                                href="../index.html?doc=docs/developer/UPDATES_TESTING.md"
+                                ><b>Testing the updater</b
+                                ><span>How to check updates by hand.</span></a
+                            >
+                        </li>
+                    </ul>
+                </section>
+                <p class="dev-empty" id="dev-empty" hidden>
+                    No document matches. Try fewer words.
+                </p>
+            </div>
+        </main>
 
-<footer class="site-footer">
-  <div class="wrap">
-    <div class="footer-grid">
-      <div class="footer-brand">
-        <a href="../index.html" aria-label="CursorPie home"><img src="../assets/cursorpie-logo.png" alt="CursorPie"></a>
-        <p>A simple pie menu that stays close to your cursor and feels natural to use every day.</p>
-        <div class="footer-social">
-          <a class="icon-btn" href="https://github.com/sebastvnd/cursorpie" target="_blank" rel="noopener" aria-label="GitHub" data-tip="GitHub"><span class="icon" aria-hidden="true">&#xe576;</span></a>
-          <a class="icon-btn" href="https://github.com/sebastvnd/cursorpie/issues" target="_blank" rel="noopener" aria-label="Report an issue" data-tip="Report an issue"><span class="icon" aria-hidden="true">&#xe5f4;</span></a>
-          <a class="icon-btn" href="../index.html#download" aria-label="Download" data-tip="Download"><span class="icon" aria-hidden="true">&#xe20c;</span></a>
-        </div>
-      </div>
-      <nav class="footer-col" aria-label="Learn">
-        <h4>Learn</h4>
-        <ul>
-          <li><a href="../index.html?doc=docs/README.md"><span class="icon" aria-hidden="true">&#xe0e6;</span>Documentation</a></li>
-          <li><a href="../index.html?doc=docs/user/install.md"><span class="icon" aria-hidden="true">&#xe20c;</span>Installation</a></li>
-          <li><a href="../index.html?doc=docs/user/README.md"><span class="icon" aria-hidden="true">&#xe2dc;</span>User guide</a></li>
-          <li><a href="../flowhub/"><span class="icon" aria-hidden="true">&#xe2dc;</span>Flow Hub</a></li>
-          <li><a href="../index.html?doc=docs/user/configuration.md"><span class="icon" aria-hidden="true">&#xe434;</span>Configuration</a></li>
-        </ul>
-      </nav>
-      <nav class="footer-col" aria-label="Project">
-        <h4>Project</h4>
-        <ul>
-          <li><a href="../index.html?doc=CHANGELOG.md"><span class="icon" aria-hidden="true">&#xe1a0;</span>Changelog</a></li>
-          <li><a href="../index.html?doc=docs/user/known-issues.md"><span class="icon" aria-hidden="true">&#xe4e0;</span>Known issues</a></li>
-          <li><a href="../developer/"><span class="icon" aria-hidden="true">&#xe6a2;</span>Developers</a></li>
-          <li><a href="../developer/kanban/"><span class="icon" aria-hidden="true">&#xe5da;</span>Kanban board</a></li>
-          <li><a href="../index.html?doc=CONTRIBUTING.md"><span class="icon" aria-hidden="true">&#xe2a8;</span>Contributing</a></li>
-          <li><a href="https://github.com/sebastvnd/cursorpie/issues" target="_blank" rel="noopener"><span class="icon" aria-hidden="true">&#xe5f4;</span>Report an issue</a></li>
-        </ul>
-      </nav>
-    </div>
-    <div class="footer-bottom">
-      <span><i class="icon" aria-hidden="true">&#xe40c;</i><span>© <span data-year>2026</span> CursorPie · MIT License</span></span>
-      <span><i class="icon" aria-hidden="true">&#xe2a8;</i><span>Made with Rust and egui · Inspired by Kando</span></span>
-    </div>
-  </div>
-</footer>
+        <footer class="site-footer">
+            <div class="wrap">
+                <div class="footer-grid">
+                    <div class="footer-brand">
+                        <a href="../index.html" aria-label="CursorPie home"
+                            ><img
+                                src="../assets/cursorpie-logo.png"
+                                alt="CursorPie"
+                        /></a>
+                        <p>
+                            A simple pie menu that stays close to your cursor
+                            and feels natural to use every day.
+                        </p>
+                        <div class="footer-social">
+                            <a
+                                class="icon-btn"
+                                href="https://github.com/sebastvnd/cursorpie"
+                                target="_blank"
+                                rel="noopener"
+                                aria-label="GitHub"
+                                data-tip="GitHub"
+                                ><span class="icon" aria-hidden="true"
+                                    >&#xe576;</span
+                                ></a
+                            >
+                            <a
+                                class="icon-btn"
+                                href="https://github.com/sebastvnd/cursorpie/issues"
+                                target="_blank"
+                                rel="noopener"
+                                aria-label="Report an issue"
+                                data-tip="Report an issue"
+                                ><span class="icon" aria-hidden="true"
+                                    >&#xe5f4;</span
+                                ></a
+                            >
+                            <a
+                                class="icon-btn"
+                                href="../index.html#download"
+                                aria-label="Download"
+                                data-tip="Download"
+                                ><span class="icon" aria-hidden="true"
+                                    >&#xe20c;</span
+                                ></a
+                            >
+                        </div>
+                    </div>
+                    <nav class="footer-col" aria-label="Learn">
+                        <h4>Learn</h4>
+                        <ul>
+                            <li>
+                                <a href="../index.html?doc=docs/README.md"
+                                    ><span class="icon" aria-hidden="true"
+                                        >&#xe0e6;</span
+                                    >Documentation</a
+                                >
+                            </li>
+                            <li>
+                                <a href="../index.html?doc=docs/user/install.md"
+                                    ><span class="icon" aria-hidden="true"
+                                        >&#xe20c;</span
+                                    >Installation</a
+                                >
+                            </li>
+                            <li>
+                                <a href="../index.html?doc=docs/user/README.md"
+                                    ><span class="icon" aria-hidden="true"
+                                        >&#xe2dc;</span
+                                    >User guide</a
+                                >
+                            </li>
+                            <li>
+                                <a href="../flowhub/"
+                                    ><span class="icon" aria-hidden="true"
+                                        >&#xe2dc;</span
+                                    >Flow Hub</a
+                                >
+                            </li>
+                            <li>
+                                <a
+                                    href="../index.html?doc=docs/user/configuration.md"
+                                    ><span class="icon" aria-hidden="true"
+                                        >&#xe434;</span
+                                    >Configuration</a
+                                >
+                            </li>
+                        </ul>
+                    </nav>
+                    <nav class="footer-col" aria-label="Project">
+                        <h4>Project</h4>
+                        <ul>
+                            <li>
+                                <a href="../index.html?doc=CHANGELOG.md"
+                                    ><span class="icon" aria-hidden="true"
+                                        >&#xe1a0;</span
+                                    >Changelog</a
+                                >
+                            </li>
+                            <li>
+                                <a
+                                    href="../index.html?doc=docs/user/known-issues.md"
+                                    ><span class="icon" aria-hidden="true"
+                                        >&#xe4e0;</span
+                                    >Known issues</a
+                                >
+                            </li>
+                            <li>
+                                <a href="../developer/"
+                                    ><span class="icon" aria-hidden="true"
+                                        >&#xe6a2;</span
+                                    >Developers</a
+                                >
+                            </li>
+                            <li>
+                                <a href="../developer/kanban/"
+                                    ><span class="icon" aria-hidden="true"
+                                        >&#xe5da;</span
+                                    >Kanban board</a
+                                >
+                            </li>
+                            <li>
+                                <a href="../index.html?doc=CONTRIBUTING.md"
+                                    ><span class="icon" aria-hidden="true"
+                                        >&#xe2a8;</span
+                                    >Contributing</a
+                                >
+                            </li>
+                            <li>
+                                <a
+                                    href="https://github.com/sebastvnd/cursorpie/issues"
+                                    target="_blank"
+                                    rel="noopener"
+                                    ><span class="icon" aria-hidden="true"
+                                        >&#xe5f4;</span
+                                    >Report an issue</a
+                                >
+                            </li>
+                        </ul>
+                    </nav>
+                </div>
+                <div class="footer-bottom">
+                    <span
+                        ><i class="icon" aria-hidden="true">&#xe40c;</i
+                        ><span
+                            >© <span data-year>2026</span> CursorPie · MIT
+                            License</span
+                        ></span
+                    >
+                    <span
+                        ><i class="icon" aria-hidden="true">&#xe2a8;</i
+                        ><span
+                            >Made with Rust and egui · Inspired by Kando</span
+                        ></span
+                    >
+                </div>
+            </div>
+        </footer>
 
-<script src="../assets/developer.js" defer></script>
-</body>
+        <script src="../assets/developer.js" defer></script>
+    </body>
 </html>

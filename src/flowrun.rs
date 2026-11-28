@@ -621,6 +621,36 @@ fn restore_state(vars: &mut Vars, state: &FlowState) {
     }
 }
 
+/// For every loop block (*Repeat*, *While*, *For each*) of `flow`: the blocks of its body, that is,
+/// the ones a run can reach from the first block of the body without passing through the loop
+/// block itself or the block its `done` output leads to. A run that arrives at a block outside this
+/// set (and is not at the loop block) has left the loop.
+fn loop_regions(flow: &Flow) -> BTreeMap<u32, BTreeSet<u32>> {
+    let mut out = BTreeMap::new();
+    for node in &flow.nodes {
+        let is_loop = matches!(
+            node.kind,
+            NodeKind::Repeat(_) | NodeKind::While(_) | NodeKind::ForEach { .. }
+        );
+        if !is_loop {
+            continue;
+        }
+        let mut body = BTreeSet::new();
+        let mut stack: Vec<u32> = node.next.into_iter().collect();
+        while let Some(id) = stack.pop() {
+            if id == node.id || Some(id) == node.alt || !body.insert(id) {
+                continue;
+            }
+            if let Some(n) = flow.node(id) {
+                stack.extend(n.next);
+                stack.extend(n.alt);
+            }
+        }
+        out.insert(node.id, body);
+    }
+    out
+}
+
 /// How many blocks a run of `flow` carries out when it goes straight through (see
 /// [`Progress::total`]): `0` when a loop or a call can make it longer.
 fn straight_total(flow: &Flow) -> u32 {
@@ -772,11 +802,17 @@ pub fn expand(text: &str, vars: &Vars, os: Os) -> String {
     out
 }
 
-/// The value for what stands between `{{` and `}}`: a defined variable (or any name, when a
+/// The value for what stands between `{{` and `}}`: an expression (`{{= a + 1 }}`, see
+/// [`flowexpr`](crate::flowexpr)), or a defined variable (or any name, when a
 /// `default:` filter can stand in for it) with its filters applied from left to right. `None`
 /// (the text stays as written) for a variable that is not defined, a filter that does not exist,
 /// or one that cannot work on the value (`count` on something that is not a list).
 fn fill(inner: &str, vars: &Vars, os: Os) -> Option<String> {
+    // `{{= expression }}`: worked out with the variables of the run (see `flowexpr`). A syntax
+    // error is `None`, so the text stays as written; a value that cannot be worked out is empty.
+    if let Some(src) = inner.trim_start().strip_prefix('=') {
+        return crate::flowexpr::evaluate(src, &|n: &str| vars.get(n).map(str::to_string));
+    }
     let mut parts = inner.split('|');
     let name = parts.next()?.trim();
     let filters: Vec<&str> = parts.collect();
@@ -1283,6 +1319,7 @@ impl<H: Host> Runner<'_, H> {
     fn walk(&mut self, flow: &Flow, depth: u8) -> Result<(), Ending> {
         // how many rounds each loop block has made in this run of this flow
         let mut rounds: BTreeMap<u32, u32> = BTreeMap::new();
+        let regions = loop_regions(flow);
         let mut cur = flow.start().and_then(|s| s.next);
         while let Some(id) = cur {
             self.tick()?;
@@ -1296,6 +1333,17 @@ impl<H: Host> Runner<'_, H> {
                 round: self.round,
             });
             cur = self.step(node, depth, &mut rounds)?;
+            // a run that leaves a loop by any wire but the loop's own (a `Break` of a program
+            // tree, see `config::flow_ast`) forgets the rounds the loop made: the next time the
+            // loop is entered it starts again at round 1, not where it was left
+            if let Some(next) = cur {
+                rounds.retain(|loop_id, _| {
+                    *loop_id == next
+                        || regions
+                            .get(loop_id)
+                            .is_some_and(|body| body.contains(&next))
+                });
+            }
         }
         Ok(())
     }
@@ -4489,5 +4537,80 @@ mod tests {
             &mut h,
         );
         assert_eq!(out.vars.get("n"), Some("7"));
+    }
+
+    #[test]
+    fn expressions_and_a_program_tree_run_like_the_blocks() {
+        use crate::config::flow_ast::{FlowAst, compile};
+        // n goes 1, 2, 3, 4; the keys are pressed for the odd ones only (an even one continues)
+        let ast: FlowAst = serde_json::from_str(
+            r#"{ "cursorpie_flow_ast": 1, "name": "t", "body": [
+                { "Let": { "name": "n", "expr": "0" } },
+                { "While": { "cond": "n < 4", "body": [
+                    { "Let": { "name": "n", "expr": "n + 1" } },
+                    { "If": { "cond": "n % 2 == 0", "then": ["Continue"] } },
+                    { "Do": { "Key": { "key": 8, "mods": 2 } } }
+                ] } },
+                { "If": { "cond": { "a": "{{= n * 2 }}", "op": "Eq", "b": "8" },
+                          "then": [ { "Do": { "OpenApp": "done" } } ],
+                          "else": [ { "Do": "Stop" } ] } }
+            ] }"#,
+        )
+        .unwrap();
+        let f = compile(&ast).unwrap();
+        let mut h = Mock::default();
+        let out = go(&f, &mut h);
+        assert_eq!(out.ending, Ending::Finished);
+        assert_eq!(h.log, ["key 8 2", "key 8 2", "app done"]);
+        assert_eq!(out.vars.get("n"), Some("4"));
+    }
+
+    #[test]
+    fn a_loop_left_in_the_middle_starts_again_at_round_one_when_it_is_entered_again() {
+        use crate::config::flow_ast::{FlowAst, compile};
+        // the inner loop is left by a Break on every second round, and entered twice
+        let ast: FlowAst = serde_json::from_str(
+            r#"{ "cursorpie_flow_ast": 1, "name": "t", "body": [
+                { "Let": { "name": "c", "expr": "0" } },
+                { "Repeat": { "times": 2, "body": [
+                    { "Repeat": { "times": 3, "body": [
+                        { "Let": { "name": "c", "expr": "c + 1" } },
+                        { "Do": { "Key": { "key": 8, "mods": 2 } } },
+                        { "If": { "cond": "c % 2 == 0", "then": ["Break"] } }
+                    ] } }
+                ] } }
+            ] }"#,
+        )
+        .unwrap();
+        let f = compile(&ast).unwrap();
+        let mut h = Mock::default();
+        let out = go(&f, &mut h);
+        assert_eq!(out.ending, Ending::Finished);
+        // round 1 and 2 of the first entry, round 1 and 2 of the second: with a stale count the
+        // second entry would have had one round left, and made three keys in all
+        assert_eq!(h.log, ["key 8 2"; 4]);
+        assert_eq!(out.vars.get("c"), Some("4"));
+    }
+
+    #[test]
+    fn a_loop_that_ends_by_itself_and_a_loop_with_a_continue_count_as_before() {
+        use crate::config::flow_ast::{FlowAst, compile};
+        let ast: FlowAst = serde_json::from_str(
+            r#"{ "cursorpie_flow_ast": 1, "name": "t", "body": [
+                { "Repeat": { "times": 2, "body": [
+                    { "Repeat": { "times": 3, "body": [
+                        { "If": { "cond": "index == 2", "then": ["Continue"] } },
+                        { "Do": { "Key": { "key": 8, "mods": 2 } } }
+                    ] } }
+                ] } }
+            ] }"#,
+        )
+        .unwrap();
+        let f = compile(&ast).unwrap();
+        let mut h = Mock::default();
+        let out = go(&f, &mut h);
+        assert_eq!(out.ending, Ending::Finished);
+        // `index` is the round of the innermost loop: the key is skipped on its second round
+        assert_eq!(h.log.len(), 4, "2 x (3 rounds - 1)");
     }
 }

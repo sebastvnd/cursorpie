@@ -189,6 +189,25 @@ pub enum TouchClickAction {
     Nothing,
 }
 
+/// How the key combination of [`Config::key_trigger`] drives the pie.
+#[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq, Default)]
+pub enum KeyPieMode {
+    /// A quick tap of the combination leaves the pie open (choose with a click or a tap, press the
+    /// combination again or Esc to close it); holding it longer than [`KEY_TAP_MS`] is a hold: the
+    /// pie closes and runs the slice under the pointer when the key is let go.
+    #[default]
+    Auto,
+    /// Hold the combination: the slice under the pointer runs when the key is let go, like
+    /// holding the mouse trigger.
+    Hold,
+    /// Press the combination once: the pie stays open until a click (or tap) chooses a slice, the
+    /// combination is pressed again, or Esc is pressed.
+    Toggle,
+}
+
+/// In [`KeyPieMode::Auto`]: a key let go within this many ms of its press was a tap.
+pub const KEY_TAP_MS: u64 = 250;
+
 /// How the app's icon looks in the center of an app's own pie.
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, PartialEq, Eq, Default)]
 pub enum AppIconStyle {
@@ -658,6 +677,16 @@ pub struct Config {
     /// lock CursorPie for the trackpad; hold with one finger and tap with two to unlock it. See
     /// [`tap::touch::lock`](crate::tap). Off: two more fingers just close the pie, as before.
     pub touch_lock: bool,
+    /// A key combination (modifiers and one key) that opens the pie where the pointer is, for people
+    /// who would rather press keys than hold a button or keep a finger on a trackpad. `None` (the
+    /// default) = off. The combination is taken by CursorPie (the app never hears it) while this
+    /// is set. See [`tap::key_trigger`](crate::tap) and [`Config::key_trigger_mode`].
+    pub key_trigger: Option<crate::keys::Shortcut>,
+    /// A second combination that opens the pie of the app in front (what a double-click of the mouse
+    /// trigger opens), or the general pie when the app has none. `None` = off.
+    pub key_trigger_app: Option<crate::keys::Shortcut>,
+    /// Hold the combination, tap it, or both: see [`KeyPieMode`].
+    pub key_trigger_mode: KeyPieMode,
     /// Esc locks CursorPie while a pie is open, for every trigger (the mouse button, the trackpad
     /// hold); holding the trigger while it is locked and pressing Esc unlocks it. See
     /// [`tap::touch::lock`](crate::tap). The lock is one flag in memory: a restart unlocks it.
@@ -676,6 +705,30 @@ pub struct Config {
 }
 
 impl Config {
+    /// Sets a combination of the keyboard trigger (`app`: the one for the pie of the app). One that
+    /// the trigger cannot use (no modifier, or Esc) is ignored; one that the other combination
+    /// already has takes it over, so the two are never the same.
+    pub fn set_key_trigger(&mut self, app: bool, sc: crate::keys::Shortcut) {
+        let usable = sc.mods & crate::keys::MOD_MASK != 0 && sc.key != crate::keys::key::ESCAPE;
+        if !usable {
+            return;
+        }
+        let same = |o: Option<crate::keys::Shortcut>| {
+            o.is_some_and(|o| (o.key, o.mods) == (sc.key, sc.mods))
+        };
+        if app {
+            if same(self.key_trigger) {
+                self.key_trigger = None;
+            }
+            self.key_trigger_app = Some(sc);
+        } else {
+            if same(self.key_trigger_app) {
+                self.key_trigger_app = None;
+            }
+            self.key_trigger = Some(sc);
+        }
+    }
+
     /// Index of the general (fallback) profile: the first one with no apps, or 0.
     pub fn global_profile(&self) -> usize {
         self.profiles

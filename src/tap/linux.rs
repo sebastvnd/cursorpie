@@ -18,7 +18,13 @@
 //!   button is released, which is the same click one moment later.
 //! * While CursorPie is paused the grabs are lifted, so every event reaches the apps untouched.
 //! * Keys: only while Settings records a shortcut is the keyboard grabbed; it is let go as soon as
-//!   the key was captured.
+//!   the key was captured. The one other case is the keyboard trigger (`tap::key_trigger`): its
+//!   combinations are grabbed passively (`XGrabKey`, with every state of Caps Lock and Num Lock), which
+//!   also brings every key event to CursorPie until the combination's key is let go; and while a pie
+//!   that it opened stays open, the keyboard is grabbed whole, so Esc (and the combination again)
+//!   reach it. It is given back as soon as that pie is gone. A combination that is grabbed is the
+//!   one X cannot hand back to the app, so a pressed combination that CursorPie does not use (Settings
+//!   is open, CursorPie is locked) is lost, as is a key typed while such a pie stays open.
 //! * Touchpad: the finger positions come from `/dev/input` (`touch::evdev`), because libinput hides
 //!   them from X. What X must do for it is here: while a touchpad hold is running, the left and
 //!   right buttons are grabbed too, so the click of the extra finger can be swallowed
@@ -29,7 +35,7 @@
 
 use super::{
     Ev, Gesture, Kind, PAUSED, RECORDING, RIGHT_BUTTON, SIDE_BACK, SIDE_FORWARD, SWALLOW_KEY,
-    TAP_ACTIVE, Verdict, dispatch, modorder, touch,
+    TAP_ACTIVE, Verdict, dispatch, key_trigger, modorder, touch,
 };
 use crate::config::{cfg, extra_buttons_in_use, lock};
 use crate::geometry::Point;
@@ -42,7 +48,7 @@ use crate::platform::linux::session::Session;
 use crate::platform::linux::x11::{self, Conn};
 use crate::platform::linux::xlib::*;
 use std::collections::BTreeSet;
-use std::os::raw::c_int;
+use std::os::raw::{c_int, c_uint};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -212,6 +218,18 @@ fn run(state: Arc<Mutex<Gesture>>, notifier: Notifier) {
     }
 }
 
+/// The X grabs the keyboard trigger needs: one per combination that is set and has a key X knows.
+fn key_grabs() -> Vec<(c_int, c_uint)> {
+    let c = cfg();
+    let mut v: Vec<(c_int, c_uint)> = [c.key_trigger, c.key_trigger_app]
+        .iter()
+        .flatten()
+        .filter_map(x11::key_grab_for)
+        .collect();
+    v.dedup();
+    v
+}
+
 /// Whether key events are wanted: the typing guard of the trackpad hold, and Space to open Settings.
 fn keys_wanted() -> bool {
     let c = cfg();
@@ -241,6 +259,17 @@ fn serve(conn: &'static Conn, state: &Arc<Mutex<Gesture>>, notifier: &Notifier) 
         conn.release_grabs();
         return false;
     }
+    // the keyboard trigger: a refused combination (another program holds it) only means no pie from
+    // the keyboard, never that the mouse trigger fails
+    let chords = key_grabs();
+    let keys_ok = conn.set_key_grabs(&chords);
+    diag::log!(
+        "tap",
+        "key_grabs",
+        wanted = format!("{chords:?}"),
+        grabbed = format!("{:?}", conn.grabbed_keys()),
+        all_grabbed = keys_ok
+    );
     TAP_ACTIVE.store(true, Ordering::SeqCst);
     diag::log!("tap", "hook", backend = "x11", state = "running");
     let mut tap = Tap {
@@ -258,6 +287,8 @@ fn serve(conn: &'static Conn, state: &Arc<Mutex<Gesture>>, notifier: &Notifier) 
         raw_keys,
         keyboard: false,
         keyboard_deadline: None,
+        chords,
+        pie_keyboard: false,
     };
     // SAFETY: the display is valid for the whole process.
     let fd = unsafe { XConnectionNumber(conn.dpy) };
@@ -304,6 +335,10 @@ struct Tap {
     keyboard: bool,
     /// When to give up waiting for the recorded key's release.
     keyboard_deadline: Option<Instant>,
+    /// The combinations of the keyboard trigger that the grabs were made for.
+    chords: Vec<(c_int, c_uint)>,
+    /// The keyboard is grabbed for a pie of the keyboard that stays open (see `key_trigger`).
+    pie_keyboard: bool,
 }
 
 impl Tap {
@@ -544,7 +579,10 @@ impl Tap {
             .for_each(|p| *p = None);
         let busy =
             self.pending_basic.iter().any(Option::is_some) || touch::extra::interested(Kind::Up);
-        let want = touch::ACTIVE.load(Ordering::SeqCst) || (self.touch_grabs && busy);
+        // (a pie of the keyboard is chosen from with a click: the left button is taken for it too)
+        let want = touch::ACTIVE.load(Ordering::SeqCst)
+            || key_trigger::ACTIVE.load(Ordering::SeqCst)
+            || (self.touch_grabs && busy);
         // the wheel is grabbed for as long as the pie swallows scrolling: the hold, and the tail
         // of the scroll its fingers began (checking it also closes a tail that ran out)
         let want_scroll = touch::scroll::wanted();
@@ -557,6 +595,35 @@ impl Tap {
                 self.scroll_grabs,
             ));
             diag::log!("touch", "x_grabs", left_right = want, wheel = want_scroll);
+        }
+
+        // the combinations of the keyboard trigger follow the setting
+        if !self.lifted {
+            let chords = key_grabs();
+            if chords != self.chords {
+                let all = self.conn.set_key_grabs(&chords);
+                diag::log!(
+                    "tap",
+                    "key_grabs",
+                    wanted = format!("{chords:?}"),
+                    grabbed = format!("{:?}", self.conn.grabbed_keys()),
+                    all_grabbed = all
+                );
+                self.chords = chords;
+            }
+        }
+
+        // a pie that the keyboard opened and that stays open takes the whole keyboard, so Esc and the
+        // combination reach it; the keyboard goes back the moment that pie is gone (and never while
+        // a shortcut is being recorded, which has the keyboard on its own)
+        if !self.keyboard {
+            let want_keyboard = !self.lifted && key_trigger::sticky_open(&self.state);
+            if want_keyboard && !self.pie_keyboard {
+                self.pie_keyboard = self.conn.grab_keyboard();
+            } else if !want_keyboard && self.pie_keyboard {
+                self.conn.ungrab_keyboard();
+                self.pie_keyboard = false;
+            }
         }
 
         // the typing guard listens to keys only while the trackpad hold is on
@@ -678,6 +745,29 @@ mod tests {
         // the left and the right X buttons are the ones that are grabbed
         assert_eq!(mac_button(TOUCH_BUTTONS[0]), Some(0));
         assert_eq!(mac_button(TOUCH_BUTTONS[1]), Some(RIGHT_BUTTON));
+    }
+
+    #[test]
+    fn a_combination_is_grabbed_for_every_state_of_the_locks() {
+        use crate::keys::{MOD_CTRL, MOD_SHIFT, Shortcut, key};
+        // Ctrl+Shift+Space: the key of the Space bar is X keycode 65 (Linux KEY_SPACE 57 + 8)
+        let (keycode, mask) =
+            x11::key_grab_for(&Shortcut::new(key::SPACE, MOD_CTRL | MOD_SHIFT)).unwrap();
+        assert_eq!(keycode, 65);
+        assert_eq!(mask, CONTROL_MASK | SHIFT_MASK);
+        // a grab for the mask alone would not match while Num Lock is on
+        assert_eq!(mods_from_state(mask | (1 << 4)), MOD_CTRL | MOD_SHIFT);
+    }
+
+    #[test]
+    fn modifier_masks_are_the_inverse_of_the_modifier_bits() {
+        use crate::keys::{MOD_ALT, MOD_CMD, MOD_CTRL, MOD_SHIFT};
+        for mods in 0..16u8 {
+            assert_eq!(mods_from_state(x11::x_modifiers(mods)), mods, "{mods:04b}");
+        }
+        assert_eq!(x11::x_modifiers(MOD_ALT), MOD1_MASK);
+        assert_eq!(x11::x_modifiers(MOD_CMD), MOD4_MASK);
+        let _ = (MOD_CTRL, MOD_SHIFT);
     }
 
     #[test]

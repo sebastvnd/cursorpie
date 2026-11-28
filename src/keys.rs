@@ -18,6 +18,10 @@ pub const MOD_ORDER: [u8; 4] = [MOD_CTRL, MOD_ALT, MOD_SHIFT, MOD_CMD];
 /// Every `MOD_*` bit together.
 const MOD_ALL: u8 = MOD_SHIFT | MOD_CTRL | MOD_ALT | MOD_CMD;
 
+/// Every `MOD_*` bit together, for code outside this module (a shortcut with none of them is a
+/// plain key).
+pub const MOD_MASK: u8 = MOD_ALL;
+
 /// Two bits of [`Shortcut::order`] name one modifier: its index in this table.
 const MOD_BY_ID: [u8; 4] = [MOD_SHIFT, MOD_CTRL, MOD_ALT, MOD_CMD];
 

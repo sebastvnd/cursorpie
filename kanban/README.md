@@ -5,11 +5,11 @@ like the code, and the notes stay in the Git history.
 
 The board has four columns:
 
-| Column | Key | Meaning |
-|---|---|---|
-| Backlog | `backlog` | not started |
-| In Progress | `in-progress` | somebody is working on it |
-| Done | `done` | the work is finished |
+| Column        | Key             | Meaning                       |
+| ------------- | --------------- | ----------------------------- |
+| Backlog       | `backlog`       | not started                   |
+| In Progress   | `in-progress`   | somebody is working on it     |
+| Done          | `done`          | the work is finished          |
 | In Evaluation | `in-evaluation` | the result is being evaluated |
 
 `BOARD.md` shows the four columns as tables. It is generated: do not edit it by hand.
@@ -31,12 +31,12 @@ cargo tools kanban board                        write BOARD.md again from the ca
 cargo tools kanban check                        cards readable and BOARD.md up to date
 ```
 
-* A status is its key or its name in any case. `progress`, `doing`, `evaluation` and `eval` also work.
-* `add`, `move`, `note` and `rm` take `--commit`: the change to `kanban/` (and nothing else that
+- A status is its key or its name in any case. `progress`, `doing`, `evaluation` and `eval` also work.
+- `add`, `move`, `note` and `rm` take `--commit`: the change to `kanban/` (and nothing else that
   may be staged) is committed with a subject such as `Move kanban card 0003 to In Progress`.
   Without it, nothing is committed: look at `git diff kanban/` and commit it yourself.
-* The owner is `--owner NAME`, or else `git config user.name`. Times are UTC.
-* `cargo tools ci --quick` (the `pre-commit` hook) runs `check`, so a board that no longer matches
+- The owner is `--owner NAME`, or else `git config user.name`. Times are UTC.
+- `cargo tools ci --quick` (the `pre-commit` hook) runs `check`, so a board that no longer matches
   its cards stops the commit. `cargo tools kanban board` fixes it.
 
 ## The card file
@@ -64,7 +64,7 @@ of the card under `## Notes`. You may edit a card by hand: run `cargo tools kanb
 
 ## Merging
 
-* Two branches that add a card at the same time both create the next free number: Git reports a
+- Two branches that add a card at the same time both create the next free number: Git reports a
   conflict on that file. Move one of the two cards to the next free number (rename the file), then
   run `cargo tools kanban board`.
-* A conflict in `BOARD.md` is solved by running `cargo tools kanban board`.
+- A conflict in `BOARD.md` is solved by running `cargo tools kanban board`.

@@ -249,6 +249,109 @@ pub(crate) fn focus_command(id: &str) -> Option<String> {
         .then(|| format!("/dispatch focuswindow address:0x{id}"))
 }
 
+// ------------------------------------------------------------------- CursorPie's own window
+
+/// CursorPie's own window as `j/clients` describes it: what is needed to take the compositor's
+/// decorations off it and to put it under the pointer.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct OwnWindow {
+    /// The address without its `0x` (hex digits, see [`address_id`]).
+    pub id: String,
+    /// Where it is and how big, in the layout's logical points.
+    pub rect: ScreenRect,
+    pub floating: bool,
+}
+
+/// The mapped window of the process `pid` in a `j/clients` reply. XWayland windows carry the
+/// `pid` of the X client (`_NET_WM_PID`, which the toolkit sets), so this finds the pie whatever
+/// its class or title is. `None` if there is none (not mapped yet), or the text is not a reply.
+pub(crate) fn parse_own_window(text: &str, pid: u32) -> Option<OwnWindow> {
+    if text.len() > MAX_REPLY {
+        return None;
+    }
+    let v: Value = serde_json::from_str(text).ok()?;
+    v.as_array()?.iter().take(MAX_WINDOWS).find_map(|c| {
+        if i64_of(c, "pid") != Some(i64::from(pid))
+            || bool_of(c, "mapped") == Some(false)
+            || bool_of(c, "hidden") == Some(true)
+        {
+            return None;
+        }
+        let (x, y) = pair_of(c, "at")?;
+        let (w, h) = pair_of(c, "size")?;
+        Some(OwnWindow {
+            id: address_id(&str_of(c, "address"))?,
+            rect: kwin::rect_of(x, y, w, h)?,
+            floating: bool_of(c, "floating").unwrap_or(false),
+        })
+    })
+}
+
+/// Whether `id` is hex digits only, so nothing else can become part of a command.
+fn valid_id(id: &str) -> bool {
+    (1..=32).contains(&id.len()) && id.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// The request that makes the window `id` a floating one (a tiled window would be put into the
+/// layout and could not be placed under the pointer). `None` for anything that is not an id.
+pub(crate) fn float_command(id: &str) -> Option<String> {
+    valid_id(id).then(|| format!("/dispatch setfloating address:0x{id}"))
+}
+
+/// The requests that take everything Hyprland draws around a window off the window `id`: the
+/// border, the shadow, the blur behind it, the rounded corners and its animation. A transparent
+/// window (the pie is one) shows all of that as an outline and a blurred, dark box around the
+/// pie, because Hyprland receives one buffer and cannot tell the drawn part from the empty one.
+///
+/// The properties are set one by one with `setprop`, which only changes this window and needs no
+/// rule in the person's configuration. Hyprland renamed them in 0.53 (`noblur` is `no_blur`,
+/// `bordersize` is `border_size`...), so both spellings are sent; the compositor answers an error
+/// for the one it does not know, which is ignored.
+pub(crate) fn look_commands(id: &str) -> Vec<String> {
+    if !valid_id(id) {
+        return Vec::new();
+    }
+    const PROPS: [(&str, &str); 12] = [
+        // before 0.53
+        ("noblur", "1"),
+        ("noshadow", "1"),
+        ("noborder", "1"),
+        ("noanim", "1"),
+        ("bordersize", "0"),
+        ("norounding", "1"),
+        // from 0.53
+        ("no_blur", "1"),
+        ("no_shadow", "1"),
+        ("no_anim", "1"),
+        ("border_size", "0"),
+        // both
+        ("rounding", "0"),
+        ("decorate", "0"),
+    ];
+    PROPS
+        .iter()
+        .map(|(prop, value)| format!("/dispatch setprop address:0x{id} {prop} {value}"))
+        .collect()
+}
+
+/// The request that puts the top-left corner of the window `id` at `(x, y)` in layout points.
+pub(crate) fn move_command(id: &str, x: i32, y: i32) -> Option<String> {
+    valid_id(id).then(|| format!("/dispatch movewindowpixel exact {x} {y},address:0x{id}"))
+}
+
+/// The top-left corner a window of size `w` x `h` has when its center is on `center`.
+pub(crate) fn top_left_for_center(center: Point, w: f64, h: f64) -> (i32, i32) {
+    (
+        (center.x - w / 2.0).round() as i32,
+        (center.y - h / 2.0).round() as i32,
+    )
+}
+
+/// Whether a window at `rect` has to be moved to reach `want` (a point off is not worth a request).
+pub(crate) fn needs_move(rect: &ScreenRect, want: (i32, i32)) -> bool {
+    (rect.x - f64::from(want.0)).abs() > 1.0 || (rect.y - f64::from(want.1)).abs() > 1.0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -489,5 +592,75 @@ mod tests {
     fn the_active_id_is_checked_like_every_other() {
         let s = build_snapshot(Vec::new(), &[], None, Some("not hex!".to_string()));
         assert_eq!(s.active, None);
+    }
+    #[test]
+    fn our_own_window_is_found_by_its_pid() {
+        let text = r#"[
+          {"address":"0xaa11","mapped":true,"hidden":false,"at":[10,20],"size":[300,300],
+           "floating":true,"pid":4321,"class":"cursorpie"},
+          {"address":"0xbb22","mapped":true,"hidden":false,"at":[0,0],"size":[800,600],
+           "floating":false,"pid":999,"class":"kitty"}]"#;
+        let w = parse_own_window(text, 4321).unwrap();
+        assert_eq!(w.id, "aa11");
+        assert!(w.floating);
+        assert_eq!(
+            (w.rect.x, w.rect.y, w.rect.w, w.rect.h),
+            (10.0, 20.0, 300.0, 300.0)
+        );
+        assert!(parse_own_window(text, 1).is_none());
+        assert!(parse_own_window("nonsense", 4321).is_none());
+    }
+
+    #[test]
+    fn a_window_that_is_not_mapped_or_is_hidden_is_not_ours_yet() {
+        let text = r#"[{"address":"0xaa11","mapped":false,"at":[0,0],"size":[10,10],"pid":7},
+                        {"address":"0xaa12","mapped":true,"hidden":true,"at":[0,0],"size":[10,10],"pid":7}]"#;
+        assert!(parse_own_window(text, 7).is_none());
+    }
+
+    #[test]
+    fn the_look_is_taken_off_with_both_spellings_and_only_for_a_hex_id() {
+        let cmds = look_commands("aa11");
+        assert!(cmds.contains(&"/dispatch setprop address:0xaa11 noblur 1".to_string()));
+        assert!(cmds.contains(&"/dispatch setprop address:0xaa11 no_blur 1".to_string()));
+        assert!(cmds.contains(&"/dispatch setprop address:0xaa11 border_size 0".to_string()));
+        assert!(cmds.contains(&"/dispatch setprop address:0xaa11 bordersize 0".to_string()));
+        assert!(look_commands("aa11; exec rm -rf").is_empty());
+        assert!(look_commands("").is_empty());
+    }
+
+    #[test]
+    fn the_window_is_moved_by_its_corner_and_only_by_a_hex_id() {
+        assert_eq!(
+            move_command("aa11", 100, -20).as_deref(),
+            Some("/dispatch movewindowpixel exact 100 -20,address:0xaa11")
+        );
+        assert!(move_command("zz", 1, 1).is_none());
+        assert_eq!(
+            float_command("aa11").as_deref(),
+            Some("/dispatch setfloating address:0xaa11")
+        );
+        assert!(float_command("a b").is_none());
+    }
+
+    #[test]
+    fn the_corner_puts_the_center_of_the_window_on_the_pointer() {
+        let p = Point {
+            x: 1000.0,
+            y: 500.0,
+        };
+        assert_eq!(top_left_for_center(p, 300.0, 300.0), (850, 350));
+        // an odd size rounds, it does not drift
+        assert_eq!(top_left_for_center(p, 301.0, 301.0), (850, 350));
+        let r = |x, y| ScreenRect {
+            x,
+            y,
+            w: 300.0,
+            h: 300.0,
+        };
+        assert!(!needs_move(&r(850.0, 350.0), (850, 350)));
+        assert!(!needs_move(&r(851.0, 349.0), (850, 350)));
+        assert!(needs_move(&r(852.0, 350.0), (850, 350)));
+        assert!(needs_move(&r(850.0, 300.0), (850, 350)));
     }
 }

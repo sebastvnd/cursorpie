@@ -1952,6 +1952,10 @@ pub fn parse_flow_report(text: &str) -> Result<ImportReport, String> {
             short(&e.to_string())
         )
     })?;
+    // a program tree (`cursorpie_flow_ast`, see `flow_ast`) is compiled to blocks first
+    if v.get("cursorpie_flow_ast").is_some() {
+        return super::flow_ast::parse_ast_report(v);
+    }
     let file_format = match v.get("cursorpie_flow").and_then(|x| x.as_u64()) {
         None if v.get("cursorpie_profile").is_some() => {
             return Err(

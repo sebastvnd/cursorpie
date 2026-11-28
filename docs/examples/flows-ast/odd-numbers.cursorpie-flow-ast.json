@@ -1,0 +1,24 @@
+{
+  "cursorpie_flow_ast": 1,
+  "name": "Odd numbers",
+  "body": [
+    { "Let": { "name": "n", "expr": "0" } },
+    {
+      "While": {
+        "cond": "n < 4",
+        "body": [
+          { "Let": { "name": "n", "expr": "n + 1" } },
+          { "If": { "cond": "n % 2 == 0", "then": ["Continue"] } },
+          { "Do": { "Key": { "key": 8, "mods": 2 } } }
+        ]
+      }
+    },
+    {
+      "If": {
+        "cond": { "a": "{{= n * 2 }}", "op": "Eq", "b": "8" },
+        "then": [{ "Do": { "OpenApp": "done" } }],
+        "else": [{ "Do": "Stop" }]
+      }
+    }
+  ]
+}

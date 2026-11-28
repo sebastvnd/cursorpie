@@ -68,6 +68,21 @@ fn section_label(ui: &mut egui::Ui, text: &str) {
     ui.label(fonts::title(text, 13.0, pal().muted));
 }
 
+/// The number of a slice's kind in the kind control: 0 = mode (side buttons), 1 = run (action),
+/// 2 = submenu, 3 = intelligent. It is the numbering [`default_kind`] takes, and the control must
+/// use no other: it once numbered run as 0 and mode as 1, so the control marked "Side buttons" on
+/// a slice that runs an action (and "Action" on one that is a mode). The marked option is the one
+/// that cannot be picked, so "Side buttons" did nothing on an action slice, and "Action" made a new
+/// action over the one it already had.
+fn kind_code(kind: &ItemKind) -> usize {
+    match kind {
+        ItemKind::Mode { .. } => 0,
+        ItemKind::Run(_) => 1,
+        ItemKind::Submenu(_) => 2,
+        ItemKind::Smart(_) => 3,
+    }
+}
+
 /// Initial kind for the kind control: 0 = mode, 1 = run, 3 = intelligent, otherwise submenu.
 fn default_kind(k: usize) -> ItemKind {
     match k {
@@ -396,12 +411,7 @@ pub(super) fn item_inspector(
                         .hint_text("Name"),
                 );
                 {
-                    let now = match &item.kind {
-                        ItemKind::Run(_) => 0,
-                        ItemKind::Mode { .. } => 1,
-                        ItemKind::Submenu(_) => 2,
-                        ItemKind::Smart(_) => 3,
-                    };
+                    let now = kind_code(&item.kind);
                     // (what the button makes, the button); a ring one level deeper than the limit
                     // is not offered, unless the slice already is one
                     let mut kinds: Vec<(usize, Option<char>, &str)> = vec![
@@ -760,5 +770,20 @@ pub(super) fn item_inspector(
     if enter {
         ed.nav.push(i);
         ed.sel = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_kind_control_marks_the_kind_the_slice_really_has() {
+        // what the control makes (`default_kind`) must be what it then marks (`kind_code`)
+        for code in 0..=3 {
+            assert_eq!(kind_code(&default_kind(code)), code, "kind {code}");
+        }
+        assert!(matches!(default_kind(0), ItemKind::Mode { .. }));
+        assert!(matches!(default_kind(1), ItemKind::Run(_)));
     }
 }

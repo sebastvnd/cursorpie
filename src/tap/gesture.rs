@@ -3,16 +3,21 @@
 use crate::geometry::Point;
 use std::time::Instant;
 
-/// Where a gesture came from: the trigger button of a mouse, or a hold on a trackpad (macOS, see
-/// [`touch`](super::touch)). The state machine is the same for both; the source only decides the
-/// few things that differ. A trackpad hold has no button, so there is no click to hand back to the
-/// app when it ends early, and only a trackpad gesture ticks the trackpad's haptic motor.
+/// Where a gesture came from: the trigger button of a mouse, a hold on a trackpad (macOS, see
+/// [`touch`](super::touch)) or a key combination (see [`key_trigger`](super::key_trigger)). The
+/// state machine is the same for all of them; the source only decides the few things that differ. A
+/// trackpad hold has no button, so there is no click to hand back to the app when it ends early, and
+/// only a trackpad gesture ticks the trackpad's haptic motor. A key combination opens the pie at
+/// once (nothing is pending, no click is swallowed to be replayed), has no button down, and its pie
+/// is aimed by a watcher of the pointer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Source {
     /// The trigger button of a mouse.
     Mouse,
     /// A hold with the fingers on a trackpad.
     Touch,
+    /// A key combination (modifiers and a key), held or tapped.
+    Key,
 }
 
 /// What the trigger button is doing right now. Shared (behind a mutex) between the tap callback

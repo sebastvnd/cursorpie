@@ -52,6 +52,7 @@ use super::flow_new::flow_new_sheet;
 use crate::config::flow::{
     COORD_LIMIT, PasteBlocks, export_flow_to_downloads, fresh_id, unique_name,
 };
+use crate::config::flow_ast::export_flow_ast_to_downloads;
 use crate::config::flow_check::{
     block_issues, block_reads, block_severity, block_writes, data_edges, wire_severity,
 };
@@ -67,6 +68,7 @@ use crate::ui::draw::rgb;
 use crate::ui::fonts;
 use crate::ui::settings::action_editor::browser_fields;
 use crate::ui::settings::clip::{self, Clip};
+use crate::ui::settings::code_editor::{self, Lang, code_edit_fill};
 use crate::ui::settings::panel_designer;
 use crate::ui::settings::picker::spawn_file_picker;
 use crate::ui::settings::state::{
@@ -137,6 +139,8 @@ pub(super) enum Do {
     Delete,
     Import,
     Export,
+    /// Export the flow as a program tree (`cursorpie_flow_ast`, see `config::flow_ast`)
+    ExportAst,
     Pick(usize),
     ResetView,
     /// Line the blocks up (in the given way) so none covers another
@@ -197,6 +201,8 @@ impl App {
         let main = full;
         let mut todo = None;
         let fi = ed.flow;
+        // the variables of the flow, for the suggestions of the code editors
+        code_editor::set_variables(ctx, code_editor::variable_names(&edit.flows[fi]));
         // the other flows a *Call* block can pick
         let others: Vec<(String, String)> = edit
             .flows
@@ -676,6 +682,24 @@ pub(super) fn run(todo: Do, ctx: &egui::Context, edit: &mut Config, ed: &mut Ed,
                 }
             }
         }
+        Do::ExportAst => {
+            if let Some(flow) = edit.flows.get(ed.flow) {
+                match export_flow_ast_to_downloads(flow) {
+                    Ok(path) => {
+                        platform::reveal_in_file_manager(&path);
+                        notice(
+                            tx,
+                            ctx,
+                            format!("Exported as a program tree to {}", path.display()),
+                        );
+                    }
+                    Err(reason) => {
+                        // not an error of the disk: this flow's wires are not nested statements
+                        notice(tx, ctx, reason);
+                    }
+                }
+            }
+        }
         Do::Pick(i) => {
             if i < edit.flows.len() {
                 select_flow(ed, i);
@@ -1107,6 +1131,166 @@ pub(super) fn field(ui: &mut egui::Ui, text: &mut String, hint: &str) {
     }
 }
 
+/// The command of a *Shell command* or *Run a command* block on the canvas and in the inspector:
+/// the one line it always was, and at its right a button that opens the code editor
+/// ([`code_editor`]: colors, suggestions, indent), where there is room for a script of several
+/// lines.
+///
+/// The editor is part of the place it is opened from, not a window of its own: on the canvas it is
+/// drawn by [`canvas`] in the layer of the blocks, under its block, so it is locked to the flow
+/// (it moves, zooms and is cut off with the canvas, and goes when the block is let go of); in the
+/// inspector it opens inline under the field. Each has its own open flag, so a block that is on
+/// both never has two editors with the same id.
+fn command_field(ui: &mut egui::Ui, id: u32, text: &mut String, lang: Lang, hint: &str) {
+    let ctx = ui.ctx().clone();
+    // on the canvas the block says where it is (see `canvas`), which is how this knows
+    let on_canvas = ctx
+        .data(|d| d.get_temp::<Option<Rect>>(egui::Id::new(("flow_code_anchor", id))))
+        .flatten()
+        .is_some();
+    let fi: usize = ctx
+        .data(|d| d.get_temp(egui::Id::new("flow_code_fi")))
+        .unwrap_or(0);
+    let canvas_key = egui::Id::new(CODE_CANVAS);
+    let insp_id = code_open_id(id, false);
+    let mut open: bool = if on_canvas {
+        ctx.data(|d| d.get_temp::<Option<(usize, u32)>>(canvas_key))
+            .flatten()
+            == Some((fi, id))
+    } else {
+        ctx.data(|d| d.get_temp(insp_id)).unwrap_or(false)
+    };
+    let mut clicked = false;
+    ui.horizontal(|ui| {
+        let w = (ui.available_width() - 40.0).max(60.0);
+        if text.chars().any(char::is_control) {
+            let mut shown = show_breaks(text);
+            if ui
+                .add(text_field(&mut shown).desired_width(w).hint_text(hint))
+                .changed()
+            {
+                *text = hide_breaks(&shown);
+            }
+        } else {
+            ui.add(text_field(text).desired_width(w).hint_text(hint));
+        }
+        if icon_button(ui, symbols::CODE, "Edit as code", true).clicked() {
+            clicked = true;
+            open = !open;
+        }
+    });
+    if on_canvas {
+        // one editor at a time on the canvas, and it is the one of the block whose button was
+        // pressed: pressing another block's button moves it there
+        if clicked {
+            ctx.data_mut(|d| {
+                d.insert_temp(canvas_key, open.then_some((fi, id)));
+                d.insert_temp(egui::Id::new(CODE_CANVAS_FRESH), open);
+            });
+        }
+        return;
+    }
+    if clicked {
+        ctx.data_mut(|d| d.insert_temp(insp_id.with("fresh"), open));
+    }
+    if open {
+        // the inspector: the editor opens inline, under the field
+        let fresh: bool = ctx
+            .data(|d| d.get_temp(insp_id.with("fresh")))
+            .unwrap_or(false);
+        ctx.data_mut(|d| d.insert_temp(insp_id.with("fresh"), false));
+        let mut close = false;
+        egui::Frame::new()
+            .fill(pal().input)
+            .stroke(Stroke::new(1.0, pal().border))
+            .corner_radius(panel_r())
+            .inner_margin(egui::Margin::same(8))
+            .show(ui, |ui| {
+                let size = vec2(ui.available_width(), 220.0);
+                ui.allocate_ui(size, |ui| {
+                    close = code_panel_body(ui, id, false, text, lang, hint, fresh);
+                });
+            });
+        code_editor::hold_escape(&ctx);
+        if close {
+            open = false;
+        }
+    }
+    ctx.data_mut(|d| d.insert_temp(insp_id, open));
+}
+
+/// Where the canvas remembers which block has its code editor open (the flow's number and the
+/// block's), and whether it was opened this frame.
+const CODE_CANVAS: &str = "flow_code_canvas";
+const CODE_CANVAS_FRESH: &str = "flow_code_canvas_fresh";
+
+/// The flag that says the code editor of block `id` is open, on the canvas or in the inspector.
+fn code_open_id(id: u32, canvas: bool) -> egui::Id {
+    egui::Id::new(("flow_code_open", id, canvas))
+}
+
+/// The text a block edits as code, with its language and the hint of its field.
+fn code_target(kind: &mut NodeKind) -> Option<(&mut String, Lang, &'static str)> {
+    match kind {
+        NodeKind::Command(s) => Some((s, Lang::Shell, "shell command (not waited for)")),
+        NodeKind::Set { value, .. } => Some((value, Lang::Value, "value, e.g. {{name}}")),
+        NodeKind::Run { command, .. } => Some((command, Lang::Shell, "shell command (waited for)")),
+        _ => None,
+    }
+}
+
+/// What the editor is called, from what it holds.
+fn code_title(lang: Lang) -> &'static str {
+    match lang {
+        Lang::Shell => "Command to run",
+        Lang::Json => "Panel (JSON)",
+        Lang::Value => "Value",
+    }
+}
+
+/// Inside of a code editor, canvas or inspector: a title with a close button, and the editor
+/// under it, filling the room it is given. Returns whether it asks to be closed (the X or Esc,
+/// which the list of suggestions has not already taken).
+fn code_panel_body(
+    ui: &mut egui::Ui,
+    id: u32,
+    canvas: bool,
+    text: &mut String,
+    lang: Lang,
+    hint: &str,
+    first: bool,
+) -> bool {
+    let mut close = false;
+    ui.horizontal(|ui| {
+        ui.label(
+            RichText::new(code_title(lang))
+                .size(13.0)
+                .strong()
+                .color(pal().text),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if icon_button(ui, symbols::X, "Close (Esc)", true).clicked() {
+                close = true;
+            }
+        });
+    });
+    let edit = code_edit_fill(ui, ("flow_code", id, canvas), text, lang, hint);
+    if first {
+        edit.request_focus();
+    }
+    if edit.has_focus() && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+    {
+        close = true;
+    }
+    close
+}
+
+/// Where the code editor of a block goes, in the coordinates of the blocks: right under it, its
+/// left edge on the block's, `gap` away.
+fn code_panel_rect(body: Rect, size: Vec2, gap: f32) -> Rect {
+    Rect::from_min_size(pos2(body.min.x, body.max.y + gap), size)
+}
+
 /// The ways an *Open app (smart)* or *Open link (smart)* block can open what it is told to: the word
 /// the block stores (see [`OpenMode::parse`]) and what the person reads in the list.
 const OPEN_MODES: [(&str, &str); 4] = [
@@ -1254,7 +1438,9 @@ pub(super) fn controls(
             });
         }
         NodeKind::OpenUrl(s) => field(ui, s, "https://\u{2026}  or a file path"),
-        NodeKind::Command(s) => field(ui, s, "shell command (not waited for)"),
+        NodeKind::Command(s) => {
+            command_field(ui, id, s, Lang::Shell, "shell command (not waited for)")
+        }
         NodeKind::Wait(ms) => {
             ui.horizontal(|ui| {
                 ui.add(
@@ -1275,7 +1461,7 @@ pub(super) fn controls(
         }
         NodeKind::Set { name, value } => {
             field(ui, name, "variable name");
-            field(ui, value, "value, e.g. {{name}}");
+            command_field(ui, id, value, Lang::Value, "value, e.g. {{name}}");
         }
         NodeKind::Calc { out, a, op, b } => {
             field(ui, out, "result variable");
@@ -1383,7 +1569,7 @@ pub(super) fn controls(
             out,
             timeout_s,
         } => {
-            field(ui, command, "shell command (waited for)");
+            command_field(ui, id, command, Lang::Shell, "shell command (waited for)");
             ui.horizontal(|ui| {
                 let w = (ui.available_width() - 82.0).max(60.0);
                 ui.add(
@@ -1956,7 +2142,14 @@ fn canvas(
                     // what is not empty: a block, its dots (half of each sticks out of its sides)
                     // and the "+" of an output with nothing plugged in; nothing else around it
                     let q = from_global * p;
-                    let on_block = flow.nodes.iter().any(|n| {
+                    // the code editors hang under their blocks: a press there is not on the
+                    // empty canvas either (it would let go of the block and close the editor)
+                    let in_editor = ctx
+                        .data(|d| d.get_temp::<Vec<Rect>>(egui::Id::new(("flow_code_rects", fi))))
+                        .unwrap_or_default()
+                        .iter()
+                        .any(|r| r.expand(6.0).contains(q));
+                    let on_block = in_editor || flow.nodes.iter().any(|n| {
                         let top = pos2(n.x, n.y);
                         let size = vec2(n.kind.width(), node_h(&n.kind));
                         let half = PORT_HIT / 2.0;
@@ -2153,6 +2346,13 @@ fn canvas(
             .is_some_and(|p| view.contains(p));
 
         // where every dot is, before anything moves
+        // the blocks whose code editor can open (their place), and where the editors were drawn
+        // in the last frame: a press there is for the editor, not for the block under it
+        ctx.data_mut(|d| d.insert_temp(egui::Id::new("flow_code_fi"), fi));
+        let mut code_slots: Vec<(u32, Rect)> = Vec::new();
+        let editor_rects: Vec<Rect> = ctx
+            .data(|d| d.get_temp(egui::Id::new(("flow_code_rects", fi))))
+            .unwrap_or_default();
         let mut outs: BTreeMap<(u32, Port), Pos2> = BTreeMap::new();
         let mut ins: Vec<(u32, Pos2)> = Vec::new();
         for n in &flow.nodes {
@@ -2270,6 +2470,16 @@ fn canvas(
         order.sort_by_key(|&i| ed.is_selected(flow.nodes[i].id));
         for i in order {
             let id = flow.nodes[i].id;
+            // the widgets of a block get their ids from the block, not from the place it is drawn
+            // at: the selected block is drawn last (so it is on top), and ids counted in drawing
+            // order moved to another block as soon as one was selected, so a press or a drag
+            // that began on one block went to another
+            let mut node_ui = ui.new_child(
+                UiBuilder::new()
+                    .id_salt(("flow_node_ui", fi, id))
+                    .max_rect(ui.max_rect()),
+            );
+            let ui = &mut node_ui;
             let is_start = matches!(flow.nodes[i].kind, NodeKind::Start);
             let is_end = matches!(flow.nodes[i].kind, NodeKind::End);
             // Start, End and Stop are only a header
@@ -2614,15 +2824,22 @@ fn canvas(
                     .as_ref()
                     .is_some_and(|r| r.profile == fi && r.slot == Slot::Node(id));
                 let kind = &mut flow.nodes[i].kind;
+                // marks the controls as the canvas's own: the code editor of the block is drawn
+                // by the canvas, under the block, in the layer of the blocks
+                let anchor_id = egui::Id::new(("flow_code_anchor", id));
+                ctx.data_mut(|d| d.insert_temp(anchor_id, Some(to_global * body_rect)));
+                code_slots.push((id, body_rect));
                 ui.scope_builder(UiBuilder::new().max_rect(area), |ui| {
                     controls(ui, kind, others, recording, accent, id, &mut ops);
                 });
+                ctx.data_mut(|d| d.insert_temp(anchor_id, None::<Rect>));
                 // a press anywhere in the body (a field too) selects the block
                 // (not when something floats over it there: the bar under the canvas, a list)
                 let covered = ctx
                     .input(|i| i.pointer.latest_pos())
                     .and_then(|p| ctx.layer_id_at(p))
-                    .is_some_and(|l| l != layer && l != base_layer && l.order >= base_layer.order);
+                    .is_some_and(|l| l != layer && l != base_layer && l.order >= base_layer.order)
+                    || pointer.is_some_and(|p| editor_rects.iter().any(|r| r.contains(p)));
                 if !covered
                     && in_view
                     && ctx.input(|i| i.pointer.primary_pressed())
@@ -2634,6 +2851,102 @@ fn canvas(
                 }
             }
         }
+
+        // the code editor, in the layer of the blocks and drawn after them, so nothing covers it:
+        // it hangs under its block and so moves, zooms and is cut off with the canvas. There is
+        // one, the one of the block whose button was pressed (which also selects that block); it
+        // goes when another block, the empty canvas or Delete lets go of its block, as the
+        // inspector does
+        let mut drawn: Vec<Rect> = Vec::new();
+        let canvas_key = egui::Id::new(CODE_CANVAS);
+        let want: Option<u32> = ctx
+            .data(|d| d.get_temp::<Option<(usize, u32)>>(canvas_key))
+            .flatten()
+            .filter(|(f, _)| *f == fi)
+            .map(|(_, i)| i);
+        if let Some(id) = want {
+            let fresh: bool = ctx
+                .data(|d| d.get_temp(egui::Id::new(CODE_CANVAS_FRESH)))
+                .unwrap_or(false);
+            ctx.data_mut(|d| d.insert_temp(egui::Id::new(CODE_CANVAS_FRESH), false));
+            let body = code_slots.iter().find(|(i, _)| *i == id).map(|(_, r)| *r);
+            let mut keep = false;
+            if let Some(body) = body
+                && let Some(node) = flow.node_mut(id)
+                && let Some((text, lang, hint)) = code_target(&mut node.kind)
+            {
+                if ed.flow_sel != Some(id) && fresh {
+                    // just opened with its button: that selects the block too
+                    ed.flow_multi.clear();
+                    ed.flow_sel = Some(id);
+                }
+                if ed.flow_sel == Some(id) {
+                    keep = true;
+                    // its size is the person's (the grip in its corner), in the units of the blocks
+                    let size_key = egui::Id::new(("flow_code_size", id));
+                    let default = vec2(body.width().max(420.0), 240.0);
+                    let mut size: Vec2 = ctx.data(|d| d.get_temp(size_key)).unwrap_or(default);
+                    size = size.clamp(vec2(260.0, 120.0), vec2(1200.0, 900.0));
+                    let rect = code_panel_rect(body, size, 12.0);
+                    // a short line from the block to its editor, so it reads as theirs
+                    painter.line_segment(
+                        [
+                            pos2(body.min.x + 22.0, body.max.y),
+                            pos2(body.min.x + 22.0, rect.min.y),
+                        ],
+                        Stroke::new(2.0, accent),
+                    );
+                    painter.rect_filled(rect, panel_r(), pal().card);
+                    painter.rect_stroke(
+                        rect,
+                        panel_r(),
+                        Stroke::new(1.5, accent),
+                        StrokeKind::Inside,
+                    );
+                    // the editor takes every press over it, also where it has no control of its own
+                    ui.interact(
+                        rect,
+                        egui::Id::new(("flow_code_back", id)),
+                        Sense::click_and_drag(),
+                    );
+                    let inner = rect.shrink(8.0);
+                    let mut close = false;
+                    ui.scope_builder(UiBuilder::new().max_rect(inner), |ui| {
+                        ui.set_clip_rect(ui.clip_rect().intersect(inner.expand(1.0)));
+                        close = code_panel_body(ui, id, true, text, lang, hint, fresh);
+                    });
+                    code_editor::hold_escape(ctx);
+                    // the grip in the corner
+                    let grip = Rect::from_min_size(rect.max - vec2(16.0, 16.0), vec2(16.0, 16.0));
+                    let g = ui.interact(grip, egui::Id::new(("flow_code_grip", id)), Sense::drag());
+                    if g.hovered() || g.dragged() {
+                        ctx.set_cursor_icon(egui::CursorIcon::ResizeNwSe);
+                    }
+                    if g.dragged() {
+                        size = (size + g.drag_delta())
+                            .clamp(vec2(260.0, 120.0), vec2(1200.0, 900.0));
+                    }
+                    for k in [5.0, 10.0] {
+                        painter.line_segment(
+                            [
+                                pos2(rect.max.x - 3.0, rect.max.y - k - 3.0),
+                                pos2(rect.max.x - k - 3.0, rect.max.y - 3.0),
+                            ],
+                            Stroke::new(1.0, pal().muted),
+                        );
+                    }
+                    ctx.data_mut(|d| d.insert_temp(size_key, size));
+                    drawn.push(rect);
+                    if close {
+                        keep = false;
+                    }
+                }
+            }
+            if !keep {
+                ctx.data_mut(|d| d.insert_temp(canvas_key, None::<(usize, u32)>));
+            }
+        }
+        ctx.data_mut(|d| d.insert_temp(egui::Id::new(("flow_code_rects", fi)), drawn));
 
         // the selection box
         if let Some(start) = ed.flow_marquee
@@ -2873,6 +3186,25 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn the_code_editor_hangs_under_its_block_and_follows_it() {
+        let block = Rect::from_min_size(pos2(100.0, 100.0), vec2(280.0, 90.0));
+        let size = vec2(460.0, 240.0);
+        // under the block, its left edges on the block's
+        let at = code_panel_rect(block, size, 12.0);
+        assert_eq!(at.min, pos2(100.0, 202.0));
+        assert_eq!(at.size(), size);
+        // it moves with the block
+        let moved = block.translate(vec2(30.0, 20.0));
+        assert_eq!(code_panel_rect(moved, size, 12.0).min, pos2(130.0, 222.0));
+    }
+
+    #[test]
+    fn only_blocks_with_a_command_have_a_code_editor() {
+        assert!(code_target(&mut NodeKind::Command(String::new())).is_some());
+        assert!(code_target(&mut NodeKind::Start).is_none());
     }
 
     #[test]

@@ -5,19 +5,20 @@
 //! startup and memory.
 
 use crate::config::{
-    AppGesture, AppIconStyle, Appearance, Config, DesktopMode, HudPosition, IconShadow, PieStyle,
-    SideTarget, TargetApp, TouchClickAction,
+    AppGesture, AppIconStyle, Appearance, Config, DesktopMode, HudPosition, IconShadow, KeyPieMode,
+    PieStyle, SideTarget, TargetApp, TouchClickAction,
 };
 use crate::geometry::{
     PIE_SIDES_RANGE, PIE_TURN_MAX, TRAIL_FAN_RANGE, TRAIL_GLIDE_RANGE, TRAIL_NODE_RANGE,
     TRAIL_REACH_RANGE, TRAIL_SHRINK_RANGE,
 };
+use crate::keys::Shortcut;
 use crate::platform::Os;
 use crate::ui::app::App;
 use crate::ui::draw::rgb;
 use crate::ui::pie::Material;
 use crate::ui::settings::demo;
-use crate::ui::settings::state::BehaviorPage;
+use crate::ui::settings::state::{BehaviorPage, Ed, Slot};
 use crate::ui::settings::theme::*;
 use crate::ui::settings::theme_picker::{theme_files, theme_picker};
 use crate::ui::settings::widgets::*;
@@ -324,8 +325,9 @@ impl App {
                 accent,
             );
         });
+        keyboard_panel(ui, cfg, &mut self.ed, accent);
         if crate::platform::OS.has_trackpad() {
-            trackpad_panel(ui, cfg, accent, crate::tap::touch_status());
+            trackpad_panel(ui, &mut self.edit, accent, crate::tap::touch_status());
         }
     }
 
@@ -1088,6 +1090,126 @@ fn touch_click_label(a: TouchClickAction) -> &'static str {
 
 /// The Trackpad panel (macOS, Windows and Linux X11): hold with fingers to open the pie, one more finger clicks
 /// to switch the mode, haptic ticks (macOS only). Everything is off until the switch is on.
+/// What a mode of the keyboard trigger is called.
+fn key_mode_label(m: KeyPieMode) -> &'static str {
+    match m {
+        KeyPieMode::Auto => "Tap or hold",
+        KeyPieMode::Hold => "Hold",
+        KeyPieMode::Toggle => "Press once",
+    }
+}
+
+/// What the Settings window says about the keyboard trigger on this system.
+fn keyboard_status_text(os: Os, wayland: bool, on: bool) -> Option<&'static str> {
+    if wayland {
+        return Some(
+            "Not available in a Wayland session: the desktop does not let a program read keys while another app has the focus. \
+             Use the mouse trigger or the trackpad, or log in to an X11 session.",
+        );
+    }
+    if !on {
+        return None;
+    }
+    Some(match os {
+        Os::Windows => {
+            "The combination is taken by CursorPie: the app never receives it. Avoid Alt-only modifiers where a bare Alt press would open a menu."
+        }
+        Os::Linux => {
+            "The combination is grabbed from the desktop (a shortcut that another program already holds cannot be used). While a pie stays open the keyboard belongs to it."
+        }
+        _ => "The combination is taken by CursorPie: the app never receives it.",
+    })
+}
+
+/// The "Keyboard" panel: key combinations that open the pie where the pointer is.
+fn keyboard_panel(ui: &mut egui::Ui, cfg: &mut Config, ed: &mut Ed, accent: Color32) {
+    let wayland = crate::platform::linux::wayland::active();
+    panel(ui, "Keyboard", |ui| {
+        note(
+            ui,
+            "Open the pie with a key combination instead of holding a button or a finger. Move the pointer \
+             (mouse or trackpad) to a slice, then let go of the key, or click or tap to choose. Esc closes the pie \
+             without running anything. A combination needs at least one modifier.",
+        );
+        let mut combo = |ui: &mut egui::Ui, label: &str, hint: &str, slot: Slot| {
+            let current = if slot == Slot::KeyPieApp {
+                cfg.key_trigger_app
+            } else {
+                cfg.key_trigger
+            };
+            let recording = ed.recording.as_ref().is_some_and(|r| r.slot == slot);
+            row(ui, label, hint, |ui| {
+                let mut toggle = false;
+                match current {
+                    Some(sc) => {
+                        if button(ui, Look::Soft, Some(symbols::X_CIRCLE), "Clear")
+                            .on_hover_text("Turn this combination off")
+                            .clicked()
+                        {
+                            if slot == Slot::KeyPieApp {
+                                cfg.key_trigger_app = None;
+                            } else {
+                                cfg.key_trigger = None;
+                            }
+                        }
+                        toggle |= shortcut_button(ui, &sc, recording, accent).clicked();
+                    }
+                    None if recording => {
+                        toggle |= shortcut_button(ui, &Shortcut::new(0, 0), true, accent).clicked();
+                    }
+                    None => {
+                        toggle |= button(
+                            ui,
+                            Look::Soft,
+                            Some(symbols::KEYBOARD),
+                            "Set a combination\u{2026}",
+                        )
+                        .clicked();
+                    }
+                }
+                if toggle {
+                    ed.toggle_key_trigger_rec(slot);
+                }
+            });
+        };
+        combo(
+            ui,
+            "Open the pie",
+            "The pie a hold of the mouse trigger opens.",
+            Slot::KeyPie,
+        );
+        combo(
+            ui,
+            "Open the pie of the app",
+            "The pie of the app in front (what a double-click of the trigger opens), or the general pie when the app has none.",
+            Slot::KeyPieApp,
+        );
+        let any = cfg.key_trigger.is_some() || cfg.key_trigger_app.is_some();
+        ui.add_enabled_ui(any, |ui| {
+            row(
+                ui,
+                "How it works",
+                "Tap or hold: a quick tap leaves the pie open, holding it longer runs the slice when you let go. \
+                 Hold: let go to run the slice. Press once: the pie stays open until you click, tap, press the combination again or Esc.",
+                |ui| {
+                    let all = [KeyPieMode::Auto, KeyPieMode::Hold, KeyPieMode::Toggle];
+                    let labels: Vec<&str> = all.iter().map(|&m| key_mode_label(m)).collect();
+                    let at = all
+                        .iter()
+                        .position(|&m| m == cfg.key_trigger_mode)
+                        .unwrap_or(0);
+                    if let Some(i) = select(ui, 190.0, key_mode_label(cfg.key_trigger_mode), &labels, at) {
+                        cfg.key_trigger_mode = all[i];
+                    }
+                },
+            );
+        });
+        if let Some(t) = keyboard_status_text(crate::platform::OS, wayland, any) {
+            note(ui, t);
+        }
+    });
+}
+
 fn trackpad_panel(
     ui: &mut egui::Ui,
     cfg: &mut Config,
@@ -1286,6 +1408,50 @@ mod bridge_text_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_keyboard_panel_says_what_the_system_can_do() {
+        assert!(
+            keyboard_status_text(Os::Linux, true, true)
+                .unwrap()
+                .contains("Wayland")
+        );
+        assert!(
+            keyboard_status_text(Os::Linux, true, false)
+                .unwrap()
+                .contains("Wayland")
+        );
+        assert_eq!(keyboard_status_text(Os::Mac, false, false), None);
+        assert!(
+            keyboard_status_text(Os::Linux, false, true)
+                .unwrap()
+                .contains("grabbed")
+        );
+        assert!(
+            keyboard_status_text(Os::Windows, false, true)
+                .unwrap()
+                .contains("Alt")
+        );
+        assert!(keyboard_status_text(Os::Mac, false, true).is_some());
+    }
+
+    #[test]
+    fn the_keyboard_panel_draws_with_and_without_a_combination() {
+        use crate::keys::{MOD_CTRL, Shortcut, key};
+        let ctx = egui::Context::default();
+        crate::ui::fonts::install(&ctx);
+        for set in [false, true] {
+            let mut cfg = Config::default();
+            if set {
+                cfg.key_trigger = Some(Shortcut::new(key::SPACE, MOD_CTRL));
+            }
+            let mut ed = Ed::default();
+            ctx.run_ui(Default::default(), |ui| {
+                keyboard_panel(ui, &mut cfg, &mut ed, Color32::GRAY);
+            })
+            .drop_without_applying_deltas();
+        }
+    }
 
     #[test]
     fn a_scan_says_what_it_found_in_the_words_of_the_os() {

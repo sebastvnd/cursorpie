@@ -93,6 +93,12 @@ pub(super) fn handle(
     if mods != 0 || RECORDING.load(Ordering::SeqCst) {
         return None; // Esc with a modifier is the app's, and Settings is recording a shortcut
     }
+    // a pie that the keyboard opened is closed by Esc, locked or not: a lock is opened by holding a
+    // trigger and pressing Esc, and a keyboard pie that stays open has no trigger that is held
+    if super::key_trigger::esc(state, notifier) {
+        HELD.store(true, Ordering::SeqCst);
+        return Some(Verdict::Drop);
+    }
     let enabled = cfg().esc_lock;
     let locked = touch::lock::in_force();
     // the look at the gesture ends here, before anything below takes the lock of the state again

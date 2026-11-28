@@ -267,6 +267,14 @@ fn scan_text(text: &str, reads: &mut Vec<(String, How)>, bad: &mut Vec<String>) 
             break;
         };
         let inner = &after[..close];
+        // `{{= expression }}` reads every variable the expression names
+        if let Some(src) = inner.trim_start().strip_prefix('=') {
+            for name in crate::flowexpr::variables(src) {
+                reads.push((name, How::Text));
+            }
+            rest = &after[close + 2..];
+            continue;
+        }
         let mut parts = inner.split('|');
         let name = parts.next().unwrap_or("").trim();
         let filters: Vec<&str> = parts.collect();

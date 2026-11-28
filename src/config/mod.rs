@@ -25,6 +25,7 @@ pub mod backup;
 mod defaults;
 mod first_run;
 pub mod flow;
+pub mod flow_ast;
 pub mod flow_check;
 pub mod flow_kit;
 pub mod flow_list;

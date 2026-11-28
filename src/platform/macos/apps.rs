@@ -619,6 +619,14 @@ pub fn window_manager_may_recenter() -> bool {
     false
 }
 
+/// Only Hyprland places the window through the compositor.
+pub fn place_window_center(_top_left: (f64, f64), _size: (f64, f64)) -> bool {
+    false
+}
+/// Nothing is being placed.
+pub fn window_placement_pending() -> bool {
+    false
+}
 /// A window is placed in the same points the pointer is in.
 pub fn window_point(x: f64, y: f64) -> (f64, f64) {
     (x, y)

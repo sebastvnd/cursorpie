@@ -30,9 +30,10 @@ pub(super) fn handle(
 ) -> Verdict {
     let g = lock(state);
 
-    // a trackpad gesture is running: the mouse trigger passes through untouched (its press, its
-    // drag and its release all belong to the app); see `touch` and "Mouse and trackpad together"
-    if g.source() == Some(Source::Touch) {
+    // a trackpad or a keyboard gesture is running: the mouse trigger passes through untouched (its
+    // press, its drag and its release all belong to the app, or to `pie_clicks` while a pie is
+    // open); see `touch` and "Mouse and trackpad together"
+    if matches!(g.source(), Some(Source::Touch | Source::Key)) {
         return Verdict::Keep;
     }
 
@@ -242,7 +243,7 @@ fn on_press<'a>(
 }
 
 /// The pies a press may open: the one of the hold and, when the app has its own, that one too.
-fn profile_list(hold: usize, app: Option<usize>) -> Vec<usize> {
+pub(super) fn profile_list(hold: usize, app: Option<usize>) -> Vec<usize> {
     let mut v = vec![hold];
     v.extend(app.filter(|a| *a != hold));
     v
@@ -473,7 +474,11 @@ pub(super) fn open_settings_from_pie(st: &Arc<Mutex<Gesture>>, n: &Notifier) -> 
             _ => None,
         };
         if let Some((_, source)) = found {
-            *gg = Gesture::InSettings(source);
+            // a keyboard pie has no button whose release would end `InSettings`: it is over now
+            *gg = match source {
+                Source::Key => Gesture::Idle,
+                _ => Gesture::InSettings(source),
+            };
         }
         found
     };
@@ -660,7 +665,7 @@ pub(super) fn read_pointer() -> Option<(f64, f64)> {
 
 /// The pointer of the tests (see [`read_pointer`]).
 #[cfg(test)]
-static TEST_POINTER: Mutex<Option<(f64, f64)>> = Mutex::new(None);
+pub(super) static TEST_POINTER: Mutex<Option<(f64, f64)>> = Mutex::new(None);
 
 /// Windows: while the pie of a mouse press is open, the pointer is also read on a timer and fed to
 /// the same hover code that the moves of the mouse hook feed.
@@ -1033,6 +1038,103 @@ pub(super) fn touch_release(state: &Arc<Mutex<Gesture>>, notifier: &Notifier, p:
     }
 }
 
+// ------------------------------------------------------------------ keyboard entry points
+//
+// The key combination (`key_trigger`) does not have a state machine of its own either. It opens its
+// pie by itself (there is nothing to wait for: a key is not a click that must reach the app), and
+// these feed the pointer and the end of that pie into the same functions a mouse gesture uses. Like
+// the trackpad's, they only act on a gesture the keyboard started (`Source::Key`) and, by id, only
+// on the one that asked.
+
+/// The pie the keyboard opened as gesture `id` is opened: `Some(true)`, and still open: `true`.
+pub(super) fn key_pie_is_open(state: &Arc<Mutex<Gesture>>, id: u64) -> bool {
+    matches!(
+        &*lock(state),
+        Gesture::ActivePie { id: cur, source: Source::Key, .. } if *cur == id
+    )
+}
+
+/// Opens the pie of the keyboard at `p`: `profile` is the pie, `id` the number of the gesture. Does
+/// nothing and returns `false` when another gesture is running (a mouse pie, a trackpad hold).
+pub(super) fn key_open(
+    state: &Arc<Mutex<Gesture>>,
+    notifier: &Notifier,
+    id: u64,
+    p: Point,
+    profile: usize,
+) -> bool {
+    {
+        let mut g = lock(state);
+        if !matches!(&*g, Gesture::Idle) {
+            return false;
+        }
+        *g = Gesture::ActivePie {
+            id,
+            center: p,
+            profile,
+            path: Vec::new(),
+            hover: None,
+            source: Source::Key,
+        };
+    }
+    super::pie_requested(); // not drawn yet: the UI says when it was
+    notifier.send(Msg::ShowPie {
+        x: p.x,
+        y: p.y,
+        profile,
+        path: Vec::new(),
+    });
+    true
+}
+
+/// The pointer is now at `p`: aims the pie of the keyboard gesture `id`. Returns whether that pie is
+/// still open (the watcher of the pointer stops when it is not).
+pub(super) fn key_move(
+    state: &Arc<Mutex<Gesture>>,
+    notifier: &Notifier,
+    id: u64,
+    p: Point,
+) -> bool {
+    let g = lock(state);
+    if matches!(
+        &*g,
+        Gesture::ActivePie { id: cur, source: Source::Key, .. } if *cur == id
+    ) {
+        on_drag_in_pie(notifier, g, p);
+        true
+    } else {
+        false
+    }
+}
+
+/// The pie of the keyboard gesture `id` ends: with `Some(p)` the slice under the pointer at `p`
+/// runs (when there is one), with `None` the pie only closes. Returns whether a pie was open.
+pub(super) fn key_finish(
+    state: &Arc<Mutex<Gesture>>,
+    notifier: &Notifier,
+    id: u64,
+    p: Option<Point>,
+) -> bool {
+    let g = lock(state);
+    if !matches!(
+        &*g,
+        Gesture::ActivePie { id: cur, source: Source::Key, .. } if *cur == id
+    ) {
+        return false;
+    }
+    match p {
+        Some(p) => {
+            on_release_in_pie(notifier, g, p);
+        }
+        None => {
+            release_to_idle(g);
+            running::set_shown(None);
+            notifier.send(Msg::HidePie);
+        }
+    }
+    true
+}
+
 /// The hold was broken (too many fingers, a slide, the device went away): back to `Idle`, the pie
 /// closed, nothing run.
 pub(super) fn touch_cancel(state: &Arc<Mutex<Gesture>>, notifier: &Notifier) {
@@ -1148,7 +1250,7 @@ pub(super) fn esc_lock(state: &Arc<Mutex<Gesture>>, notifier: &Notifier) -> Opti
     };
     *g = match source {
         Source::Mouse => Gesture::InSettings(Source::Mouse),
-        Source::Touch => Gesture::Idle,
+        Source::Touch | Source::Key => Gesture::Idle,
     };
     drop(g);
     if source == Source::Mouse {

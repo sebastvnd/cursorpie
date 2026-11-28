@@ -71,6 +71,10 @@ pub const SHIFT_MASK: c_uint = 1 << 0;
 pub const CONTROL_MASK: c_uint = 1 << 2;
 pub const MOD1_MASK: c_uint = 1 << 3; // Alt
 pub const MOD4_MASK: c_uint = 1 << 6; // Super
+/// Caps Lock and Num Lock (Mod2) are in `state` too, but are not modifiers of a shortcut: a grab of
+/// a key has to be made for every combination of them.
+pub const LOCK_MASK: c_uint = 1 << 1;
+pub const MOD2_MASK: c_uint = 1 << 4;
 
 pub const POLLIN: i16 = 1;
 
@@ -377,6 +381,29 @@ unsafe extern "C" {
         time: Time,
     ) -> c_int;
     pub fn XUngrabKeyboard(dpy: *mut Display, time: Time) -> c_int;
+    /// Passive grab of one key with the modifiers `modifiers` on `grab_window`.
+    pub fn XGrabKey(
+        dpy: *mut Display,
+        keycode: c_int,
+        modifiers: c_uint,
+        grab_window: Window,
+        owner_events: Bool,
+        pointer_mode: c_int,
+        keyboard_mode: c_int,
+    ) -> c_int;
+    pub fn XUngrabKey(
+        dpy: *mut Display,
+        keycode: c_int,
+        modifiers: c_uint,
+        grab_window: Window,
+    ) -> c_int;
+    /// Asks the server not to report the auto-repeat of a key as release and press pairs (only
+    /// presses are reported then). `supported` receives whether it is. XKB is part of libX11.
+    pub fn XkbSetDetectableAutoRepeat(
+        dpy: *mut Display,
+        detectable: Bool,
+        supported: *mut Bool,
+    ) -> Bool;
 }
 
 #[link(name = "Xi")]

@@ -339,6 +339,10 @@ pub enum Slot {
     /// The shortcut block `.0` of the flow being edited in the Flow tab (the flow is
     /// `Rec::profile`, the path is empty).
     Node(u32),
+    /// The key combination that opens the general pie (Behavior > Input > Keyboard).
+    KeyPie,
+    /// The key combination that opens the pie of the app in front.
+    KeyPieApp,
 }
 
 /// The action field currently recording a shortcut.
@@ -975,6 +979,33 @@ impl Ed {
     pub fn close_import(&mut self) -> bool {
         self.pie_drag = None;
         self.pie_import.take().is_some()
+    }
+
+    /// Starts recording the combination of the keyboard trigger `slot` (`Slot::KeyPie` or
+    /// `Slot::KeyPieApp`), or stops when it is already being recorded.
+    pub fn toggle_key_trigger_rec(&mut self, slot: Slot) {
+        if self.recording.as_ref().is_some_and(|r| r.slot == slot) {
+            self.stop_recording();
+        } else {
+            crate::tap::SWALLOW_KEY.store(-1, Ordering::SeqCst);
+            RECORDING.store(true, Ordering::SeqCst);
+            self.recording = Some(Rec {
+                profile: 0,
+                path: Vec::new(),
+                slot,
+            });
+        }
+    }
+
+    /// Starts recording again after a key that could not be used (the welcome guide: a key without a
+    /// modifier). The key that was just heard stays swallowed, so its auto-repeat is not heard again.
+    pub fn rearm_key_trigger_rec(&mut self, slot: Slot) {
+        RECORDING.store(true, Ordering::SeqCst);
+        self.recording = Some(Rec {
+            profile: 0,
+            path: Vec::new(),
+            slot,
+        });
     }
 
     /// Stops recording a shortcut (also disarms the event tap).

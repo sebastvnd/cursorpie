@@ -529,8 +529,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: macos-latest, system: macos-universal, asset: cpd-macos-universal }
-          - { os: windows-latest, system: windows-x86_64, asset: cpd-windows-x86_64.exe }
+          - {
+              os: macos-latest,
+              system: macos-universal,
+              asset: cpd-macos-universal,
+            }
+          - {
+              os: windows-latest,
+              system: windows-x86_64,
+              asset: cpd-windows-x86_64.exe,
+            }
           - { os: ubuntu-24.04, system: linux-x86_64, asset: cpd-linux-x86_64 }
     steps:
       - uses: actions/checkout@v4

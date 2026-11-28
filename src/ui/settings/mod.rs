@@ -15,6 +15,7 @@
 //! | `welcome` | the first-launch welcome window (`App::welcome_ui`), drawn in the same window and style |
 //! | `quit_dialog` | the "unsaved changes" sheet shown when you quit with edits that were not saved (`App::request_quit`) |
 //! | `update_dialog` | the "update available" sheet, offered once a day when Settings opens (see [`update`](crate::update)) |
+//! | `code_editor` | the code editor of a command or a JSON text in a flow: colors, suggestions, indent, brackets that close |
 //! | `clip` | Ctrl/Cmd + X, C and V in the editors (blocks of a flow, widgets of a panel) through the system clipboard |
 //! | `wayland_keys` | recording a shortcut from the window's own key events in a Wayland session |
 //! | `undo` | undo / redo shortcuts and backup restore, on top of [`History`](crate::history::History) |
@@ -34,6 +35,7 @@ mod add_panel;
 // the pie draws the mark in its empty center (see `ui::pie`)
 pub(crate) mod brand;
 mod clip;
+mod code_editor;
 mod demo;
 mod developer;
 mod export_error;

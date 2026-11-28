@@ -12,6 +12,14 @@ use crate::tap::Kind;
 use crate::windowing::{Asked, Windows};
 use std::path::Path;
 
+/// Only Hyprland places the window through the compositor.
+pub fn place_window_center(_top_left: (f64, f64), _size: (f64, f64)) -> bool {
+    false
+}
+/// Nothing is being placed.
+pub fn window_placement_pending() -> bool {
+    false
+}
 /// No app lookup.
 pub fn frontmost_bundle_id() -> Option<String> {
     None

@@ -71,6 +71,8 @@ impl App {
         // the worker of the liquid glass, with its GPU device and the fonts it loaded
         self.liquid.release();
         self.release_font_atlas(ctx);
+        // the pictures of the mascot, made again when a screen that has one is drawn
+        crate::ui::mascot::release(ctx);
         self.toast = None;
         platform::release_unused_memory();
         crate::ui::trim::note(); // and once more when the pages the renderer let go of are free

@@ -154,6 +154,31 @@ impl App {
                     super::windows::passthrough_after_hide(self.settings_open),
                 ));
             }
+            Msg::KeyCaptured(sc)
+                if self
+                    .ed
+                    .recording
+                    .as_ref()
+                    .is_some_and(|r| matches!(r.slot, Slot::KeyPie | Slot::KeyPieApp)) =>
+            {
+                // a combination of the keyboard trigger (Behavior > Input > Keyboard)
+                let slot = self.ed.recording.take().map(|r| r.slot);
+                self.ed.stop_recording();
+                if let Some(w) = self.welcome.as_mut() {
+                    // the welcome guide asks for the combination on its own page
+                    let kept = if slot == Some(Slot::KeyPieApp) {
+                        w.set_app_key(sc)
+                    } else {
+                        w.set_key(sc)
+                    };
+                    if !kept {
+                        // not a usable one (no modifier, or the other pie's): say so and listen again
+                        self.ed.rearm_key_trigger_rec(slot.unwrap_or(Slot::KeyPie));
+                    }
+                } else {
+                    self.edit.set_key_trigger(slot == Some(Slot::KeyPieApp), sc);
+                }
+            }
             Msg::KeyCaptured(sc) => {
                 // a shortcut block of the Flow tab, or a field of a slice of the Menu tab
                 let flow_block = self.ed.recording.as_ref().and_then(|r| match r.slot {

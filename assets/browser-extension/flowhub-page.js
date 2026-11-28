@@ -19,66 +19,90 @@
 "use strict";
 
 (function () {
-  const api = typeof browser !== "undefined" ? browser : chrome;
-  const VERSION = 1;
-  // the most text of a flow file (the app refuses a bigger one too)
-  const MAX_FLOW = 1024 * 1024;
+    const api = typeof browser !== "undefined" ? browser : chrome;
+    const VERSION = 1;
+    // the most text of a flow file (the app refuses a bigger one too)
+    const MAX_FLOW = 1024 * 1024;
 
-  function reply(message) {
-    window.postMessage(Object.assign({ cursorpie: "bridge", v: VERSION }, message), location.origin);
-  }
-
-  // Asks the extension's background; a closed or reloading extension answers with an error, which
-  // is "not available" for the page, not a crash.
-  function ask(message) {
-    try {
-      return Promise.resolve(api.runtime.sendMessage(message)).catch(() => null);
-    } catch (e) {
-      return Promise.resolve(null);
+    function reply(message) {
+        window.postMessage(
+            Object.assign({ cursorpie: "bridge", v: VERSION }, message),
+            location.origin,
+        );
     }
-  }
 
-  async function onPing(m) {
-    const r = await ask({ kind: "flowhub_ping" });
-    reply({
-      id: m.id,
-      type: "pong",
-      version: api.runtime.getManifest().version,
-      app: !!(r && r.app),
-      install: !!(r && r.app && r.install),
-      reason: String((r && r.reason) || "").slice(0, 300),
+    // Asks the extension's background; a closed or reloading extension answers with an error, which
+    // is "not available" for the page, not a crash.
+    function ask(message) {
+        try {
+            return Promise.resolve(api.runtime.sendMessage(message)).catch(
+                () => null,
+            );
+        } catch (e) {
+            return Promise.resolve(null);
+        }
+    }
+
+    async function onPing(m) {
+        const r = await ask({ kind: "flowhub_ping" });
+        reply({
+            id: m.id,
+            type: "pong",
+            version: api.runtime.getManifest().version,
+            app: !!(r && r.app),
+            install: !!(r && r.app && r.install),
+            reason: String((r && r.reason) || "").slice(0, 300),
+        });
+    }
+
+    async function onInstall(m) {
+        const bad = (message) =>
+            reply({
+                id: m.id,
+                type: "install_result",
+                state: "invalid",
+                message,
+            });
+        if (typeof m.flow !== "string" || !m.flow)
+            return bad("There is no flow to install.");
+        if (m.flow.length > MAX_FLOW)
+            return bad("That flow file is too large.");
+        const r = await ask({
+            kind: "flowhub_install",
+            author: typeof m.author === "string" ? m.author.slice(0, 120) : "",
+            flow: m.flow,
+        });
+        reply({
+            id: m.id,
+            type: "install_result",
+            state: String((r && r.state) || "offline"),
+            message: String(
+                (r && r.message) || "CursorPie did not answer.",
+            ).slice(0, 600),
+        });
+    }
+
+    window.addEventListener("message", (event) => {
+        // only this page, from its own address: not a frame inside it, not another window
+        if (event.source !== window || event.origin !== location.origin) return;
+        const m = event.data;
+        if (
+            !m ||
+            typeof m !== "object" ||
+            m.cursorpie !== "flowhub" ||
+            m.v !== VERSION
+        )
+            return;
+        if (typeof m.id !== "number" && typeof m.id !== "string") return;
+        if (m.type === "ping") onPing(m);
+        else if (m.type === "install") onInstall(m);
     });
-  }
 
-  async function onInstall(m) {
-    const bad = (message) => reply({ id: m.id, type: "install_result", state: "invalid", message });
-    if (typeof m.flow !== "string" || !m.flow) return bad("There is no flow to install.");
-    if (m.flow.length > MAX_FLOW) return bad("That flow file is too large.");
-    const r = await ask({
-      kind: "flowhub_install",
-      author: typeof m.author === "string" ? m.author.slice(0, 120) : "",
-      flow: m.flow,
-    });
-    reply({
-      id: m.id,
-      type: "install_result",
-      state: String((r && r.state) || "offline"),
-      message: String((r && r.message) || "CursorPie did not answer.").slice(0, 600),
-    });
-  }
-
-  window.addEventListener("message", (event) => {
-    // only this page, from its own address: not a frame inside it, not another window
-    if (event.source !== window || event.origin !== location.origin) return;
-    const m = event.data;
-    if (!m || typeof m !== "object" || m.cursorpie !== "flowhub" || m.v !== VERSION) return;
-    if (typeof m.id !== "number" && typeof m.id !== "string") return;
-    if (m.type === "ping") onPing(m);
-    else if (m.type === "install") onInstall(m);
-  });
-
-  // A page that loads after this script (or one that never pings) can still tell the extension is
-  // here: the attribute is a flag, not a promise that the app runs.
-  document.documentElement.setAttribute("data-cursorpie-bridge", api.runtime.getManifest().version);
-  window.dispatchEvent(new CustomEvent("cursorpie-bridge-ready"));
+    // A page that loads after this script (or one that never pings) can still tell the extension is
+    // here: the attribute is a flag, not a promise that the app runs.
+    document.documentElement.setAttribute(
+        "data-cursorpie-bridge",
+        api.runtime.getManifest().version,
+    );
+    window.dispatchEvent(new CustomEvent("cursorpie-bridge-ready"));
 })();

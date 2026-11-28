@@ -6,9 +6,9 @@
 //! The words come from `config::describe_io_error`; the app keeps them in `App::export_error`.
 
 use crate::ui::app::App;
+use crate::ui::mascot::Pose;
 use crate::ui::settings::theme::*;
 use crate::ui::settings::widgets::*;
-use crate::ui::symbols;
 use eframe::egui::{self, Vec2};
 
 impl App {
@@ -21,7 +21,7 @@ impl App {
         let esc = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
         let mut close = enter || esc;
         let lines = [error.reason.clone()];
-        let height = 260.0;
+        let height = 274.0; // 14 more than a sheet with a glyph: the mascot is taller
         let (floating, ()) = sheet(
             ctx,
             "export_error",
@@ -29,7 +29,7 @@ impl App {
             Vec2::new(600.0, height),
             "Could not export",
             |ui| {
-                sheet_heading(ui, symbols::WARNING, pal().bad, &error.what);
+                sheet_heading_pose(ui, Pose::Error, &error.what);
                 sheet_text(ui, "Nothing was exported, because:");
                 ui.add_space(4.0);
                 sheet_bullets(ui, &lines, height - 130.0);

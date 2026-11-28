@@ -1,4 +1,4 @@
-//! The welcome window: a four-page introduction shown the first time CursorPie starts (and again
+//! The welcome window: a five-page introduction shown the first time CursorPie starts (and again
 //! from the tray item "Welcome guide...").
 //!
 //! It is drawn in the same native window and with the same card, shadow, colors and widgets as
@@ -18,7 +18,8 @@
 //! |   page 1  Permissions  (macOS: Accessibility,          |
 //! |                         Windows: the system tray, ...) |
 //! |   page 2  About you    (what do you do most?)          |
-//! |   page 3  Done         (launch at login, intelligent pie) |
+//! |   page 3  Shortcut     (the key combination; required) |
+//! |   page 4  Done         (launch at login, intelligent pie) |
 //! |                                                        |
 //! +--------------------------------------------------------+
 //! | Back                   o o o o                   Next  |  footer
@@ -28,6 +29,18 @@
 //! The pick of page 2 is kept in [`Welcome::picks`]; it is written into the config only when the
 //! guide ends with "Done" (see `App::finish_welcome` and [`crate::config::persona::apply`]), so Skip and Esc leave
 //! the pie as it was.
+//!
+//! Page 3 asks for the key combination that opens the pie ([`crate::tap`]'s keyboard trigger) and
+//! **cannot be passed without one** (except where the system does not allow the keyboard trigger, a
+//! Wayland session: see [`key_required`]). It listens as soon as it is shown and writes what is
+//! pressed as it is pressed: the modifiers held show at once as keycaps, and the key that ends the
+//! combination completes it. The combination is kept in [`Welcome::key`] and written into the config
+//! only with "Done", like the picks.
+//!
+//! Below the combination sits an optional second one that opens the pie of the app in front
+//! ([`Welcome::key_app`]). Each combination is a roomy box with no buttons: click it and press the
+//! keys; the box that takes them gets an accent edge. The intelligent pie box on the last
+//! page starts from `smart.enabled`, so it shows what Settings already has.
 //!
 //! The texts that differ between macOS, Windows and Linux are small pure functions of [`Os`], so a
 //! test can check all of them without running on all.
@@ -43,17 +56,33 @@ use crate::tap::TAP_ACTIVE;
 use crate::ui::app::App;
 use crate::ui::draw::*;
 use crate::ui::fonts;
+use crate::ui::mascot::{self, Pose, Style};
+use crate::ui::settings::state::Slot;
 use crate::ui::symbols;
 use eframe::egui::{self, Color32, Stroke, Vec2};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 /// Number of pages of the welcome window.
-pub const PAGES: usize = 4;
+pub const PAGES: usize = 5;
+
+/// The page that asks for the key combination.
+pub const KEY_PAGE: usize = 3;
 
 /// Room the body leaves at its right (and the clip leaves below it) for the hard shadow of a
 /// sticker on the edge, so no shadow is cut off.
 const BODY_ROOM: f32 = HARD + 4.0;
+
+/// How big the mascot behind the first page is, as a multiple of the page's shorter side.
+const INTRO_MASCOT_SCALE: f32 = 1.22;
+/// Where its center is, from the middle of the page, as a fraction of the page's width and height
+/// (right and down). Together with [`INTRO_MASCOT_SCALE`] these are the numbers to change to move it.
+const INTRO_MASCOT_SHIFT: [f32; 2] = [0.15, 0.31];
+
+/// The mascot of the last page needs this much free space at the side of the toggles to show.
+const READY_MASCOT_MIN_MARGIN: f32 = 150.0;
+/// Its largest side.
+const READY_MASCOT_MAX: f32 = 140.0;
 
 /// Height of the top bar.
 const TOP_H: f32 = 72.0;
@@ -126,20 +155,153 @@ pub struct Welcome {
     /// What the person said they do most (page 2), in the order they picked it. Empty: nothing was
     /// picked and the pie stays as it is.
     pub picks: Vec<Persona>,
+    /// The key combination that opens the pie (page 3). Starts as the one the config already has,
+    /// so opening the guide again from the tray does not ask for what is set. Written into the
+    /// config only when the guide ends with "Done".
+    pub key: Option<crate::keys::Shortcut>,
+    /// The optional second combination of page 3: it opens the pie of the app in front (see
+    /// [`crate::config::Config::key_trigger_app`]). Starts as the config has it; written with
+    /// "Done", like `key`.
+    pub key_app: Option<crate::keys::Shortcut>,
+    /// The last key pressed on page 3 had no modifier: the page says what it needs.
+    pub key_hint: bool,
+    /// The last combination pressed for the pie of the app is the one that opens the general pie.
+    pub key_dup: bool,
+    /// Page 3 has started listening once (so Esc, which cancels a recording, is not undone by
+    /// listening again at once).
+    pub key_armed: bool,
 }
 
 impl Welcome {
     /// A new welcome window on its first page; `launch_at_login` is the current system setting.
     pub fn new(launch_at_login: bool) -> Self {
+        // one lock, read once and let go: `cfg()` is a mutex guard, and a guard taken inside the
+        // struct below would live to the end of the statement, so a second `cfg()` there would wait
+        // for the first one forever (the window froze)
+        let (intelligent, key, key_app) = {
+            let c = cfg();
+            (c.smart.enabled, c.key_trigger, c.key_trigger_app)
+        };
         Self {
             page: 0,
             launch_at_login,
-            intelligent: false,
+            // what Settings says: a person who already switched the intelligent pie on finds the
+            // box checked, and a fresh install finds it off
+            intelligent,
             apply: false,
             open_settings_after: false,
             picks: Vec::new(),
+            key,
+            key_app,
+            key_hint: false,
+            key_dup: false,
+            key_armed: false,
         }
     }
+
+    /// A combination was pressed on page 3. Returns whether it was kept: one without a modifier
+    /// (a bare key would take typing away) or Esc is not, and the page says what it needs.
+    pub fn set_key(&mut self, sc: crate::keys::Shortcut) -> bool {
+        self.set_slot_key(false, sc)
+    }
+
+    /// Like [`Welcome::set_key`] for the combination of the pie of the app (`key_app`). One that
+    /// the general pie already uses is not kept (the general one is required, so it wins).
+    pub fn set_app_key(&mut self, sc: crate::keys::Shortcut) -> bool {
+        self.set_slot_key(true, sc)
+    }
+
+    fn set_slot_key(&mut self, app: bool, sc: crate::keys::Shortcut) -> bool {
+        let usable = sc.mods & crate::keys::MOD_MASK != 0 && sc.key != crate::keys::key::ESCAPE;
+        self.key_hint = !usable;
+        self.key_dup = false;
+        if !usable {
+            return false;
+        }
+        let same = |o: Option<crate::keys::Shortcut>| {
+            o.is_some_and(|o| (o.key, o.mods) == (sc.key, sc.mods))
+        };
+        if app {
+            if same(self.key) {
+                self.key_dup = true;
+                return false;
+            }
+            self.key_app = Some(sc);
+        } else {
+            if same(self.key_app) {
+                self.key_app = None;
+            }
+            self.key = Some(sc);
+        }
+        true
+    }
+
+    /// Whether the guide may leave `page` forward: the key page needs a combination.
+    pub fn can_continue(&self, page: usize) -> bool {
+        page != KEY_PAGE || self.key.is_some() || !key_required()
+    }
+}
+
+/// Whether the key page cannot be passed without a combination: it can everywhere the keyboard
+/// trigger works. A Wayland session does not allow a program to read keys while another app has the
+/// focus, so there the page only says so.
+pub fn key_required() -> bool {
+    !crate::platform::linux::wayland::active()
+}
+
+/// The names of the modifiers in `mods` in the usual order, in the words of `os`.
+pub fn mod_names_in(os: Os, mods: u8) -> Vec<&'static str> {
+    use crate::keys::{MOD_ALT, MOD_CMD, MOD_CTRL, MOD_SHIFT};
+    let n = os.mod_names();
+    [
+        (MOD_CTRL, n.ctrl),
+        (MOD_ALT, n.alt),
+        (MOD_SHIFT, n.shift),
+        (MOD_CMD, n.cmd),
+    ]
+    .into_iter()
+    .filter(|(bit, _)| mods & bit != 0)
+    .map(|(_, name)| name)
+    .collect()
+}
+
+/// What the key page shows: the keys of the combination, one keycap each, or the modifiers held so
+/// far followed by a gap for the key still to come.
+#[derive(Debug, PartialEq, Eq)]
+pub enum KeyView {
+    /// Nothing is held and nothing is set: "Press your keys".
+    Waiting,
+    /// Modifiers are held, the key is still to come.
+    Holding(Vec<&'static str>),
+    /// A combination is set.
+    Set(Vec<String>),
+}
+
+/// What the key page shows now: `live` are the modifiers held at this moment (only looked at while
+/// `listening`), `key` the combination that is set.
+pub fn key_view(os: Os, key: Option<&crate::keys::Shortcut>, listening: bool, live: u8) -> KeyView {
+    if listening && live != 0 {
+        return KeyView::Holding(mod_names_in(os, live));
+    }
+    match key {
+        Some(sc) => KeyView::Set(
+            sc.label_for(os)
+                .split(" + ")
+                .filter(|k| !k.is_empty())
+                .map(str::to_owned)
+                .collect(),
+        ),
+        None => KeyView::Waiting,
+    }
+}
+
+/// What the key page asked for this frame.
+pub enum KeyAction {
+    None,
+    /// Start recording the combination of this slot (or stop, when it is being recorded).
+    Record(Slot),
+    /// Take the combination of the pie of the app away.
+    ClearApp,
 }
 
 /// What a button of the window asked for this frame.
@@ -264,12 +426,52 @@ impl App {
         // keep the permission status fresh while the window is open
         ctx.request_repaint_after(Duration::from_millis(1000));
 
-        if self.closing.is_none() && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.closing = Some(false);
-        }
         let Some(page) = self.welcome.as_ref().map(|w| w.page) else {
             return;
         };
+
+        // the key page listens while it is on screen, once (see `Welcome::key_armed`), and stops
+        // listening when the person leaves it
+        let key_slot = Slot::KeyPie;
+        let rec_slot: Option<Slot> = self
+            .ed
+            .recording
+            .as_ref()
+            .map(|r| r.slot)
+            .filter(|s| matches!(s, Slot::KeyPie | Slot::KeyPieApp));
+        let listening = rec_slot.is_some();
+        if page == KEY_PAGE && key_required() {
+            if let Some(w) = self.welcome.as_mut()
+                && !w.key_armed
+                && w.key.is_none()
+                && !listening
+                && self.closing.is_none()
+            {
+                w.key_armed = true;
+                self.ed.toggle_key_trigger_rec(key_slot);
+            }
+        } else if listening {
+            self.ed.stop_recording();
+        }
+        if !listening {
+            self.ed.key_rec.reset();
+        }
+        // Windows and Wayland: the window's own keys carry the combination (see `wayland_keys`),
+        // and they are taken away from the widgets, so Enter and Esc do not also act as buttons
+        if listening
+            && super::wayland_keys::applies()
+            && let Some(msg) = super::wayland_keys::capture(&ctx, &mut self.ed.key_rec)
+        {
+            crate::tap::RECORDING.store(false, Ordering::SeqCst);
+            self.ed.key_rec.reset();
+            let _ = self.tx.send(msg);
+            ctx.request_repaint();
+        }
+
+        // Esc closes the guide, unless it is cancelling a recording of the key page
+        if self.closing.is_none() && !listening && ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.closing = Some(false);
+        }
 
         let t = self.settings_anim.clamp(0.0, 1.0);
         let slide = (1.0 - t) * (1.0 - t) * 26.0;
@@ -339,6 +541,36 @@ impl App {
                             persona_page(ui, w, accent);
                         }
                     }
+                    KEY_PAGE => {
+                        if let Some(w) = self.welcome.as_mut() {
+                            let m = ctx.input(|i| i.modifiers);
+                            let mut live = self.ed.key_rec.held_bits();
+                            for (down, bit) in [
+                                (m.ctrl, crate::keys::MOD_CTRL),
+                                (m.alt, crate::keys::MOD_ALT),
+                                (m.shift, crate::keys::MOD_SHIFT),
+                                (m.mac_cmd, crate::keys::MOD_CMD),
+                            ] {
+                                if down {
+                                    live |= bit;
+                                }
+                            }
+                            match key_page(ui, w, accent, platform::OS, rec_slot, live) {
+                                KeyAction::None => {}
+                                KeyAction::Record(slot) => {
+                                    w.key_hint = false;
+                                    w.key_dup = false;
+                                    self.ed.toggle_key_trigger_rec(slot);
+                                }
+                                KeyAction::ClearApp => {
+                                    self.ed.stop_recording();
+                                    w.key_hint = false;
+                                    w.key_dup = false;
+                                    w.key_app = None;
+                                }
+                            }
+                        }
+                    }
                     _ => {
                         if let Some(w) = self.welcome.as_mut() {
                             ready_page(ui, w, accent, platform::OS);
@@ -399,16 +631,20 @@ impl App {
                     .layout(egui::Layout::right_to_left(egui::Align::Center)),
                 |ui| {
                     if page + 1 < PAGES {
-                        if button(
-                            ui,
-                            Look::Primary(accent),
-                            Some(symbols::CARET_RIGHT),
-                            "Next",
-                        )
-                        .clicked()
-                        {
-                            step = Step::Next;
-                        }
+                        // the key page cannot be passed without a combination
+                        let ok = self.welcome.as_ref().is_none_or(|w| w.can_continue(page));
+                        ui.add_enabled_ui(ok, |ui| {
+                            if button(
+                                ui,
+                                Look::Primary(accent),
+                                Some(symbols::CARET_RIGHT),
+                                "Next",
+                            )
+                            .clicked()
+                            {
+                                step = Step::Next;
+                            }
+                        });
                     } else if button(ui, Look::Primary(accent), Some(symbols::CHECK), "Done")
                         .clicked()
                     {
@@ -437,7 +673,8 @@ impl App {
         if let Some(w) = self.welcome.as_mut() {
             match step {
                 Step::None => {}
-                Step::Next => w.page = (w.page + 1).min(PAGES - 1),
+                Step::Next if w.can_continue(w.page) => w.page = (w.page + 1).min(PAGES - 1),
+                Step::Next => {}
                 Step::Back => w.page = w.page.saturating_sub(1),
                 Step::Finish { open_settings } => {
                     w.apply = true;
@@ -506,8 +743,8 @@ fn toggle_persona(picks: &mut Vec<Persona>, persona: Persona) {
 }
 
 /// Page 0: the app icon in the middle of the page (the rounded square of the real application),
-/// its name, one line about it and "Get started". Nothing else. Returns true when "Get started"
-/// was clicked.
+/// its name, one line about it and "Get started". Behind them, the mascot waves as a faint
+/// watermark. Nothing else. Returns true when "Get started" was clicked.
 fn intro_page(ui: &mut egui::Ui) -> bool {
     const ICON: f32 = 108.0; // side of the app icon
     const CTA_H: f32 = 44.0;
@@ -515,6 +752,24 @@ fn intro_page(ui: &mut egui::Ui) -> bool {
     let accent = rgb(cfg().accent);
     let area = ui.available_rect_before_wrap();
     let painter = ui.painter().with_clip_rect(area.expand(BODY_ROOM));
+
+    // Decorative mascot background: the welcome pose, bigger than the page, a little right of and
+    // below the middle, fading out toward the edges of the page. Everything is a fraction of the
+    // page (not a number of points), so it keeps its place in the small card too.
+    let side = (area.width().min(area.height()) * INTRO_MASCOT_SCALE).max(1.0);
+    let center = area.center()
+        + Vec2::new(
+            area.width() * INTRO_MASCOT_SHIFT[0],
+            area.height() * INTRO_MASCOT_SHIFT[1],
+        );
+    mascot::paint_faded(
+        &painter,
+        Pose::Welcome,
+        egui::Rect::from_center_size(center, Vec2::splat(side)),
+        area.shrink(0.2),
+        0.18,
+        Style::Watermark,
+    );
 
     let name = painter.layout_no_wrap(
         APP_NAME.to_owned(),
@@ -714,6 +969,283 @@ fn persona_page(ui: &mut egui::Ui, w: &mut Welcome, accent: Color32) {
     });
 }
 
+/// Height and font size of a keycap of the key page.
+const CAP_H: f32 = 36.0;
+const CAP_FONT: f32 = 16.0;
+
+/// A keycap of the key page: a small sticker with the name of the key in it. `ghost` draws the gap
+/// where the key that is still to come will be. Returns the width used.
+fn keycap(painter: &egui::Painter, at: egui::Pos2, text: &str, tone: Color32, ghost: bool) -> f32 {
+    const H: f32 = CAP_H;
+    let galley = painter.layout_no_wrap(
+        text.to_owned(),
+        egui::FontId::new(CAP_FONT, fonts::semibold()),
+        pal().text,
+    );
+    let w = (galley.size().x + 28.0).max(H);
+    let rect = egui::Rect::from_min_size(at, Vec2::new(w, H));
+    let radius = egui::CornerRadius::same(12);
+    if ghost {
+        painter.rect_stroke(
+            rect,
+            radius,
+            Stroke::new(2.0, pal().muted.gamma_multiply(0.6)),
+            egui::StrokeKind::Inside,
+        );
+        painter.text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            text,
+            egui::FontId::new(CAP_FONT, fonts::semibold()),
+            pal().muted,
+        );
+    } else {
+        sticker(painter, rect, radius, tone);
+        painter.galley(
+            egui::pos2(
+                rect.center().x - galley.size().x / 2.0,
+                rect.center().y - galley.size().y / 2.0,
+            )
+            .round(),
+            galley,
+            Color32::PLACEHOLDER,
+        );
+    }
+    w
+}
+
+/// Page 3: the key combination that opens the pie, and an optional second one for the pie of the
+/// app in front. Two roomy boxes, centered, and no buttons: click a box and press the keys. The box
+/// that will take the keys gets an accent edge (a soft one while the pointer is over it), the
+/// modifiers held show at once as keycaps, and the key that ends the combination completes it.
+/// A small cross on the second box removes it. The first one is required: "Next" waits for it.
+fn key_page(
+    ui: &mut egui::Ui,
+    w: &mut Welcome,
+    accent: Color32,
+    os: Os,
+    rec: Option<Slot>,
+    live: u8,
+) -> KeyAction {
+    const CARD_GAP: f32 = 16.0;
+    const INSET: f32 = 20.0;
+    let ctx = ui.ctx().clone();
+    let required = key_required();
+    let mut action = KeyAction::None;
+    ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
+        heading(ui, "Open the pie with your keys");
+        muted(
+            ui,
+            if required {
+                "Press the keys you want, for example Ctrl + Space."
+            } else {
+                "Not available in this session."
+            },
+        );
+        ui.add_space(8.0);
+        if !required {
+            muted(
+                ui,
+                "The mouse trigger and the trackpad still work. You can continue.",
+            );
+            return;
+        }
+        ui.spacing_mut().item_spacing.y = CARD_GAP;
+        let width = ui.available_width().min(540.0);
+        // as roomy as the page allows: what is left, less the gap, the hint and the shadows
+        let card_h =
+            ((ui.available_height() - 2.0 * CARD_GAP - 26.0) / 2.0 - HARD).clamp(104.0, 140.0);
+        let rows = [
+            (
+                Slot::KeyPie,
+                "Open the pie",
+                "Your general pie. Required.",
+                w.key,
+                candy(4),
+            ),
+            (
+                Slot::KeyPieApp,
+                "Open the pie of the app",
+                "The app in front. Optional.",
+                w.key_app,
+                candy(1),
+            ),
+        ];
+        for (i, (slot, title, hint, key, tone)) in rows.into_iter().enumerate() {
+            let painter = ui.painter().clone();
+            let (full, resp) =
+                ui.allocate_exact_size(Vec2::new(width, card_h + HARD), egui::Sense::click());
+            let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
+            let rect = egui::Rect::from_min_size(full.min, Vec2::new(width - HARD, card_h));
+            let recording = rec == Some(slot);
+            let on =
+                ctx.animate_bool_with_time(egui::Id::new(("welcome_key_on", i)), recording, 0.15);
+            let hot = ctx.animate_bool_with_time(
+                egui::Id::new(("welcome_key_hot", i)),
+                resp.hovered() && !recording,
+                0.12,
+            );
+            sticker(
+                &painter,
+                rect,
+                panel_r(),
+                pal().card.lerp_to_gamma(accent, 0.12 * on),
+            );
+            // the edge says where the keys will go: the accent while recording, softer on hover
+            let edge = on.max(0.6 * hot);
+            if edge > 0.01 {
+                painter.rect_stroke(
+                    rect,
+                    panel_r(),
+                    Stroke::new(3.0, pal().line.lerp_to_gamma(accent, edge)),
+                    egui::StrokeKind::Inside,
+                );
+            }
+
+            painter.text(
+                rect.min + Vec2::new(INSET, 16.0),
+                egui::Align2::LEFT_TOP,
+                title,
+                egui::FontId::new(15.0, fonts::semibold()),
+                pal().text,
+            );
+            painter.text(
+                rect.min + Vec2::new(INSET, 38.0),
+                egui::Align2::LEFT_TOP,
+                hint,
+                egui::FontId::proportional(12.5),
+                pal().muted,
+            );
+
+            // a small cross removes the second combination
+            let mut cleared = false;
+            if slot == Slot::KeyPieApp && key.is_some() && !recording {
+                let xr = egui::Rect::from_center_size(
+                    egui::pos2(rect.max.x - INSET - 6.0, rect.min.y + 26.0),
+                    Vec2::splat(28.0),
+                );
+                let xresp = ui
+                    .interact(xr, egui::Id::new("welcome_key_clear"), egui::Sense::click())
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text("Remove");
+                let c = if xresp.hovered() {
+                    pal().text
+                } else {
+                    pal().muted
+                };
+                fonts::paint_icon(&painter, xr.center(), symbols::X_CIRCLE, 18.0, c, false);
+                if xresp.clicked() {
+                    cleared = true;
+                    action = KeyAction::ClearApp;
+                }
+            }
+            if resp.clicked() && !cleared {
+                action = KeyAction::Record(slot);
+            }
+
+            // the keys, centered in the lower part of the box
+            let caps_rect = egui::Rect::from_min_max(
+                egui::pos2(rect.min.x + INSET, rect.min.y + 58.0),
+                egui::pos2(rect.max.x - INSET, rect.max.y - 10.0),
+            );
+            let view = if recording && live == 0 {
+                KeyView::Waiting
+            } else {
+                key_view(
+                    os,
+                    key.as_ref(),
+                    recording,
+                    if recording { live } else { 0 },
+                )
+            };
+            match &view {
+                KeyView::Waiting => {
+                    let text = if recording {
+                        "Press your keys"
+                    } else if slot == Slot::KeyPieApp {
+                        "Click to add one"
+                    } else {
+                        "Click to set"
+                    };
+                    painter.text(
+                        caps_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        text,
+                        egui::FontId::new(15.0, fonts::semibold()),
+                        pal().muted,
+                    );
+                    if recording {
+                        // a quiet pulse says the box is listening
+                        let t = ctx.input(|i| i.time) as f32;
+                        let a = 0.5 + 0.5 * (t * 3.0).sin();
+                        painter.circle_filled(
+                            egui::pos2(caps_rect.center().x + 62.0, caps_rect.center().y),
+                            3.5,
+                            accent.gamma_multiply(0.35 + 0.65 * a),
+                        );
+                        ctx.request_repaint();
+                    }
+                }
+                KeyView::Holding(mods) => {
+                    let names: Vec<(&str, bool)> = mods
+                        .iter()
+                        .map(|m| (*m, false))
+                        .chain(std::iter::once(("key", true)))
+                        .collect();
+                    paint_caps(&painter, caps_rect, &names, candy(3));
+                    ctx.request_repaint();
+                }
+                KeyView::Set(keys) => {
+                    let names: Vec<(&str, bool)> =
+                        keys.iter().map(|k| (k.as_str(), false)).collect();
+                    paint_caps(&painter, caps_rect, &names, tone);
+                }
+            }
+        }
+
+        let msg = if rec.is_some() {
+            "Press the keys you want. Esc cancels."
+        } else if w.key_dup {
+            "That one already opens your general pie."
+        } else if w.key_hint {
+            "Add Ctrl, Alt, Shift or Cmd: a key alone blocks typing."
+        } else if w.key.is_none() {
+            "Click the first box to continue."
+        } else if w.key_app.is_some() {
+            "Click a box to change it. The cross removes the second one."
+        } else {
+            "Click a box, then press your keys."
+        };
+        muted(ui, msg);
+    });
+    action
+}
+
+/// Draws `caps` in a row, centered in `rect`, with a small gap between them.
+fn paint_caps(painter: &egui::Painter, rect: egui::Rect, caps: &[(&str, bool)], tone: Color32) {
+    const H: f32 = CAP_H;
+    const GAP_CAP: f32 = 8.0;
+    // measure first, so the row is centered
+    let widths: Vec<f32> = caps
+        .iter()
+        .map(|(t, _)| {
+            let g = painter.layout_no_wrap(
+                (*t).to_owned(),
+                egui::FontId::new(CAP_FONT, fonts::semibold()),
+                pal().text,
+            );
+            (g.size().x + 28.0).max(H)
+        })
+        .collect();
+    let total: f32 = widths.iter().sum::<f32>() + GAP_CAP * (caps.len().saturating_sub(1)) as f32;
+    let mut x = rect.center().x - total / 2.0;
+    let y = rect.center().y - H / 2.0;
+    for ((text, ghost), w) in caps.iter().zip(widths) {
+        keycap(painter, egui::pos2(x, y), text, tone, *ghost);
+        x += w + GAP_CAP;
+    }
+}
+
 /// The free area of `ui` cut in two side by side: the left one `left_frac` of the width, a gap of
 /// [`PAD`] between them. Both start at the top of the free area.
 fn two_columns(ui: &egui::Ui, left_frac: f32) -> (egui::Rect, egui::Rect) {
@@ -903,7 +1435,7 @@ fn setup_page(ui: &mut egui::Ui, accent: Color32, os: Os) {
 /// Page 3: a check, "You're all set", one line on how to use the pie and the launch-at-login box.
 fn ready_page(ui: &mut egui::Ui, w: &mut Welcome, accent: Color32, os: Os) {
     const RADIUS: f32 = 18.0;
-    const TOGGLE_W: f32 = 440.0;
+    const TOGGLE_W: f32 = 460.0;
     let area = ui.available_rect_before_wrap();
     let painter = ui.painter().clone();
     let cx = area.center().x;
@@ -921,7 +1453,7 @@ fn ready_page(ui: &mut egui::Ui, w: &mut Welcome, accent: Color32, os: Os) {
         (area.width() - 2.0 * PAD).clamp(160.0, 440.0),
     );
     // the block: check, title, line, toggle (about 64 points high), centered in the page
-    let gaps = [10.0, 4.0, 6.0];
+    let gaps = [14.0, 6.0, 22.0];
     let toggle_h = 64.0 * 2.0;
     let block =
         2.0 * RADIUS + gaps[0] + title.size().y + gaps[1] + lead.size().y + gaps[2] + toggle_h;
@@ -972,6 +1504,20 @@ fn ready_page(ui: &mut egui::Ui, w: &mut Welcome, accent: Color32, os: Os) {
             });
         },
     );
+
+    // the mascot celebrates in the free margin at the right of the toggles: only when that margin is
+    // wide enough for it to breathe, so a small card (or a long translation) never gets it on top
+    // of the text
+    let margin = (area.width() - width) / 2.0;
+    if margin >= READY_MASCOT_MIN_MARGIN {
+        let side = (margin - 2.0 * GAP).min(READY_MASCOT_MAX);
+        let bottom = (y + toggle_h + 8.0).min(area.max.y);
+        let rect = egui::Rect::from_min_size(
+            egui::pos2(area.max.x - margin + GAP, bottom - side),
+            Vec2::splat(side),
+        );
+        mascot::paint(&painter, Pose::Celebrate, rect, Style::Full);
+    }
 }
 
 #[cfg(test)]
@@ -1013,8 +1559,8 @@ mod tests {
     }
 
     #[test]
-    fn the_guide_has_four_pages_and_the_dots_fit_the_footer() {
-        assert_eq!(PAGES, 4);
+    fn the_guide_has_five_pages_and_the_dots_fit_the_footer() {
+        assert_eq!(PAGES, 5);
         // the dots are centered in a box as wide as they are when one of them is the wide one
         assert!(DOT_WIDE + (PAGES as f32 - 1.0) * (DOT + DOT_GAP) < 200.0);
     }
@@ -1061,6 +1607,9 @@ mod tests {
             }
             1 => setup_page(ui, accent, os),
             2 => persona_page(ui, w, accent),
+            KEY_PAGE => {
+                key_page(ui, w, accent, os, None, 0);
+            }
             _ => ready_page(ui, w, accent, os),
         }
     }
@@ -1168,11 +1717,100 @@ mod tests {
     fn a_new_welcome_starts_on_the_first_page_with_nothing_picked() {
         let w = Welcome::new(true);
         assert_eq!((w.page, w.launch_at_login, w.apply), (0, true, false));
-        assert!(
-            !w.intelligent,
-            "learning is never on unless the person says so"
+        let enabled = cfg().smart.enabled;
+        assert_eq!(
+            w.intelligent, enabled,
+            "the box shows what Settings already has"
         );
         assert!(w.picks.is_empty());
+    }
+
+    #[test]
+    fn the_key_page_cannot_be_passed_without_a_combination() {
+        use crate::keys::{MOD_CTRL, Shortcut, key};
+        let mut w = Welcome::new(false);
+        w.key = None;
+        assert!(w.can_continue(0) && w.can_continue(1) && w.can_continue(2));
+        assert_eq!(
+            w.can_continue(KEY_PAGE),
+            !key_required(),
+            "required, except where the keyboard trigger cannot work"
+        );
+        assert!(w.set_key(Shortcut::new(key::SPACE, MOD_CTRL)));
+        assert!(w.can_continue(KEY_PAGE));
+        assert!(!w.key_hint);
+    }
+
+    #[test]
+    fn a_key_without_a_modifier_or_esc_is_not_kept_and_the_page_says_so() {
+        use crate::keys::{MOD_CTRL, Shortcut, key};
+        let mut w = Welcome::new(false);
+        w.key = None;
+        assert!(!w.set_key(Shortcut::new(key::SPACE, 0)));
+        assert!(w.key.is_none() && w.key_hint);
+        assert!(!w.set_key(Shortcut::new(key::ESCAPE, MOD_CTRL)));
+        assert!(w.key.is_none());
+        assert!(w.set_key(Shortcut::new(key::SPACE, MOD_CTRL)));
+        assert!(!w.key_hint, "a good one clears the hint");
+    }
+
+    #[test]
+    fn the_modifiers_are_named_as_they_are_held() {
+        use crate::keys::{MOD_ALT, MOD_CMD, MOD_CTRL, MOD_SHIFT};
+        assert_eq!(mod_names_in(Os::Mac, MOD_CTRL | MOD_ALT), ["Ctrl", "Opt"]);
+        assert_eq!(
+            mod_names_in(Os::Windows, MOD_CMD | MOD_SHIFT),
+            ["Shift", "Win"]
+        );
+        assert!(mod_names_in(Os::Linux, 0).is_empty());
+    }
+
+    #[test]
+    fn the_key_page_shows_what_is_pressed_as_it_is_pressed() {
+        use crate::keys::{MOD_CTRL, MOD_SHIFT, Shortcut, key};
+        let set = Shortcut::new(key::SPACE, MOD_CTRL);
+        // nothing yet
+        assert_eq!(key_view(Os::Windows, None, true, 0), KeyView::Waiting);
+        // modifiers held: they show at once, the key is still to come
+        assert_eq!(
+            key_view(Os::Windows, None, true, MOD_CTRL | MOD_SHIFT),
+            KeyView::Holding(vec!["Ctrl", "Shift"])
+        );
+        // the combination: one keycap per key
+        assert_eq!(
+            key_view(Os::Windows, Some(&set), true, 0),
+            KeyView::Set(vec!["Ctrl".into(), "Space".into()])
+        );
+        // pressing again while one is set shows the new keys being held
+        assert_eq!(
+            key_view(Os::Windows, Some(&set), true, MOD_SHIFT),
+            KeyView::Holding(vec!["Shift"])
+        );
+        // not listening: held modifiers are none of its business
+        assert_eq!(
+            key_view(Os::Windows, Some(&set), false, MOD_SHIFT),
+            KeyView::Set(vec!["Ctrl".into(), "Space".into()])
+        );
+    }
+
+    #[test]
+    fn the_app_combination_is_optional_and_never_the_same_as_the_general_one() {
+        use crate::keys::{MOD_CTRL, MOD_SHIFT, Shortcut, key};
+        let mut w = Welcome::new(false);
+        w.key = None;
+        w.key_app = None;
+        assert!(w.can_continue(KEY_PAGE) == !key_required());
+        assert!(w.set_key(Shortcut::new(key::SPACE, MOD_CTRL)));
+        // optional: the page can be passed without it
+        assert!(w.key_app.is_none() && w.can_continue(KEY_PAGE));
+        assert!(w.set_app_key(Shortcut::new(key::SPACE, MOD_CTRL | MOD_SHIFT)));
+        assert!(w.key_app.is_some());
+        // the general one already has this: not kept, and the page says so
+        assert!(!w.set_app_key(Shortcut::new(key::SPACE, MOD_CTRL)));
+        assert!(w.key_dup);
+        // pressing the app's combination for the general pie takes it over
+        assert!(w.set_key(Shortcut::new(key::SPACE, MOD_CTRL | MOD_SHIFT)));
+        assert!(w.key_app.is_none());
     }
 
     #[test]
